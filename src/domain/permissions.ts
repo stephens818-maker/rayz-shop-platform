@@ -789,6 +789,12 @@ export const REPORTS = [
     hint: "By month of the paycheck and per pay period, employer and employee: hours, cash wages, tips charged, cash and declared, the tips over the $7.25 an hour floor that count toward the 45B credit, and the estimated credit. For the CPA.",
   },
   {
+    key: "payroll_paid_leave",
+    label: "Illinois paid leave",
+    href: "/admin/reports/payroll/paid-leave",
+    hint: "Per employee, at shops in a state with a paid leave law (Illinois): hours worked there this year, leave earned at an hour per 40 up to 40 a year, carried in, used and the balance.",
+  },
+  {
     key: "payroll_isolved",
     label: "iSolved export preview",
     href: "/admin/reports/payroll/isolved",
@@ -1039,6 +1045,7 @@ export const PAYROLL_REPORTS = [
   "payroll_tips_paid",
   "payroll_w2_codes",
   "payroll_fica_tip_credit",
+  "payroll_paid_leave",
 ] as const satisfies readonly ReportKey[];
 export const BRAND_PAY_REPORTS: readonly ReportKey[] = ["tips_payroll", "tip_payouts", "commission_payout", ...PAYROLL_REPORTS];
 const LOCATION_REPORTS = ALL_REPORTS.filter((k) => !BRAND_CAMPAIGN_CENTER.has(reportView(k)) && !BRAND_PAY_REPORTS.includes(k));

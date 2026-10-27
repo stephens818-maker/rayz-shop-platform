@@ -665,7 +665,7 @@ export function ftStatus(staffId: string, weekly: readonly { worked: number; tra
 export interface Anomaly {
   staffId: string | null;
   shopId: string | null;
-  kind: "owner_case" | "sales_without_hours" | "override" | "netcomm_gap" | "missing_key" | "training_in_hours" | "no_rate" | "late_tip_refund" | "changed_since_lock" | "late_import";
+  kind: "owner_case" | "sales_without_hours" | "override" | "netcomm_gap" | "missing_key" | "training_in_hours" | "no_rate" | "late_tip_refund" | "changed_since_lock" | "late_import" | "below_minimum_wage" | "meal_missed" | "no_work_state";
   message: string;
 }
 

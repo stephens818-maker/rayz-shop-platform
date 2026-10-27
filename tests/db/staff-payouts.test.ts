@@ -207,11 +207,11 @@ describe("owed tips go through payroll at the cutoff, once (ST-C14), and the tip
     expect(draft.status).toBe("draft");
     expect(draft.fileName).toMatch(/^DRAFT - Tips paid/);
     const [header, ...rows] = parseCsv(draft.body);
-    expect(header).toEqual(["Company Code", "Employer", "EIN", "Employee Number", "Employee", "Period Start", "Period End", "Tips Earned", "Paid via Stripe", "Paid in Cash", "Paid Through Payroll", "Owed", "Sent Not Paid", "Reversed", "Absorbed by Shop", "Status"]);
+    expect(header).toEqual(["Company Code", "Employer", "EIN", "Work State", "Employee Number", "Employee", "Period Start", "Period End", "Tips Earned", "Paid via Stripe", "Paid in Cash", "Paid Through Payroll", "Owed", "Sent Not Paid", "Reversed", "Absorbed by Shop", "Status"]);
     const col = (row: string[], h: string) => row[header.indexOf(h)];
     const gNumber = (await m.db.db.query.payrollProfiles.findFirst({ where: eq(s().payrollProfiles.staffId, g) }))!.employeeNumber;
     const gRow = rows.find((r) => col(r, "Employee Number") === gNumber)!;
-    expect([col(gRow, "Company Code"), col(gRow, "Employer"), col(gRow, "EIN"), col(gRow, "Owed"), col(gRow, "Status")]).toEqual(["RZI01", "Ray'z Inc.", "EIN ••6789", "9.00", "Draft"]);
+    expect([col(gRow, "Company Code"), col(gRow, "Employer"), col(gRow, "EIN"), col(gRow, "Work State"), col(gRow, "Owed"), col(gRow, "Status")]).toEqual(["RZI01", "Ray'z Inc.", "EIN ••6789", "IL", "9.00", "Draft"]);
     expect(draft.body).not.toMatch(/123456789/);
 
     expect(await run.approveAndLock(period.start, period.end, actor)).toMatchObject({ locked: expect.any(Number) });

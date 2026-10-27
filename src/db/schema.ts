@@ -3525,6 +3525,7 @@ export interface PayrollSendShop {
   employerId?: string | null;
   employer?: string | null;
   isolvedCompanyCode?: string | null;
+  workState?: string | null;
 }
 
 /**

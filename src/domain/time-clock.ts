@@ -358,7 +358,7 @@ export function shiftWork(shift: Shift, r: Pick<ClockRules, "unpaidBreakFromMinu
 
 // ───────────────────────────── Schedule ─────────────────────────────
 
-export type PunchFlag = "late" | "early_in" | "early_out" | "late_out" | "during_time_off" | "forgot_out" | "off_site" | "manual";
+export type PunchFlag = "late" | "early_in" | "early_out" | "late_out" | "during_time_off" | "forgot_out" | "off_site" | "manual" | "meal_missed";
 
 export const FLAG_LABEL: Record<PunchFlag, string> = {
   late: "Late",
@@ -369,6 +369,7 @@ export const FLAG_LABEL: Record<PunchFlag, string> = {
   forgot_out: "Forgot to clock out",
   off_site: "Away from the shop",
   manual: "Added by a manager",
+  meal_missed: "No meal break in time (state rule)",
 };
 
 export interface ScheduleRow {

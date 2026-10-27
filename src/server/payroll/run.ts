@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { and, eq, gt, gte, inArray, lt, lte, sql } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { payGroups, payrollEmployers, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, sales as salesTable, staff, timeEntries } from "@/db/schema";
+import { payGroups, payrollEmployers, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, sales as salesTable, staff, timeEntries, timePunches } from "@/db/schema";
 import { calendarProblem, periodOf, periodStarting, periodsAround, workweeksOf, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
 import {
   OVERRIDABLE,
@@ -25,6 +25,7 @@ import {
   type ShopBlock,
   type Totals,
 } from "@/domain/payroll/calc";
+import { minimumWageCents, minimumWageShortfallCents, rulesFor } from "@/domain/wage-hour";
 import { dailyHours, overtimeSlices, sliceKey, weekStartOf, type Slice, type TimeEntry } from "@/domain/payroll/overtime";
 import { addDays, endOfLocalDay, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
@@ -97,6 +98,8 @@ export interface BlockView extends ShopBlock {
   exportTab: string;
   /** The shop's legal entity: its pay group's employer, or the one it had when the period was locked. */
   employer: LegalEntity | null;
+  /** The shop's work state: its wage-hour rules, and the state its hours are withheld for. */
+  workState: string | null;
   period: CalendarPeriod;
   locked: { at: string; by: string | null } | null;
   /** Locked shops: the hash of the inputs of record as approved, and what's changed in the live data since. */
@@ -114,9 +117,22 @@ export interface PayrollView {
   /** The W-2 tip check: each employee's tips against the iSolved file and their payouts, to the cent. */
   tips: TipCheck;
   anomalies: Anomaly[];
+  /** The period by legal entity and work state: what each FEIN files in each state. */
+  byEntityState: EntityStateTotal[];
   ft: Record<string, FtStatus>;
   weeks: Record<string, WeekBreakdown[]>;
   locked: "none" | "some" | "all";
+}
+
+export interface EntityStateTotal {
+  employerId: string | null;
+  employer: string;
+  workState: string | null;
+  shops: string[];
+  employees: number;
+  hours: number;
+  laborCost: number;
+  tips: number;
 }
 
 interface Snapshot {
@@ -350,6 +366,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
       payGroup: g.label,
       exportTab: g.exportTab,
       employer: employerOf.get((run ? run.employerId : g.employerId) ?? "") ?? null,
+      workState: g.workState,
       period: p,
       locked: run ? { at: run.lockedAt.toISOString(), by: run.lockedBy ? (lockedBy.get(run.lockedBy) ?? null) : null } : null,
       lockCheck,
@@ -385,7 +402,8 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
     grand: grandAndCheck.grand,
     mismatches: [...grandAndCheck.mismatches, ...tipGate],
     tips,
-    anomalies: [...anomalies(blocks, settings), ...lockAnomalies(blocks)],
+    anomalies: [...anomalies(blocks, settings), ...lockAnomalies(blocks), ...stateAnomalies(blocks, end, await missedMealsIn([...runShops], start, end))],
+    byEntityState: byEntityState(blocks),
     ft,
     weeks: weekBreakdowns(slices, staffIds, weeks, start, runShops, (id) => groupOf.get(id)?.shop ?? "Other shop"),
     locked: runs.length === 0 ? "none" : runs.length === inRun.length ? "all" : "some",
@@ -405,6 +423,83 @@ async function importedAfterLock(runs: readonly (typeof payrollRuns.$inferSelect
     if (n) out.set(r.payGroupId, n);
   }
   return out;
+}
+
+/** Shifts in the period flagged for a meal period missed under the shop's state rule, per employee and shop. */
+async function missedMealsIn(shopIds: string[], start: LocalDate, end: LocalDate) {
+  const out = new Map<string, number>();
+  if (!shopIds.length) return out;
+  const rows = await db
+    .select({ staffId: timePunches.staffId, shopId: timePunches.shopId, n: sql<number>`count(*)::int` })
+    .from(timePunches)
+    .where(
+      and(
+        inArray(timePunches.shopId, shopIds),
+        eq(timePunches.type, "in"),
+        isNull(timePunches.voidedAt),
+        gte(timePunches.at, startOfLocalDay(start)),
+        lt(timePunches.at, endOfLocalDay(end)),
+        sql`${timePunches.flags} @> '["meal_missed"]'::jsonb`,
+      ),
+    )
+    .groupBy(timePunches.staffId, timePunches.shopId);
+  for (const r of rows) out.set(`${r.staffId}|${r.shopId}`, r.n);
+  return out;
+}
+
+/**
+ * The work state's rules (ST-I16): straight-time pay under the state minimum wage over the period's
+ * paid hours (tips never count; owners at $0 are their own flag), meal periods the state requires and
+ * the clock flagged missed, and a shop with no state in its address.
+ */
+function stateAnomalies(blocks: readonly BlockView[], end: LocalDate, missedMeals: Map<string, number>): Anomaly[] {
+  const out: Anomaly[] = [];
+  for (const b of blocks) {
+    const rules = rulesFor(b.workState);
+    if (!b.workState) out.push({ staffId: null, shopId: b.shopId, kind: "no_work_state", message: `${b.shop} has no state in its address, so only the federal minimum wage is checked. Add it in the location's details.` });
+    const min = minimumWageCents(b.workState, end);
+    for (const l of b.lines) {
+      if (l.laborCost === 0) continue;
+      const hoursPaid = l.hours + l.otHours + (l.trainingPay > 0 ? l.trainingHours : 0);
+      const straight = toCents(l.totalWages + l.trainingPay + l.guaranteeTopUp + l.wage * l.otHours);
+      const short = minimumWageShortfallCents(straight, hoursPaid, min);
+      if (short > 0)
+        out.push({
+          staffId: l.staffId,
+          shopId: b.shopId,
+          kind: "below_minimum_wage",
+          message: `${l.name} (${b.shop}): ${fmtMoney(straight / 100)} for ${fmtHours(hoursPaid)} is under the ${rules.name} minimum wage of ${fmtMoney(min / 100)} an hour by ${fmtMoney(short / 100)}, tips not counted. Check each workweek and top it up before locking.`,
+        });
+      const missed = missedMeals.get(`${l.staffId}|${b.shopId}`) ?? 0;
+      if (missed && rules.mealPeriod)
+        out.push({
+          staffId: l.staffId,
+          shopId: b.shopId,
+          kind: "meal_missed",
+          message: `${l.name} (${b.shop}): ${missed} shift${missed === 1 ? "" : "s"} of ${rules.mealPeriod.afterHours} hours or more without a ${rules.mealPeriod.minutes}-minute meal break starting by hour ${rules.mealPeriod.startByHours} (${rules.name} ${rules.mealPeriod.law}).`,
+        });
+    }
+  }
+  return out;
+}
+
+function byEntityState(blocks: readonly BlockView[]): EntityStateTotal[] {
+  const by = new Map<string, EntityStateTotal & { people: Set<string> }>();
+  for (const b of blocks) {
+    const k = `${b.employer?.id ?? ""}|${b.workState ?? ""}`;
+    const t = by.get(k) ?? { employerId: b.employer?.id ?? null, employer: b.employer?.legalName ?? "No employer set", workState: b.workState, shops: [], employees: 0, hours: 0, laborCost: 0, tips: 0, people: new Set<string>() };
+    t.shops.push(b.shop);
+    for (const l of b.lines) {
+      t.people.add(l.staffId);
+      t.hours += l.hours + l.otHours + l.trainingHours;
+      t.laborCost += l.laborCost;
+      t.tips += l.tips;
+    }
+    by.set(k, t);
+  }
+  return [...by.values()]
+    .map(({ people, ...t }) => ({ ...t, employees: people.size, hours: Math.round(t.hours * 100) / 100, laborCost: Math.round(t.laborCost * 100) / 100, tips: Math.round(t.tips * 100) / 100 }))
+    .sort((a, b) => a.employer.localeCompare(b.employer) || (a.workState ?? "").localeCompare(b.workState ?? ""));
 }
 
 /** Flags on locked shops: data changed since the lock (the file stays as approved), and Squire history imported after it. */

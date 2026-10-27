@@ -34,7 +34,7 @@ const fx = { a: "", b: "", aLabel: "", bLabel: "", moline: "", start: "", end: "
 const cash = { method: "cash" as const, cashTenderedCents: null };
 const at = (d: string, h = 12) => new Date(new Date(`${d}T00:00:00-05:00`).getTime() + h * 3_600_000);
 const day = (n: number) => m.time.addDays(fx.start, n);
-const PAGES = ["summary", "timesheets", "tips", "commission", "full-time", "labor-cost", "overtime", "isolved", "tips-paid", "w2-codes", "fica-tip-credit"];
+const PAGES = ["summary", "timesheets", "tips", "commission", "full-time", "labor-cost", "overtime", "isolved", "tips-paid", "w2-codes", "fica-tip-credit", "paid-leave"];
 const OTHER_SHOPS = ["Rock Island", "Coralville", "Dubuque", "Kimberly", "Le Claire", "Silvis", "Utica"];
 
 async function sell(staffId: string, d: string, o: { product?: boolean; tipCents?: number; with?: string } = {}) {
@@ -130,15 +130,15 @@ afterAll(async () => {
 describe("who can see them", () => {
   it("brand owner, brand admin and bookkeeper by default; no location role; never a shop login", async () => {
     const keys = P.PAYROLL_REPORTS.flatMap((k) => [P.reportView(k), P.reportExport(k)]);
-    expect(keys).toHaveLength(22);
+    expect(keys).toHaveLength(24);
     for (const t of P.ROLE_TEMPLATES) {
       const has = keys.filter((k) => t.permissions.includes(k));
-      expect([t.key, has.length]).toEqual([t.key, ["brand_owner", "brand_admin", "bookkeeper"].includes(t.key) ? 22 : 0]);
+      expect([t.key, has.length]).toEqual([t.key, ["brand_owner", "brand_admin", "bookkeeper"].includes(t.key) ? 24 : 0]);
     }
     for (const k of keys) expect(P.SHOP_LOGIN_NEVER.has(k)).toBe(true);
     const roles = await m.db.db.select({ key: m.schema.roles.key, permissions: m.schema.roles.permissions }).from(m.schema.roles);
     for (const r of roles.filter((x) => x.key !== P.OWNER_ROLE_KEY))
-      expect([r.key, keys.filter((k) => (r.permissions as string[]).includes(k)).length]).toEqual([r.key, ["brand_admin", "bookkeeper"].includes(r.key ?? "") ? 22 : 0]);
+      expect([r.key, keys.filter((k) => (r.permissions as string[]).includes(k)).length]).toEqual([r.key, ["brand_admin", "bookkeeper"].includes(r.key ?? "") ? 24 : 0]);
 
     await signInAs(ids["manager.moline"]);
     for (const p of PAGES) expect([p, (await open(`/admin/reports/payroll/${p}`)).kind]).toEqual([p, "denied"]);
@@ -302,6 +302,37 @@ describe("W-2 codes and the 45B credit", () => {
     expect(mine).toHaveLength(1);
     for (const h of ["Hours worked", "Reported tips", "Needed to reach the floor", "Tips that count", "Estimated credit"]) expect([h, mine[0][col(months, h)]]).toEqual([h, row[col(t, h)]]);
     expect(String(mine[0][col(months, "Month")])).toMatch(/^[A-Z][a-z]{2} \d{4}$/);
+  });
+});
+
+describe("Illinois and Iowa wage-hour rules (ST-I16)", () => {
+  it("Moline is in Illinois: its minimum wage is checked, and the period splits by legal entity and work state", async () => {
+    const v = (await run.buildPayroll(fx.start, fx.end))!;
+    const moline = v.blocks.find((b) => b.shopId === fx.moline)!;
+    expect(moline.workState).toBe("IL");
+    const low = v.anomalies.filter((a) => a.kind === "below_minimum_wage" && a.shopId === fx.moline);
+    expect(low.map((a) => a.staffId)).toContain(fx.b);
+    expect(low.map((a) => a.staffId)).not.toContain(fx.a);
+    expect(low.find((a) => a.staffId === fx.b)!.message).toMatch(/Illinois minimum wage of \$15\.00/);
+    const il = v.byEntityState.find((r) => r.workState === "IL" && r.shops.includes("Moline"))!;
+    expect(il.employer).toBe("Ray'z Inc.");
+    expect(il.laborCost).toBeCloseTo(moline.totals.laborCost, 2);
+    const ia = v.byEntityState.find((r) => r.workState === "IA");
+    if (ia) expect(ia.shops).not.toContain("Moline");
+  });
+
+  it("Illinois paid leave: an hour per 40 worked at Illinois shops, to 40 a year, plus what carried in, less what was used", async () => {
+    const { data } = await report("payroll_paid_leave", { from: `${fx.end.slice(0, 4)}-01-01`, to: fx.end });
+    const t = table(data, "paid_leave");
+    const row = body(t).find((r) => r[col(t, "Employee")] === fx.aLabel)!;
+    expect(row[col(t, "State")]).toBe("IL");
+    const worked = Number(row[col(t, "Hours worked")]);
+    expect(worked).toBeGreaterThanOrEqual(165);
+    expect(row[col(t, "Earned")]).toBe(Math.round(Math.min(40, worked / 40) * 100) / 100);
+    expect(row[col(t, "Balance")]).toBeCloseTo(Number(row[col(t, "Carried in")]) + Number(row[col(t, "Earned")]) - Number(row[col(t, "Used")]), 2);
+    const kimberly = (await m.catalog.getShop("kimberly"))!.id;
+    const iowa = await report("payroll_paid_leave", { shop: [kimberly], from: `${fx.end.slice(0, 4)}-01-01`, to: fx.end });
+    expect(body(table(iowa.data, "paid_leave")).filter((r) => r[0] !== "Total")).toEqual([]);
   });
 });
 

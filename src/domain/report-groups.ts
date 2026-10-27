@@ -43,6 +43,7 @@ export const REPORT_GROUP: Record<ReportKey, ReportGroupId> = {
   payroll_tips_paid: "payroll",
   payroll_w2_codes: "payroll",
   payroll_fica_tip_credit: "payroll",
+  payroll_paid_leave: "payroll",
   tips_payroll: "payroll",
   tip_payouts: "payroll",
   commission_payout: "payroll",

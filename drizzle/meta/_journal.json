@@ -834,6 +834,13 @@
       "when": 1796595120000,
       "tag": "core_0118_legal_entities",
       "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1796595180000,
+      "tag": "core_0119_paid_leave_report",
+      "breakpoints": true
     }
   ]
 }

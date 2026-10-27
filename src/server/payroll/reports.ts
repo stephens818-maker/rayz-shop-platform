@@ -1,7 +1,8 @@
 import { and, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { db } from "@/db";
-import { payGroups, payrollEmployers, payrollExportSends, payrollProfiles, staff, timeEntries, tipAbsorptions, tipLedger, tipPayouts, type PayrollSendShop } from "@/db/schema";
+import { payGroups, payrollEmployers, payrollExportSends, payrollProfiles, shops, staff, timeEntries, tipAbsorptions, tipLedger, tipPayouts, type PayrollSendShop } from "@/db/schema";
+import { paidLeaveYear, rulesFor, workStateOf } from "@/domain/wage-hour";
 import { EXPORT_COLUMNS, PAID_TIP_COLUMNS, PAYROLL_TIP_COLUMNS, extraFromOf, sumColumns, toCents, type Line } from "@/domain/payroll/calc";
 import { FLAG_LABEL, FT_LABEL, PUNCH_LABEL, csv, type PunchType } from "@/domain/time-clock";
 import type { Permission } from "@/domain/permissions";
@@ -9,7 +10,7 @@ import type { BarChart } from "@/domain/report-charts";
 import { ABSORPTION_LABEL, TIPS_PAID_STATUS_LABEL, employerTaxIdLabel, tipsPaidStatus, type TipsPaidBuckets, type TipsPaidStatus } from "@/domain/staff-payouts";
 import { Cell, Column, ListRow, ViewCtx, listTable } from "@/domain/report-views";
 import { formatCents } from "@/lib/money";
-import { addDays, endOfLocalDay, formatDate, formatDateTime, formatTime, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
+import { SHOP_TZ, addDays, endOfLocalDay, formatDate, formatDateTime, formatTime, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
 import { AppError } from "@/server/errors";
 import type { ReportChart, ReportData, ReportOption } from "@/server/report-data";
@@ -581,6 +582,8 @@ export interface TipsPaidRow extends TipsPaidBuckets {
   employer: string;
   companyCode: string | null;
   taxId: string;
+  /** The work state of the shops the tips were earned at: each state's withholding is per entity and state. */
+  workState: string | null;
   staffId: string;
   name: string;
   employeeNumber: string | null;
@@ -617,6 +620,7 @@ function bucketOf(method: string | null, status: string | null): keyof Omit<Tips
 async function tipsPaidPeriod(r: Pick<PeriodRun, "ref" | "label" | "blocks">, sel: string[] | null): Promise<TipsPaidPeriod> {
   const shopIds = r.blocks.map((b) => b.shopId);
   const lockedShop = new Set(r.blocks.filter((b) => b.locked).map((b) => b.shopId));
+  const stateOf = new Map(r.blocks.map((b) => [b.shopId, b.workState]));
   const none: TipsPaidPeriod = { start: r.ref.start, end: r.ref.end, label: r.label, status: "final", rows: [] };
   if (!shopIds.length || (sel && !sel.length)) return none;
   const inPeriod = (t: typeof tipLedger | typeof tipAbsorptions) =>
@@ -644,7 +648,8 @@ async function tipsPaidPeriod(r: Pick<PeriodRun, "ref" | "label" | "blocks">, se
   ]);
   const rows = new Map<string, TipsPaidRow>();
   const rowOf = (staffId: string, employerId: string | null, shopId: string) => {
-    const k = `${employerId ?? ""}|${staffId}`;
+    const workState = stateOf.get(shopId) ?? null;
+    const k = `${employerId ?? ""}|${workState ?? ""}|${staffId}`;
     let row = rows.get(k);
     if (!row) {
       row = {
@@ -654,6 +659,7 @@ async function tipsPaidPeriod(r: Pick<PeriodRun, "ref" | "label" | "blocks">, se
         employer: NO_EMPLOYER,
         companyCode: null,
         taxId: "",
+        workState,
         staffId,
         name: "",
         employeeNumber: null,
@@ -702,7 +708,7 @@ async function tipsPaidPeriod(r: Pick<PeriodRun, "ref" | "label" | "blocks">, se
     row.problems = problems;
     row.status = status === "final" && !problems.length ? "final" : "draft";
   }
-  list.sort((a, b) => a.employer.localeCompare(b.employer) || a.name.localeCompare(b.name));
+  list.sort((a, b) => a.employer.localeCompare(b.employer) || (a.workState ?? "").localeCompare(b.workState ?? "") || a.name.localeCompare(b.name));
   return { ...none, status: list.every((x) => x.status === "final") ? "final" : "draft", rows: list };
 }
 
@@ -719,14 +725,14 @@ export async function payrollTipsPaidData(i: PayrollReportInput): Promise<Report
       people.push({
         shopId: x.shopIds[0],
         staffId: x.staffId,
-        cells: [p.label, x.employer, x.companyCode ?? "", x.taxId, x.name, x.employeeNumber ?? "", ...buckets, TIPS_PAID_STATUS_LABEL[x.status], x.problems.join("; ")],
+        cells: [p.label, x.employer, x.companyCode ?? "", x.taxId, x.workState ?? "", x.name, x.employeeNumber ?? "", ...buckets, TIPS_PAID_STATUS_LABEL[x.status], x.problems.join("; ")],
       });
-      const k = `${p.start}|${x.employer}`;
-      const e = byEmployer.get(k) ?? { shopId: x.shopIds[0], key: k, cells: [p.label, x.employer, x.companyCode ?? "", x.taxId, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "Final"] };
-      e.cells[4] = Number(e.cells[4]) + 1;
-      buckets.forEach((v, j) => (e.cells[5 + j] = Number(e.cells[5 + j]) + v));
-      if (x.status === "draft") e.cells[13] = Number(e.cells[13]) + 1;
-      e.cells[14] = Number(e.cells[13]) ? "Draft" : "Final";
+      const k = `${p.start}|${x.employer}|${x.workState ?? ""}`;
+      const e = byEmployer.get(k) ?? { shopId: x.shopIds[0], key: k, cells: [p.label, x.employer, x.companyCode ?? "", x.taxId, x.workState ?? "", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "Final"] };
+      e.cells[5] = Number(e.cells[5]) + 1;
+      buckets.forEach((v, j) => (e.cells[6 + j] = Number(e.cells[6 + j]) + v));
+      if (x.status === "draft") e.cells[14] = Number(e.cells[14]) + 1;
+      e.cells[15] = Number(e.cells[14]) ? "Draft" : "Final";
       byEmployer.set(k, e);
     }
   const periods = done.map(({ rows, ...p }) => ({ ...p, rows: rows.length }));
@@ -738,16 +744,16 @@ export async function payrollTipsPaidData(i: PayrollReportInput): Promise<Report
   const absorbedList = await absorptionsIn(scope, sel);
   const col = (j: number) => sumOf(people, (r) => Number(r.cells[j]));
   const amounts = [money("Tips earned"), money("Paid via Stripe"), money("Paid in cash"), money("Paid through payroll"), money("Owed"), money("Sent, not paid yet"), money("Reversed (refunds)"), money("Absorbed by the shop")];
-  const drafts = people.filter((r) => r.cells[14] === "Draft").length;
+  const drafts = people.filter((r) => r.cells[15] === "Draft").length;
   return {
     presets,
     periods: periods.reverse().map(({ start, end, label, status }) => ({ start, end, label, status })),
     shopParam: scope.shopIds.length ? scope.shopIds.join(",") : null,
     bars: [],
     stats: [
-      { label: "Tips earned", value: formatCents(col(6)), hint: `${formatCents(col(12))} reversed · ${formatCents(col(13))} absorbed by the shop` },
-      { label: "Paid through payroll", value: formatCents(col(9)), hint: `${formatCents(col(7))} via Stripe · ${formatCents(col(8))} in cash` },
-      { label: "Owed", value: formatCents(col(10)), hint: col(11) ? `${formatCents(col(11))} sent, not paid yet` : "Owed tips go on payroll at the cutoff" },
+      { label: "Tips earned", value: formatCents(col(7)), hint: `${formatCents(col(13))} reversed · ${formatCents(col(14))} absorbed by the shop` },
+      { label: "Paid through payroll", value: formatCents(col(10)), hint: `${formatCents(col(8))} via Stripe · ${formatCents(col(9))} in cash` },
+      { label: "Owed", value: formatCents(col(11)), hint: col(12) ? `${formatCents(col(12))} sent, not paid yet` : "Owed tips go on payroll at the cutoff" },
       { label: "Final", value: `${people.length - drafts} of ${people.length}`, tone: drafts ? "down" : "up", hint: drafts ? `${drafts} draft: see Why` : "Every row adds up to the cent" },
     ],
     tables: [
@@ -761,16 +767,16 @@ export async function payrollTipsPaidData(i: PayrollReportInput): Promise<Report
       }),
       listTable(combined(loc), {
         id: "employers",
-        title: "By employer",
-        subtitle: "Each employer is one FEIN (the pay groups' legal entity). Only the last 4 of the EIN is kept.",
-        columns: [text("Pay period"), text("Employer"), text("iSolved company"), text("EIN"), int("Employees"), ...amounts, int("Draft rows"), text("Status")],
+        title: "By employer and work state",
+        subtitle: "Each employer is one FEIN (the pay groups' legal entity), split by the state the tips were earned in. Only the last 4 of the EIN is kept.",
+        columns: [text("Pay period"), text("Employer"), text("iSolved company"), text("EIN"), text("Work state"), int("Employees"), ...amounts, int("Draft rows"), text("Status")],
         rows: [...byEmployer.values()].reverse(),
         totals: false,
       }),
       listTable(combined(loc), {
         id: "employees",
         title: "By employee",
-        columns: [text("Pay period"), text("Employer"), text("iSolved company"), text("EIN"), text("Employee"), text("Employee number"), ...amounts, text("Status"), text("Why draft")],
+        columns: [text("Pay period"), text("Employer"), text("iSolved company"), text("EIN"), text("Work state"), text("Employee"), text("Employee number"), ...amounts, text("Status"), text("Why draft")],
         rows: people,
         totals: false,
       }),
@@ -804,7 +810,7 @@ async function absorptionsIn(scope: ReportScope, sel: string[] | null) {
 const dollars = (cents: number) => (cents / 100).toFixed(2);
 
 /**
- * A pay period's tips-paid file for iSolved: one row per employer and employee. Marked DRAFT until
+ * A pay period's tips-paid file for iSolved: one row per employer, work state and employee. Marked DRAFT until
  * every row is final. Dollar amounts, the iSolved company code and employee number; never an EIN
  * beyond its last 4, or any account number.
  */
@@ -815,11 +821,12 @@ export async function tipsPaidFile(start: LocalDate, end: LocalDate, shopIds: re
   if (!blocks.length) return null;
   const ref = { start, end };
   const p = await tipsPaidPeriod({ ref: { ...ref, groups: [] }, label: yearLabel(ref), blocks }, null);
-  const header = ["Company Code", "Employer", "EIN", "Employee Number", "Employee", "Period Start", "Period End", "Tips Earned", "Paid via Stripe", "Paid in Cash", "Paid Through Payroll", "Owed", "Sent Not Paid", "Reversed", "Absorbed by Shop", "Status"];
+  const header = ["Company Code", "Employer", "EIN", "Work State", "Employee Number", "Employee", "Period Start", "Period End", "Tips Earned", "Paid via Stripe", "Paid in Cash", "Paid Through Payroll", "Owed", "Sent Not Paid", "Reversed", "Absorbed by Shop", "Status"];
   const lines = p.rows.map((x) => [
     x.companyCode ?? "",
     x.employer,
     x.taxId,
+    x.workState ?? "",
     x.employeeNumber ?? "",
     x.name,
     start,
@@ -1467,6 +1474,7 @@ export async function markIsolvedSent(start: LocalDate, end: LocalDate, actor: A
       employerId: b.employer?.id ?? null,
       employer: b.employer?.legalName ?? null,
       isolvedCompanyCode: b.employer?.isolvedCompanyCode ?? null,
+      workState: b.workState,
     };
   });
   const [row] = await db
@@ -1488,6 +1496,102 @@ export async function undoIsolvedSent(start: LocalDate, end: LocalDate, actor: A
     .returning({ id: payrollExportSends.id, sentAt: payrollExportSends.sentAt });
   if (!gone.length) throw bad("This pay period isn't marked sent.");
   await audit(actor, "payroll.isolved_unsent", "payroll_period", `${start}_${end}`, { periodStart: start, periodEnd: end, sentAt: gone[0].sentAt.toISOString(), reason: why.slice(0, 300) });
+}
+
+// ───────────────────────────── State paid leave (ST-I16) ─────────────────────────────
+
+/**
+ * Earned paid leave where the state requires it (Illinois's Paid Leave for All Workers Act): per
+ * employee, the hours worked at the state's shops this calendar year, the leave they earned (an hour
+ * per 40, to the yearly cap), what carried in from last year, what they used (PTO at those shops) and
+ * the balance. The year is the one the range ends in.
+ */
+export async function payrollPaidLeaveData(i: PayrollReportInput): Promise<ReportData> {
+  const { scope, loc } = i;
+  const sel = staffSelection(scope);
+  const year = Number(scope.to.slice(0, 4));
+  const today = todayLocal(i.now);
+  const presets = await payPeriodPresets(undefined, scope.shopIds);
+  const shopRows = scope.shopIds.length ? await db.select({ id: shops.id, state: shops.state }).from(shops).where(inArray(shops.id, scope.shopIds)) : [];
+  const states = new Map<string, string[]>();
+  for (const s of shopRows) {
+    const st = workStateOf(s.state);
+    if (st && rulesFor(st).paidLeave) states.set(st, [...(states.get(st) ?? []), s.id]);
+  }
+  const rows: ListRow[] = [];
+  const totals = { accrued: 0, used: 0, balance: 0 };
+  for (const [state, shopIds] of states) {
+    const rule = rulesFor(state).paidLeave!;
+    const hours = await sqlRows<{ staffId: string; shopId: string; kind: string; y: number; h: number }>(sql`
+      select staff_id as "staffId", (array_agg(shop_id order by starts_at))[1] as "shopId", kind::text as kind,
+        extract(year from starts_at at time zone ${SHOP_TZ})::int as y, sum(extract(epoch from ends_at - starts_at)) / 3600.0 as h
+      from time_entries
+      where shop_id in ${uuids(shopIds)} and starts_at >= ${startOfLocalDay(`${year - 1}-01-01`).toISOString()}::timestamptz and starts_at < ${endOfLocalDay(scope.to).toISOString()}::timestamptz
+        ${sel ? sql`and staff_id in ${uuids(sel)}` : sql``}
+      group by staff_id, kind, y`);
+    const people = new Map<string, { shopId: string; prev: { worked: number; used: number }; cur: { worked: number; used: number } }>();
+    for (const r of hours) {
+      const p = people.get(r.staffId) ?? { shopId: r.shopId, prev: { worked: 0, used: 0 }, cur: { worked: 0, used: 0 } };
+      const bucket = r.y === year ? p.cur : p.prev;
+      if (r.kind === "pto") bucket.used += Number(r.h);
+      else bucket.worked += Number(r.h);
+      people.set(r.staffId, p);
+    }
+    const hired = new Map(
+      (people.size ? await db.select({ id: staff.id, label: staff.displayLabel, hireDate: staff.hireDate }).from(staff).where(inArray(staff.id, [...people.keys()])) : []).map((s) => [s.id, s]),
+    );
+    for (const [staffId, p] of people) {
+      const carried = paidLeaveYear(rule, { workedHours: p.prev.worked, usedHours: p.prev.used, carriedInHours: 0 }).balanceHours;
+      const y = paidLeaveYear(rule, { workedHours: p.cur.worked, usedHours: p.cur.used, carriedInHours: carried });
+      const who = hired.get(staffId);
+      const usableOn = who?.hireDate ? addDays(who.hireDate, rule.usableAfterDays) : null;
+      totals.accrued += y.accruedHours;
+      totals.used += y.usedHours;
+      totals.balance += y.balanceHours;
+      rows.push({
+        shopId: p.shopId,
+        staffId,
+        key: `${state}|${staffId}`,
+        cells: [
+          state,
+          who?.label ?? "Unknown",
+          y.workedHours,
+          y.accruedHours,
+          y.carriedInHours,
+          y.usedHours,
+          y.balanceHours,
+          y.capped ? "Yes" : "",
+          usableOn ? (usableOn <= today ? "Yes" : `From ${formatDate(usableOn)}`) : "No hire date",
+        ],
+      });
+    }
+  }
+  rows.sort((a, b) => String(a.cells[1]).localeCompare(String(b.cells[1])));
+  const law = [...states.keys()].map((s) => `${rulesFor(s).name}: ${rulesFor(s).paidLeave!.law}`);
+  return {
+    presets,
+    stats: [
+      { label: "Employees", value: String(rows.length), hint: [...states.keys()].join(", ") || "No shop here has a state paid leave law" },
+      { label: "Earned this year", value: `${h2(totals.accrued)}h` },
+      { label: "Used this year", value: `${h2(totals.used)}h` },
+      { label: "Balance", value: `${h2(totals.balance)}h` },
+    ],
+    tables: [
+      listTable(combined(loc), {
+        id: "paid_leave",
+        title: `Earned paid leave, ${year}`,
+        subtitle: "An hour of paid leave per 40 hours worked at the state's shops, up to 40 hours a year; unused hours carry into next year. Used is PTO entered at those shops.",
+        columns: [text("State"), text("Employee"), hrs("Hours worked"), hrs("Earned"), hrs("Carried in"), hrs("Used"), hrs("Balance"), text("At the yearly cap"), text("Can use it")],
+        rows,
+        totals: true,
+      }),
+    ],
+    notes: [
+      ...law,
+      "Hours are counted where they're worked: hours at an Iowa shop earn nothing here, whatever state the employee lives in. Employees can use leave 90 days after their hire date; the employer may limit a year's use to 40 hours.",
+      "PTO here comes from time entries marked PTO at these shops. iSolved pays the leave; this is the balance the law requires to be kept and shown on request. The CPA confirms the method each January.",
+    ],
+  };
 }
 
 // ───────────────────────────── W-2 tip and overtime codes (SB-C7) ─────────────────────────────

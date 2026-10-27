@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Badge, Card, CardHeader, Notice, PageHeader, cx } from "@/components/ui";
-import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, fmtMoney, type Line, type Totals } from "@/domain/payroll/calc";
+import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, fmtHours, fmtMoney, type Line, type Totals } from "@/domain/payroll/calc";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { reportView } from "@/domain/permissions";
 import { can, guardPage } from "@/server/auth/staff";
@@ -197,13 +197,15 @@ function Report({ view, canRun }: { view: PayrollView; canRun: boolean }) {
 
       <Locations view={view} />
 
+      <EntityStates view={view} />
+
       {view.anomalies.length > 0 && (
         <Card>
           <CardHeader title={`Anomalies (${view.anomalies.length})`} subtitle="For review. None of these block the lock and none are changed automatically." />
           <ul className="divide-y divide-zinc-100 text-sm">
             {view.anomalies.map((a, i) => (
               <li key={i} className="flex gap-2 px-4 py-2">
-                <Badge tone={a.kind === "owner_case" || a.kind === "netcomm_gap" || a.kind === "sales_without_hours" ? "amber" : "gray"}>{a.kind.replace(/_/g, " ")}</Badge>
+                <Badge tone={a.kind === "below_minimum_wage" || a.kind === "meal_missed" ? "red" : a.kind === "owner_case" || a.kind === "netcomm_gap" || a.kind === "sales_without_hours" ? "amber" : "gray"}>{a.kind.replace(/_/g, " ")}</Badge>
                 <span>{a.message}</span>
               </li>
             ))}
@@ -356,6 +358,44 @@ function Locations({ view }: { view: PayrollView }) {
   );
 }
 
+/** What each legal entity (FEIN) pays in each work state: iSolved withholds by the work location, and each state's filings go per entity. */
+function EntityStates({ view }: { view: PayrollView }) {
+  if (view.byEntityState.length < 2 && view.byEntityState.every((r) => r.workState)) return null;
+  return (
+    <Card>
+      <CardHeader title="By legal entity and work state" subtitle="Hours are withheld for the state they're worked in (the shop's address), whatever state the employee lives in. Each state's filings go per legal entity." />
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-zinc-50 text-left text-xs text-zinc-500">
+            <tr>
+              <th className="px-3 py-2">Legal entity</th>
+              <th className="px-3 py-2">Work state</th>
+              <th className="px-3 py-2">Shops</th>
+              <th className="px-3 py-2 text-right">Employees</th>
+              <th className="px-3 py-2 text-right">Hours</th>
+              <th className="px-3 py-2 text-right">Employee Cost</th>
+              <th className="px-3 py-2 text-right">Tips</th>
+            </tr>
+          </thead>
+          <tbody>
+            {view.byEntityState.map((r) => (
+              <tr key={`${r.employerId}|${r.workState}`} className="border-t border-zinc-100">
+                <td className="px-3 py-1.5">{r.employer}</td>
+                <td className="px-3 py-1.5">{r.workState ?? <Badge tone="amber">not set</Badge>}</td>
+                <td className="px-3 py-1.5 text-zinc-600">{r.shops.join(", ")}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{r.employees}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtHours(r.hours)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.laborCost)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.tips)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
 function ShopBlockCard({ b, view, canRun }: { b: BlockView; view: PayrollView; canRun: boolean }) {
   const s = view.settings;
   const downloadable = !!b.locked && canRun;
@@ -365,7 +405,8 @@ function ShopBlockCard({ b, view, canRun }: { b: BlockView; view: PayrollView; c
         title={
           <>
             {b.shop} <span className="font-normal text-zinc-500">· pay group {b.payGroup}
-            {b.employer ? ` · ${b.employer.legalName}${b.employer.isolvedCompanyCode ? ` (iSolved ${b.employer.isolvedCompanyCode})` : ""}` : ""} · period {String(b.period.number).padStart(2, "0")}, check {formatDate(b.period.checkDate, "EEE MMM d")}</span>
+            {b.employer ? ` · ${b.employer.legalName}${b.employer.isolvedCompanyCode ? ` (iSolved ${b.employer.isolvedCompanyCode})` : ""}` : ""}
+            {b.workState ? ` · ${b.workState}` : ""} · period {String(b.period.number).padStart(2, "0")}, check {formatDate(b.period.checkDate, "EEE MMM d")}</span>
           </>
         }
         subtitle={b.locked ? `Locked ${formatDateTime(b.locked.at)}${b.locked.by ? ` by ${b.locked.by}` : ""}` : "Open: live from hours, sales and overrides"}

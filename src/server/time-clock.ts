@@ -53,6 +53,7 @@ import {
   type ShopClockSettings,
 } from "@/domain/time-clock";
 import { appBaseUrl } from "@/lib/deployment";
+import { mealCheck, mealPromptDue, rulesFor, workStateOf } from "@/domain/wage-hour";
 import { callInHref, clockBlockTitle } from "@/domain/clock-live";
 import type { Permission } from "@/domain/permissions";
 import { addDays, endOfLocalDay, formatDate, formatTime, isValidLocalDate, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
@@ -1246,11 +1247,13 @@ export async function flagForgottenClockOuts(now = new Date()): Promise<number> 
 export async function timeClockCron(now = new Date()) {
   const clockOutReminders = await remindClockOuts(now);
   const forgottenClockOuts = await flagForgottenClockOuts(now);
+  const mealPrompts = await promptMealPeriods(now);
+  const mealsMissed = await flagMissedMealPeriods(now);
   const blocks = await refreshClockBlocks(now);
   const clockAlerts = await sendClockFallout(now);
   const m = localMinutesOf(now);
   const ftChanges = m >= 180 && m < 195 ? await checkFtCrossings(now) : 0;
-  return { clockOutReminders, forgottenClockOuts, clockBlocks: blocks.created + blocks.updated + blocks.removed, clockAlerts, ftChanges };
+  return { clockOutReminders, forgottenClockOuts, mealPrompts, mealsMissed, clockBlocks: blocks.created + blocks.updated + blocks.removed, clockAlerts, ftChanges };
 }
 
 /** Minutes after their scheduled end that someone still clocked in, with no client still to come, is reminded. */
@@ -1292,6 +1295,72 @@ export async function remindClockOuts(now = new Date()): Promise<number> {
     const [first] = await db.insert(clockAlertLog).values({ key: `out_reminder:${x.inId}`, shopId: x.shopId, sentAt: now }).onConflictDoNothing().returning({ key: clockAlertLog.key });
     if (!first) continue;
     n += (await queueStaffNotice("clock_out", x.staffId, { body: `You're still clocked in. Your hours ended at ${formatTime(end)}. Clock out in the Ray'z Team app if you're done.`, shopId: x.shopId, now })) ? 1 : 0;
+  }
+  return n;
+}
+
+// ───────────────────────────── Meal periods (ST-I16) ─────────────────────────────
+
+/** Each shop's meal period rule, from the state it's in (Illinois has one; Iowa doesn't for adults). */
+async function mealRulesOf(shopIds: readonly string[]) {
+  const rows = shopIds.length ? await db.select({ id: shops.id, state: shops.state }).from(shops).where(inArray(shops.id, [...shopIds])) : [];
+  const by = new Map(rows.map((r) => [r.id, rulesFor(workStateOf(r.state)).mealPeriod]));
+  return (shopId: string) => by.get(shopId) ?? null;
+}
+
+const breaksOf = (s: Shift) => s.breaks.map((b) => ({ start: b.start, end: b.end }));
+
+/**
+ * Reminds someone clocked in at a shop with a meal period rule, once per shift (clock_alert_log), half
+ * an hour before their meal break has to start: in Illinois, 20 minutes starting by the 5th hour of a
+ * shift of 7½ hours or more. Not when they're already on a break, or scheduled for less than 7½ hours.
+ */
+export async function promptMealPeriods(now = new Date()): Promise<number> {
+  const punches = await punchesBetween(null, new Date(now.getTime() - DAY), new Date(now.getTime() + 60_000));
+  const open = pairPunches(punches.map(asLike)).shifts.filter((x) => x.end === null);
+  if (!open.length) return 0;
+  const ruleOf = await mealRulesOf([...new Set(open.map((x) => x.shopId))]);
+  const sched = await schedulesOf([...new Set(open.map((x) => x.staffId))]);
+  let n = 0;
+  for (const x of open) {
+    const rule = ruleOf(x.shopId);
+    if (!rule || !mealPromptDue(rule, { start: x.start, end: null, breaks: breaksOf(x) }, now)) continue;
+    const planned = scheduleFor(sched, x.staffId, x.shopId, localDateOf(x.start)).filter((i) => i.end > x.start);
+    if (planned.length && Math.max(...planned.map((i) => i.end.getTime())) - x.start.getTime() < rule.afterHours * 3_600_000) continue;
+    const [first] = await db.insert(clockAlertLog).values({ key: `meal_prompt:${x.inId}`, shopId: x.shopId, sentAt: now }).onConflictDoNothing().returning({ key: clockAlertLog.key });
+    if (!first) continue;
+    const by = new Date(x.start.getTime() + rule.startByHours * 3_600_000);
+    n += (await queueStaffNotice("meal_break", x.staffId, {
+      body: `Time for your ${rule.minutes}-minute meal break: it needs to start by ${formatTime(by)}. Start a break in the Ray'z Team app.`,
+      shopId: x.shopId,
+      now,
+    }))
+      ? 1
+      : 0;
+  }
+  return n;
+}
+
+/** Closed shifts of the last two days at a shop with a meal period rule that didn't get it (or got it late): the clock-in is flagged once, for the timesheet and payroll review. */
+export async function flagMissedMealPeriods(now = new Date()): Promise<number> {
+  const punches = await punchesBetween(null, new Date(now.getTime() - 2 * DAY), new Date(now.getTime() + 60_000));
+  const closed = pairPunches(punches.map(asLike)).shifts.filter((x) => x.end !== null);
+  if (!closed.length) return 0;
+  const ruleOf = await mealRulesOf([...new Set(closed.map((x) => x.shopId))]);
+  const byId = new Map(punches.map((p) => [p.id, p]));
+  let n = 0;
+  for (const x of closed) {
+    const rule = ruleOf(x.shopId);
+    const p = byId.get(x.inId);
+    if (!rule || !p || (p.flags as string[]).includes("meal_missed")) continue;
+    const c = mealCheck(rule, { start: x.start, end: x.end, breaks: breaksOf(x) }, now);
+    if (!c.missed) continue;
+    await db
+      .update(timePunches)
+      .set({ flags: [...(p.flags as string[]), "meal_missed"] })
+      .where(eq(timePunches.id, p.id));
+    await audit(SYSTEM, "timeclock.meal_missed", "time_punch", p.id, { staffId: x.staffId, law: rule.law, needed: c.needed, taken: c.taken, dueBy: c.firstDueBy.toISOString() }, x.shopId);
+    n++;
   }
   return n;
 }

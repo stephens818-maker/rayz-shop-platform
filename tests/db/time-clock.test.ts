@@ -427,6 +427,44 @@ describe("alerts", () => {
     expect((await tc.clockAlertFacts([cv.id], later)).forgotten.map((f) => f.id)).not.toContain(inn.punchId);
   });
 
+  it("Illinois meal periods: prompted once before hour 5, and a long shift without one is flagged; Iowa has neither (ST-I16)", async () => {
+    const mo = await shop("moline");
+    const cv = await shop("coralville");
+    const [{ id: whoId }] = await m.db.db
+      .select({ id: S().staffShops.staffId })
+      .from(S().staffShops)
+      .innerJoin(S().staff, eq(S().staff.id, S().staffShops.staffId))
+      .where(m.drizzle.and(eq(S().staffShops.shopId, mo.id), eq(S().staff.kind, "person"), eq(S().staff.active, true), m.drizzle.isNotNull(S().staff.email)))
+      .limit(1);
+    await m.db.db.update(S().staff).set({ notificationPrefs: { events: { meal_break: ["email"] } } }).where(eq(S().staff.id, whoId));
+    await m.db.db.delete(S().staffSchedules).where(eq(S().staffSchedules.staffId, whoId));
+    const mk = await staffBy("makenna@rayz.test");
+    const e = editorOf(await staffBy("owner@rayz.test"), [mo.id, cv.id], true);
+    const day = m.time.addDays(period(9).start, 2);
+    const innId = await tc.addPunch(e, { staffId: whoId, shopId: mo.id, type: "in", at: at(day, 9 * 60) }, "Test shift", at(day, 9 * 60));
+    await tc.addPunch(e, { staffId: mk.id, shopId: cv.id, type: "in", at: at(day, 9 * 60) }, "Test shift", at(day, 9 * 60));
+    const jobs = async () => (await m.db.db.select().from(S().notificationJobs).where(eq(S().notificationJobs.kind, "staff_meal_break"))).length;
+    const before = await jobs();
+    expect(await tc.promptMealPeriods(at(day, 13 * 60))).toBe(0);
+    expect(await tc.promptMealPeriods(at(day, 13 * 60 + 35))).toBe(1);
+    expect(await tc.promptMealPeriods(at(day, 13 * 60 + 45))).toBe(0);
+    expect(await jobs()).toBe(before + 1);
+    const log = await m.db.db.select().from(S().clockAlertLog).where(m.drizzle.like(S().clockAlertLog.key, "meal_prompt:%"));
+    expect(log.map((l) => l.shopId)).not.toContain(cv.id);
+
+    await tc.addPunch(e, { staffId: whoId, shopId: mo.id, type: "out", at: at(day, 17 * 60 + 30) }, "Test shift", at(day, 18 * 60));
+    await tc.addPunch(e, { staffId: mk.id, shopId: cv.id, type: "out", at: at(day, 17 * 60 + 30) }, "Test shift", at(day, 18 * 60));
+    expect(await tc.flagMissedMealPeriods(at(day, 18 * 60))).toBeGreaterThanOrEqual(1);
+    expect(await tc.flagMissedMealPeriods(at(day, 18 * 60))).toBe(0);
+    const [p] = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.id, innId));
+    expect(p.flags).toContain("meal_missed");
+    const [iowa] = await m.db.db
+      .select()
+      .from(S().timePunches)
+      .where(m.drizzle.and(eq(S().timePunches.staffId, mk.id), eq(S().timePunches.shopId, cv.id), eq(S().timePunches.type, "in"), eq(S().timePunches.at, at(day, 9 * 60))));
+    expect(iowa.flags).not.toContain("meal_missed");
+  });
+
   it("crossing the 32-hour rolling average is recorded once and managers are told", async () => {
     const mk = await staffBy("makenna@rayz.test");
     const cv = await shop("coralville");

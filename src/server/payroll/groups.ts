@@ -3,6 +3,7 @@ import { db, type DBorTx } from "@/db";
 import { payGroups, payrollEmployerStates, payrollEmployers, payrollRuns, shops, timesheetLocks } from "@/db/schema";
 import { DEFAULT_BRAND_CALENDAR, periodOf, type PayCalendar } from "@/domain/payroll/calendar";
 import type { PayrollSettings } from "@/domain/payroll/calc";
+import { workStateOf } from "@/domain/wage-hour";
 import { settingAt } from "../brand-sync/settings";
 import { stripePayoutsOn } from "../tips/payout-model";
 import type { LocalDate } from "@/lib/time";
@@ -24,6 +25,8 @@ export interface PayGroup {
   label: string;
   legalEntity: string;
   employerId: string | null;
+  /** The shop's work state (its address), whose wage-hour rules and withholding apply. Null when the address has none. */
+  workState: string | null;
   exportTab: string;
   calendar: PayCalendar;
 }
@@ -54,14 +57,15 @@ export async function ensurePayGroups(): Promise<PayGroup[]> {
       )
       .onConflictDoNothing();
   }
-  const rows = await db.select({ g: payGroups, shop: shops.name }).from(payGroups).innerJoin(shops, eq(shops.id, payGroups.shopId)).where(eq(shops.active, true)).orderBy(shops.name);
-  return rows.map(({ g, shop }) => ({
+  const rows = await db.select({ g: payGroups, shop: shops.name, state: shops.state }).from(payGroups).innerJoin(shops, eq(shops.id, payGroups.shopId)).where(eq(shops.active, true)).orderBy(shops.name);
+  return rows.map(({ g, shop, state }) => ({
     id: g.id,
     shopId: g.shopId,
     shop,
     label: g.label,
     legalEntity: g.legalEntity,
     employerId: g.employerId,
+    workState: workStateOf(state),
     exportTab: g.exportTab,
     calendar: { anchorStart: g.anchorStart, anchorNumber: g.anchorNumber, periodDays: g.periodDays, checkOffsetDays: g.checkOffsetDays, numberResetsYearly: g.numberResetsYearly },
   }));
