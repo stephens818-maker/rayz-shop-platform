@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DateTime } from "luxon";
+import { DateTime, Settings } from "luxon";
 import { payPeriodByIndex, payPeriodFor, payPeriodsBetween } from "@/domain/payroll";
 import { periodByIndex, periodOf, periodStarting, calendarProblem, type PayCalendar } from "@/domain/payroll/calendar";
 import { dailyHours, largestRemainder, overtimeSlices, sliceKey, splitByLocalDay, weekStartOf, type OtOptions, type TimeEntry } from "@/domain/payroll/overtime";
@@ -116,6 +116,93 @@ describe("cross-shop overtime (C4)", () => {
     expect(slices.map((s) => [s.weekStart, s.worked, s.ot])).toEqual([["2026-11-01", 4400, 400]]);
     // spring forward: 1:30–3:30am on 3/8 is one hour
     expect(splitByLocalDay(entry("A", "2026-03-08T01:30", "2026-03-08T03:30"))).toEqual([{ date: "2026-03-08", minutes: 60 }]);
+  });
+
+  describe("workweeks and OT across the DST changes, in America/Chicago whatever the server's zone", () => {
+    const hoursBetween = (a: Date, b: Date) => (b.getTime() - a.getTime()) / 3_600_000;
+
+    it("the fall-back week is 169 real hours and the spring-forward week 167; both start Sunday at local midnight", () => {
+      expect(weekStartOf("2026-11-01")).toBe("2026-11-01");
+      expect(weekStartOf("2026-11-07")).toBe("2026-11-01");
+      expect(weekStartOf("2026-10-31")).toBe("2026-10-25");
+      expect(at("2026-11-01T00:00").toISOString()).toBe("2026-11-01T05:00:00.000Z");
+      expect(at("2026-11-08T00:00").toISOString()).toBe("2026-11-08T06:00:00.000Z");
+      expect(hoursBetween(at("2026-11-01T00:00"), at("2026-11-08T00:00"))).toBe(169);
+      expect(weekStartOf("2026-03-08")).toBe("2026-03-08");
+      expect(weekStartOf("2026-03-14")).toBe("2026-03-08");
+      expect(weekStartOf("2026-03-07")).toBe("2026-03-01");
+      expect(hoursBetween(at("2026-03-08T00:00"), at("2026-03-15T00:00"))).toBe(167);
+    });
+
+    it("a Saturday-night shift over fall-back is split at local midnight into two workweeks, by real time", () => {
+      // 10 PM CDT Sat Oct 31 to 3 AM CST Sun Nov 1: 2 hours Saturday, 4 hours Sunday (1 AM happens twice).
+      const night = entry("A", "2026-10-31T22:00", "2026-11-01T03:00");
+      expect(hoursBetween(night.startsAt, night.endsAt)).toBe(6);
+      expect(splitByLocalDay(night)).toEqual([
+        { date: "2026-10-31", minutes: 120 },
+        { date: "2026-11-01", minutes: 240 },
+      ]);
+      // 38 hours Mon–Fri before it, 40 after it: only the new week's 44 hours have OT.
+      const e = [...days("A", "2026-10-26", 4, 9.5), night, ...days("A", "2026-11-02", 5, 8)];
+      const weeks = Object.fromEntries(overtimeSlices(dailyHours(e), opts()).map((s) => [s.weekStart, [s.worked, s.ot]]));
+      expect(weeks).toEqual({ "2026-10-25": [4000, 0], "2026-11-01": [4400, 400] });
+    });
+
+    it("a Saturday-night shift over spring-forward is split the same way: 2 AM never happens", () => {
+      // 10 PM CST Sat Mar 7 to 3 AM CDT Sun Mar 8: 2 hours Saturday, 2 hours Sunday.
+      const night = entry("A", "2026-03-07T22:00", "2026-03-08T03:00");
+      expect(hoursBetween(night.startsAt, night.endsAt)).toBe(4);
+      expect(splitByLocalDay(night)).toEqual([
+        { date: "2026-03-07", minutes: 120 },
+        { date: "2026-03-08", minutes: 120 },
+      ]);
+      const e = [...days("A", "2026-03-02", 4, 9.5), night, ...days("A", "2026-03-09", 5, 8)];
+      const weeks = Object.fromEntries(overtimeSlices(dailyHours(e), opts()).map((s) => [s.weekStart, [s.worked, s.ot]]));
+      expect(weeks).toEqual({ "2026-03-01": [4000, 0], "2026-03-08": [4200, 200] });
+    });
+
+    it("the 25-hour and 23-hour days count every real hour toward the weekly 40", () => {
+      const fall = [entry("A", "2026-11-01T00:00", "2026-11-02T00:00"), ...days("A", "2026-11-02", 4, 8)];
+      expect(dailyHours(fall).find((d) => d.date === "2026-11-01")!.worked).toBe(2500);
+      expect(overtimeSlices(dailyHours(fall), opts()).map((s) => [s.worked, s.ot])).toEqual([[5700, 1700]]);
+      const spring = [entry("A", "2026-03-08T00:00", "2026-03-09T00:00"), ...days("A", "2026-03-09", 2, 8), ...days("A", "2026-03-12", 1, 1.5)];
+      expect(dailyHours(spring).find((d) => d.date === "2026-03-08")!.worked).toBe(2300);
+      expect(overtimeSlices(dailyHours(spring), opts()).map((s) => [s.worked, s.ot])).toEqual([[4050, 50]]);
+    });
+
+    it("daily OT on a DST day goes by real hours too: midnight to 9 AM on fall-back day is 10 hours, 2 over 8", () => {
+      const e = [entry("A", "2026-11-01T00:00", "2026-11-01T09:00")];
+      const [s] = overtimeSlices(dailyHours(e), opts({ dailyThresholdCenti: 800 }));
+      expect([s.worked, s.ot]).toEqual([1000, 200]);
+      const [p] = overtimeSlices(dailyHours([entry("A", "2026-03-08T00:00", "2026-03-08T09:00")]), opts({ dailyThresholdCenti: 800 }));
+      expect([p.worked, p.ot]).toEqual([800, 0]);
+    });
+
+    it("a week split over two pay periods on a DST weekend keeps one week's OT", () => {
+      // MAIN's period 24 starts Sun Nov 1, the fall-back day: the week and the period start together.
+      const e = [...days("A", "2026-10-26", 5, 9), entry("A", "2026-11-01T00:00", "2026-11-01T10:00"), ...days("A", "2026-11-02", 4, 9)];
+      const s = overtimeSlices(dailyHours(e), opts());
+      expect(otBy(s)).toEqual({ "A@2026-10-18": 500, "A@2026-11-01": 700 });
+      expect(s.find((x) => x.periodStart === "2026-11-01")!.worked).toBe(4700);
+    });
+
+    it("the same answers with the server's default zone set to Tokyo", () => {
+      const was = Settings.defaultZone;
+      Settings.defaultZone = "Asia/Tokyo";
+      try {
+        const night = entry("A", "2026-10-31T22:00", "2026-11-01T03:00");
+        expect(splitByLocalDay(night)).toEqual([
+          { date: "2026-10-31", minutes: 120 },
+          { date: "2026-11-01", minutes: 240 },
+        ]);
+        expect(weekStartOf("2026-11-01")).toBe("2026-11-01");
+        const e = [...days("A", "2026-10-26", 4, 9.5), night, ...days("A", "2026-11-02", 5, 8)];
+        const weeks = Object.fromEntries(overtimeSlices(dailyHours(e), opts()).map((s) => [s.weekStart, [s.worked, s.ot]]));
+        expect(weeks).toEqual({ "2026-10-25": [4000, 0], "2026-11-01": [4400, 400] });
+      } finally {
+        Settings.defaultZone = was;
+      }
+    });
   });
 
   it("weeks run Sunday to Saturday in shop time; a shift past midnight Saturday is split", () => {

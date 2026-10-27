@@ -230,6 +230,31 @@ describe("punching", () => {
       await m.db.db.update(S().shops).set({ timeClock: saved }).where(eq(S().shops.id, cv.id));
     }
   });
+
+  it("a Saturday-night shift over the fall-back change is 6 real hours, split at Chicago midnight into two workweeks", async () => {
+    const mk = await staffBy("makenna@rayz.test");
+    const cv = await shop("coralville");
+    // 2027 falls back Sun Nov 7: 10 PM CDT Saturday to 3 AM CST Sunday.
+    const inAt = at("2027-11-06", 22 * 60);
+    const outAt = at("2027-11-07", 3 * 60);
+    expect([inAt.toISOString(), outAt.toISOString()]).toEqual(["2027-11-07T03:00:00.000Z", "2027-11-07T09:00:00.000Z"]);
+    for (let i = 1; i <= 4; i++) {
+      const d = m.time.addDays("2027-10-31", i);
+      await punchAt(mk, cv.id, "in", at(d, 9 * 60));
+      await punchAt(mk, cv.id, "out", at(d, 18 * 60 + 30));
+    }
+    const night = await punchAt(mk, cv.id, "in", inAt);
+    await punchAt(mk, cv.id, "out", outAt);
+    expect(minutesOf(await entriesOf(night.punchId))).toBe(6 * 60);
+    for (let i = 1; i <= 5; i++) {
+      const d = m.time.addDays("2027-11-07", i);
+      await punchAt(mk, cv.id, "in", at(d, 9 * 60));
+      await punchAt(mk, cv.id, "out", at(d, 17 * 60));
+    }
+    const { slices } = await tc.hoursSlices("2027-10-31", "2027-11-13", [mk.id]);
+    const weeks = Object.fromEntries(slices.map((s) => [s.weekStart, [s.worked, s.ot]]));
+    expect(weeks).toEqual({ "2027-10-31": [4000, 0], "2027-11-07": [4400, 400] });
+  });
 });
 
 describe("the front-desk clock", () => {
