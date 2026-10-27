@@ -20,8 +20,8 @@ import { shopOf, type StaffAppContext } from "./http";
 const DAY_MS = 86_400_000;
 const editor = (ctx: StaffAppContext): Editor => ({ actor: ctx.actor, staffId: ctx.staff.id, isOwner: ctx.isOwner, shopIds: ctx.shopIds });
 
-function periodsOf(today: LocalDate, current: LocalDate) {
-  return recentPeriods(today).map((p) => ({ start: p.start, end: p.end, current: p.start <= today && today <= p.end, selected: p.start === current }));
+async function periodsOf(today: LocalDate, current: LocalDate) {
+  return (await recentPeriods(today)).map((p) => ({ start: p.start, end: p.end, current: p.start <= today && today <= p.end, selected: p.start === current }));
 }
 
 /** A timesheet as the app shows it: hours, breaks, flags and approvals, without photos. */
@@ -67,10 +67,10 @@ function appSheet(v: TimesheetView) {
 
 /** GET /me/timecard?period=: their own, every shop they have time at. */
 export async function myTimecard(ctx: StaffAppContext, period: string | undefined, today: LocalDate = todayLocal()) {
-  const p = chosenPeriod(period, today);
+  const p = await chosenPeriod(period, today);
   const sheet = appSheet(await timesheetView(ctx.staff.id, p.start, null));
   return {
-    periods: periodsOf(today, p.start),
+    periods: await periodsOf(today, p.start),
     ...sheet,
     shops: sheet.shops.map((s) => ({ ...s, canSignOff: can(ctx, "timesheet.own") && !s.locked && !s.approval.employeeAt && today >= p.start })),
   };
@@ -84,11 +84,11 @@ export async function signOffMine(ctx: StaffAppContext, v: { shopId: string; per
 
 /** GET /timecards?period=&shopId=: one row per person and shop the manager can reach. */
 export async function teamTimecards(ctx: StaffAppContext, q: { period?: string; shopId?: string }, today: LocalDate = todayLocal()) {
-  const p = chosenPeriod(q.period, today);
+  const p = await chosenPeriod(q.period, today);
   const shopIds = narrowShops(ctx, q.shopId ? [shopOf(ctx, q.shopId)] : null);
   const { rows, locks } = await timesheetList(p.start, shopIds);
   return {
-    periods: periodsOf(today, p.start),
+    periods: await periodsOf(today, p.start),
     period: { start: p.start, end: p.end },
     rows,
     locks,
@@ -108,7 +108,7 @@ async function reachable(ctx: StaffAppContext, staffId: string) {
 export async function teamTimecard(ctx: StaffAppContext, staffId: string, period: string | undefined, today: LocalDate = todayLocal()) {
   if (staffId === ctx.staff.id) return myTimecard(ctx, period, today);
   await reachable(ctx, staffId);
-  const p = chosenPeriod(period, today);
+  const p = await chosenPeriod(period, today);
   const sheet = appSheet(await timesheetView(staffId, p.start, ctx.shopIds));
   const punches = await db
     .select({ id: timePunches.id, shopId: timePunches.shopId, type: timePunches.type, at: timePunches.at, method: timePunches.method, source: timePunches.source, flags: timePunches.flags, voidedAt: timePunches.voidedAt, editedAt: timePunches.editedAt })
@@ -118,7 +118,7 @@ export async function teamTimecard(ctx: StaffAppContext, staffId: string, period
   const canEdit = can(ctx, "timesheet.edit");
   const canApprove = can(ctx, "timesheet.approve");
   return {
-    periods: periodsOf(today, p.start),
+    periods: await periodsOf(today, p.start),
     ...sheet,
     shops: sheet.shops.map((s) => ({ ...s, canApprove: canApprove && !s.locked && !s.approval.managerAt, canEdit: canEdit && !s.locked })),
     punches: punches.map((x) => ({

@@ -10,6 +10,7 @@ import type { StaffContext } from "@/server/auth/staff";
 import { ReportBarbers, reportBarbers, staffLabels } from "@/server/barbers";
 import { reportLocations, visibleGroups } from "@/server/locations";
 import type { ReportScope } from "@/server/reports";
+import { brandCalendar } from "@/server/payroll/groups";
 
 /**
  * `shop` and `staff` are one id, several (repeated or comma-separated), "all", or "group:<id>".
@@ -185,7 +186,7 @@ export async function resolveScope(ctx: StaffContext, p: ReportParams, report: R
   let preset = custom ? null : (p.preset ?? DEFAULT_PRESET[report] ?? "7d");
   const period = preset?.startsWith(PAY_PERIOD_PRESET) ? ((await payPeriodRange(preset)) ?? (await payPeriodRange("pp:last"))) : null;
   if (period) preset = period.id;
-  let { from, to } = custom ? { from: p.from!, to: p.to! } : (period ?? presetRange(preset!));
+  let { from, to } = custom ? { from: p.from!, to: p.to! } : (period ?? presetRange(preset!, undefined, await brandCalendar()));
   if (from > to) [from, to] = [to, from];
   const v = await resolveBarberView(ctx, p, report, await resolveLocations(ctx, p));
   return { shopIds: v.selection.shopIds, from, to, preset, ...v };

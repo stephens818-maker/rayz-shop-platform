@@ -57,6 +57,7 @@ import { unreadCount } from "./messaging";
 import { fillCandidates, marketingConsent, rebookCandidates } from "./outreach-campaigns";
 import { listRequests } from "./staff-time";
 import { clockAlertFacts } from "./time-clock";
+import { brandCalendar } from "./payroll/groups";
 
 /** Who is looking: their open shops in scope and what they may do. Alerts never cover anything else. */
 export interface TodayViewer {
@@ -513,6 +514,7 @@ async function clockAlerts(c: Ctx): Promise<Alert[]> {
   const { forgotten, ftChanges } = await clockAlertFacts(c.shops.map((s) => s.id), c.now);
   const out: Alert[] = [];
   if (forgotten.length && c.has("timesheet.edit")) {
+    const cal = await brandCalendar();
     out.push({
       key: `forgot_clock_out:all:${c.today}:${forgotten.length}`,
       type: "forgot_clock_out",
@@ -521,7 +523,7 @@ async function clockAlerts(c: Ctx): Promise<Alert[]> {
       shop: null,
       title: `${plural(forgotten.length, "shift")} never clocked out`,
       detail: "Those shifts count no hours until a clock-out is added on the timesheet, with a reason.",
-      items: forgotten.slice(0, 8).map((f) => ({ label: `${f.label}: in at ${formatTime(f.at)} ${formatDate(f.at)}`, sub: c.name(f.shopId) ?? undefined, href: `/admin/timesheets/${f.staffId}?period=${payPeriodFor(localDateOf(f.at)).start}` })),
+      items: forgotten.slice(0, 8).map((f) => ({ label: `${f.label}: in at ${formatTime(f.at)} ${formatDate(f.at)}`, sub: c.name(f.shopId) ?? undefined, href: `/admin/timesheets/${f.staffId}?period=${payPeriodFor(localDateOf(f.at), cal).start}` })),
       href: "/admin/timesheets",
       linkLabel: "Timesheets",
     });

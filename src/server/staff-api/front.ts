@@ -288,11 +288,12 @@ export async function managerBoard(ctx: StaffAppContext, shopIdRaw?: string, now
     lowStock: canAny(ctx, ["inventory.manage", "inventory.adjust", "inventory.transfer", "inventory.stocktake", "po.create", "po.receive", "catalog.manage", "catalog.prices"]),
   };
   if (!Object.values(sees).some(Boolean)) throw forbidden("You don't have a manager's view of this shop");
+  const period = sees.timecards ? (await periodFor(today)).start : null;
   const [cal, waiting, offPending, sheets, stock] = await Promise.all([
     sees.calendar ? myCalendar(ctx, { date: today, shopId }) : null,
     sees.waitlist ? waitlistForShop(shopId) : null,
     sees.timeOff ? pendingCount([shopId], false) : null,
-    sees.timecards ? timesheetList(periodFor(today).start, [shopId]) : null,
+    period ? timesheetList(period, [shopId]) : null,
     sees.lowStock ? stockLevels([shopId]) : null,
   ]);
   const nowMin = localMinutesOf(now);
@@ -317,7 +318,7 @@ export async function managerBoard(ctx: StaffAppContext, shopIdRaw?: string, now
       : null,
     waitlist: waiting ? { waiting: waiting.filter((w) => w.status === "waiting").length, notified: waiting.filter((w) => w.status === "notified").length } : null,
     timeOffPending: offPending,
-    timecards: sheets ? { period: periodFor(today).start, toApprove: sheets.rows.filter((r) => r.employeeApprovedAt && !r.managerApprovedAt).length, notSignedOff: sheets.rows.filter((r) => !r.employeeApprovedAt).length, missedPunches: sheets.rows.reduce((a, r) => a + r.problems, 0) } : null,
+    timecards: sheets ? { period, toApprove: sheets.rows.filter((r) => r.employeeApprovedAt && !r.managerApprovedAt).length, notSignedOff: sheets.rows.filter((r) => !r.employeeApprovedAt).length, missedPunches: sheets.rows.reduce((a, r) => a + r.problems, 0) } : null,
     lowStock: stock
       ? stock
           .filter((r) => r.low && r.active)

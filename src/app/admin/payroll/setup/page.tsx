@@ -101,6 +101,7 @@ export default async function PayrollSetupPage() {
                 <th className="px-2 py-2">Key is text</th>
                 <th className="px-2 py-2">iSolved name</th>
                 <th className="px-2 py-2">Row order</th>
+                <th className="px-2 py-2">Occupation code</th>
                 <th className="px-2 py-2">Hourly</th>
                 <th className="px-2 py-2">Service %</th>
                 <th className="px-2 py-2">Product %</th>
@@ -121,6 +122,7 @@ export default async function PayrollSetupPage() {
                       keyIsText: s.p?.keyIsText ?? false,
                       isolvedName: s.p?.isolvedName ?? "",
                       exportPosition: s.p?.exportPosition ?? null,
+                      tippedOccupationCode: s.p?.tippedOccupationCode ?? "",
                       hourlyRate: r?.hourlyRate ?? 0,
                       servicePct: r?.servicePct ?? 0,
                       productPct: r?.productPct ?? 0.15,

@@ -26,7 +26,7 @@ export type ExportFormat = "generic" | "isolved";
 
 /** Per employee and shop for one pay period: regular and OT hours, breaks, tips and sales. */
 export async function exportData(periodStart: LocalDate, shopIds: readonly string[]): Promise<{ lines: ExportLine[]; draft: boolean; period: PayPeriod }> {
-  const period = periodFor(periodStart);
+  const period = await periodFor(periodStart);
   const rules = await clockRulesAt(shopIds);
   const { slices } = await hoursSlices(period.start, period.end, null);
   const mine = slices.filter((s) => s.periodStart === period.start && shopIds.includes(s.shopId));

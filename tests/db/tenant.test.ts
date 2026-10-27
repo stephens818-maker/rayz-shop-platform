@@ -1192,7 +1192,7 @@ describe("the staff app API (/api/staff/v1)", () => {
       .values({ staffId: ids.barber, shopId: shop.coralville, fromDate: from, toDate: from, startsAt: m.time.zonedWallTime(from, 0).toJSDate(), endsAt: m.time.zonedWallTime(m.time.addDays(from, 1), 0).toJSDate(), reason: CANARY.block })
       .returning();
     punch.request = r.id;
-    punch.period = (await import("@/server/time-clock")).periodFor(today).start;
+    punch.period = (await (await import("@/server/time-clock")).periodFor(today)).start;
   });
 
   it("X-Shop-Id naming Coralville is refused, not swapped for one of theirs", async () => {

@@ -7,6 +7,7 @@ import { AppError, forbidden } from "../errors";
 import { exportReport } from "./deliver";
 import { reportProblem, runReport } from "./engine";
 import { openSavedReport, usesCustomReports } from "./saved";
+import { brandCalendar } from "../payroll/groups";
 
 /** What the builder asks to run: a saved report as saved (optionally over other dates), or a definition being built. */
 export interface RunRequest {
@@ -67,7 +68,7 @@ export async function previewReport(ctx: StaffContext, req: RunRequest, now: Dat
     await recordClientAccess(ctx, { kind: "list", detail: { report: r.id, name: r.name, page: result.page, clients: customerIds.length, fields: result.columns.map((c) => `${c.key}${c.masked ? ":masked" : ""}`) } });
   let blast: Preview["blast"] = null;
   if (r.definition.source === "customers" && can(ctx, "campaign_center.create")) {
-    const s = segmentFromReport(r.definition, { shopIds: scope.shopIds, staffIds: scope.staffIds }, todayLocal(now));
+    const s = segmentFromReport(r.definition, { shopIds: scope.shopIds, staffIds: scope.staffIds }, todayLocal(now), await brandCalendar());
     blast = { f: encodeFilter(s.segment), shops: s.shopIds.join(","), notes: s.notes };
   }
   return { result, notes: scope.notes, blast };

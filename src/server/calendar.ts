@@ -22,6 +22,7 @@ import { ratingSummaries } from "./ratings";
 import { timesFor } from "./service-times";
 import { reasonShower } from "./block-reasons";
 import { staffingFor } from "./staff-time";
+import { brandCalendar } from "./payroll/groups";
 import { guardian, householdContact } from "./household-contact";
 import { groupsForCalendar } from "./booking-groups";
 import type { NoteViewer } from "@/domain/client-notes";
@@ -297,7 +298,7 @@ export async function loadDayCalendar(
     .map((b) => ({ ...b, endsAt: effectiveEnd(b, now), kind: clockKindOf(b.clockKey) ?? ("break" as const) }))
     .filter((b) => b.endsAt > now);
   const held = new Map(affectedBy(clockRows, apptRows.map((r) => r.a)).map((a) => [a.id, { kind: a.why, blockId: a.blockId }]));
-  const sheet = `?period=${payPeriodFor(date).start}`;
+  const sheet = `?period=${payPeriodFor(date, await brandCalendar()).start}`;
   const minOf = (id: string | null) => {
     const p = id ? punchAt.get(id) : undefined;
     return p ? clampDay(p, date) : null;
@@ -460,6 +461,7 @@ export async function loadWeekCalendar(shopId: string, weekStart: LocalDate, sta
   const dates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const from = startOfLocalDay(dates[0]);
   const to = endOfLocalDay(dates[6]);
+  const payCal = await brandCalendar();
   const links = await db
     .select({ id: staff.id, label: staff.displayLabel, color: staff.color })
     .from(staffShops)
@@ -532,7 +534,7 @@ export async function loadWeekCalendar(shopId: string, weekStart: LocalDate, sta
         fromRequest: b.requestId !== null,
         clock:
           b.source === "clock"
-            ? { kind: clockKindOf(b.clockKey) ?? "break", open: b.clockOpen && !b.overriddenAt, overridden: !!b.overriddenAt, punchMin: null, endPunchMin: null, timesheetHref: `/admin/timesheets/${b.staffId}?period=${payPeriodFor(date).start}` }
+            ? { kind: clockKindOf(b.clockKey) ?? "break", open: b.clockOpen && !b.overriddenAt, overridden: !!b.overriddenAt, punchMin: null, endPunchMin: null, timesheetHref: `/admin/timesheets/${b.staffId}?period=${payPeriodFor(date, payCal).start}` }
             : null,
       })),
       pending: pending.filter(inDay).map((p) => ({ id: p.id, startMin: clampDay(p.startsAt, date), endMin: clampDay(p.endsAt, date), ...show(p, true) })),

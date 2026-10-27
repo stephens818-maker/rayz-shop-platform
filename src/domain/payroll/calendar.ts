@@ -29,6 +29,16 @@ export interface CalendarPeriod {
   endsAt: Date;
 }
 
+/** Until the brand saves its own (Payroll setup, the payroll setting's calendar): period 23 = 10/18–10/31/2026. */
+export const DEFAULT_BRAND_CALENDAR: PayCalendar = { anchorStart: "2026-10-18", anchorNumber: 23, periodDays: 14, checkOffsetDays: 6, numberResetsYearly: true };
+
+export const sameCalendar = (a: PayCalendar, b: PayCalendar) =>
+  a.anchorStart === b.anchorStart && a.anchorNumber === b.anchorNumber && a.periodDays === b.periodDays && a.checkOffsetDays === b.checkOffsetDays && a.numberResetsYearly === b.numberResetsYearly;
+
+/** Both calendars start and end their periods on the same days (they may number them differently). */
+export const sameDates = (a: Pick<PayCalendar, "anchorStart" | "periodDays">, b: Pick<PayCalendar, "anchorStart" | "periodDays">) =>
+  a.periodDays === b.periodDays && ((diffDays(a.anchorStart, b.anchorStart) % a.periodDays) + a.periodDays) % a.periodDays === 0;
+
 export function calendarProblem(c: PayCalendar): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(c.anchorStart)) return "Pick the first day of a known pay period.";
   if (c.periodDays !== 7 && c.periodDays !== 14) return "Pay periods are weekly or bi-weekly.";

@@ -4,7 +4,9 @@ import { useState } from "react";
 import { Button, Input, Select } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { SyncMsg, useSettingSync } from "@/components/brand-sync";
-import { FT_BASIS_LABEL, type PayrollSettings } from "@/domain/payroll/calc";
+import { FT_BASIS_LABEL, type PayrollSettings, type TipDeclarationSettings, type TipTaxSettings } from "@/domain/payroll/calc";
+import { calendarProblem, periodsAround, type PayCalendar } from "@/domain/payroll/calendar";
+import { formatDate, todayLocal } from "@/lib/time";
 import { saveEmployerAction, savePayGroupAction, saveProfileAction } from "../actions";
 
 const Check = ({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) => (
@@ -102,6 +104,9 @@ export function SettingsForm({ initial, memoRequired }: { initial: PayrollSettin
         {memoRequired &&
           " With tips paid straight to employees through Stripe, the column can't be turned off, and approve and lock checks it per employee against every payout in the period, to the cent (the Payroll tip report shows it)."}
       </p>
+      <BrandCalendarFields cal={v.calendar} onChange={(calendar) => setV({ ...v, calendar })} />
+      <DeclarationFields d={v.declarations} header={v.cashTipsDeclaredHeader} onChange={(declarations) => setV({ ...v, declarations })} onHeader={(cashTipsDeclaredHeader) => setV({ ...v, cashTipsDeclaredHeader })} />
+      <TipTaxFields t={v.tipTax} onChange={(tipTax) => setV({ ...v, tipTax })} />
       <p className="text-xs text-zinc-500">Full time / part time: exactly {v.ftHoursPerWeek} is part time. Defaults (clocked worked hours over a rolling 4 weeks) are pending Charles. Overtime is weekly over 40 (federal FLSA); Iowa and
         Illinois appear to add no daily rule, which is to confirm before a daily threshold is set.</p>
       <div className="flex items-center gap-3">
@@ -112,6 +117,111 @@ export function SettingsForm({ initial, memoRequired }: { initial: PayrollSettin
       </div>
       {dialog}
     </div>
+  );
+}
+
+const Num = ({ label, value, onChange, step, w = "w-24" }: { label: string; value: number; onChange: (v: number) => void; step?: string; w?: string }) => (
+  <label>
+    <span className="block text-xs text-zinc-500">{label}</span>
+    <Input type="number" step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} className={`h-9 ${w}`} />
+  </label>
+);
+
+/** The brand's pay calendar, with the periods it makes, to check against iSolved's calendar before saving. */
+function BrandCalendarFields({ cal, onChange }: { cal: PayCalendar; onChange: (c: PayCalendar) => void }) {
+  const problem = calendarProblem(cal);
+  const preview = problem ? [] : periodsAround(cal, todayLocal(), 2, 2).reverse();
+  return (
+    <fieldset className="rounded-lg border border-zinc-200 p-3">
+      <legend className="px-1 text-sm font-medium">Brand pay calendar</legend>
+      <p className="mb-2 text-xs text-zinc-500">
+        Match it to iSolved&apos;s pay calendar. New shops start on it, and so do the brand-wide pay periods (tips by pay period, timesheets). Shops still on the old one move with it; once a
+        shop has a locked period, the calendar can only be renumbered, not moved to other dates.
+      </p>
+      <div className="flex flex-wrap items-end gap-3 text-sm">
+        <label>
+          <span className="block text-xs text-zinc-500">A period starts on</span>
+          <Input type="date" value={cal.anchorStart} onChange={(e) => onChange({ ...cal, anchorStart: e.target.value })} className="h-9 w-40" />
+        </label>
+        <Num label="Its iSolved number" value={cal.anchorNumber} onChange={(anchorNumber) => onChange({ ...cal, anchorNumber })} />
+        <label>
+          <span className="block text-xs text-zinc-500">Length</span>
+          <Select value={cal.periodDays} onChange={(e) => onChange({ ...cal, periodDays: Number(e.target.value) })} className="h-9 w-32">
+            <option value={14}>Bi-weekly</option>
+            <option value={7}>Weekly</option>
+          </Select>
+        </label>
+        <Num label="Check date, days after the end" value={cal.checkOffsetDays} onChange={(checkOffsetDays) => onChange({ ...cal, checkOffsetDays })} />
+        <Check label="Numbers restart each year" checked={cal.numberResetsYearly} onChange={(numberResetsYearly) => onChange({ ...cal, numberResetsYearly })} />
+      </div>
+      {problem ? (
+        <p className="mt-2 text-xs text-red-700">{problem}</p>
+      ) : (
+        <ul className="mt-2 grid gap-1 text-xs text-zinc-600 sm:grid-cols-2">
+          {preview.map((p) => (
+            <li key={p.index}>
+              Period {p.number}: {formatDate(p.start, "MMM d")} – {formatDate(p.end, "MMM d, yyyy")}, check {formatDate(p.checkDate, "EEE MMM d")}
+            </li>
+          ))}
+        </ul>
+      )}
+    </fieldset>
+  );
+}
+
+function DeclarationFields({ d, header, onChange, onHeader }: { d: TipDeclarationSettings; header: string; onChange: (d: TipDeclarationSettings) => void; onHeader: (h: string) => void }) {
+  return (
+    <fieldset className="rounded-lg border border-zinc-200 p-3">
+      <legend className="px-1 text-sm font-medium">Cash tip declarations</legend>
+      <p className="mb-2 text-xs text-zinc-500">
+        Employees declare the cash tips handed to them (never rung up) in the staff app and at clock-out. The IRS wants them monthly by the 10th once they reach $20; they go to iSolved as their
+        own earning, reported and taxed, never paid by the shop. The CPA and iSolved confirm the electronic declaration meets the IRS tip report rules.
+      </p>
+      <div className="space-y-2">
+        <Check label="Employees declare cash tips" checked={d.enabled} onChange={(enabled) => onChange({ ...d, enabled })} />
+        <Check label="Ask at clock-out" checked={d.atClockOut} onChange={(atClockOut) => onChange({ ...d, atClockOut })} />
+        <div className="flex flex-wrap items-end gap-3 text-sm">
+          <Num label="Remind from the 1st through day" value={d.remindUntilDay} onChange={(remindUntilDay) => onChange({ ...d, remindUntilDay })} />
+          <Num label="Last month closes after day" value={d.lockDay} onChange={(lockDay) => onChange({ ...d, lockDay })} />
+          <label>
+            <span className="block text-xs text-zinc-500">iSolved earning for declared cash tips</span>
+            <Input value={header} onChange={(e) => onHeader(e.target.value)} className="h-9 w-72" />
+          </label>
+        </div>
+        <label className="block text-sm">
+          <span className="block text-xs text-zinc-500">What the employee attests to</span>
+          <Input value={d.attestation} onChange={(e) => onChange({ ...d, attestation: e.target.value })} className="h-9 w-full" />
+        </label>
+      </div>
+    </fieldset>
+  );
+}
+
+function TipTaxFields({ t, onChange }: { t: TipTaxSettings; onChange: (t: TipTaxSettings) => void }) {
+  return (
+    <fieldset className="rounded-lg border border-zinc-200 p-3">
+      <legend className="px-1 text-sm font-medium">2026 W-2 tip and overtime codes, 45B FICA tip credit</legend>
+      <p className="mb-2 text-xs text-zinc-500">
+        For the W-2 codes and 45B reports. Qualified tips and overtime (the FLSA half-time premium) go on the W-2 under their box 12 codes, with each employee&apos;s occupation code (Payroll
+        setup, per barber). The codes, the 45B wage floor and the start date are the CPA&apos;s and iSolved&apos;s to confirm.
+      </p>
+      <div className="flex flex-wrap items-end gap-3 text-sm">
+        <label>
+          <span className="block text-xs text-zinc-500">Qualified tips code</span>
+          <Input value={t.qualifiedTipsCode} onChange={(e) => onChange({ ...t, qualifiedTipsCode: e.target.value.toUpperCase() })} className="h-9 w-20" />
+        </label>
+        <label>
+          <span className="block text-xs text-zinc-500">Qualified overtime code</span>
+          <Input value={t.overtimeCode} onChange={(e) => onChange({ ...t, overtimeCode: e.target.value.toUpperCase() })} className="h-9 w-20" />
+        </label>
+        <label>
+          <span className="block text-xs text-zinc-500">45B from</span>
+          <Input type="date" value={t.creditFrom} onChange={(e) => onChange({ ...t, creditFrom: e.target.value })} className="h-9 w-40" />
+        </label>
+        <Num label="45B wage floor ($/h)" step="0.01" value={t.creditWageCentsPerHour / 100} onChange={(x) => onChange({ ...t, creditWageCentsPerHour: Math.round(x * 100) })} />
+        <Num label="Employer FICA rate (%)" step="0.01" value={Math.round(t.ficaRate * 10000) / 100} onChange={(x) => onChange({ ...t, ficaRate: x / 100 })} />
+      </div>
+    </fieldset>
   );
 }
 
@@ -185,6 +295,7 @@ export interface ProfileRow {
   keyIsText: boolean;
   isolvedName: string;
   exportPosition: number | null;
+  tippedOccupationCode: string;
   hourlyRate: number;
   servicePct: number;
   productPct: number;
@@ -214,6 +325,15 @@ export function ProfileRowForm({ p }: { p: ProfileRow }) {
           value={v.exportPosition ?? ""}
           onChange={(e) => setV({ ...v, exportPosition: e.target.value === "" ? null : Number(e.target.value) })}
           className="h-8 w-16 text-xs"
+        />
+      </td>
+      <td className="px-2 py-1.5">
+        <Input
+          aria-label="Tipped occupation code"
+          title="Treasury's tipped occupation code for the 2026 W-2 (barber versus front desk). Blank: their tips aren't reported as qualified."
+          value={v.tippedOccupationCode}
+          onChange={(e) => setV({ ...v, tippedOccupationCode: e.target.value.toUpperCase().slice(0, 8) })}
+          className="h-8 w-20 text-xs"
         />
       </td>
       <td className="px-2 py-1.5">
@@ -249,6 +369,7 @@ export function ProfileRowForm({ p }: { p: ProfileRow }) {
                 keyIsText: v.keyIsText,
                 isolvedName: v.isolvedName,
                 exportPosition: v.exportPosition,
+                tippedOccupationCode: v.tippedOccupationCode,
                 shopId: null,
                 hourlyRate: v.hourlyRate,
                 servicePct: v.servicePct / 100,

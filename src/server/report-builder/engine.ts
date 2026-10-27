@@ -58,6 +58,8 @@ import { laborRows } from "../time-clock-export";
 import { cadenceCtes } from "../visit-cadence";
 import { refillCtes } from "../product-history";
 import { DAY_END, nextBookedWhere } from "../rebook-report";
+import { brandCalendar } from "../payroll/groups";
+import type { BrandCalendar } from "@/domain/payroll";
 
 export const PAGE_SIZE = 50;
 export const MAX_PAGE_SIZE = 200;
@@ -135,7 +137,7 @@ async function barberGroups(): Promise<BarberGroup[]> {
 export async function resolveReportScope(
   ctx: StaffContext,
   def: ReportDefinition,
-  o: { own: boolean; today: LocalDate },
+  o: { own: boolean; today: LocalDate; cal?: BrandCalendar },
 ): Promise<ReportScope> {
   const notes: string[] = [];
   let shopRaw = def.shops;
@@ -218,7 +220,7 @@ export async function resolveReportScope(
     notes.push(
       "Lists only clients you've served: you don't have \"Look up any client in the brand\".",
     );
-  const range = reportRange(def.range, o.today);
+  const range = reportRange(def.range, o.today, o.cal ?? (await brandCalendar()));
   const where = everyShop
     ? ctx.isOwner || ctx.brandWide
       ? "All locations"
@@ -1503,9 +1505,11 @@ export async function runReport(
   if (problem) throw forbidden(problem);
   const now = o.now ?? new Date();
   const today = todayLocal(now);
+  const cal = await brandCalendar();
   const scope = await resolveReportScope(ctx, def, {
     own: o.own ?? true,
     today,
+    cal,
   });
   const b =
     def.source === "events"
@@ -1666,7 +1670,7 @@ export async function runReport(
       t && anyTotal && def.totals
         ? { count: Number(t.n), cells: totalCells(t) }
         : null,
-    rangeLabel: rangeLabel(def.range, today),
+    rangeLabel: rangeLabel(def.range, today, cal),
     scopeLabel: scope.label,
     truncated: !!o.all && total > EXPORT_MAX,
     noun: nounOf(def.source),

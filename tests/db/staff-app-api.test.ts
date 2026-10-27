@@ -374,7 +374,7 @@ describe("timecards (ST-C5)", () => {
     const owner = await login("owner@rayz.test");
     const r = await call("GET", `timecards/export?period=${m.time.addDays(today, -1)}&shopId=${shop.coralville}`, { token: owner.accessToken });
     const { periodFor } = await import("@/server/time-clock");
-    const p = periodFor(m.time.addDays(today, -1)).start;
+    const p = (await periodFor(m.time.addDays(today, -1))).start;
     const ok = r.status === 200 ? r : await call("GET", `timecards/export?period=${p}&shopId=${shop.coralville}`, { token: owner.accessToken });
     expect(ok.status, ok.text).toBe(200);
     expect(ok.headers.get("content-type")).toMatch(/text\/csv/);

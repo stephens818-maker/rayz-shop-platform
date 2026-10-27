@@ -1,4 +1,4 @@
-import { payPeriodFor } from "./payroll";
+import { DEFAULT_BRAND_CALENDAR, payPeriodFor, type BrandCalendar } from "./payroll";
 import { LocalDate, addDays, todayLocal, weekdayOf } from "@/lib/time";
 
 export const PRESETS: { id: string; label: string }[] = [
@@ -60,7 +60,8 @@ export function lastBusinessDay(today: LocalDate = todayLocal(), closedWeekdays:
   return d;
 }
 
-export function presetRange(id: string, today: LocalDate = todayLocal()): { from: LocalDate; to: LocalDate } {
+/** `cal` is the brand's pay calendar (Payroll setup), for the pay period presets. */
+export function presetRange(id: string, today: LocalDate = todayLocal(), cal: BrandCalendar = DEFAULT_BRAND_CALENDAR): { from: LocalDate; to: LocalDate } {
   const [y, m] = today.split("-").map(Number);
   const monthStart = `${y}-${String(m).padStart(2, "0")}-01`;
   switch (id) {
@@ -87,11 +88,11 @@ export function presetRange(id: string, today: LocalDate = todayLocal()): { from
       return { from: `${end.slice(0, 7)}-01`, to: end };
     }
     case "payperiod": {
-      const p = payPeriodFor(today);
+      const p = payPeriodFor(today, cal);
       return { from: p.start, to: today < p.end ? today : p.end };
     }
     case "lastpayperiod": {
-      const p = payPeriodFor(addDays(payPeriodFor(today).start, -1));
+      const p = payPeriodFor(addDays(payPeriodFor(today, cal).start, -1), cal);
       return { from: p.start, to: p.end };
     }
     case "quarter":

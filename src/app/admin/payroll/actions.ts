@@ -132,6 +132,7 @@ export async function saveProfileAction(input: {
   keyIsText: boolean;
   isolvedName: string;
   exportPosition: number | null;
+  tippedOccupationCode?: string;
   shopId: string | null;
   hourlyRate: number;
   servicePct: number;
@@ -147,6 +148,7 @@ export async function saveProfileAction(input: {
         keyIsText: z.boolean(),
         isolvedName: z.string().max(80),
         exportPosition: z.number().int().min(0).max(999).nullable(),
+        tippedOccupationCode: z.string().max(8).optional(),
         shopId: z.string().uuid().nullable(),
         hourlyRate: z.number(),
         servicePct: z.number(),
@@ -154,7 +156,7 @@ export async function saveProfileAction(input: {
         trainingRate: z.number().nullable(),
       })
       .parse(input);
-    fail(await saveProfile(v.staffId, { employeeNumber: v.employeeNumber, keyIsText: v.keyIsText, isolvedName: v.isolvedName, exportPosition: v.exportPosition }, ctx.actor));
+    fail(await saveProfile(v.staffId, { employeeNumber: v.employeeNumber, keyIsText: v.keyIsText, isolvedName: v.isolvedName, exportPosition: v.exportPosition, tippedOccupationCode: v.tippedOccupationCode }, ctx.actor));
     fail(await saveRate(v.staffId, v.shopId, { hourlyRate: v.hourlyRate, servicePct: v.servicePct, productPct: v.productPct, trainingRate: v.trainingRate }, ctx.actor));
     refresh();
     return null;

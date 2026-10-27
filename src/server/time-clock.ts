@@ -64,7 +64,7 @@ import { refreshClockBlocks, syncClockBlocks } from "./clock-blocks";
 import { usableReason } from "./block-reasons";
 import { enqueueShopEmail } from "./notifications/queue";
 import { queueStaffNotice } from "./staff-alerts";
-import { DEFAULT_CALENDAR, ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings } from "./payroll/groups";
+import { brandCalendar, DEFAULT_CALENDAR, ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings } from "./payroll/groups";
 import { randomToken, sha256 } from "./auth/tokens";
 import { nfcValid, qrValid } from "./clock-codes";
 
@@ -305,7 +305,8 @@ export async function rederive(staffId: string, from: Date, to: Date, tx: DBorTx
 
 /** A change to someone's time in a pay period clears that timesheet's approvals; they sign off again. */
 async function clearApprovals(staffId: string, shopId: string, dates: LocalDate[], tx: DBorTx): Promise<number> {
-  const starts = [...new Set(dates.map((d) => payPeriodFor(d).start))];
+  const cal = await brandCalendar(tx);
+  const starts = [...new Set(dates.map((d) => payPeriodFor(d, cal).start))];
   const cleared = await tx
     .update(timesheets)
     .set({ employeeApprovedAt: null, managerApprovedAt: null, managerApprovedBy: null, managerNote: null, updatedAt: new Date() })
@@ -634,24 +635,20 @@ export async function punchPhoto(punchId: string, shopIds: readonly string[]) {
 
 // ───────────────────────────── Hours ─────────────────────────────
 
-/** A timesheet period: the bi-weekly pay periods ending Saturdays, anchored on 10/03/2026. */
-export const periodFor = (date: LocalDate): PayPeriod => payPeriodFor(date);
+/** A timesheet period: a pay period on the brand's calendar (Payroll setup). */
+export const periodFor = async (date: LocalDate, tx: DBorTx = db): Promise<PayPeriod> => payPeriodFor(date, await brandCalendar(tx));
 
-/** The pay period holding `today` and the ones before it, back to the first (ending 10/03/2026). */
-export function recentPeriods(today: LocalDate, count = 8): PayPeriod[] {
-  const cur = payPeriodFor(today);
-  return Array.from({ length: count }, (_, i) => cur.index - i)
-    .filter((i) => i >= 0)
-    .map((i) => payPeriodByIndex(i));
+/** The pay period holding `today` and the ones before it. */
+export async function recentPeriods(today: LocalDate, count = 8): Promise<PayPeriod[]> {
+  const cal = await brandCalendar();
+  const cur = payPeriodFor(today, cal);
+  return Array.from({ length: count }, (_, i) => payPeriodByIndex(cur.index - i, cal));
 }
 
 /** The period a link asks for (?period=<start>), or the current one when it names none. */
-export function chosenPeriod(requested: string | undefined, today: LocalDate): PayPeriod {
-  if (requested && isValidLocalDate(requested)) {
-    const p = payPeriodFor(requested);
-    if (p.index >= 0) return p;
-  }
-  return payPeriodFor(today);
+export async function chosenPeriod(requested: string | undefined, today: LocalDate): Promise<PayPeriod> {
+  const cal = await brandCalendar();
+  return payPeriodFor(requested && isValidLocalDate(requested) ? requested : today, cal);
 }
 
 /**
@@ -764,7 +761,7 @@ function shiftViews(shifts: Shift[], punches: Map<string, PunchRow>, rulesAt: (s
 
 /** One person's timesheet for a period, per shop: day by day, week by week with overtime, and its approvals. */
 export async function timesheetView(staffId: string, periodStart: LocalDate, shopIds: readonly string[] | null): Promise<TimesheetView> {
-  const period = periodFor(periodStart);
+  const period = await periodFor(periodStart);
   const who = await db.query.staff.findFirst({ where: eq(staff.id, staffId) });
   if (!who) throw notFound("Staff member");
   const [punches, { slices, entries }, sched, sheets, locks, names] = await Promise.all([
@@ -971,7 +968,7 @@ export interface TimesheetRow {
 
 /** Everyone with time, punches or a schedule at these shops in a period, one row per person and shop. */
 export async function timesheetList(periodStart: LocalDate, shopIds: readonly string[], staffIds: readonly string[] | null = null): Promise<{ rows: TimesheetRow[]; locks: Record<string, string> }> {
-  const period = periodFor(periodStart);
+  const period = await periodFor(periodStart);
   if (!shopIds.length) return { rows: [], locks: {} };
   const rules = await clockRulesAt(shopIds);
   const people = await db
@@ -1036,7 +1033,7 @@ async function openProblems(staffId: string, shopId: string, period: PayPeriod) 
 
 /** The employee signs off their own hours at one shop for the period. */
 export async function approveOwn(staffId: string, shopId: string, periodStart: LocalDate, actor: Actor, now = new Date()) {
-  const period = periodFor(periodStart);
+  const period = await periodFor(periodStart);
   if (await hoursLockedOn(shopId, period.start)) throw new AppError("conflict", "This period is already locked.");
   if (localDateOf(now) < period.start) throw bad("This period hasn't started yet.");
   const p = await openProblems(staffId, shopId, period);
@@ -1050,7 +1047,7 @@ export async function approveOwn(staffId: string, shopId: string, periodStart: L
 
 /** A manager approves after the employee. Without the employee's sign-off they have to say why. */
 export async function approveAsManager(e: Editor, staffId: string, shopId: string, periodStart: LocalDate, note: string | null, now = new Date()) {
-  const period = periodFor(periodStart);
+  const period = await periodFor(periodStart);
   if (staffId === e.staffId) throw forbidden("You can't approve your own timesheet. Another manager approves it.");
   if (!e.shopIds.includes(shopId)) throw forbidden("That shop is outside your access.");
   if (await hoursLockedOn(shopId, period.start)) throw new AppError("conflict", "This period is already locked.");
@@ -1071,7 +1068,7 @@ export async function approveAsManager(e: Editor, staffId: string, shopId: strin
 
 /** Closes a shop's period once every timesheet with time in it is approved by a manager. */
 export async function lockPeriod(e: Editor, shopId: string, periodStart: LocalDate, now = new Date()) {
-  const period = periodFor(periodStart);
+  const period = await periodFor(periodStart);
   if (!e.shopIds.includes(shopId)) throw forbidden("That shop is outside your access.");
   if (localDateOf(now) <= period.end) throw bad(`The period runs through ${formatDate(period.end)}. Lock it after it ends.`);
   const { rows } = await timesheetList(period.start, [shopId]);
@@ -1090,7 +1087,7 @@ export async function lockPeriod(e: Editor, shopId: string, periodStart: LocalDa
 
 export async function unlockPeriod(e: Editor, shopId: string, periodStart: LocalDate, reason: string) {
   const why = cleanReason(reason);
-  const period = periodFor(periodStart);
+  const period = await periodFor(periodStart);
   if (!e.shopIds.includes(shopId)) throw forbidden("That shop is outside your access.");
   if (await hoursLockedOnPayroll(shopId, period.start)) throw new AppError("conflict", "Payroll for this period is approved and locked, so its hours can't reopen.");
   const gone = await db.delete(timesheetLocks).where(and(eq(timesheetLocks.shopId, shopId), eq(timesheetLocks.periodStart, period.start))).returning({ s: timesheetLocks.periodStart });
@@ -1200,6 +1197,7 @@ export async function flagForgottenClockOuts(now = new Date()): Promise<number> 
   const sched = await schedulesOf([...new Set(open.map((s) => s.staffId))]);
   const rules = await clockRulesAt([...new Set(open.map((s) => s.shopId))]);
   const names = new Map((await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, [...new Set(open.map((s) => s.staffId))]))).map((s) => [s.id, s.label]));
+  const cal = await brandCalendar();
   let n = 0;
   for (const s of open) {
     const p = byId.get(s.inId)!;
@@ -1224,7 +1222,7 @@ export async function flagForgottenClockOuts(now = new Date()): Promise<number> 
         body: [
           `${label} clocked in at ${formatTime(s.start)} on ${formatDate(localDateOf(s.start))} and hasn't clocked out.`,
           "Until a clock-out is added, that shift counts no hours. Add the clock-out (with a reason) on their timesheet.",
-          `Timesheet: ${appBaseUrl()}/admin/timesheets/${s.staffId}?period=${periodFor(localDateOf(s.start)).start}`,
+          `Timesheet: ${appBaseUrl()}/admin/timesheets/${s.staffId}?period=${payPeriodFor(localDateOf(s.start), cal).start}`,
         ].join("\n\n"),
         shopId: s.shopId,
       });

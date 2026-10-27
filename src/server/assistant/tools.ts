@@ -68,6 +68,7 @@ import { loadReport } from "../report-data";
 import { reportContext } from "../report-access";
 import { reportProblem, runReport } from "../report-builder/engine";
 import type { ToolSpec } from "./providers";
+import { brandCalendar } from "../payroll/groups";
 
 /**
  * The assistant's tools. Each runs with the asking person's own context, over the same report
@@ -601,6 +602,7 @@ async function customerReportTool(
           def,
           { shopIds: scope.shopIds, staffIds: scope.staffIds },
           todayLocal(now),
+          await brandCalendar(),
         );
         links.push({
           label: "Message these clients",

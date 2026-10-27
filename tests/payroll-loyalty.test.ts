@@ -1,20 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { payPeriodFor, payPeriodsBetween } from "@/domain/payroll";
+import { payPeriodByIndex, payPeriodFor, payPeriodsBetween } from "@/domain/payroll";
 import { DEFAULT_LOYALTY, accrue, progressExpired, reverseAccrual, rewardExpiry, usableRewards } from "@/domain/loyalty";
 import { weekdayOf } from "@/lib/time";
 
-describe("payroll periods (bi-weekly, ending Saturdays, anchored on Sat 2026-10-03)", () => {
-  it("the anchor Saturday ends a period that starts on a Sunday 13 days earlier", () => {
-    const p = payPeriodFor("2026-10-03");
-    expect(p).toMatchObject({ start: "2026-09-20", end: "2026-10-03", index: 0 });
-    expect(payPeriodFor("2026-09-20").index).toBe(0);
-    expect(payPeriodFor("2026-09-19")).toMatchObject({ start: "2026-09-06", end: "2026-09-19", index: -1 });
+describe("payroll periods (bi-weekly, ending Saturdays, on the default brand calendar: period 23 starts Sun 2026-10-18)", () => {
+  it("the anchor Sunday starts period index 0; earlier periods count down", () => {
+    expect(payPeriodFor("2026-10-18")).toMatchObject({ start: "2026-10-18", end: "2026-10-31", index: 0 });
+    expect(payPeriodFor("2026-10-03")).toMatchObject({ start: "2026-09-20", end: "2026-10-03", index: -2 });
+    expect(payPeriodFor("2026-09-19")).toMatchObject({ start: "2026-09-06", end: "2026-09-19", index: -3 });
   });
 
-  it("the next period runs Sun 10/04 → Sat 10/17, then 10/18 → 10/31", () => {
-    expect(payPeriodFor("2026-10-04")).toMatchObject({ start: "2026-10-04", end: "2026-10-17", index: 1 });
+  it("the periods run Sun 10/04 → Sat 10/17, then 10/18 → 10/31", () => {
+    expect(payPeriodFor("2026-10-04")).toMatchObject({ start: "2026-10-04", end: "2026-10-17", index: -1 });
     expect(payPeriodFor("2026-10-17").end).toBe("2026-10-17");
     expect(payPeriodFor("2026-10-20")).toMatchObject({ start: "2026-10-18", end: "2026-10-31" });
+    expect(payPeriodByIndex(payPeriodFor("2026-10-20").index + 1).start).toBe("2026-11-01");
+  });
+
+  it("follows the brand's calendar when it's moved: a weekly calendar anchored on a Monday", () => {
+    const cal = { anchorStart: "2026-10-05", periodDays: 7 };
+    expect(payPeriodFor("2026-10-04", cal)).toMatchObject({ start: "2026-09-28", end: "2026-10-04", index: -1 });
+    expect(payPeriodFor("2026-10-14", cal)).toMatchObject({ start: "2026-10-12", end: "2026-10-18", index: 1 });
+    expect(payPeriodsBetween("2026-10-01", "2026-10-20", cal).map((p) => p.start)).toEqual(["2026-09-28", "2026-10-05", "2026-10-12", "2026-10-19"]);
   });
 
   it("every period ends on a Saturday and starts on a Sunday, for years in both directions", () => {

@@ -1,7 +1,7 @@
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, DBorTx } from "@/db";
-import { brandSettings, shopSyncState, shops } from "@/db/schema";
+import { brandSettings, payGroups, payrollRuns, shopSyncState, shops } from "@/db/schema";
 import { BadgeSettingsSchema, badgeSettings, thresholdsProblem } from "@/domain/badges";
 import { SyncArea, clip, money, onOff, syncKey } from "@/domain/brand-sync";
 import { cleanLimits, cleanShopLoginCap, isShopLoginCap, SHOP_LOGIN_CAP_LABEL } from "@/domain/client-privacy";
@@ -18,11 +18,14 @@ import { BrandNetworkSchema, brandNetworkSettings } from "@/domain/network-acces
 import { OpeningsSettingsSchema, openingsSettings, openingsTemplatesProblem } from "@/domain/openings";
 import { cleanOutreachRules, outreachRules, outreachRulesProblem } from "@/domain/outreach";
 import { EXPORT_COLUMNS, FT_BASIS_LABEL, payrollSettings } from "@/domain/payroll/calc";
+import { calendarProblem, sameCalendar, sameDates, type PayCalendar } from "@/domain/payroll/calendar";
 import type { Permission } from "@/domain/permissions";
 import { ReviewRulesSchema, locationReviewRules, reviewRules } from "@/domain/reviews";
 import { FILING_LABEL, cleanTaxFiling } from "@/domain/sales-tax";
 import {
   ACCOUNT_DASHBOARDS,
+  AFTER_PAYOUT_LABEL,
+  AFTER_PAYOUT_RULES,
   DASHBOARD_LABEL,
   ONBOARDING_LABEL,
   ONBOARDING_MODES,
@@ -183,7 +186,42 @@ const PayrollInput = z.object({
   tipsInPayrollHeader: z.string().trim().min(1, "Name the iSolved earning for tips paid in payroll").max(60),
   markPaidTips: z.boolean(),
   tipsPaidOutHeader: z.string().trim().min(1, "Name the iSolved memo column for tips already paid out").max(60),
+  calendar: z.object({
+    anchorStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the first day of a known pay period"),
+    anchorNumber: z.number().int().min(1, "The period number is a whole number from 1").max(60),
+    periodDays: z.union([z.literal(7), z.literal(14)], { message: "Pay periods are weekly or bi-weekly" }),
+    checkOffsetDays: z.number().int().min(0).max(31),
+    numberResetsYearly: z.boolean(),
+  }),
+  cashTipsDeclaredHeader: z.string().trim().min(1, "Name the iSolved earning for declared cash tips").max(60),
+  declarations: z.object({
+    enabled: z.boolean(),
+    atClockOut: z.boolean(),
+    remindUntilDay: z.number().int().min(0).max(28),
+    lockDay: z.number().int().min(1, "Declarations close on a day from the 1st to the 28th").max(28, "Declarations close on a day from the 1st to the 28th"),
+    attestation: z.string().trim().min(10, "Write out what the employee attests to").max(300),
+  }),
+  tipTax: z.object({
+    qualifiedTipsCode: z.string().trim().regex(/^[A-Za-z0-9]{1,4}$/, "A W-2 box 12 code is 1 to 4 letters or digits"),
+    overtimeCode: z.string().trim().regex(/^[A-Za-z0-9]{1,4}$/, "A W-2 box 12 code is 1 to 4 letters or digits"),
+    creditFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the date 45B starts"),
+    creditWageCentsPerHour: z.number().int().min(0).max(5000),
+    ficaRate: z.number().min(0).max(0.2),
+  }),
 });
+
+/** A new brand calendar can renumber the periods of pay groups that follow it, but can't move a locked period's dates. */
+async function brandCalendarProblem(tx: DBorTx, from: PayCalendar, to: PayCalendar): Promise<string | null> {
+  const problem = calendarProblem(to);
+  if (problem) return problem;
+  if (sameDates(from, to)) return null;
+  const following = (await tx.select().from(payGroups)).filter((g) => sameCalendar(groupCalendar(g), from));
+  if (!following.length) return null;
+  const [locked] = await tx.select({ id: payrollRuns.id }).from(payrollRuns).where(inArray(payrollRuns.payGroupId, following.map((g) => g.id))).limit(1);
+  return locked ? "Shops on the brand's calendar have locked pay periods, so it can only be renumbered (the same Sundays), not moved to different dates." : null;
+}
+
+const groupCalendar = (g: typeof payGroups.$inferSelect): PayCalendar => ({ anchorStart: g.anchorStart, anchorNumber: g.anchorNumber, periodDays: g.periodDays, checkOffsetDays: g.checkOffsetDays, numberResetsYearly: g.numberResetsYearly });
 
 const ClockInput = z.object({
   unpaidBreakFromMinutes: z.number().int().min(0).max(240),
@@ -224,6 +262,7 @@ const StaffPayoutsInput = z.object({
     .int()
     .min(REVERSAL_WINDOW_DAYS.min, `The reversal window is ${REVERSAL_WINDOW_DAYS.min} to ${REVERSAL_WINDOW_DAYS.max} days`)
     .max(REVERSAL_WINDOW_DAYS.max, `The reversal window is ${REVERSAL_WINDOW_DAYS.min} to ${REVERSAL_WINDOW_DAYS.max} days`),
+  afterPayoutRefunds: z.enum(AFTER_PAYOUT_RULES),
   tipDate: z.enum(TIP_DATE_RULES),
   taxForms: z.enum(TAX_FORM_FILING),
   taxCheckMonth: z.number().int().min(1).max(12),
@@ -410,15 +449,44 @@ export const SETTINGS: readonly SettingDef[] = [
     paths: ["/admin/payroll", "/admin/payroll/setup"],
     wholeBrand: "Payroll adds each person's hours up across shops into one overtime count and one export, so these rules are the same at every shop.",
     read: payrollSettings,
-    parse: (raw, before) => {
-      const v = payrollSettings(PayrollInput.parse({ ...before, ...obj(raw) }));
+    parse: async (raw, before, _who, tx) => {
+      const r = obj(raw);
+      const merged = { ...before, ...r, calendar: { ...before.calendar, ...obj(r.calendar) }, declarations: { ...before.declarations, ...obj(r.declarations) }, tipTax: { ...before.tipTax, ...obj(r.tipTax) } };
+      const parsed = zparse(PayrollInput, merged, "Check the payroll rules");
+      const calProblem = await brandCalendarProblem(tx, before.calendar, parsed.calendar);
+      if (calProblem) bad(calProblem);
+      const v = payrollSettings(parsed);
       const taken = [...EXPORT_COLUMNS.map((c) => c.header), v.tipsInPayrollHeader].map((h) => h.toLowerCase());
       if (v.markPaidTips && taken.includes(v.tipsPaidOutHeader.toLowerCase())) bad("The column for tips already paid out needs its own name, not another column's.");
+      if ([...taken, ...(v.markPaidTips ? [v.tipsPaidOutHeader.toLowerCase()] : [])].includes(v.cashTipsDeclaredHeader.toLowerCase())) bad("The column for declared cash tips needs its own name, not another column's.");
       if (!v.markPaidTips && stripePayoutsOn())
         bad("Tips are paid straight to employees through Stripe, so the iSolved file has to mark the tips already paid out; that column can't be turned off while Stripe payouts are on.");
+      if (v.declarations.remindUntilDay > v.declarations.lockDay) bad("Reminders stop by the day declarations close.");
       return v;
     },
-    labels: { otThresholdHours: "Weekly OT after (hours)", dailyOtHours: "Daily OT after (hours)", otMultiplier: "OT multiplier", ftBasis: "Full-time basis", markPaidTips: "Mark tips already paid out", tipsPaidOutHeader: "Tips paid out column" },
+    async after(tx, from, to) {
+      if (!from || sameCalendar(from.calendar, to.calendar)) return;
+      const c = to.calendar;
+      for (const g of await tx.select().from(payGroups)) {
+        if (!sameCalendar(groupCalendar(g), from.calendar)) continue;
+        await tx
+          .update(payGroups)
+          .set({ anchorStart: c.anchorStart, anchorNumber: c.anchorNumber, periodDays: c.periodDays, checkOffsetDays: c.checkOffsetDays, numberResetsYearly: c.numberResetsYearly, updatedAt: new Date() })
+          .where(eq(payGroups.id, g.id));
+      }
+    },
+    labels: {
+      otThresholdHours: "Weekly OT after (hours)",
+      dailyOtHours: "Daily OT after (hours)",
+      otMultiplier: "OT multiplier",
+      ftBasis: "Full-time basis",
+      markPaidTips: "Mark tips already paid out",
+      tipsPaidOutHeader: "Tips paid out column",
+      calendar: "Brand pay calendar",
+      cashTipsDeclaredHeader: "Declared cash tips column",
+      declarations: "Cash tip declarations",
+      tipTax: "W-2 tip and overtime codes, 45B",
+    },
     audit: "payroll.settings",
   }),
   def({
@@ -469,6 +537,7 @@ export const SETTINGS: readonly SettingDef[] = [
       owedVia: "Tips nobody can pay directly yet",
       reversalRule: "Refunds take the tip back",
       reversalWindowDays: "Reversal window (days)",
+      afterPayoutRefunds: "Refunds of tips already paid",
       tipDate: "A tip's date",
       taxForms: "1099 tax forms",
       taxCheckMonth: "Yearly tax form check (month)",
@@ -481,6 +550,7 @@ export const SETTINGS: readonly SettingDef[] = [
       "Tips nobody can pay directly yet": OWED_VIA_LABEL[v.owedVia],
       "Refunds take the tip back": REVERSAL_RULE_LABEL[v.reversalRule],
       "Reversal window": `${v.reversalWindowDays} days`,
+      "Refunds of tips already paid": AFTER_PAYOUT_LABEL[v.afterPayoutRefunds],
       "A tip's date": TIP_DATE_LABEL[v.tipDate],
       "1099 tax forms": TAX_FORMS_LABEL[v.taxForms],
       "Yearly tax form check": `From month ${v.taxCheckMonth}`,

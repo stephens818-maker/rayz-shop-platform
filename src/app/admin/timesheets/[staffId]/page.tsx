@@ -29,8 +29,7 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
   const manage = canAny(ctx, ["timesheet.edit", "timesheet.approve", "payroll.export"]);
   if (own ? !can(ctx, "timesheet.own") && !manage : !manage || !(await inTenant(ctx, "staff", staffId))) notFound();
   const today = todayLocal();
-  const periods = recentPeriods(today);
-  const period = chosenPeriod(sp.period, today);
+  const [periods, period] = await Promise.all([recentPeriods(today), chosenPeriod(sp.period, today)]);
   const view = await timesheetView(staffId, period.start, own ? null : ctx.shopIds);
   const canEdit = can(ctx, "timesheet.edit") && (!own || ctx.isOwner);
   const canApprove = can(ctx, "timesheet.approve") && !own;

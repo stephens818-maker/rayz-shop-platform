@@ -19,6 +19,7 @@ import {
 } from "./marketing";
 import { REPORTS, type ReportKey } from "./permissions";
 import { PRESETS, presetRange } from "./report-range";
+import type { BrandCalendar } from "./payroll";
 
 // ───────────────────────────── Sources ─────────────────────────────
 
@@ -1451,6 +1452,7 @@ export const columnLabel = (c: ReportColumn, f: FieldDef | null) =>
 export function reportRange(
   r: ReportDefinition["range"],
   today: LocalDate,
+  cal?: BrandCalendar,
 ): { from: LocalDate; to: LocalDate } | null {
   if (r.preset === "all") return null;
   if (r.preset === "custom") {
@@ -1459,14 +1461,15 @@ export function reportRange(
       ? { from: r.from, to: r.to }
       : { from: r.to, to: r.from };
   }
-  return presetRange(r.preset, today);
+  return presetRange(r.preset, today, cal);
 }
 
 export function rangeLabel(
   r: ReportDefinition["range"],
   today: LocalDate,
+  cal?: BrandCalendar,
 ): string {
-  const d = reportRange(r, today);
+  const d = reportRange(r, today, cal);
   if (!d) return "All time";
   const preset = PRESETS.find((p) => p.id === r.preset)?.label;
   const dates =
@@ -1969,6 +1972,7 @@ export function segmentFromReport(
   def: ReportDefinition,
   scope: { shopIds: string[] | null; staffIds: string[] | null },
   today: LocalDate,
+  cal?: BrandCalendar,
 ): { segment: Segment; shopIds: string[]; notes: string[] } {
   const seg: Segment = { ...def.filter };
   const notes: string[] = [];
@@ -1976,7 +1980,7 @@ export function segmentFromReport(
     seg.staffIds = [...scope.staffIds];
     seg.barberMatch = "any";
   }
-  const range = reportRange(def.range, today);
+  const range = reportRange(def.range, today, cal);
   const visited = def.rows === "visited" || !!scope.staffIds?.length;
   if (visited && range) {
     if (range.to >= today) {

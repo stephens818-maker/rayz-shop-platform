@@ -23,8 +23,7 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
   if (!canAny(ctx, ["timesheet.edit", "timesheet.approve", "payroll.export"])) redirect(`/admin/timesheets/${ctx.staff.id}`);
   const sp = await searchParams;
   const today = todayLocal();
-  const periods = recentPeriods(today);
-  const period = chosenPeriod(sp.period, today);
+  const [periods, period] = await Promise.all([recentPeriods(today), chosenPeriod(sp.period, today)]);
   const shopId = ctx.shops.find((s) => s.id === sp.shop)?.id ?? null;
   const shopIds = narrowShops(ctx, shopId ? [shopId] : null);
   const window = WINDOWS.find((w) => String(w) === sp.window) ?? 8;

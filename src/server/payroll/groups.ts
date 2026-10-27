@@ -1,7 +1,7 @@
 import { and, eq, gte, lte } from "drizzle-orm";
-import { db } from "@/db";
+import { db, type DBorTx } from "@/db";
 import { payGroups, payrollEmployers, payrollRuns, shops, timesheetLocks } from "@/db/schema";
-import { periodOf, type PayCalendar } from "@/domain/payroll/calendar";
+import { DEFAULT_BRAND_CALENDAR, periodOf, type PayCalendar } from "@/domain/payroll/calendar";
 import type { PayrollSettings } from "@/domain/payroll/calc";
 import { settingAt } from "../brand-sync/settings";
 import { stripePayoutsOn } from "../tips/payout-model";
@@ -9,8 +9,13 @@ import type { LocalDate } from "@/lib/time";
 import { audit, type Actor } from "../audit";
 import { TEMPLATE_TABS } from "./export";
 
-/** The brand's calendar (period 23 = 10/18–10/31/2026). A shop on its own calendar gets a pay group when it's set up, or one is edited in Payroll setup. */
-export const DEFAULT_CALENDAR: PayCalendar = { anchorStart: "2026-10-18", anchorNumber: 23, periodDays: 14, checkOffsetDays: 6, numberResetsYearly: true };
+/** Until the brand saves its own calendar (the payroll setting): period 23 = 10/18–10/31/2026. */
+export const DEFAULT_CALENDAR: PayCalendar = DEFAULT_BRAND_CALENDAR;
+
+/** The brand's pay calendar (Payroll setup), matched to iSolved's. New pay groups start on it; a shop on its own calendar is edited in Payroll setup. */
+export async function brandCalendar(tx: DBorTx = db): Promise<PayCalendar> {
+  return (await settingAt<PayrollSettings>("payroll", null, tx)).calendar;
+}
 
 export interface PayGroup {
   id: string;
@@ -29,11 +34,11 @@ export async function ensurePayGroups(): Promise<PayGroup[]> {
   const list = await db.select({ id: shops.id, name: shops.name, pg: payGroups.id }).from(shops).leftJoin(payGroups, eq(payGroups.shopId, shops.id)).where(eq(shops.active, true));
   const missing = list.filter((s) => !s.pg);
   if (missing.length) {
+    const cal = await brandCalendar();
     await db
       .insert(payGroups)
       .values(
         missing.map((s) => {
-          const cal = DEFAULT_CALENDAR;
           return {
             shopId: s.id,
             label: s.name,
@@ -68,12 +73,11 @@ export async function loadSettings(): Promise<PayrollSettings> {
 }
 
 /** Whether a shop's pay period holding `date` is locked; time and overrides in it can't change then. */
-export async function isLockedOn(shopId: string, date: LocalDate): Promise<boolean> {
-  const [g] = await db.select().from(payGroups).where(eq(payGroups.shopId, shopId));
-  const cal = g ? { anchorStart: g.anchorStart, anchorNumber: g.anchorNumber, periodDays: g.periodDays, checkOffsetDays: g.checkOffsetDays, numberResetsYearly: g.numberResetsYearly } : DEFAULT_CALENDAR;
-  const p = periodOf(cal, date);
+export async function isLockedOn(shopId: string, date: LocalDate, tx: DBorTx = db): Promise<boolean> {
+  const [g] = await tx.select().from(payGroups).where(eq(payGroups.shopId, shopId));
   if (!g) return false;
-  const [r] = await db.select({ id: payrollRuns.id }).from(payrollRuns).where(and(eq(payrollRuns.payGroupId, g.id), eq(payrollRuns.periodStart, p.start)));
+  const p = periodOf({ anchorStart: g.anchorStart, anchorNumber: g.anchorNumber, periodDays: g.periodDays, checkOffsetDays: g.checkOffsetDays, numberResetsYearly: g.numberResetsYearly }, date);
+  const [r] = await tx.select({ id: payrollRuns.id }).from(payrollRuns).where(and(eq(payrollRuns.payGroupId, g.id), eq(payrollRuns.periodStart, p.start)));
   return !!r;
 }
 

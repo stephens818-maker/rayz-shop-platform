@@ -325,7 +325,7 @@ export async function payrollTimesheetsData(i: PayrollReportInput): Promise<Repo
     payPeriodPresets(undefined, scope.shopIds),
   ]);
   const periods = [];
-  for (let p = periodFor(scope.from); p.start <= scope.to && periods.length < MAX_REPORT_PERIODS; p = periodFor(addDays(p.end, 1))) periods.push(p);
+  for (let p = await periodFor(scope.from); p.start <= scope.to && periods.length < MAX_REPORT_PERIODS; p = await periodFor(addDays(p.end, 1))) periods.push(p);
   const sheets = await Promise.all(periods.map(async (p) => ({ p, list: await timesheetList(p.start, scope.shopIds, sel) })));
   const name = await labels([...shifts.map((s) => s.staffId), ...edits.map((e) => e.staffId), ...sheets.flatMap((s) => s.list.rows.map((r) => r.staffId))]);
   const who = (id: string) => name.get(id) ?? "Unknown";

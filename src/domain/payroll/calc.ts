@@ -6,6 +6,8 @@
  * Money is dollars as JavaScript numbers (IEEE doubles, the same arithmetic Excel uses) and each
  * formula runs in the workbook's order, so an unrounded export matches the workbook to the last digit.
  */
+import type { LocalDate } from "@/lib/time";
+import { DEFAULT_BRAND_CALENDAR, calendarProblem, type PayCalendar } from "./calendar";
 
 export interface PayrollSettings {
   /** Weekly overtime threshold: 40 under the federal FLSA. Iowa and Illinois appear to follow it with no daily rule; to confirm. */
@@ -37,7 +39,42 @@ export interface PayrollSettings {
   markPaidTips: boolean;
   /** That column's header; the memo code is Charles's to confirm in iSolved. */
   tipsPaidOutHeader: string;
+  /** The brand's pay calendar, matched to iSolved's: new pay groups start on it, and so do the brand-wide pay periods (tips by pay period, timesheets). */
+  calendar: PayCalendar;
+  /** The iSolved earning for cash tips employees declare (received in hand, not paid by the shop, but taxed). Added only when someone in the file declared any. */
+  cashTipsDeclaredHeader: string;
+  declarations: TipDeclarationSettings;
+  tipTax: TipTaxSettings;
 }
+
+/** Employees declaring the cash tips handed to them (IRS: monthly, by the 10th of the next month, when $20 or more). */
+export interface TipDeclarationSettings {
+  enabled: boolean;
+  /** Asked for at clock-out, as well as from the staff app's tips screen. */
+  atClockOut: boolean;
+  /** Reminded on the 1st through this day when they haven't declared anything for last month. */
+  remindUntilDay: number;
+  /** From the day after this one, last month's declarations are closed to employees; a manager can still correct one, with a reason. */
+  lockDay: number;
+  /** What the employee checks to declare. Kept with every declaration. */
+  attestation: string;
+}
+
+/** 2026 W-2 reporting of qualified tips and overtime, and the 45B FICA tip credit. Codes and thresholds are the CPA's and iSolved's to confirm. */
+export interface TipTaxSettings {
+  /** W-2 box 12 code for qualified tips. */
+  qualifiedTipsCode: string;
+  /** W-2 box 12 code for qualified overtime (the FLSA half-time premium). */
+  overtimeCode: string;
+  /** Tips from this date count toward 45B (tax years after Dec 31, 2025 for beauty service businesses). */
+  creditFrom: LocalDate;
+  /** 45B's wage floor per hour, in cents: tips that only bring pay up to it don't count. */
+  creditWageCentsPerHour: number;
+  /** The employer FICA rate on creditable tips. */
+  ficaRate: number;
+}
+
+export const DEFAULT_ATTESTATION = "I declare these are all the cash tips I received that weren't rung up on a ticket.";
 
 export type FtBasis = "worked" | "worked_training" | "paid";
 
@@ -60,13 +97,36 @@ export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
   tipsInPayrollHeader: "E_Tips Paid In Payroll_Dollars",
   markPaidTips: true,
   tipsPaidOutHeader: "M_Tips Paid Out_Dollars",
+  calendar: DEFAULT_BRAND_CALENDAR,
+  cashTipsDeclaredHeader: "E_Cash Tips Declared_Dollars",
+  declarations: { enabled: true, atClockOut: true, remindUntilDay: 9, lockDay: 10, attestation: DEFAULT_ATTESTATION },
+  tipTax: { qualifiedTipsCode: "TP", overtimeCode: "TT", creditFrom: "2026-01-01", creditWageCentsPerHour: 515, ficaRate: 0.0765 },
 };
+
+const header = (v: unknown, d: string) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 60) : d);
+
+function calendarOf(v: unknown): PayCalendar {
+  const c = (v && typeof v === "object" ? v : {}) as Partial<PayCalendar>;
+  const d = DEFAULT_BRAND_CALENDAR;
+  const cal: PayCalendar = {
+    anchorStart: typeof c.anchorStart === "string" ? c.anchorStart : d.anchorStart,
+    anchorNumber: typeof c.anchorNumber === "number" ? c.anchorNumber : d.anchorNumber,
+    periodDays: typeof c.periodDays === "number" ? c.periodDays : d.periodDays,
+    checkOffsetDays: typeof c.checkOffsetDays === "number" ? c.checkOffsetDays : d.checkOffsetDays,
+    numberResetsYearly: typeof c.numberResetsYearly === "boolean" ? c.numberResetsYearly : d.numberResetsYearly,
+  };
+  return calendarProblem(cal) ? d : cal;
+}
 
 export function payrollSettings(raw: unknown): PayrollSettings {
   const r = (raw && typeof raw === "object" ? raw : {}) as Partial<PayrollSettings>;
   const d = DEFAULT_PAYROLL_SETTINGS;
   const num = (v: unknown, min: number, max: number, dflt: number) => (typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : dflt);
   const bool = (v: unknown, dflt: boolean) => (typeof v === "boolean" ? v : dflt);
+  const dc = (r.declarations && typeof r.declarations === "object" ? r.declarations : {}) as Partial<TipDeclarationSettings>;
+  const tt = (r.tipTax && typeof r.tipTax === "object" ? r.tipTax : {}) as Partial<TipTaxSettings>;
+  const lockDay = Math.round(num(dc.lockDay, 1, 28, d.declarations.lockDay));
+  const code = (v: unknown, dflt: string) => (typeof v === "string" && /^[A-Z0-9]{1,4}$/.test(v.trim().toUpperCase()) ? v.trim().toUpperCase() : dflt);
   return {
     otThresholdHours: num(r.otThresholdHours, 1, 80, d.otThresholdHours),
     dailyOtHours: r.dailyOtHours === null || r.dailyOtHours === undefined ? null : num(r.dailyOtHours, 1, 24, d.dailyOtHours ?? 0) || null,
@@ -77,9 +137,25 @@ export function payrollSettings(raw: unknown): PayrollSettings {
     ftHoursPerWeek: num(r.ftHoursPerWeek, 1, 60, d.ftHoursPerWeek),
     ftBasis: r.ftBasis && r.ftBasis in FT_BASIS_LABEL ? r.ftBasis : d.ftBasis,
     ftWindowWeeks: Math.round(num(r.ftWindowWeeks, 1, 26, d.ftWindowWeeks)),
-    tipsInPayrollHeader: typeof r.tipsInPayrollHeader === "string" && r.tipsInPayrollHeader.trim() ? r.tipsInPayrollHeader.trim().slice(0, 60) : d.tipsInPayrollHeader,
+    tipsInPayrollHeader: header(r.tipsInPayrollHeader, d.tipsInPayrollHeader),
     markPaidTips: bool(r.markPaidTips, d.markPaidTips),
-    tipsPaidOutHeader: typeof r.tipsPaidOutHeader === "string" && r.tipsPaidOutHeader.trim() ? r.tipsPaidOutHeader.trim().slice(0, 60) : d.tipsPaidOutHeader,
+    tipsPaidOutHeader: header(r.tipsPaidOutHeader, d.tipsPaidOutHeader),
+    calendar: calendarOf(r.calendar),
+    cashTipsDeclaredHeader: header(r.cashTipsDeclaredHeader, d.cashTipsDeclaredHeader),
+    declarations: {
+      enabled: bool(dc.enabled, d.declarations.enabled),
+      atClockOut: bool(dc.atClockOut, d.declarations.atClockOut),
+      remindUntilDay: Math.min(lockDay, Math.round(num(dc.remindUntilDay, 0, 28, d.declarations.remindUntilDay))),
+      lockDay,
+      attestation: typeof dc.attestation === "string" && dc.attestation.trim() ? dc.attestation.trim().slice(0, 300) : d.declarations.attestation,
+    },
+    tipTax: {
+      qualifiedTipsCode: code(tt.qualifiedTipsCode, d.tipTax.qualifiedTipsCode),
+      overtimeCode: code(tt.overtimeCode, d.tipTax.overtimeCode),
+      creditFrom: typeof tt.creditFrom === "string" && /^\d{4}-\d{2}-\d{2}$/.test(tt.creditFrom) ? tt.creditFrom : d.tipTax.creditFrom,
+      creditWageCentsPerHour: Math.round(num(tt.creditWageCentsPerHour, 0, 5000, d.tipTax.creditWageCentsPerHour)),
+      ficaRate: num(tt.ficaRate, 0, 0.2, d.tipTax.ficaRate),
+    },
   };
 }
 
@@ -127,6 +203,14 @@ export interface LineInput {
   tipsPaidOut?: number;
   /** What brings the employee up to their guaranteed minimum (compensation plans, when payroll uses them). */
   guaranteeTopUp?: number;
+  /** Cash tips the employee declared for the period (handed to them, never rung up). Not the shop's money, so not labor cost. */
+  declaredCashTips?: number;
+  /** Of the tips, card and gift card ("charged") ones; the rest were cash on a ticket. For the W-2 and 45B reports. */
+  chargedTips?: number;
+  /** Tip refunds in the period of tickets from an earlier pay period, already paid. */
+  lateTipRefunds?: number;
+  /** Of those, taken off the tips (only when the brand deducts them; never below zero). The rest is the shop's cost. */
+  lateTipRefundsDeducted?: number;
   overrides?: Overrides;
 }
 
@@ -177,6 +261,14 @@ export interface Line {
   tipsOutside: number;
   /** Of tipsOutside, what was already paid out when the report was built. Information only. */
   tipsPaidOut: number;
+  /** Declared cash tips: their own iSolved earning, reported (and taxed), never paid by the shop. */
+  declaredCashTips: number;
+  /** Of R, card and gift card tips. Information only. */
+  chargedTips: number;
+  /** Tip refunds of earlier, already-paid periods issued in this one; flagged. Information only. */
+  lateTipRefunds: number;
+  /** Of those, the shop's cost: never taken from the employee unless the brand deducts them. */
+  tipRefundsShopCost: number;
   /** S */
   trainingHours: number;
   /** T = OT multiplier × C × Q. Base rate only; iSolved may compute blended OT higher. */
@@ -238,6 +330,10 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
     tipsInPayroll,
     tipsOutside: tips - tipsInPayroll,
     tipsPaidOut: i.tipsPaidOut ?? 0,
+    declaredCashTips: i.declaredCashTips ?? 0,
+    chargedTips: Math.min(tips, Math.max(0, i.chargedTips ?? 0)),
+    lateTipRefunds: i.lateTipRefunds ?? 0,
+    tipRefundsShopCost: (i.lateTipRefunds ?? 0) - (i.lateTipRefundsDeducted ?? 0),
     trainingHours,
     otPay,
     trainingPay,
@@ -264,6 +360,10 @@ export const SUMMED = [
   "tipsInPayroll",
   "tipsOutside",
   "tipsPaidOut",
+  "declaredCashTips",
+  "chargedTips",
+  "lateTipRefunds",
+  "tipRefundsShopCost",
   "trainingHours",
   "otPay",
   "trainingPay",
@@ -294,6 +394,10 @@ export const COLUMN_LABEL: Record<Summed | "wage" | "grossPerHour" | "servicePct
   tipsInPayroll: "Tips in payroll",
   tipsOutside: "Tips paid separately",
   tipsPaidOut: "Tips paid out",
+  declaredCashTips: "Cash tips declared",
+  chargedTips: "Charged tips",
+  lateTipRefunds: "Post-payout tip refunds",
+  tipRefundsShopCost: "Tip refunds, shop cost",
   trainingHours: "Training Hours",
   otPay: "O.T. Pay",
   trainingPay: "Training Pay",
@@ -342,9 +446,10 @@ export interface ExportRow {
 export const hasPayrollTips = (lines: readonly Pick<Line, "tipsInPayroll">[]) => lines.some((l) => l.tipsInPayroll !== 0);
 export const hasPaidTips = (lines: readonly Pick<Line, "tipsPaidOut">[]) => lines.some((l) => l.tipsPaidOut !== 0);
 const hasGuarantee = (lines: readonly Pick<Line, "guaranteeTopUp">[]) => lines.some((l) => (l.guaranteeTopUp ?? 0) !== 0);
+export const hasDeclaredTips = (lines: readonly Pick<Line, "declaredCashTips">[]) => lines.some((l) => (l.declaredCashTips ?? 0) !== 0);
 
 /** What a column after the standard six carries. */
-export type ExtraFrom = "tipsInPayroll" | "tipsPaidOut" | "guaranteeTopUp" | "commission" | "productTotal" | "wage";
+export type ExtraFrom = "tipsInPayroll" | "tipsPaidOut" | "declaredCashTips" | "guaranteeTopUp" | "commission" | "productTotal" | "wage";
 export interface ExtraColumn {
   header: string;
   from: ExtraFrom;
@@ -357,11 +462,12 @@ export interface ExportOptions {
   guaranteeHeader?: string;
 }
 
-/** The columns after the standard six: tips in payroll, tips already paid out (where marked) and the guarantee top-up when someone in the file has them, then the brand's. */
+/** The columns after the standard six: tips in payroll, tips already paid out (where marked), declared cash tips and the guarantee top-up when someone in the file has them, then the brand's. */
 export function exportExtraColumns(lines: readonly Line[], s: PayrollSettings, o: ExportOptions = {}): ExtraColumn[] {
   return [
     ...(hasPayrollTips(lines) ? [{ header: s.tipsInPayrollHeader, from: "tipsInPayroll" as const }] : []),
     ...(s.markPaidTips && hasPaidTips(lines) ? [{ header: s.tipsPaidOutHeader, from: "tipsPaidOut" as const }] : []),
+    ...(hasDeclaredTips(lines) ? [{ header: s.cashTipsDeclaredHeader, from: "declaredCashTips" as const }] : []),
     ...(hasGuarantee(lines) ? [{ header: o.guaranteeHeader ?? COLUMN_LABEL.guaranteeTopUp, from: "guaranteeTopUp" as const }] : []),
     ...(o.extras ?? []),
   ];
@@ -438,6 +544,9 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
     const topUps = exported("guaranteeTopUp");
     if (!sameToTheCent(b.totals.guaranteeTopUp ?? 0, topUps))
       out.push({ shopId: b.shopId, column: COLUMN_LABEL.guaranteeTopUp, check: "export", report: b.totals.guaranteeTopUp ?? 0, other: topUps, detail: `${b.shop}: the export's guarantee top-ups add up to a different total than the report's` });
+    const declared = exported("declaredCashTips");
+    if (!sameToTheCent(b.totals.declaredCashTips ?? 0, declared))
+      out.push({ shopId: b.shopId, column: COLUMN_LABEL.declaredCashTips, check: "export", report: b.totals.declaredCashTips ?? 0, other: declared, detail: `${b.shop}: the export's declared cash tips add up to a different total than the report's` });
     for (const k of ["tipsPaidOut", "commission", "productTotal"] as const) {
       if (!from.includes(k)) continue;
       const sum = exported(k);
@@ -447,7 +556,7 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
       out.push({ shopId: b.shopId, column: COLUMN_LABEL.tips, check: "rows", report: b.totals.tips, other: b.totals.tipsInPayroll + b.totals.tipsOutside, detail: `${b.shop}: tips paid separately and in payroll don't add up to TIPS` });
     if (b.exportRows.length !== b.lines.length) out.push({ shopId: b.shopId, column: "Rows", check: "export", report: b.lines.length, other: b.exportRows.length, detail: `${b.shop}: the export has a different number of rows` });
   }
-  for (const k of ["service", "laborCost", "otPay", "trainingPay", "totalWages", "hours", "otHours", "tips", "netComm"] as const) {
+  for (const k of ["service", "laborCost", "otPay", "trainingPay", "totalWages", "hours", "otHours", "tips", "netComm", "declaredCashTips"] as const) {
     const sum = blocks.reduce((a, b) => a + b.totals[k], 0);
     if (!sameToTheCent(grand[k], sum)) out.push({ shopId: null, column: COLUMN_LABEL[k], check: "locations", report: grand[k], other: sum, detail: "Locations total isn't the sum of the shops" });
   }
@@ -484,7 +593,7 @@ export function ftStatus(staffId: string, weekly: readonly { worked: number; tra
 export interface Anomaly {
   staffId: string | null;
   shopId: string | null;
-  kind: "owner_case" | "sales_without_hours" | "override" | "netcomm_gap" | "missing_key" | "training_in_hours" | "no_rate";
+  kind: "owner_case" | "sales_without_hours" | "override" | "netcomm_gap" | "missing_key" | "training_in_hours" | "no_rate" | "late_tip_refund" | "changed_since_lock" | "late_import";
   message: string;
 }
 
@@ -504,6 +613,17 @@ export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Ano
       }
       if (l.trainingHours > 0 && !s.trainingCountsTowardOt) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "training_in_hours", message: `${who}: ${fmtHours(l.trainingHours)} training. If the clocked hours already include it, it's counted twice (Q11, C2 flag).` });
       if (l.wage === 0 && l.service > 0 && l.servicePct === 0) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "no_rate", message: `${who} has sales but no wage or commission rate.` });
+      const late = l.lateTipRefunds ?? 0;
+      if (late > 0) {
+        const cost = l.tipRefundsShopCost ?? late;
+        const taken = late - cost;
+        out.push({
+          staffId: l.staffId,
+          shopId: b.shopId,
+          kind: "late_tip_refund",
+          message: `${who}: ${fmtMoney(late)} of tips refunded on tickets from an earlier pay period, already paid. ${cost > 0 ? `${fmtMoney(cost)} is the shop's cost, not taken from their pay.` : ""}${taken > 0 ? ` ${fmtMoney(taken)} comes off this period's tips (the brand deducts them, which needs the employee's written consent in IL and IA).` : ""} Review before locking.`.replace(/\s+/g, " ").trim(),
+        });
+      }
     }
   }
   return out;
