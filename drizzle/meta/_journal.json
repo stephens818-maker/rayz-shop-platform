@@ -708,6 +708,13 @@
       "when": 1796241600000,
       "tag": "core_0100_staff_tip_stripe",
       "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1796328000000,
+      "tag": "core_0101_staff_onboarding",
+      "breakpoints": true
     }
   ]
 }

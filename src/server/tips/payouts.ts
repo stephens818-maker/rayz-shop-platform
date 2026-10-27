@@ -21,6 +21,7 @@ import {
   scheduledBatch,
   shopCostCents,
 } from "@/domain/tips";
+import { SETUP_HOLD_REASON } from "@/domain/staff-onboarding";
 import { formatCents } from "@/lib/money";
 import { todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
 import { appBaseUrl } from "@/lib/deployment";
@@ -38,6 +39,8 @@ export type TipPayout = typeof tipPayouts.$inferSelect;
 export type TipBatch = typeof tipPayoutBatches.$inferSelect;
 
 const instantRate = () => parseInstantFee(process.env.TIP_INSTANT_FEE) ?? DEFAULT_INSTANT_FEE;
+/** Opens the staff app's payout setup, or My banking on the web. Signed-in only; the link itself carries nothing. */
+export const PAYOUT_SETUP_PATH = "/staff-app/payouts";
 const OPEN: TipPayoutStatus[] = ["pending", "held", "approved", "processing"];
 const STRIPE_ACTOR: Actor = { staffId: null, label: "stripe" };
 
@@ -129,11 +132,8 @@ export async function buildBatch(o: { shopId: string; kind: Exclude<TipBatchKind
         const acct = choices.get(d.staffId) ?? null;
         let method: TipMethod = methodOf(d.staffId);
         if (method === "payroll") method = policy.methods.includes("cash") ? "cash" : "stripe";
-        let holdReason: string | null = null;
-        if (method === "stripe" && !canReceive(acct)) {
-          if (policy.methods.includes("cash")) method = "cash";
-          else holdReason = "Their Stripe payout account isn't set up yet";
-        }
+        const waiting = method === "stripe" && !canReceive(acct);
+        const holdReason = waiting ? SETUP_HOLD_REASON : null;
         const instant = method === "stripe" && policy.instantAllowed && !!acct?.instant && !!acct?.instantEligible;
         [p] = await tx
           .insert(tipPayouts)
@@ -142,9 +142,10 @@ export async function buildBatch(o: { shopId: string; kind: Exclude<TipBatchKind
             shopId: o.shopId,
             staffId: d.staffId,
             method,
-            status: holdReason ? "held" : "pending",
+            status: waiting ? "held" : "pending",
             holdReason,
-            heldAt: holdReason ? now : null,
+            holdKind: waiting ? "stripe_setup" : null,
+            heldAt: waiting ? now : null,
             instant,
             stripeAccountId: method === "stripe" ? (acct?.stripeAccountId ?? null) : null,
           })
@@ -214,11 +215,12 @@ export async function approveBatch(batchId: string, actor: Actor, now = new Date
       b.shopId,
       tx,
     );
-    return { shopId: b.shopId, approved };
+    return { shopId: b.shopId, approved, waiting: ps.filter((p) => p.status === "held" && p.holdKind === "stripe_setup") };
   });
   for (const p of r.approved.filter((x) => x.method === "stripe")) await sendStripePayout(p.id, now);
+  for (const p of r.waiting) await notifyPayout(p, "waiting");
   await maybeComplete(batchId);
-  return { approved: r.approved.length };
+  return { approved: r.approved.length, waitingForSetup: r.waiting.length };
 }
 
 export async function cancelBatch(batchId: string, reason: string, actor: Actor) {
@@ -239,7 +241,7 @@ export async function holdPayout(payoutId: string, reason: string, actor: Actor,
   await db.transaction(async (tx) => {
     const p = await lockPayout(tx, payoutId);
     if (!(p.status === "pending" || (p.status === "approved" && p.method === "cash"))) throw new AppError("conflict", "Only a payout that hasn't been sent or paid can be held.");
-    await tx.update(tipPayouts).set({ status: "held", holdReason: why, heldBy: actor.staffId ?? null, heldAt: now, updatedAt: now }).where(eq(tipPayouts.id, payoutId));
+    await tx.update(tipPayouts).set({ status: "held", holdReason: why, holdKind: "manager", heldBy: actor.staffId ?? null, heldAt: now, updatedAt: now }).where(eq(tipPayouts.id, payoutId));
     await audit(actor, "tips.hold", "tip_payout", payoutId, { reason: why, staffId: p.staffId, netCents: p.netCents, from: p.status }, p.shopId, tx);
   });
 }
@@ -249,12 +251,18 @@ export async function releasePayout(payoutId: string, actor: Actor, now = new Da
     const p = await lockPayout(tx, payoutId);
     if (p.status !== "held") throw new AppError("conflict", "That payout isn't held.");
     const b = await lockBatch(tx, p.batchId);
-    if (b.status === "approved" && p.method === "stripe") {
+    if (p.method === "stripe" && (b.status === "approved" || p.holdKind === "stripe_setup")) {
       const a = await staffAccount(p.staffId, tx);
-      if (!canReceive(a)) throw new AppError("conflict", "Their Stripe payout account still isn't ready. Take the payout out of the batch to pay it another way.");
+      if (!canReceive(a))
+        throw new AppError(
+          "conflict",
+          p.holdKind === "stripe_setup"
+            ? "This payout waits for them to finish Stripe payout setup, and goes out on its own once they do. Their tips stay reserved to it."
+            : "Their Stripe payout account still isn't ready. Take the payout out of the batch to pay it another way.",
+        );
     }
     const status: TipPayoutStatus = b.status === "draft" ? "pending" : "approved";
-    const [row] = await tx.update(tipPayouts).set({ status, holdReason: null, heldBy: null, heldAt: null, updatedAt: now }).where(eq(tipPayouts.id, payoutId)).returning();
+    const [row] = await tx.update(tipPayouts).set({ status, holdReason: null, holdKind: null, heldBy: null, heldAt: null, updatedAt: now }).where(eq(tipPayouts.id, payoutId)).returning();
     await audit(actor, "tips.release", "tip_payout", payoutId, { staffId: p.staffId, heldFor: p.holdReason, to: status }, p.shopId, tx);
     return row;
   });
@@ -386,7 +394,7 @@ export async function sendStripePayout(payoutId: string, now = new Date()) {
     .returning();
   if (!p) return null;
   const acct = await staffAccount(p.staffId);
-  if (!canReceive(acct)) return markFailed(p.id, "Their Stripe payout account isn't ready");
+  if (!canReceive(acct)) return holdForSetup(p, now);
   const list = storedExternalAccounts(acct!.externalAccounts);
   const fast = p.instant ? instantDestination(list) : null;
   let sending = p;
@@ -459,6 +467,67 @@ export async function sendStripePayout(payoutId: string, now = new Date()) {
   }
 }
 
+/** An approved Stripe payout whose employee can't be paid yet: it waits, with its tips, until their setup is done. Nothing moved. */
+async function holdForSetup(p: TipPayout, now: Date) {
+  const [row] = await db
+    .update(tipPayouts)
+    .set({ status: "held", holdKind: "stripe_setup", holdReason: SETUP_HOLD_REASON, heldBy: null, heldAt: now, updatedAt: now })
+    .where(and(eq(tipPayouts.id, p.id), eq(tipPayouts.status, "processing"), isNull(tipPayouts.stripeTransferId), isNull(tipPayouts.stripeDebitId)))
+    .returning();
+  if (!row) return null;
+  await audit(STRIPE_ACTOR, "tips.hold", "tip_payout", p.id, { reason: SETUP_HOLD_REASON, kind: "stripe_setup", staffId: p.staffId, netCents: p.netCents, from: "approved" }, p.shopId);
+  await notifyPayout(row, "waiting");
+  return row;
+}
+
+/**
+ * Once an employee's Stripe account can be paid, every payout waiting on their setup goes on: in a
+ * draft batch it's back with the rest for the manager to approve, and in an approved batch (a manager
+ * already approved it) it's sent. Safe to call on every account update.
+ */
+export async function releaseSetupHolds(staffId: string, now = new Date()) {
+  const acct = await staffAccount(staffId);
+  if (!canReceive(acct)) return { released: 0, sent: 0 };
+  const r = await db.transaction(async (tx) => {
+    const held = await tx
+      .select()
+      .from(tipPayouts)
+      .where(and(eq(tipPayouts.staffId, staffId), eq(tipPayouts.status, "held"), eq(tipPayouts.holdKind, "stripe_setup")))
+      .for("update");
+    const send: string[] = [];
+    let released = 0;
+    for (const p of held) {
+      const b = await lockBatch(tx, p.batchId);
+      if (b.status !== "draft" && b.status !== "approved") continue;
+      const { policyOf, byShop } = await shopTipConfigs([p.shopId], tx);
+      const instant = policyOf(p.shopId).instantAllowed && acct!.instant && acct!.instantEligible;
+      const status: TipPayoutStatus = b.status === "draft" ? "pending" : "approved";
+      await tx
+        .update(tipPayouts)
+        .set({ status, holdReason: null, holdKind: null, heldBy: null, heldAt: null, instant, stripeAccountId: acct!.stripeAccountId, updatedAt: now })
+        .where(eq(tipPayouts.id, p.id));
+      if (instant !== p.instant) await recompute(tx, p.id, netsCardFee(byShop.get(p.shopId)!, (await tipOverrides([p.staffId], tx, now)).get(p.staffId)?.netCardFee));
+      await audit(STRIPE_ACTOR, "tips.release", "tip_payout", p.id, { staffId: p.staffId, heldFor: p.holdReason, to: status, why: "stripe_setup_done" }, p.shopId, tx);
+      released++;
+      if (status === "approved") send.push(p.id);
+    }
+    return { released, send };
+  });
+  for (const id of r.send) await sendStripePayout(id, now);
+  return { released: r.released, sent: r.send.length };
+}
+
+/** Per employee: tips in payouts waiting for their Stripe setup, so nobody forgets they're owed. */
+export async function waitingForSetup(staffIds: readonly string[], tx: DBorTx = db) {
+  if (!staffIds.length) return new Map<string, { cents: number; payouts: number }>();
+  const rows = await tx
+    .select({ staffId: tipPayouts.staffId, cents: sql<number>`coalesce(sum(${tipPayouts.netCents}), 0)::int`, payouts: sql<number>`count(*)::int` })
+    .from(tipPayouts)
+    .where(and(inArray(tipPayouts.staffId, [...staffIds]), eq(tipPayouts.status, "held"), eq(tipPayouts.holdKind, "stripe_setup")))
+    .groupBy(tipPayouts.staffId);
+  return new Map(rows.map((r) => [r.staffId, { cents: r.cents, payouts: r.payouts }]));
+}
+
 /**
  * A payout that failed or bounced: its tips go back into the next batch, and the money comes back
  * (the transfer reversed to the platform, a shop account debit refunded to the shop). Safe to call twice.
@@ -528,9 +597,25 @@ export async function applyTransferReversed(tr: Pick<Stripe.Transfer, "id" | "me
 
 // ───────────────────────────── Notifications ─────────────────────────────
 
-async function notifyPayout(p: TipPayout, what: "sent" | "failed") {
+async function notifyPayout(p: TipPayout, what: "sent" | "failed" | "waiting") {
   const [person] = await db.select({ email: staff.email, phone: staff.phone, first: staff.firstName }).from(staff).where(eq(staff.id, p.staffId));
   const [shop] = await db.select({ name: shops.name, email: shops.email }).from(shops).where(eq(shops.id, p.shopId));
+  if (what === "waiting") {
+    const amount = formatCents(p.netCents);
+    const link = `${appBaseUrl()}${PAYOUT_SETUP_PATH}`;
+    if (person?.email)
+      await enqueueRaw({
+        kind: "tip_payout",
+        channel: "email",
+        to: person.email,
+        shopId: p.shopId,
+        subject: `${amount} in tips is waiting for your Stripe setup`,
+        body: `Hi ${person.first}, a manager at Ray'z ${shop?.name ?? ""} approved ${amount} in tips for you. It's paid through Stripe, and your Stripe payout setup isn't finished, so it's waiting for you: nothing is lost, and it goes out on its own as soon as you finish. Finish setup: ${link}`,
+      });
+    else if (person?.phone)
+      await enqueueRaw({ kind: "tip_payout", channel: "sms", to: person.phone, shopId: p.shopId, body: `Ray'z ${shop?.name ?? ""}: ${amount} in tips is waiting for you. Finish your Stripe payout setup and it's sent: ${link}` });
+    return;
+  }
   const amount = formatCents(receivedCents(p));
   const fee = employeeFeeCents(p);
   const to = p.destinationLast4 ? ` ••${p.destinationLast4}` : "";

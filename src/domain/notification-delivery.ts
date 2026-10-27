@@ -74,6 +74,7 @@ export const MESSAGE_KIND_LABEL: Record<string, string> = {
   access_alert: "Blocked sign-in alert",
   tip_payout: "Tip payout",
   tip_banking: "Payout account notice",
+  tip_onboarding: "Payout setup invite",
   staff_invite: "Brand portal invite",
   milestone: "Staff milestone",
 };

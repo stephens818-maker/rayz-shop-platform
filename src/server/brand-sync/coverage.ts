@@ -185,6 +185,7 @@ export const TABLES: Record<string, Coverage> = {
   staff_milestone_cheers: REC,
   staff_milestone_rules: LIST,
   staff_milestones: REC,
+  staff_onboarding_invites: is("person", "Invites and reminders to one person to set up payouts"),
   staff_payout_accounts: is("person", "One person's payout account"),
   staff_schedules: is("person", "One person's shifts"),
   staff_service_durations: is("person", "One barber's own length for a service"),

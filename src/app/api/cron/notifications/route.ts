@@ -7,13 +7,14 @@ import { processDueJobs } from "@/server/notifications/queue";
 import { extendSeries } from "@/server/block-series";
 import { sendDueMorningDashboards } from "@/server/morning-dashboard";
 import { timeClockCron } from "@/server/time-clock";
+import { onboardingReminderCron } from "@/server/tips/onboarding";
 
 export const maxDuration = 300;
 
 /**
  * Vercel Cron target (see vercel.json). Writes recurring blocks ahead, queues low-stock alerts, sends
  * the Morning Dashboard if its own cron missed it, flags forgotten clock-outs (and nightly,
- * full-time/part-time changes), then works through background tasks (src/server/jobs.ts): each
+ * full-time/part-time changes), reminds staff who haven't finished Stripe payout setup, then works through background tasks (src/server/jobs.ts): each
  * location's nudges (call-in follow-ups, Google review asks, rebook reminders set at checkout), each
  * scheduled custom report that's due, and each location's tip payout draft that's due. Then drains
  * due messages. Closed unless CRON_SECRET is set.
@@ -24,6 +25,7 @@ export const GET = route(async (req) => {
   const lowStock = await sendLowStockAlerts(null, await allShopIds());
   const digest = await sendDueMorningDashboards();
   const timeClock = await timeClockCron();
+  const payoutSetupReminders = await onboardingReminderCron();
   const tasks = await runJobs(new Date(), { kinds: ["nudges", "reports", "payouts"], budgetMs: 200_000 });
-  return json({ ...(await processDueJobs()), lowStock, recurringBlocks, digest, timeClock, tasks });
+  return json({ ...(await processDueJobs()), lowStock, recurringBlocks, digest, timeClock, payoutSetupReminders, tasks });
 });

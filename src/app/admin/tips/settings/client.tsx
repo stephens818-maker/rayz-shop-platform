@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button, Card, CardHeader, Field, Input, Notice, Select } from "@/components/ui";
-import { BrandTipPolicy, DEFAULT_CARD_DELAY, METHOD_LABEL, SCHEDULE_LABEL, ShopTipSettings, TIP_METHODS, TIP_SCHEDULES, TipMethod, TipSchedule } from "@/domain/tips";
+import { BrandTipPolicy, DEFAULT_CARD_DELAY, METHOD_LABEL, REMINDER_DAYS, REMINDER_MAX, SCHEDULE_LABEL, ShopTipSettings, TIP_METHODS, TIP_SCHEDULES, TipMethod, TipSchedule } from "@/domain/tips";
 import { saveShopTipSettingsAction } from "../actions";
 import { useSettingSync } from "@/components/brand-sync";
 
@@ -64,6 +64,26 @@ export function PolicyForm({ policy }: { policy: BrandTipPolicy }) {
             </Check>
           </div>
         )}
+        <div className="space-y-1 border-t border-zinc-100 pt-3">
+          <div className="text-sm font-medium">Payout setup reminders</div>
+          <p className="text-xs text-zinc-500">
+            After an invite from Payout onboarding, people who haven&rsquo;t finished get a reminder on the same channel, between 9 AM and 7 PM at their shop. Reminders stop once they&rsquo;re done.
+          </p>
+          <div className="grid grid-cols-2 gap-3 sm:max-w-md">
+            <Field label="Every (days)">
+              <Input
+                type="number"
+                min={REMINDER_DAYS.min}
+                max={REMINDER_DAYS.max}
+                value={p.reminderEveryDays}
+                onChange={(e) => setP({ ...p, reminderEveryDays: Number(e.target.value) || REMINDER_DAYS.min })}
+              />
+            </Field>
+            <Field label="Reminders per invite (0 = none)">
+              <Input type="number" min={REMINDER_MAX.min} max={REMINDER_MAX.max} value={p.reminderMax} onChange={(e) => setP({ ...p, reminderMax: Math.max(0, Number(e.target.value) || 0) })} />
+            </Field>
+          </div>
+        </div>
         {msg && <Notice tone={msg.ok ? "green" : "red"}>{msg.text}</Notice>}
         <Button disabled={pending || !p.methods.length} onClick={() => saveSetting(p)}>
           Save brand policy

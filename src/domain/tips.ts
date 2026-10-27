@@ -4,6 +4,7 @@
  * without a database (tests/tips.test.ts).
  */
 import { addDays, type LocalDate } from "@/lib/time";
+import { DEFAULT_REMINDERS, type ReminderPolicy } from "./staff-onboarding";
 
 export const TIP_SCHEDULES = ["end_of_night", "daily_delay", "weekly", "payroll", "manual"] as const;
 export type TipSchedule = (typeof TIP_SCHEDULES)[number];
@@ -43,19 +44,37 @@ export interface BrandTipPolicy {
   instantAllowed: boolean;
   /** Stripe's instant payout fee comes out of the employee's payout; off, the shop pays it on top. */
   instantFeePassedOn: boolean;
+  /** Payout setup reminders: days between them, and how many after each invite (0 = none). */
+  reminderEveryDays: number;
+  reminderMax: number;
 }
 
-export const DEFAULT_BRAND_TIP_POLICY: BrandTipPolicy = { methods: ["cash", "stripe", "payroll"], employeeChooses: true, instantAllowed: true, instantFeePassedOn: true };
+export const DEFAULT_BRAND_TIP_POLICY: BrandTipPolicy = {
+  methods: ["cash", "stripe", "payroll"],
+  employeeChooses: true,
+  instantAllowed: true,
+  instantFeePassedOn: true,
+  reminderEveryDays: DEFAULT_REMINDERS.everyDays,
+  reminderMax: DEFAULT_REMINDERS.max,
+};
+
+export const REMINDER_DAYS = { min: 1, max: 14 } as const;
+export const REMINDER_MAX = { min: 0, max: 10 } as const;
+
+export const reminderPolicy = (p: Pick<BrandTipPolicy, "reminderEveryDays" | "reminderMax">): ReminderPolicy => ({ everyDays: p.reminderEveryDays, max: p.reminderMax });
 
 export function brandTipPolicy(raw: unknown): BrandTipPolicy {
   const r = (raw && typeof raw === "object" ? raw : {}) as Partial<BrandTipPolicy>;
   const d = DEFAULT_BRAND_TIP_POLICY;
   const methods = Array.isArray(r.methods) ? TIP_METHODS.filter((m) => (r.methods as unknown[]).includes(m)) : d.methods;
+  const int = (v: unknown, b: { min: number; max: number }, dflt: number) => (typeof v === "number" && Number.isInteger(v) && v >= b.min && v <= b.max ? v : dflt);
   return {
     methods: methods.length ? methods : d.methods,
     employeeChooses: typeof r.employeeChooses === "boolean" ? r.employeeChooses : d.employeeChooses,
     instantAllowed: typeof r.instantAllowed === "boolean" ? r.instantAllowed : d.instantAllowed,
     instantFeePassedOn: typeof r.instantFeePassedOn === "boolean" ? r.instantFeePassedOn : d.instantFeePassedOn,
+    reminderEveryDays: int(r.reminderEveryDays, REMINDER_DAYS, d.reminderEveryDays),
+    reminderMax: int(r.reminderMax, REMINDER_MAX, d.reminderMax),
   };
 }
 

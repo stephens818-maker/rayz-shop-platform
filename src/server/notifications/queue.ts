@@ -54,6 +54,8 @@ export type NotificationKind =
   | "tip_payout"
   /** An employee's payout account: Stripe needs more information, or a security notice that the destination or method changed. */
   | "tip_banking"
+  /** An invite or reminder to set up Stripe tip payouts under Ray'z, by text or email. */
+  | "tip_onboarding"
   /** Time clock, live: not clocked in for the first client, and clients booked over a break or after an early clock-out. */
   | "clock_late_in"
   | "clock_affected"

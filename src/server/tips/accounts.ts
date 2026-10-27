@@ -1,7 +1,7 @@
 import type Stripe from "stripe";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { auditLog, staff, staffPayoutAccounts, staffShops } from "@/db/schema";
+import { auditLog, staff, staffOnboardingInvites, staffPayoutAccounts, staffShops } from "@/db/schema";
 import {
   BANKING_STATUS_LABEL,
   BankingStatus,
@@ -145,6 +145,8 @@ async function saveAccount(before: StaffPayoutAccount, patch: AccountPatch, acto
     await audit(actor, "tips.destination_changed", "staff", after.staffId, { stripeAccountId: after.stripeAccountId, from: brief(was), to: brief(is) });
     await noticeDestinationChanged(after, was, now);
   }
+  if (to === "ready") await db.update(staffOnboardingInvites).set({ remindersStoppedAt: now, updatedAt: now }).where(and(eq(staffOnboardingInvites.staffId, after.staffId), isNull(staffOnboardingInvites.remindersStoppedAt)));
+  if (canReceive(after)) await (await import("./payouts")).releaseSetupHolds(after.staffId, now);
   return after;
 }
 
@@ -356,7 +358,17 @@ export async function staffDashboardUrl(staffId: string): Promise<string | null>
   return link?.url ?? null;
 }
 
-const BANKING_ACTIONS = ["tips.account_created", "tips.onboarding_started", "tips.onboarding_resumed", "tips.onboarding_simulated", "tips.account_state", "tips.destination_changed", "tips.method"];
+const BANKING_ACTIONS = [
+  "tips.account_created",
+  "tips.onboarding_invite",
+  "tips.onboarding_reminder",
+  "tips.onboarding_started",
+  "tips.onboarding_resumed",
+  "tips.onboarding_simulated",
+  "tips.account_state",
+  "tips.destination_changed",
+  "tips.method",
+];
 
 /** The employee's own banking history from the audit log: setup, status changes, destination and method changes. */
 export async function bankingActivity(staffId: string, limit = 12) {

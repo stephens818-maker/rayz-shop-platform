@@ -2489,6 +2489,7 @@ export type TipBatchKind = "end_of_night" | "daily_delay" | "weekly" | "manual" 
 export type TipBatchStatus = "draft" | "approved" | "completed" | "cancelled";
 export type TipPayoutMethod = "cash" | "stripe" | "payroll" | "prior";
 export type TipPayoutStatus = "pending" | "held" | "approved" | "processing" | "paid" | "failed" | "cancelled";
+export type TipHoldKind = "manager" | "stripe_setup";
 export type TipLedgerKind = "tip" | "refund" | "adjust";
 
 /** A manager reviews and approves each batch: one shop, everything available up to the cutoff date. One draft per shop at a time. */
@@ -2557,6 +2558,8 @@ export const tipPayouts = pgTable(
     ackMethod: text("ack_method").$type<"pin" | "name">(),
     ackName: text("ack_name"),
     holdReason: text("hold_reason"),
+    /** manager = held by hand; stripe_setup = waiting for the employee to finish Stripe payout setup, released on its own when they do. */
+    holdKind: text("hold_kind").$type<TipHoldKind>(),
     heldBy: uuid("held_by"),
     heldAt: ts("held_at"),
     /** Payroll: the pay period it was paid in. */
@@ -2573,6 +2576,8 @@ export const tipPayouts = pgTable(
     check("tip_payouts_held", sql`${t.status} <> 'held' or ${t.holdReason} is not null`),
     check("tip_payouts_instant_fee_paid_by", sql`${t.instantFeePaidBy} in ('employee', 'shop')`),
     check("tip_payouts_destination", sql`(${t.destinationType} is null or ${t.destinationType} in ('bank_account', 'card')) and (${t.destinationLast4} is null or ${t.destinationLast4} ~ '^[0-9]{4}$')`),
+    check("tip_payouts_hold_kind", sql`${t.holdKind} is null or ${t.holdKind} in ('manager', 'stripe_setup')`),
+    index("tip_payouts_stripe_setup").on(t.staffId).where(sql`${t.status} = 'held' and ${t.holdKind} = 'stripe_setup'`),
     uniqueIndex("tip_payouts_batch_staff_uq").on(t.batchId, t.staffId),
     uniqueIndex("tip_payouts_transfer_uq").on(t.stripeTransferId),
     uniqueIndex("tip_payouts_payout_uq").on(t.stripePayoutId),
@@ -2666,6 +2671,36 @@ export const staffPayoutAccounts = pgTable(
     check("staff_payout_accounts_destination_type", sql`${t.destinationType} is null or ${t.destinationType} in ('bank_account', 'card')`),
     check("staff_payout_accounts_last4", sql`${t.destinationLast4} is null or ${t.destinationLast4} ~ '^[0-9]{4}$'`),
     check("staff_payout_accounts_external_accounts", sql`jsonb_typeof(${t.externalAccounts}) = 'array'`),
+  ],
+);
+
+/**
+ * Invites to set up Stripe payouts, one row per employee: everyone onboards fresh under Ray'z, since
+ * no Squire account carries over. Each send is also in the audit log. Reminders stop once their
+ * setup is done (or a manager stops them).
+ */
+export const staffOnboardingInvites = pgTable(
+  "staff_onboarding_invites",
+  {
+    staffId: uuid("staff_id")
+      .primaryKey()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    firstSentAt: ts("first_sent_at").notNull(),
+    firstSentBy: uuid("first_sent_by").references(() => staff.id, { onDelete: "set null" }),
+    lastSentAt: ts("last_sent_at").notNull(),
+    lastSentBy: uuid("last_sent_by").references(() => staff.id, { onDelete: "set null" }),
+    /** Where the last invite went, which reminders follow. */
+    channels: jsonb("channels").$type<("sms" | "email")[]>().notNull().default(sql`'[]'::jsonb`),
+    invites: integer("invites").notNull().default(1),
+    reminders: integer("reminders").notNull().default(0),
+    remindersStoppedAt: ts("reminders_stopped_at"),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    check("staff_onboarding_invites_channels", sql`jsonb_typeof(${t.channels}) = 'array' and ${t.channels} <@ '["sms", "email"]'::jsonb`),
+    check("staff_onboarding_invites_counts", sql`${t.invites} >= 1 and ${t.reminders} >= 0`),
+    index("staff_onboarding_invites_reminders").on(t.lastSentAt).where(sql`${t.remindersStoppedAt} is null`),
   ],
 );
 
@@ -2845,6 +2880,8 @@ export const shopCutovers = pgTable("shop_cutovers", {
   switchedAt: ts("switched_at"),
   handedBackAt: ts("handed_back_at"),
   handedBackBy: uuid("handed_back_by").references(() => staff.id, { onDelete: "set null" }),
+  /** The last day Squire pays this shop's tips. Everyone should finish Ray'z Stripe payout setup before it. */
+  squireTipsEndOn: date("squire_tips_end_on"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: createdAt(),
 });
