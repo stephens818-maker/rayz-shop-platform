@@ -103,6 +103,13 @@ describe("iSolved per-shop export, workbook format (each tab's own formatting)",
     expect(isolvedTimecardExporter.fileName({ ...f, tab: "Moline", rows: [], namePattern: "Payroll {end} {shop}" })).toBe("Payroll 10.17.26 Moline.xlsx");
   });
 
+  it("{code} is the shop's iSolved pay group code, and drops out until it's set", () => {
+    const f = { tab: "Moline", payGroup: "Moline", periodNumber: 22, periodStart: "2026-10-04", periodEnd: "2026-10-17" };
+    expect(exportFileName("{code} {shop} {period}", { ...f, payGroupCode: "C" })).toBe("C Moline 22.xlsx");
+    expect(exportFileName("{code} {shop} {period}", { ...f, payGroupCode: null })).toBe("Moline 22.xlsx");
+    expect(exportFileName("{code} {shop} {period}", f)).toBe("Moline 22.xlsx");
+  });
+
   it("the only exporter writes a file; nothing connects to iSolved", () => {
     expect(EXPORTERS.map((e) => e.id)).toEqual(["isolved-timecard-xlsx"]);
   });

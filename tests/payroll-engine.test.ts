@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { DateTime, Settings } from "luxon";
 import { payPeriodByIndex, payPeriodFor, payPeriodsBetween } from "@/domain/payroll";
-import { periodByIndex, periodOf, periodStarting, calendarProblem, type PayCalendar } from "@/domain/payroll/calendar";
+import { DEFAULT_BRAND_CALENDAR, periodByIndex, periodDatesProblem, periodOf, periodStarting, calendarProblem, workweeksOf, type PayCalendar } from "@/domain/payroll/calendar";
+import { weekdayOf } from "@/lib/time";
 import { dailyHours, largestRemainder, overtimeSlices, sliceKey, splitByLocalDay, weekStartOf, type OtOptions, type TimeEntry } from "@/domain/payroll/overtime";
 import {
   DEFAULT_PAYROLL_SETTINGS,
@@ -67,6 +68,80 @@ describe("pay calendars are per pay group", () => {
     expect(periodStarting(MAIN, "2026-10-19")).toBeNull();
     expect(calendarProblem({ ...MAIN, anchorStart: "2026-10-19" })).toMatch(/Sunday/);
     expect(calendarProblem(MAIN)).toBeNull();
+  });
+});
+
+describe("iSolved's default pay calendar (bi-weekly Sun–Sat, anchored on 10/4/2026)", () => {
+  const D = DEFAULT_BRAND_CALENDAR;
+
+  it("period 21 was 9/20–10/3 with a 10/9 check; period 22 is 10/4–10/17, due Wednesday 10/21, check Friday 10/23", () => {
+    expect(D).toMatchObject({ anchorStart: "2026-10-04", anchorNumber: 22, periodDays: 14, checkOffsetDays: 6, submitOffsetDays: 4 });
+    expect(periodOf(D, "2026-10-01")).toMatchObject({ number: 21, start: "2026-09-20", end: "2026-10-03", checkDate: "2026-10-09", datesMoved: false });
+    const p22 = periodOf(D, "2026-10-10");
+    expect(p22).toMatchObject({ number: 22, start: "2026-10-04", end: "2026-10-17", submitBy: "2026-10-21", checkDate: "2026-10-23" });
+    expect(weekdayOf(p22.start)).toBe(0);
+    expect(weekdayOf(p22.end)).toBe(6);
+    expect(weekdayOf(p22.submitBy)).toBe(3);
+    expect(weekdayOf(p22.checkDate)).toBe(5);
+    expect(calendarProblem(D)).toBeNull();
+  });
+
+  it("lands on the same periods, numbers and checks as the calendar it replaces, for a year either way", () => {
+    for (let i = -26; i <= 26; i++) {
+      const a = periodByIndex(D, i + 1);
+      const b = periodByIndex(MAIN, i);
+      expect([a.start, a.end, a.number, a.checkDate, a.submitBy]).toEqual([b.start, b.end, b.number, b.checkDate, b.submitBy]);
+    }
+  });
+
+  it("the OT workweek starts Sunday, so each period is exactly two whole workweeks", () => {
+    const p = periodOf(D, "2026-10-10");
+    expect(workweeksOf(p)).toEqual(["2026-10-04", "2026-10-11"]);
+    expect(weekStartOf("2026-10-17")).toBe("2026-10-11");
+    expect(weekStartOf("2026-10-18")).toBe("2026-10-18");
+  });
+
+  it("the submit-by offset is configurable, between the period's end and its check date", () => {
+    expect(periodOf({ ...D, submitOffsetDays: 3 }, "2026-10-10").submitBy).toBe("2026-10-20");
+    expect(calendarProblem({ ...D, submitOffsetDays: 0 })).toBeNull();
+    expect(calendarProblem({ ...D, submitOffsetDays: 6 })).toBeNull();
+    expect(calendarProblem({ ...D, submitOffsetDays: 7 })).toMatch(/no later than the check date/);
+    expect(calendarProblem({ ...D, submitOffsetDays: -1 })).toMatch(/due in iSolved/);
+    expect(calendarProblem({ ...D, submitOffsetDays: 1.5 })).toMatch(/due in iSolved/);
+  });
+
+  it("saved settings without a submit-by offset get Wednesday (4 days), never after the check", () => {
+    expect(payrollSettings({}).calendar).toEqual(D);
+    const { submitOffsetDays: _, ...old } = MAIN;
+    expect(payrollSettings({ calendar: old }).calendar).toMatchObject({ anchorStart: "2026-10-18", submitOffsetDays: 4 });
+    expect(payrollSettings({ calendar: { ...old, checkOffsetDays: 2 } }).calendar).toMatchObject({ checkOffsetDays: 2, submitOffsetDays: 2 });
+    expect(payrollSettings({ calendar: { ...MAIN, submitOffsetDays: 9 } }).calendar).toEqual(D);
+  });
+
+  it("a period's stored dates replace the offsets (a holiday moved the check) and are marked moved", () => {
+    const c: PayCalendar = { ...D, dates: { "2026-10-04": { checkDate: "2026-10-22", submitBy: "2026-10-20" } } };
+    expect(periodOf(c, "2026-10-10")).toMatchObject({ number: 22, checkDate: "2026-10-22", submitBy: "2026-10-20", datesMoved: true });
+    expect(periodOf(c, "2026-10-20")).toMatchObject({ number: 23, checkDate: "2026-11-06", datesMoved: false });
+    const same: PayCalendar = { ...D, dates: { "2026-10-04": { checkDate: "2026-10-23", submitBy: "2026-10-21" } } };
+    expect(periodOf(same, "2026-10-10").datesMoved).toBe(false);
+  });
+
+  it("numbers follow the check date actually paid: a New Year's Day check moved into December ends the old year", () => {
+    expect(periodOf(D, "2026-12-20")).toMatchObject({ start: "2026-12-13", end: "2026-12-26", checkDate: "2027-01-01", number: 1 });
+    const c: PayCalendar = { ...D, dates: { "2026-12-13": { checkDate: "2026-12-31", submitBy: "2026-12-29" } } };
+    expect(periodOf(c, "2026-12-20")).toMatchObject({ checkDate: "2026-12-31", number: 27, datesMoved: true });
+    expect(periodOf(c, "2027-01-01")).toMatchObject({ start: "2026-12-27", checkDate: "2027-01-15", number: 1 });
+    expect(periodOf(c, "2027-01-10")).toMatchObject({ number: 2 });
+  });
+
+  it("a period's own dates: due once it has ended, no later than its check, the check within 31 days", () => {
+    const end = "2026-10-17";
+    expect(periodDatesProblem({ end, submitBy: "2026-10-21", checkDate: "2026-10-23" })).toBeNull();
+    expect(periodDatesProblem({ end, submitBy: "2026-10-17", checkDate: "2026-10-17" })).toBeNull();
+    expect(periodDatesProblem({ end, submitBy: "2026-10-16", checkDate: "2026-10-23" })).toMatch(/before the period's last day/);
+    expect(periodDatesProblem({ end, submitBy: "2026-10-22", checkDate: "2026-10-21" })).toMatch(/before the submit-by date/);
+    expect(periodDatesProblem({ end, submitBy: "2026-10-21", checkDate: "2026-11-18" })).toMatch(/31 days/);
+    expect(periodDatesProblem({ end, submitBy: "", checkDate: "2026-10-23" })).toMatch(/both dates/);
   });
 });
 
@@ -569,13 +644,14 @@ describe("full time / part time", () => {
 
 describe("payroll review (SB-C2, SB-C3, SB-I2)", () => {
   it("brand pay periods follow the calendar in the payroll setting, not a hard-coded anchor", () => {
-    expect(payPeriodFor("2026-10-18")).toMatchObject({ start: "2026-10-18", end: "2026-10-31", index: 0 });
+    expect(payPeriodFor("2026-10-18")).toMatchObject({ start: "2026-10-18", end: "2026-10-31", index: 1 });
+    expect(payPeriodFor("2026-10-04")).toMatchObject({ start: "2026-10-04", end: "2026-10-17", index: 0 });
     const cal = { anchorStart: "2026-10-04", periodDays: 7 };
     expect(payPeriodFor("2026-10-18", cal)).toMatchObject({ start: "2026-10-18", end: "2026-10-24", index: 2 });
     expect(payPeriodByIndex(-1, cal)).toMatchObject({ start: "2026-09-27", end: "2026-10-03" });
     expect(payPeriodsBetween("2026-10-01", "2026-10-12", cal).map((p) => p.start)).toEqual(["2026-09-27", "2026-10-04", "2026-10-11"]);
     expect(payrollSettings({ calendar: DUBUQUE }).calendar).toEqual(DUBUQUE);
-    expect(payrollSettings({ calendar: { ...DUBUQUE, anchorStart: "2026-10-05" } }).calendar).toEqual(MAIN);
+    expect(payrollSettings({ calendar: { ...DUBUQUE, anchorStart: "2026-10-05" } }).calendar).toEqual(DEFAULT_BRAND_CALENDAR);
   });
 
   it("declarations and the W-2 and 45B settings parse with safe defaults", () => {

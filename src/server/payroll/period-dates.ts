@@ -57,9 +57,9 @@ export async function storedPeriodDates(groups: readonly PayGroupRow[], today: L
 }
 
 /**
- * After a pay group's calendar changes: the calendar's own rows of unlocked periods are dropped (they're
- * written again from the new offsets), a moved period keeps its dates if it's still a period, and
- * every row takes the new numbering.
+ * After a pay group's calendar changes: the calendar's own rows of unlocked periods are written again
+ * from the new offsets, a moved period keeps its dates if it's still a period, and every row takes
+ * the new numbering.
  */
 export async function resyncPeriodDates(tx: DBorTx, groupId: string): Promise<void> {
   const [g] = await tx.select().from(payGroups).where(eq(payGroups.id, groupId));
@@ -72,6 +72,7 @@ export async function resyncPeriodDates(tx: DBorTx, groupId: string): Promise<vo
     if (!p || (!r.reason && !locked.has(r.periodStart))) await tx.delete(payPeriodDates).where(eq(payPeriodDates.id, r.id));
     else if (p.number !== r.periodNumber || p.end !== r.periodEnd) await tx.update(payPeriodDates).set({ periodNumber: p.number, periodEnd: p.end }).where(eq(payPeriodDates.id, r.id));
   }
+  await storedPeriodDates([g], todayLocal(), tx);
 }
 
 /**
@@ -108,6 +109,7 @@ export async function savePeriodDates(
         .insert(payPeriodDates)
         .values({ payGroupId: g.id, periodStart: start, periodEnd: end, periodNumber: p!.number, ...row })
         .onConflictDoUpdate({ target: [payPeriodDates.payGroupId, payPeriodDates.periodStart], set: row });
+      await resyncPeriodDates(tx, g.id);
     }
     const was = targets[0].p!;
     await audit(
