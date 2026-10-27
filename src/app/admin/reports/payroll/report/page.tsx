@@ -49,7 +49,7 @@ const PERIOD = /^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/;
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ period?: string; preset?: string; shop?: string }> }) {
   const sp = await searchParams;
-  const ctx = await guardPage(HREF);
+  const ctx = await guardPage("/admin/reports/payroll/report");
   const choices = await periodChoices();
   const current = choices.findIndex((c) => c.current);
   const asked = PERIOD.exec(sp.period ?? sp.preset?.replace(/^pp:/, "") ?? "");

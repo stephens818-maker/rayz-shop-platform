@@ -130,6 +130,7 @@ export const TABLES: Record<string, Coverage> = {
   payout_reconciliations: PAY,
   payroll_employers: is("structure", "The legal entities (one FEIN each) the pay groups and tips belong to"),
   payroll_employer_states: is("structure", "A legal entity's state tax registrations"),
+  payroll_approvals: LOG,
   payroll_export_sends: LOG,
   payroll_locked_ot: REC,
   payroll_overrides: is("record", "A value typed over the computed one for one barber and pay period"),
