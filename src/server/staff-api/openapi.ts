@@ -68,7 +68,14 @@ const MORE: Op[] = [
   { method: "post", path: "/clients/{id}/contact", tag: "Clients", summary: "A call bridged through the shop line, or a text from the shop's number (consent and STOP checked). The number never comes back.", permission: "clients.message", body: S.ContactBody, params: true },
   // ST-C5
   { method: "post", path: "/clock/in", tag: "Time clock", summary: "POST /clock/punch with type in. 409 with details.feature = clock while the app clock is switched off (STAFF_APP_CLOCK_OFF).", permission: "timeclock.punch", body: S.ClockInOutBody },
-  { method: "post", path: "/clock/out", tag: "Time clock", summary: "POST /clock/punch with type out.", permission: "timeclock.punch", body: S.ClockInOutBody },
+  {
+    method: "post",
+    path: "/clock/out",
+    tag: "Time clock",
+    summary: "POST /clock/punch with type out. With cashTips (where GET /clock has cashTips), declares today's cash tips too; the reply's cashTips has the declaration or why it couldn't be taken, and the punch stands either way.",
+    permission: "timeclock.punch",
+    body: S.ClockInOutBody,
+  },
   { method: "get", path: "/me/timecard", tag: "Timecards", summary: "Their timesheet for a pay period at every shop: days, hours, overtime, breaks, problems, approvals, edits (who, when, why) and whether they can sign off. No punch photos.", permission: "timesheet.own", query: S.PeriodQuery },
   { method: "post", path: "/me/timecard/sign-off", tag: "Timecards", summary: "Sign off their own timecard for a shop and period.", permission: "timesheet.own", body: S.SignOffBody },
   { method: "get", path: "/timecards", tag: "Timecards", summary: "The team's timecards at the manager's shops for a period: hours, problems and approvals per person and shop.", permission: "timesheet.edit, timesheet.approve or payroll.export", query: S.TeamTimecardsQuery },
@@ -148,6 +155,24 @@ const OPS: Op[] = [
   { method: "post", path: "/clock/kiosk/status", tag: "Front-desk clock", summary: "Their PIN, then what they can punch next. Five wrong PINs lock theirs for five minutes.", permission: "timeclock.kiosk", body: S.KioskStatusBody, kiosk: true },
   { method: "post", path: "/clock/kiosk/punch", tag: "Front-desk clock", summary: "Punch (in, out, break start or end) as the person whose PIN was typed.", permission: "timeclock.kiosk", body: S.KioskPunchBody, kiosk: true },
   { method: "get", path: "/tips", tag: "Tips and pay", summary: "Their tips (S3): today, settling, ready, in a payout, paid out; how each shop pays them; history by ticket.", permission: "tips.own", query: S.TipsQuery },
+  {
+    method: "get",
+    path: "/tips/declarations",
+    tag: "Tips and pay",
+    summary:
+      "Their cash tip declarations (SB-C3), newest first: current (not replaced by a correction) and closesOn (the day the month locks). rules: whether declaring is on, asked at clock-out, the attestation to show, the lock day. reminder: last month, when nothing's declared for it yet.",
+    permission: "tips.own",
+    query: S.DeclarationsQuery,
+  },
+  {
+    method: "post",
+    path: "/tips/declarations",
+    tag: "Tips and pay",
+    summary:
+      "Declare cash tips they were handed for a day at a shop (0 counts), with the attestation checked; 201. A correction sends replacesId and a reason and keeps the shop and day. 409 once the pay period is locked or the month closed (a manager corrects it then).",
+    permission: "tips.own",
+    body: S.DeclareBody,
+  },
   {
     method: "get",
     path: "/payouts",

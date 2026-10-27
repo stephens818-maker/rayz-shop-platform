@@ -11,6 +11,8 @@ import { workShopIds } from "@/server/auth/access";
 import { can, canAny, guardPage } from "@/server/auth/staff";
 import { inTenant } from "@/server/tenant";
 import { chosenPeriod, recentPeriods, timesheetView } from "@/server/time-clock";
+import { declarationRules, myDeclarations } from "@/server/tips/declarations";
+import { DeclarationList, DeclareCashTips } from "../../my-tips/declare";
 import { AddPunch, ApproveOwn, ClearPin, EditPunch, ManagerApprove } from "../timesheets";
 
 export const metadata: Metadata = { title: "Timesheet" };
@@ -46,6 +48,8 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
     db.select({ pin: staff.clockPinHash }).from(staff).where(eq(staff.id, staffId)),
   ]);
   const shopName = new Map(shopRows.map((s) => [s.id, s.name]));
+  const [tipRules, mine] = await Promise.all([declarationRules(), myDeclarations(staffId, period.start, today)]);
+  const decls = mine.declarations.filter((d) => d.businessDate <= period.end && (own || ctx.shopIds.includes(d.shopId)));
   const inSheet = new Set(view.punchIds);
   const pickShops = shopRows.filter((s) => editShopIds.includes(s.id) && (team.includes(s.id) || view.shops.some((v) => v.shopId === s.id)));
   const snap = (s: Snap) => (s ? `${PUNCH_LABEL[s.type]} ${formatDateTime(s.at)} at ${shopName.get(s.shopId) ?? "another shop"}${s.voided ? " (void)" : ""}` : "nothing");
@@ -263,6 +267,20 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
               ))}
             </tbody>
           </Table>
+        </Card>
+      )}
+      {tipRules.enabled && (decls.length > 0 || (canEdit && !own && pickShops.length > 0)) && (
+        <Card>
+          <CardHeader
+            title="Cash tips declared"
+            subtitle={own ? "Declare or correct them on My tips." : "Each declaration and correction is kept. A manager's entry needs a reason; none can go into a locked pay period."}
+          />
+          {canEdit && !own && pickShops.length > 0 && (
+            <div className="px-4 py-3">
+              <DeclareCashTips shops={pickShops} today={today < period.end ? today : period.end} attestation={tipRules.attestation} staffId={staffId} />
+            </div>
+          )}
+          {decls.length > 0 && <DeclarationList rows={decls} shops={pickShops} today={today} attestation={tipRules.attestation} staffId={canEdit && !own ? staffId : undefined} />}
         </Card>
       )}
       {canEdit && !own && who?.pin && pickShops[0] && (

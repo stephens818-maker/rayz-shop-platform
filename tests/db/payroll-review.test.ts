@@ -5,6 +5,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { Mods, actor, loadModules } from "./setup";
+import { signInAs } from "./session";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", async () => (await import("./session")).headersMock);
@@ -15,6 +16,7 @@ let tl: typeof import("@/server/tips/ledger");
 let run: typeof import("@/server/payroll/run");
 let dec: typeof import("@/server/tips/declarations");
 let reassign: typeof import("@/server/reassign");
+let myTips: typeof import("@/app/admin/my-tips/actions");
 let today: string;
 
 beforeAll(async () => {
@@ -23,6 +25,7 @@ beforeAll(async () => {
   run = await import("@/server/payroll/run");
   dec = await import("@/server/tips/declarations");
   reassign = await import("@/server/reassign");
+  myTips = await import("@/app/admin/my-tips/actions");
   today = m.time.todayLocal();
   await m.db.db
     .update(m.schema.shops)
@@ -192,6 +195,28 @@ describe("SB-C3: cash tip declarations", () => {
     await expect(m.db.db.delete(s().tipDeclarations).where(eq(s().tipDeclarations.id, fixed.id))).rejects.toThrow();
     const audits = await m.db.db.select().from(s().auditLog).where(m.drizzle.inArray(s().auditLog.entityId, [d.id, fixed.id]));
     expect(audits.map((a) => a.action).sort()).toEqual(["tips.declaration_correct", "tips.declare"]);
+  });
+
+  it("on the web: a barber declares their own; a manager enters someone else's with a reason, never their own", async () => {
+    const { shop: sh, b } = await barberAt("moline", 2);
+    const mgr = (await m.db.db.query.staff.findFirst({ where: eq(s().staff.email, "manager.moline@rayz.test") }))!;
+    const day = today;
+    onTestFinished(() => signInAs(null));
+
+    await signInAs(b.id);
+    expect(await myTips.declareCashTipsAction({ shopId: sh.id, businessDate: day, amountCents: 1500, attest: false })).toMatchObject({ ok: false, error: expect.stringMatching(/Check the box/) });
+    const mine = await myTips.declareCashTipsAction({ shopId: sh.id, businessDate: day, amountCents: 1500, attest: true });
+    expect(mine).toMatchObject({ ok: true });
+    expect(await myTips.managerDeclareAction({ staffId: b.id, shopId: sh.id, businessDate: day, amountCents: 1500, attest: true, reason: "x" })).toMatchObject({ ok: false });
+
+    await signInAs(mgr.id);
+    expect(await myTips.managerDeclareAction({ staffId: mgr.id, shopId: sh.id, businessDate: day, amountCents: 900, attest: true, reason: "Mine" })).toMatchObject({ ok: false, error: expect.stringMatching(/another manager/) });
+    expect(await myTips.managerDeclareAction({ staffId: b.id, shopId: sh.id, businessDate: day, amountCents: 1700, attest: false })).toMatchObject({ ok: false, error: expect.stringMatching(/Say why/) });
+    const fixed = await myTips.managerDeclareAction({ staffId: b.id, shopId: sh.id, businessDate: day, amountCents: 1700, attest: false, replacesId: (mine as { data: { id: string } }).data.id, reason: "Recounted at close" });
+    expect(fixed).toMatchObject({ ok: true });
+    const [row] = await m.db.db.select().from(s().tipDeclarations).where(eq(s().tipDeclarations.id, (fixed as { data: { id: string } }).data.id));
+    expect(row).toMatchObject({ source: "manager", createdBy: mgr.id, amountCents: 1700, attestation: expect.stringMatching(/^Entered by a manager: Recounted/) });
+    expect((await dec.declaredTipsBetween([sh.id], day, day)).get(`${b.id}|${sh.id}`)).toBe(1700);
   });
 });
 

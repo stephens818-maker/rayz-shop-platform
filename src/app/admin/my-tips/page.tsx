@@ -14,7 +14,10 @@ import { guardPage } from "@/server/auth/staff";
 import { accountDestination, staffAccount, staffAccountState } from "@/server/tips/accounts";
 import { myTips, shopTipConfigs } from "@/server/tips/ledger";
 import { tipOverrides } from "@/server/compensation";
+import { ordinal } from "@/domain/tip-declarations";
+import { myDeclarations } from "@/server/tips/declarations";
 import { PAYOUT_STATUS_TONE } from "../tips/labels";
+import { DeclarationList, DeclareCashTips } from "./declare";
 
 export const metadata: Metadata = { title: "My tips" };
 
@@ -31,7 +34,7 @@ export default async function MyTipsPage({ searchParams }: { searchParams: Promi
   const shopRows = assigned.length ? await db.select({ id: shops.id, name: shops.name }).from(shops).where(and(inArray(shops.id, assigned), ne(shops.status, "archived"))) : [];
   if (!shopRows.length) return <Empty title="You aren't on a shop's team yet">Ask a manager to add you to a shop.</Empty>;
   const today = todayLocal();
-  const [t, acct] = await Promise.all([myTips(me, shopRows.map((s) => s.id), today), staffAccount(me)]);
+  const [t, acct, declared] = await Promise.all([myTips(me, shopRows.map((s) => s.id), today), staffAccount(me), myDeclarations(me, addDays(today, -62), today)]);
   const shopName = new Map(shopRows.map((s) => [s.id, s.name]));
   const settingsOf = new Map(t.perShop.map((s) => [s.shopId, s.settings]));
   const state = staffAccountState(acct);
@@ -65,6 +68,30 @@ export default async function MyTipsPage({ searchParams }: { searchParams: Promi
           {formatCents(t.owed.cents)} in approved tips is owed to you. Direct payouts aren&rsquo;t on yet, so it&rsquo;s paid with your paycheck at the pay period&rsquo;s cutoff unless it&rsquo;s sent to
           Stripe first. It&rsquo;s never paid twice.
         </Notice>
+      )}
+      {declared.rules.enabled && (
+        <Card>
+          <CardHeader
+            title="Cash tips you were handed"
+            subtitle={`Cash tips that weren't rung up on a ticket go on your W-2, so declare them${declared.rules.atClockOut ? " when you clock out, or here" : ""}: each month's close on the ${ordinal(declared.rules.lockDay)} of the next.`}
+          />
+          <div className="space-y-3 px-4 py-3">
+            {declared.reminder && (
+              <Notice tone="amber">
+                You haven&apos;t declared cash tips for {formatDate(`${declared.reminder.month}-01`, "MMMM yyyy")}. Declare them (even $0) by {formatDate(declared.reminder.closesOn, "MMM d")}.
+              </Notice>
+            )}
+            <DeclareCashTips shops={shopRows} today={today} attestation={declared.rules.attestation} />
+          </div>
+          {declared.declarations.length > 0 && (
+            <DeclarationList
+              rows={declared.declarations}
+              shops={shopRows}
+              today={today}
+              attestation={declared.rules.attestation}
+            />
+          )}
+        </Card>
       )}
       <Card>
         <CardHeader

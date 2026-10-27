@@ -1,12 +1,14 @@
 import "server-only";
 import { z } from "zod";
 import { body, json, options, query, route } from "@/server/api";
-import { can, canAny } from "@/server/auth/staff";
+import { addDays, todayLocal } from "@/lib/time";
+import { assertShopAccess, can, canAny } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
 import { answerPayoutCutover, myPayoutCutover } from "@/server/payout-cutover";
 import { loadNotificationPrefs, saveNotificationPrefs } from "@/server/staff-settings";
 import { requireInTenant } from "@/server/tenant";
 import { clockState } from "@/server/time-clock";
+import { declareCashTips, myDeclarations } from "@/server/tips/declarations";
 import { assertStripePayouts } from "@/server/tips/payout-model";
 import { refreshStaffTokens, requestWhere, staffCodeLogin, staffLogout, staffPasswordLogin } from "./auth";
 import { block, book, move, myCalendar, openings, runningLate, seesEveryColumn, setStatus, unblock } from "./calendar";
@@ -439,6 +441,20 @@ const TIPS = { perms: "tips.own", person: true, message: "You can't see tips" } 
 export const getTips = staffRoute(TIPS, async (req, ctx) => {
   const q = query(req, S.TipsQuery);
   return json(await myTipsView(ctx, q.days ?? 14));
+});
+
+/** GET /tips/declarations */
+export const getTipDeclarations = staffRoute(TIPS, async (req, ctx) => {
+  const q = query(req, S.DeclarationsQuery);
+  return json(await myDeclarations(ctx.staff.id, q.from ?? addDays(todayLocal(), -62)));
+});
+
+/** POST /tips/declarations: cash tips they were handed (SB-C3), or a correction of one. */
+export const postTipDeclaration = staffRoute(TIPS, async (req, ctx) => {
+  const v = await body(req, S.DeclareBody);
+  assertShopAccess(ctx, v.shopId);
+  const d = await declareCashTips({ staffId: ctx.staff.id, shopId: v.shopId, businessDate: v.businessDate, amountCents: v.amountCents, attested: v.attest, replacesId: v.replacesId ?? null, reason: v.reason ?? null, source: "staff_app", actor: ctx.actor });
+  return json({ id: d.id, businessDate: d.businessDate, amountCents: d.amountCents, replacesId: d.replacesId }, 201);
 });
 
 /** GET /payouts */

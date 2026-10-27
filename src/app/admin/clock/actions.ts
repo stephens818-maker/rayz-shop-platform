@@ -6,11 +6,12 @@ import { z } from "zod";
 import QRCode from "qrcode";
 import { clientIp } from "@/lib/client-ip";
 import { safe } from "@/server/action";
-import { authorize } from "@/server/auth/staff";
+import { authorize, can } from "@/server/auth/staff";
 import { clockProofUrl, clockQrCode } from "@/server/clock-codes";
 import { type Actor } from "@/server/audit";
 import { forbidden } from "@/server/errors";
 import { type Welcome, clockInWelcome } from "@/server/milestones/day";
+import { declareAtClockOut } from "@/server/tips/declarations";
 import {
   DEVICE_COOKIE,
   checkPin,
@@ -25,7 +26,10 @@ import {
   type PunchResult,
 } from "@/server/time-clock";
 
-export type PunchReply = PunchResult & { welcome?: Welcome | null };
+export type PunchReply = PunchResult & {
+  welcome?: Welcome | null;
+  cashTips?: Awaited<ReturnType<typeof declareAtClockOut>>;
+};
 
 /** Clocking in is when they get their congratulations. */
 async function withWelcome(
@@ -80,6 +84,8 @@ export async function punchAction(
     confirmTimeOff?: boolean;
     /** The front-desk QR code or NFC tag from the address this page was opened with. */
     proof?: { qr?: string; tag?: string };
+    /** Clocking out: today's cash tips, declared with the attestation. */
+    cashTips?: { cents: number; attest: boolean } | null;
   } & BreakPlanInput,
 ) {
   return safe<PunchReply>(async () => {
@@ -92,6 +98,7 @@ export async function punchAction(
         photo: Photo,
         confirmTimeOff: z.boolean().optional(),
         proof: z.object({ qr: z.string().max(64).optional(), tag: z.string().max(64).optional() }).optional(),
+        cashTips: z.object({ cents: z.number().int().min(0).max(1_000_000), attest: z.boolean() }).nullish(),
         ...BreakPlan,
       })
       .parse(input);
@@ -115,7 +122,10 @@ export async function punchAction(
       actor: ctx.actor,
     });
     refresh();
-    return withWelcome(r, ctx.staff.id, ctx.actor, "clock");
+    const reply = await withWelcome(r, ctx.staff.id, ctx.actor, "clock");
+    if (r.kind !== "done" || r.type !== "out" || !v.cashTips || !can(ctx, "tips.own")) return reply;
+    revalidatePath("/admin/my-tips");
+    return { ...reply, cashTips: await declareAtClockOut({ staffId: ctx.staff.id, shopId: v.shopId, cents: v.cashTips.cents, attested: v.cashTips.attest, actor: ctx.actor }) };
   });
 }
 

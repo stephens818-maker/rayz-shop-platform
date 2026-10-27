@@ -47,6 +47,14 @@ const Proof = z
   .describe("The qr or tag from the front-desk QR code's or the NFC sticker's link (/admin/clock?shop=…&qr=… or &tag=…)");
 const Photo = z.string().max(400_000).nullish().describe("A data: URL (jpeg, png or webp) where the shop asks for a punch photo; never face-matched");
 
+const CashTips = z
+  .object({
+    cents: z.number().int().min(0).max(1_000_000).describe("Cash tips handed to them today that weren't rung up on a ticket; 0 is a declaration too"),
+    attest: z.literal(true).describe("They checked GET /clock cashTips.attestation"),
+  })
+  .optional()
+  .describe("Clocking out only, where GET /clock has cashTips: declares today's cash tips at the shop (SB-C3)");
+
 export const PunchBody = z.object({
   shopId: z.uuid(),
   type: z.enum(["in", "out"]),
@@ -54,6 +62,7 @@ export const PunchBody = z.object({
   gps: Gps,
   photo: Photo,
   confirmTimeOff: z.boolean().optional().describe("Clock in anyway during time off, after the confirm reply"),
+  cashTips: CashTips,
 });
 
 export const ClockInOutBody = PunchBody.omit({ type: true });
@@ -79,6 +88,16 @@ export const KioskPunchBody = KioskStatusBody.extend({
   confirmTimeOff: z.boolean().optional(),
   breakReasonId: z.uuid().nullish(),
   plannedMin: z.number().int().min(5).max(240).nullish(),
+});
+
+export const DeclarationsQuery = z.object({ from: DateStr.optional().describe("62 days ago when left out") });
+export const DeclareBody = z.object({
+  shopId: z.uuid(),
+  businessDate: DateStr.describe("The day they got the tips; not in the future"),
+  amountCents: z.number().int().min(0).max(1_000_000),
+  attest: z.boolean().describe("They checked the attestation from GET /tips/declarations rules"),
+  replacesId: z.uuid().nullish().describe("Correcting one of their declarations: same shop and day"),
+  reason: z.string().trim().max(300).nullish().describe("Required with replacesId"),
 });
 
 export const TipsQuery = z.object({ days: z.coerce.number().int().min(1).max(60).optional().describe("History days, 1 to 60; 14 when left out") });

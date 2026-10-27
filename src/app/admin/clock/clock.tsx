@@ -257,9 +257,12 @@ export function ClockPanel({
   defaultShopId,
   breakReasons,
   proof,
+  cashTips,
 }: {
   /** Opened from the front-desk QR code or the shop's NFC tag. */
   proof?: { shopId: string; qr?: string; tag?: string } | null;
+  /** Ask for today's cash tips at clock-out, with this attestation. */
+  cashTips?: { attestation: string } | null;
   shops: ClockShop[];
   state: "off" | "working" | "on_break";
   shiftShopId: string | null;
@@ -280,13 +283,22 @@ export function ClockPanel({
   const [done, setDone] = useState<Done | null>(null);
   const [welcome, setWelcome] = useState<Welcome | null>(null);
   const [step, setStep] = useState<string | null>(null);
+  const [tips, setTips] = useState("");
+  const [attest, setAttest] = useState(false);
+  const [tipNote, setTipNote] = useState<{ tone: "green" | "amber"; text: string } | null>(null);
   const [pending, start] = useTransition();
   const shop = shops.find((s) => s.id === shopId);
+  const tipCents = tips.trim() === "" ? null : Math.round(Number(tips) * 100);
+  const tipProblem =
+    tipCents === null ? null : !Number.isFinite(tipCents) || tipCents < 0 || tipCents > 1_000_000 ? "Enter cash tips from $0 to $10,000." : !attest ? "Check the box to declare your cash tips." : null;
 
   const go = (type: PunchType, confirmTimeOff = false) =>
     start(async () => {
       setError(null);
       setDone(null);
+      setTipNote(null);
+      const declaring = type === "out" && cashTips && tipCents !== null;
+      if (declaring && tipProblem) return setError(tipProblem);
       let gps: Gps | null = null;
       if (shop?.gps) {
         setStep("Getting your location…");
@@ -301,12 +313,17 @@ export function ClockPanel({
         confirmTimeOff,
         ...(proof?.shopId === shopId ? { proof: { qr: proof.qr, tag: proof.tag } } : {}),
         ...planOf(type, breakReasonId, planned),
+        cashTips: declaring ? { cents: tipCents, attest } : null,
       });
       if (!r.ok) return setError(r.error);
       if (r.data.kind === "confirm") {
         if (window.confirm(r.data.message)) go(type, true);
         return;
       }
+      if (r.data.cashTips?.declared) setTipNote({ tone: "green", text: `Declared $${(r.data.cashTips.declared.amountCents / 100).toFixed(2)} of cash tips for today.` });
+      else if (r.data.cashTips?.error) setTipNote({ tone: "amber", text: `Your cash tips weren't declared: ${r.data.cashTips.error} You can declare them on My tips.` });
+      setTips("");
+      setAttest(false);
       setDone(r.data);
       setWelcome(r.data.welcome ?? null);
       setPhoto(null);
@@ -374,6 +391,19 @@ export function ClockPanel({
           }}
         />
       )}
+      {cashTips && next.includes("out") && (
+        <fieldset className="space-y-2 rounded-lg border border-zinc-200 p-3 text-sm">
+          <legend className="px-1 text-xs font-medium text-zinc-600">Cash tips today (when you clock out)</legend>
+          <label className="block">
+            <span className="mb-1 block text-xs text-zinc-500">Cash handed to you that wasn&apos;t rung up on a ticket. Leave it empty to declare later on My tips.</span>
+            <Input inputMode="decimal" placeholder="0.00" value={tips} onChange={(e) => setTips(e.target.value)} aria-label="Cash tips today" className="w-32" />
+          </label>
+          <label className="flex items-start gap-2">
+            <input type="checkbox" checked={attest} onChange={(e) => setAttest(e.target.checked)} className="mt-0.5" />
+            <span>{cashTips.attestation}</span>
+          </label>
+        </fieldset>
+      )}
       <div className="grid grid-cols-2 gap-3">
         {next.map((t) => (
           <Button
@@ -390,6 +420,7 @@ export function ClockPanel({
       {step && <p className="text-sm text-zinc-500">{step}</p>}
       {error && <Notice tone="red">{error}</Notice>}
       {done && <Result r={done} />}
+      {tipNote && <Notice tone={tipNote.tone}>{tipNote.text}</Notice>}
     </Card>
   );
 }

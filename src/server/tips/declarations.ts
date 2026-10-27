@@ -85,6 +85,17 @@ export async function declareCashTips(i: DeclareInput, now = new Date()) {
   });
 }
 
+/** Today's cash tips declared as they clock out. Never fails the punch: a declaration that can't be taken says why. */
+export async function declareAtClockOut(i: { staffId: string; shopId: string; cents: number; attested: boolean; actor: Actor; source?: "clock_out" | "web" }, now = new Date()) {
+  try {
+    const d = await declareCashTips({ staffId: i.staffId, shopId: i.shopId, businessDate: todayLocal(now), amountCents: i.cents, attested: i.attested, source: i.source ?? "clock_out", actor: i.actor }, now);
+    return { declared: { id: d.id, businessDate: d.businessDate, amountCents: d.amountCents }, error: null };
+  } catch (e) {
+    if (e instanceof AppError) return { declared: null, error: e.message };
+    throw e;
+  }
+}
+
 /** An employee's declarations from a day on, newest first, with which are current and whether each can still be corrected. */
 export async function myDeclarations(staffId: string, from: LocalDate, today: LocalDate = todayLocal()) {
   const rules = await declarationRules();

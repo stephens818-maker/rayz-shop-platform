@@ -12,6 +12,7 @@ import { clockProofUrl, clockQrCode } from "@/server/clock-codes";
 import { forbidden, notFound } from "@/server/errors";
 import { clockInWelcome } from "@/server/milestones/day";
 import { PunchResult, checkPin, clockState, deviceFromToken, punch, registerDevice, setPin, shopClocks } from "@/server/time-clock";
+import { declarationRules, declareAtClockOut } from "@/server/tips/declarations";
 import { kioskQueue } from "./front";
 import type { StaffAppContext } from "./http";
 
@@ -47,7 +48,7 @@ const stateView = (s: Awaited<ReturnType<typeof clockState>>) => ({
 export async function clockOverview(ctx: StaffAppContext, now = new Date()) {
   const me = ctx.staff.id;
   const { team, open } = await myClockShops(ctx);
-  const [state, clocks, today, [mine], reasons] = await Promise.all([
+  const [state, clocks, today, [mine], reasons, tipRules] = await Promise.all([
     clockState(me, now),
     shopClocks(open),
     db
@@ -58,6 +59,7 @@ export async function clockOverview(ctx: StaffAppContext, now = new Date()) {
       .orderBy(asc(timePunches.at)),
     db.select({ pin: staff.clockPinHash, opensEarly: staff.clockOpensEarly }).from(staff).where(eq(staff.id, me)),
     breakReasons(ctx.currentShopId),
+    declarationRules(),
   ]);
   return {
     ...stateView(state),
@@ -67,6 +69,8 @@ export async function clockOverview(ctx: StaffAppContext, now = new Date()) {
     hasPin: !!mine?.pin,
     today: today.map((p) => ({ id: p.id, type: p.type, at: p.at.toISOString(), shopId: p.shopId, shop: p.shop, method: p.method, flags: p.flags })),
     canTimesheet: can(ctx, "timesheet.own"),
+    /** Ask for today's cash tips when they clock out (send them as cashTips on the punch). */
+    cashTips: tipRules.enabled && tipRules.atClockOut && can(ctx, "tips.own") ? { attestation: tipRules.attestation } : null,
   };
 }
 
@@ -79,6 +83,7 @@ export interface AppPunchInput {
   confirmTimeOff?: boolean;
   breakReasonId?: string | null;
   plannedMin?: number | null;
+  cashTips?: { cents: number; attest: boolean };
 }
 
 const resultView = (r: PunchResult, welcome: Awaited<ReturnType<typeof clockInWelcome>> = null) =>
@@ -102,7 +107,10 @@ export async function appPunch(ctx: StaffAppContext, req: Request, v: AppPunchIn
     plannedMin: v.plannedMin ?? null,
     actor: { ...ctx.actor, label: `${ctx.actor.label} (staff app)` },
   });
-  return resultView(r, r.kind === "done" && r.type === "in" ? await clockInWelcome(ctx.staff.id, ctx.actor, "clock") : null);
+  const view = resultView(r, r.kind === "done" && r.type === "in" ? await clockInWelcome(ctx.staff.id, ctx.actor, "clock") : null);
+  // The punch stands either way; a declaration that can't be taken comes back as cashTips.error.
+  if (r.kind !== "done" || r.type !== "out" || !v.cashTips || !can(ctx, "tips.own")) return view;
+  return { ...view, cashTips: await declareAtClockOut({ staffId: ctx.staff.id, shopId: v.shopId, cents: v.cashTips.cents, attested: v.cashTips.attest, actor: ctx.actor }) };
 }
 
 export async function setMyPin(ctx: StaffAppContext, pin: string) {

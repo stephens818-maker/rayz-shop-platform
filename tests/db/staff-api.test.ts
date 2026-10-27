@@ -331,10 +331,39 @@ describe("the time clock", () => {
     expect((await call("GET", "clock", { token: t.accessToken })).json.state).toBe("on_break");
     expect((await call("POST", "clock/breaks/end", { token: t.accessToken, body: { proof: { tag: "forged-tag-0000000000" } } })).status).toBe(403);
     expect((await call("POST", "clock/breaks/end", { token: t.accessToken, body: { proof: { tag } } })).json.type).toBe("break_end");
-    expect((await call("POST", "clock/punch", { token: t.accessToken, body: { shopId: shop.coralville, type: "out", proof: { tag } } })).json.type).toBe("out");
+    const attestation = (await call("GET", "clock", { token: t.accessToken })).json.cashTips?.attestation;
+    expect(attestation).toMatch(/\w/);
+    expect((await call("POST", "clock/punch", { token: t.accessToken, body: { shopId: shop.coralville, type: "out", proof: { tag }, cashTips: { cents: 2500, attest: false } } })).status).toBe(400);
+    const out = await call("POST", "clock/punch", { token: t.accessToken, body: { shopId: shop.coralville, type: "out", proof: { tag }, cashTips: { cents: 2500, attest: true } } });
+    expect(out.json).toMatchObject({ type: "out", cashTips: { declared: { businessDate: today, amountCents: 2500 }, error: null } });
+    const [d] = await m.db.db.select().from(S().tipDeclarations).where(eq(S().tipDeclarations.id, out.json.cashTips.declared.id));
+    expect(d).toMatchObject({ staffId: ids.makenna, shopId: shop.coralville, source: "clock_out", attestation });
 
     const punches = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.id, inn.json.punchId));
     expect(punches[0]).toMatchObject({ method: "qr", source: "self" });
+  });
+
+  it("cash tip declarations: list, declare, correct with a reason; only at your own shops; no attestation, no declaration", async () => {
+    const t = await login("makenna@rayz.test");
+    const day = m.time.addDays(today, -1);
+    expect((await call("POST", "tips/declarations", { token: t.accessToken, body: { shopId: shop.coralville, businessDate: day, amountCents: 1800, attest: false } })).status).toBe(400);
+    const other = Object.entries(shop).find(([slug]) => slug !== "coralville" && slug !== "moline")![1];
+    const away = await m.db.db.select().from(S().staffShops).where(m.drizzle.and(eq(S().staffShops.staffId, ids.makenna), eq(S().staffShops.shopId, other)));
+    if (!away.length) expect((await call("POST", "tips/declarations", { token: t.accessToken, body: { shopId: other, businessDate: day, amountCents: 1800, attest: true } })).status).toBe(403);
+
+    const made = await call("POST", "tips/declarations", { token: t.accessToken, body: { shopId: shop.coralville, businessDate: day, amountCents: 1800, attest: true } });
+    expect(made.status, JSON.stringify(made.json)).toBe(201);
+    expect(made.json).toMatchObject({ amountCents: 1800, businessDate: day, replacesId: null });
+    expect((await call("POST", "tips/declarations", { token: t.accessToken, body: { shopId: shop.coralville, businessDate: day, amountCents: 2000, attest: true, replacesId: made.json.id } })).status).toBe(400);
+    const fixed = await call("POST", "tips/declarations", { token: t.accessToken, body: { shopId: shop.coralville, businessDate: day, amountCents: 2000, attest: true, replacesId: made.json.id, reason: "Found another $2" } });
+    expect(fixed.status).toBe(201);
+
+    const list = await call("GET", "tips/declarations", { token: t.accessToken });
+    expect(list.status).toBe(200);
+    expect(list.json.rules).toMatchObject({ enabled: true, attestation: expect.any(String) });
+    const mine = list.json.declarations.filter((x: { businessDate: string }) => x.businessDate === day);
+    expect(mine.map((x: { id: string; current: boolean }) => [x.id, x.current])).toEqual(expect.arrayContaining([[made.json.id, false], [fixed.json.id, true]]));
+    expect(JSON.stringify(list.json)).not.toMatch(/staffId|createdBy/);
   });
 
   it("the front-desk tablet punches anyone with their own PIN, once a manager registers it", async () => {

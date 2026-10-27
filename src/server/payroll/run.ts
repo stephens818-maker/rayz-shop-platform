@@ -36,7 +36,7 @@ import { lockPayrollTips, payrollTipSplit } from "@/server/tips/payouts";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { isolvedTimecardExporter, type PayrollExporter } from "./export";
 import { checkPayrollTips, type TipCheck } from "./tip-reconcile";
-import { DEFAULT_CALENDAR, ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type PayGroup } from "./groups";
+import { ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type PayGroup } from "./groups";
 
 export { DEFAULT_CALENDAR, ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type PayGroup } from "./groups";
 

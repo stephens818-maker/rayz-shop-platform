@@ -10,6 +10,7 @@ import { workShopIds } from "@/server/auth/access";
 import { can, guardPage, openShops } from "@/server/auth/staff";
 import { breakReasons } from "@/server/block-reasons";
 import { clockState, shopClocks } from "@/server/time-clock";
+import { declarationRules } from "@/server/tips/declarations";
 import { ClockPanel, OpensEarlyForm, PinForm, type ClockShop } from "./clock";
 
 export const metadata: Metadata = { title: "Time clock" };
@@ -25,7 +26,7 @@ export default async function ClockPage({ searchParams }: { searchParams: Promis
   const ids = [...new Set([...team, ...openShops(ctx).map((s) => s.id)])];
   const open = ids.length ? (await db.select({ id: shops.id }).from(shops).where(and(inArray(shops.id, ids), ne(shops.status, "archived")))).map((s) => s.id) : [];
   if (!open.length) return <Empty title="You aren't on a shop's team yet">Ask a manager to add you to a shop.</Empty>;
-  const [state, clocks, today, [mine], reasons] = await Promise.all([
+  const [state, clocks, today, [mine], reasons, tipRules] = await Promise.all([
     clockState(me, now),
     shopClocks(open),
     db
@@ -36,6 +37,7 @@ export default async function ClockPage({ searchParams }: { searchParams: Promis
       .orderBy(asc(timePunches.at)),
     db.select({ pin: staff.clockPinHash, opensEarly: staff.clockOpensEarly }).from(staff).where(eq(staff.id, me)),
     breakReasons(ctx.currentShopId),
+    declarationRules(),
   ]);
   const earlyShops = clocks.filter((c) => c.settings.openEarly && team.includes(c.id)).map((c) => c.name);
   const primary = team.find((s) => open.includes(s)) ?? null;
@@ -70,6 +72,7 @@ export default async function ClockPage({ searchParams }: { searchParams: Promis
         defaultShopId={primary}
         breakReasons={reasons}
         proof={proof}
+        cashTips={tipRules.enabled && tipRules.atClockOut && can(ctx, "tips.own") ? { attestation: tipRules.attestation } : null}
       />
       <Card>
         <CardHeader title="Today" subtitle={today.length ? undefined : "No punches yet today."} />
