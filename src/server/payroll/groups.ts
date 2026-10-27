@@ -4,6 +4,7 @@ import { payGroups, payrollRuns, shops, timesheetLocks } from "@/db/schema";
 import { periodOf, type PayCalendar } from "@/domain/payroll/calendar";
 import type { PayrollSettings } from "@/domain/payroll/calc";
 import { settingAt } from "../brand-sync/settings";
+import { stripePayoutsOn } from "../tips/payout-model";
 import type { LocalDate } from "@/lib/time";
 import { TEMPLATE_TABS } from "./export";
 
@@ -59,7 +60,11 @@ export async function ensurePayGroups(): Promise<PayGroup[]> {
 }
 
 /** The payroll rules (the payroll setting): one for the whole brand. */
-export const loadSettings = (): Promise<PayrollSettings> => settingAt<PayrollSettings>("payroll");
+/** With direct Stripe payouts on, the file always marks tips already paid out, whatever was saved before. */
+export async function loadSettings(): Promise<PayrollSettings> {
+  const s = await settingAt<PayrollSettings>("payroll");
+  return stripePayoutsOn() && !s.markPaidTips ? { ...s, markPaidTips: true } : s;
+}
 
 /** Whether a shop's pay period holding `date` is locked; time and overrides in it can't change then. */
 export async function isLockedOn(shopId: string, date: LocalDate): Promise<boolean> {

@@ -4,7 +4,7 @@ import { Badge, Card, CardHeader, Notice, PageHeader, cx } from "@/components/ui
 import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, fmtMoney, type Line, type Totals } from "@/domain/payroll/calc";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
-import { buildPayroll, periodChoices, type BlockView, type PayrollView } from "@/server/payroll/run";
+import { buildPayroll, periodChoices, periodKey, type BlockView, type PayrollView } from "@/server/payroll/run";
 import { LockButton, OverrideForm } from "./client";
 
 export const metadata: Metadata = { title: "Payroll report" };
@@ -127,7 +127,7 @@ function Report({ view, canRun }: { view: PayrollView; canRun: boolean }) {
         </Notice>
       ) : view.mismatches.length ? (
         <Card>
-          <CardHeader title="Totals don't reconcile: approve and lock is blocked" subtitle="Every total has to equal the sum of its rows, each shop's export has to add up to the report, and the Locations totals to the shops. Tolerance: $0.00." />
+          <CardHeader title="Totals don't reconcile: approve and lock is blocked" subtitle={`Every total has to equal the sum of its rows, each shop's export has to add up to the report, and the Locations totals to the shops.${view.tips.mismatches.length ? " Each employee's tips in the file have to match their tips and payouts (the W-2 tip check)." : ""} Tolerance: $0.00.`} />
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-red-50 text-left text-xs text-red-800">
@@ -160,6 +160,8 @@ function Report({ view, canRun }: { view: PayrollView; canRun: boolean }) {
         </Notice>
       )}
 
+      <TipCheckNotice view={view} />
+
       <Locations view={view} />
 
       {view.anomalies.length > 0 && (
@@ -187,6 +189,28 @@ function Report({ view, canRun }: { view: PayrollView; canRun: boolean }) {
         <ShopBlockCard key={b.shopId} b={b} view={view} canRun={canRun} />
       ))}
     </div>
+  );
+}
+
+function TipCheckNotice({ view }: { view: PayrollView }) {
+  const { rows } = view.tips;
+  if (!rows.length) return null;
+  const paid = rows.reduce((a, r) => a + r.paidCents, 0);
+  const link = (
+    <Link href={`/admin/payroll/tips?period=${periodKey(view.start, view.end)}`} className="font-medium underline">
+      Payroll tip report
+    </Link>
+  );
+  const off = rows.filter((r) => r.problems.length).length;
+  return off ? (
+    <Notice tone="amber">
+      W-2 tip check: {off} employee{off === 1 ? "'s" : "s'"} tips in the iSolved file don&apos;t match their tips and payouts. {link}.
+    </Notice>
+  ) : (
+    <Notice tone="green">
+      W-2 tip check: all {rows.length} employee{rows.length === 1 ? "'s" : "s'"} tips match to the cent. Tips paid straight to them ({fmtMoney(paid / 100)} paid out so far) go to iSolved as tips
+      already received, so payroll includes them in W-2 wages and withholds on them. {link}.
+    </Notice>
   );
 }
 

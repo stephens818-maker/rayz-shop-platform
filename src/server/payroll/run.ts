@@ -27,7 +27,9 @@ import { guaranteeTopUps, exportExtras } from "@/domain/compensation";
 import { loadCompensationSettings, payrollPlans, setupRates } from "@/server/compensation";
 import { payrollSalesBetween } from "@/server/reports";
 import { lockPayrollTips, payrollTipSplit } from "@/server/tips/payouts";
+import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { isolvedTimecardExporter, type PayrollExporter } from "./export";
+import { checkPayrollTips, type TipCheck } from "./tip-reconcile";
 import { DEFAULT_CALENDAR, ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type PayGroup } from "./groups";
 
 export { DEFAULT_CALENDAR, ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type PayGroup } from "./groups";
@@ -88,7 +90,10 @@ export interface PayrollView {
   settings: PayrollSettings;
   blocks: BlockView[];
   grand: Totals;
+  /** With direct Stripe payouts on, includes the tip check's differences at shops still open, so they block approve and lock. */
   mismatches: Mismatch[];
+  /** The W-2 tip check: each employee's tips against the iSolved file and their payouts, to the cent. */
+  tips: TipCheck;
   anomalies: Anomaly[];
   ft: Record<string, FtStatus>;
   weeks: Record<string, WeekBreakdown[]>;
@@ -253,6 +258,8 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
     };
   });
   const grandAndCheck = runs.length ? assembleFromBlocks(blocks) : { grand: live.grand, mismatches: live.mismatches };
+  const tips = await checkPayrollTips(blocks, start, end);
+  const tipGate = stripePayoutsOn() ? tips.mismatches.filter((m) => !blocks.find((b) => b.shopId === m.shopId)?.locked) : [];
 
   const ft: Record<string, FtStatus> = {};
   const weekly = new Map<string, Map<string, { worked: number; training: number; pto: number }>>();
@@ -278,7 +285,8 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
     settings,
     blocks,
     grand: grandAndCheck.grand,
-    mismatches: grandAndCheck.mismatches,
+    mismatches: [...grandAndCheck.mismatches, ...tipGate],
+    tips,
     anomalies: anomalies(blocks, settings),
     ft,
     weeks: weekBreakdowns(slices, staffIds, weeks, start, runShops, (id) => groupOf.get(id)?.shop ?? "Other shop"),

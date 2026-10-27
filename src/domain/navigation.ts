@@ -106,6 +106,7 @@ export const PAGE_ACCESS = {
   "/admin/notifications": ["notifications.view", "notifications.send"],
   "/admin/notifications/simulator": ["notifications.send"],
   "/admin/payroll/report": ["payroll.run", "payroll.approve"],
+  "/admin/payroll/tips": ["payroll.run", "payroll.approve"],
   "/admin/payroll/hours": ["payroll.run"],
   "/admin/payroll/setup": ["payroll.run"],
   "/admin/clock": ["timeclock.punch"],
@@ -210,6 +211,7 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
     items: [
       { href: "/admin/timesheets", label: "Timesheets" },
       { href: "/admin/payroll/report", label: "Payroll report" },
+      { href: "/admin/payroll/tips", label: "Payroll tip report" },
       { href: "/admin/tips", label: "Tip payouts" },
       { href: "/admin/tips/onboarding", label: "Payout onboarding" },
       { href: "/admin/tips/settings", label: "Tip payout settings" },

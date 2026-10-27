@@ -3,6 +3,7 @@ import { db, DBorTx } from "@/db";
 import { staff, tipLedger, tipPayoutPeriods, tipPayouts, type TipPayoutMethod, type TipPayoutStatus } from "@/db/schema";
 import { EXPORT_COLUMNS, extraFromOf, toCents, type ExportRow, type ExtraFrom, type Line, type Mismatch } from "@/domain/payroll/calc";
 import type { LocalDate } from "@/lib/time";
+import { toCsv } from "@/server/reports";
 import { recordMissingPayoutPeriods } from "@/server/tips/pay-periods";
 import { payrollTipSplit } from "@/server/tips/payouts";
 
@@ -190,10 +191,6 @@ export async function checkPayrollTips(blocks: readonly TipCheckBlock[], start: 
   return { rows, mismatches };
 }
 
-const csvCell = (v: string | number | null) => {
-  const s = v === null ? "" : String(v);
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
 const money = (c: number | null) => (c === null ? "" : (c / 100).toFixed(2));
 
 /**
@@ -259,5 +256,5 @@ export function tipCheckCsv(check: TipCheck, start: LocalDate, end: LocalDate): 
       ]),
     ),
   ];
-  return lines.map((l) => l.map(csvCell).join(",")).join("\n") + "\n";
+  return toCsv(lines[0] as string[], lines.slice(1));
 }
