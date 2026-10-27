@@ -9,7 +9,7 @@
 import Stripe from "stripe";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { TIP_DEPOSIT_CONSENT_VERSION } from "@/domain/tip-deposit-consent";
-import { Mods, actor, agreeToStripeDeposits, loadModules } from "./setup";
+import { Mods, actor, agreeToStripeDeposits, loadModules, lockHours } from "./setup";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", async () => (await import("./session")).headersMock);
@@ -214,6 +214,7 @@ describe("owed tips go through payroll at the cutoff, once (ST-C14), and the tip
     expect([col(gRow, "Company Code"), col(gRow, "Employer"), col(gRow, "EIN"), col(gRow, "Work State"), col(gRow, "Owed"), col(gRow, "Status")]).toEqual(["RZI01", "Ray'z Inc.", "EIN ••6789", "IL", "9.00", "Draft"]);
     expect(draft.body).not.toMatch(/123456789/);
 
+    await lockHours(period.start, period.end);
     expect(await run.approveAndLock(period.start, period.end, actor)).toMatchObject({ locked: expect.any(Number) });
     const after = await m.db.db.select().from(s().tipPayouts).where(m.drizzle.inArray(s().tipPayouts.id, held.map((p) => p.id)));
     expect(after.map((p) => [p.staffId, p.status])).toEqual(expect.arrayContaining([[g, "cancelled"], [mz, "cancelled"]]));

@@ -82,7 +82,7 @@ async function runsIn(scope: ReportScope): Promise<{ runs: PeriodRun[]; capped: 
   const sel = staffSelection(scope);
   const runs: PeriodRun[] = [];
   for (const ref of periods) {
-    const view = await buildPayroll(ref.start, ref.end);
+    const view = await buildPayroll(ref.start, ref.end, { clockChecks: false });
     if (!view) continue;
     const blocks = view.blocks.filter((b) => scope.shopIds.includes(b.shopId));
     if (!blocks.length) continue;
@@ -815,7 +815,7 @@ const dollars = (cents: number) => (cents / 100).toFixed(2);
  * beyond its last 4, or any account number.
  */
 export async function tipsPaidFile(start: LocalDate, end: LocalDate, shopIds: readonly string[]): Promise<{ fileName: string; body: string; status: TipsPaidStatus; rows: number } | null> {
-  const view = await buildPayroll(start, end);
+  const view = await buildPayroll(start, end, { clockChecks: false });
   if (!view) return null;
   const blocks = view.blocks.filter((b) => shopIds.includes(b.shopId));
   if (!blocks.length) return null;
@@ -1434,7 +1434,7 @@ export async function payrollIsolvedData(i: PayrollReportInput): Promise<ReportD
 
 /** One workbook for a pay period: a tab per shop (in the viewer's shops) in the iSolved layout, from the approved snapshot once locked. */
 export async function isolvedWorkbook(start: LocalDate, end: LocalDate, shopIds: readonly string[]): Promise<{ fileName: string; body: Buffer; status: ExportStatus; rows: number; shops: string[] } | null> {
-  const view = await buildPayroll(start, end);
+  const view = await buildPayroll(start, end, { clockChecks: false });
   if (!view) return null;
   const blocks = view.blocks.filter((b) => shopIds.includes(b.shopId));
   if (!blocks.length) return null;
@@ -1458,7 +1458,7 @@ const bad = (msg: string) => new AppError("bad_request", msg);
 
 /** Marks a pay period's iSolved file uploaded. Only once every shop is approved and locked and the tips reconcile to the cent. */
 export async function markIsolvedSent(start: LocalDate, end: LocalDate, actor: Actor, note: string | null): Promise<void> {
-  const view = await buildPayroll(start, end);
+  const view = await buildPayroll(start, end, { clockChecks: false });
   if (!view) throw bad("No shop has a pay period with those dates.");
   const why = blockedReason(view);
   if (why) throw bad(why);

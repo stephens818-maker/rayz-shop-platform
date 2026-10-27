@@ -5,7 +5,7 @@
  * the payroll-period tip report as a CSV.
  */
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
-import { Mods, actor, loadModules } from "./setup";
+import { Mods, actor, loadModules, lockHours } from "./setup";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", async () => (await import("./session")).headersMock);
@@ -155,6 +155,7 @@ describe("a locked pay period stays as it went to iSolved", () => {
     const q = await mine(batch.batchId, b.id);
     expect(q).toMatchObject({ status: "pending" });
 
+    await lockHours(prev.start, prev.end);
     expect(await run.approveAndLock(prev.start, prev.end, actor)).toMatchObject({ locked: expect.any(Number) });
     await tp.adjustPayout(q.id, 100, "One more tip left off a ticket", actor);
     const [last] = await m.db.db.select().from(s().tipLedger).where(eq(s().tipLedger.payoutId, q.id)).orderBy(m.drizzle.desc(s().tipLedger.createdAt)).limit(1);

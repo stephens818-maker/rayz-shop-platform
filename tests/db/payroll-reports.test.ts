@@ -10,7 +10,7 @@ import ExcelJS from "exceljs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ReportTable } from "@/domain/report-views";
 import type { IsolvedPeriod } from "@/server/payroll/reports";
-import { Mods, actor, loadModules } from "./setup";
+import { Mods, actor, loadModules, lockHours } from "./setup";
 import { open } from "./render";
 import { signInAs } from "./session";
 
@@ -365,6 +365,7 @@ describe("the iSolved export", () => {
   });
 
   it("goes approved once locked, then sent; can't be sent twice; undo needs a reason; every step audited", async () => {
+    await lockHours(fx.start, fx.end);
     expect(await run.approveAndLock(fx.start, fx.end, actor)).toMatchObject({ locked: expect.any(Number) });
     expect(await periodOf()).toMatchObject({ status: "approved", blocked: null });
 

@@ -6,7 +6,7 @@
 import Stripe from "stripe";
 import ExcelJS from "exceljs";
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
-import { Mods, actor, agreeToStripeDeposits, loadModules } from "./setup";
+import { Mods, actor, agreeToStripeDeposits, loadModules, lockHours } from "./setup";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", async () => (await import("./session")).headersMock);
@@ -548,6 +548,7 @@ describe("payroll export shows tips already paid", () => {
     expect([row(c.id)[2], row(c.id)[6], row(c.id)[7]]).toEqual([lc.tips, 0, lc.tips]);
     expect(v.mismatches, JSON.stringify(v.mismatches)).toEqual([]);
 
+    await lockHours(period.start, period.end);
     expect(await run.approveAndLock(period.start, period.end, actor)).toMatchObject({ locked: expect.any(Number) });
     const [locked] = await m.db.db.select().from(s().tipPayouts).where(and(eq(s().tipPayouts.staffId, a.id), eq(s().tipPayouts.shopId, sh.id), eq(s().tipPayouts.method, "payroll")));
     expect(locked).toMatchObject({ status: "paid", shopId: sh.id, grossCents: 800, netCents: 800, payrollPeriodStart: period.start });

@@ -39,6 +39,30 @@ export async function loadModules() {
 export type Mods = Awaited<ReturnType<typeof loadModules>>;
 export const actor = { staffId: null, label: "test" };
 
+/**
+ * The time clock's hours locked for the timesheet periods covering a pay period, as managers do once
+ * each timesheet is approved; payroll's approve and lock waits for it. Default: every shop whose pay
+ * group has that pay period.
+ */
+export async function lockHours(start: string, end: string, shopIds?: string[]) {
+  const { db } = await import("@/db");
+  const { timesheetLocks } = await import("@/db/schema");
+  const { periodFor } = await import("@/server/time-clock");
+  const { ensurePayGroups } = await import("@/server/payroll/groups");
+  const { periodStarting } = await import("@/domain/payroll/calendar");
+  const { addDays } = await import("@/lib/time");
+  const ids = shopIds ?? (await ensurePayGroups()).filter((g) => periodStarting(g.calendar, start)?.end === end).map((g) => g.shopId);
+  if (!ids.length) return;
+  for (let d = start; d <= end; ) {
+    const p = await periodFor(d);
+    await db
+      .insert(timesheetLocks)
+      .values(ids.map((shopId) => ({ shopId, periodStart: p.start, periodEnd: p.end })))
+      .onConflictDoNothing();
+    d = addDays(p.end, 1);
+  }
+}
+
 /** The employee agrees to today's Stripe tip deposit wording, as they would on My banking (ST-C17). */
 export async function agreeToStripeDeposits(staffId: string) {
   const { setDepositConsent } = await import("@/server/tips/accounts");

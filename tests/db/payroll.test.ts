@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import ExcelJS from "exceljs";
 import { DateTime } from "luxon";
 import { brandSettings } from "./brand";
-import { Mods, actor, loadModules } from "./setup";
+import { Mods, actor, loadModules, lockHours } from "./setup";
 import { signInAs } from "./session";
 
 vi.mock("server-only", () => ({}));
@@ -91,6 +91,7 @@ describe("payroll period", () => {
   it("locks every shop in the period, freezes hours and overrides, and serves the approved file with OT hours only", async () => {
     const owner = (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, "owner@rayz.test") }))!;
     await signInAs(owner.id);
+    await lockHours(START, END);
     const before = (await run.buildPayroll(START, END))!;
     expect(await actions.approveAndLockAction(START, END)).toEqual({ ok: true, data: before.blocks.length });
     expect(await run.approveAndLock(START, END, actor)).toEqual({ error: "This pay period is already locked." });

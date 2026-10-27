@@ -404,6 +404,12 @@ describe("full time / part time", () => {
     expect(payrollSettings(null)).toEqual(DEFAULT_PAYROLL_SETTINGS);
     expect(payrollSettings({ ftBasis: "nope", ftHoursPerWeek: -1, roundExport2dp: true })).toMatchObject({ ftBasis: "worked", ftHoursPerWeek: 32, roundExport2dp: true });
   });
+
+  it("hours come from the time clock unless the brand turns it off (Charles: the basic clock ships at launch)", () => {
+    expect(DEFAULT_PAYROLL_SETTINGS.hoursFromClock).toBe(true);
+    expect(payrollSettings({ hoursFromClock: "no" }).hoursFromClock).toBe(true);
+    expect(payrollSettings({ hoursFromClock: false }).hoursFromClock).toBe(false);
+  });
 });
 
 describe("payroll review (SB-C2, SB-C3, SB-I2)", () => {

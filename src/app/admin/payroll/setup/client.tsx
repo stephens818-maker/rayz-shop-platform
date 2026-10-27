@@ -43,6 +43,12 @@ export function SettingsForm({ initial, memoRequired }: { initial: PayrollSettin
         checked={v.roundExport2dp}
         onChange={(x) => setV({ ...v, roundExport2dp: x })}
       />
+      <Check
+        label="Hours come from the time clock: approve and lock waits for every shop's timesheets to be locked"
+        hint="Charles: the basic clock ships at launch. A shop's timesheets lock (Payroll → Timesheets) once each one is manager-approved with no missed punches. Off only for a period whose hours were typed in or imported."
+        checked={v.hoursFromClock}
+        onChange={(x) => setV({ ...v, hoursFromClock: x })}
+      />
       <div className="flex flex-wrap items-end gap-3 text-sm">
         <label>
           <span className="block text-xs text-zinc-500">Full time is more than (h/week)</span>

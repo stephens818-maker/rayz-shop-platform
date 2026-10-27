@@ -49,6 +49,12 @@ export interface PayrollSettings {
   cashTipsDeclaredHeader: string;
   declarations: TipDeclarationSettings;
   tipTax: TipTaxSettings;
+  /**
+   * The report's hours come from the time clock (Charles: the basic clock ships at launch). Payroll
+   * can't be approved until every shop's timesheets are locked for each day of its pay period, which
+   * in turn needs each one manager-approved with no missed punches. Off: hours typed in or imported.
+   */
+  hoursFromClock: boolean;
 }
 
 /** Employees declaring the cash tips handed to them (IRS: monthly, by the 10th of the next month, when $20 or more). */
@@ -107,6 +113,7 @@ export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
   cashTipsDeclaredHeader: "E_Cash Tips Declared_Dollars",
   declarations: { enabled: true, atClockOut: true, remindUntilDay: 9, lockDay: 10, attestation: DEFAULT_ATTESTATION },
   tipTax: { qualifiedTipsCode: "TP", overtimeCode: "TT", creditFrom: "2025-01-01", creditWageCentsPerHour: 725, ficaRate: 0.0765 },
+  hoursFromClock: true,
 };
 
 const header = (v: unknown, d: string) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 60) : d);
@@ -164,6 +171,7 @@ export function payrollSettings(raw: unknown): PayrollSettings {
       creditWageCentsPerHour: Math.round(num(tt.creditWageCentsPerHour, 0, 5000, d.tipTax.creditWageCentsPerHour)),
       ficaRate: num(tt.ficaRate, 0, 0.2, d.tipTax.ficaRate),
     },
+    hoursFromClock: bool(r.hoursFromClock, d.hoursFromClock),
   };
 }
 
@@ -714,9 +722,29 @@ export function ftStatus(staffId: string, weekly: readonly { worked: number; tra
 export interface Anomaly {
   staffId: string | null;
   shopId: string | null;
-  kind: "owner_case" | "sales_without_hours" | "override" | "netcomm_gap" | "missing_key" | "training_in_hours" | "no_rate" | "late_tip_refund" | "changed_since_lock" | "late_import" | "below_minimum_wage" | "meal_missed" | "no_work_state";
+  kind: AnomalyKind;
   message: string;
 }
+
+export type AnomalyKind =
+  | "owner_case"
+  | "sales_without_hours"
+  | "override"
+  | "netcomm_gap"
+  | "missing_key"
+  | "training_in_hours"
+  | "no_rate"
+  | "late_tip_refund"
+  | "changed_since_lock"
+  | "late_import"
+  | "below_minimum_wage"
+  | "meal_missed"
+  | "no_work_state"
+  | "missed_punch"
+  | "timesheet_not_approved"
+  | "hours_not_locked"
+  | "sales_day_without_hours"
+  | "hours_not_from_clock";
 
 /** Things to look at before locking. None of these block the lock, and none are "fixed" automatically. */
 export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Anomaly[] {
@@ -726,7 +754,7 @@ export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Ano
       const who = `${l.name} (${b.shop})`;
       if (l.input.employeeNumber === null) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "missing_key", message: `${who} has no iSolved Employee Number yet, so their Key cell would be blank.` });
       if (l.hours + l.otHours > 0 && l.laborCost === 0) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "owner_case", message: `${who}: ${fmtHours(l.hours + l.otHours)} at $0.00 labor cost. Owner or salaried? Left as is until Charles decides (Q17).` });
-      if (l.hours + l.otHours === 0 && l.service > 0) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "sales_without_hours", message: `${who}: ${fmtMoney(l.service)} of service sales with no hours. Owner case? Left as is (Q17).` });
+      if (l.hours + l.otHours === 0 && l.service > 0) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "sales_without_hours", message: `${who}: ${fmtMoney(l.service)} of service sales with no hours. A missed clock-in, or an owner (Q17)? Left as is.` });
       if (!sameToTheCent(l.netComm, l.netCommComputed)) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "netcomm_gap", message: `${who}: NetComm ${fmtMoney(l.netComm)} was typed over the formula's ${fmtMoney(l.netCommComputed)}, a ${fmtMoney(Math.abs(l.netComm - l.netCommComputed))} gap between the report's Total Wages and the export's Comm Sales. Not fixed (Q17).` });
       for (const k of l.overridden) {
         if (k === "netComm") continue;

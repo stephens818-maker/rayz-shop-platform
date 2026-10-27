@@ -5,7 +5,7 @@ import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, fmtHours, f
 import { formatDate, formatDateTime } from "@/lib/time";
 import { reportView } from "@/domain/permissions";
 import { can, guardPage } from "@/server/auth/staff";
-import { buildPayroll, periodChoices, periodKey, RECORD_LABEL, type BlockView, type PayrollView } from "@/server/payroll/run";
+import { buildPayroll, hoursOpenMessage, periodChoices, periodKey, RECORD_LABEL, type BlockView, type PayrollView } from "@/server/payroll/run";
 import { LockButton, OverrideForm } from "./client";
 
 export const metadata: Metadata = { title: "Payroll report" };
@@ -104,7 +104,13 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
               start={view.start}
               end={view.end}
               label={`${formatDate(view.start, "MMM d")} – ${formatDate(view.end, "MMM d")} for ${view.blocks.length} shop${view.blocks.length === 1 ? "" : "s"}`}
-              blocked={view.mismatches.length ? `${view.mismatches.length} total${view.mismatches.length === 1 ? " doesn't" : "s don't"} reconcile` : null}
+              blocked={
+                view.mismatches.length
+                  ? `${view.mismatches.length} total${view.mismatches.length === 1 ? " doesn't" : "s don't"} reconcile`
+                  : view.settings.hoursFromClock && view.hoursOpen.length
+                    ? `Hours aren't locked on the time clock at ${view.hoursOpen.length} shop${view.hoursOpen.length === 1 ? "" : "s"}`
+                    : null
+              }
             />
           ) : undefined
         }
@@ -191,6 +197,8 @@ function Report({ view, canRun }: { view: PayrollView; canRun: boolean }) {
         </Notice>
       )}
 
+      <HoursGate view={view} />
+
       <LockCheck view={view} />
 
       <TipCheckNotice view={view} />
@@ -205,7 +213,7 @@ function Report({ view, canRun }: { view: PayrollView; canRun: boolean }) {
           <ul className="divide-y divide-zinc-100 text-sm">
             {view.anomalies.map((a, i) => (
               <li key={i} className="flex gap-2 px-4 py-2">
-                <Badge tone={a.kind === "below_minimum_wage" || a.kind === "meal_missed" ? "red" : a.kind === "owner_case" || a.kind === "netcomm_gap" || a.kind === "sales_without_hours" ? "amber" : "gray"}>{a.kind.replace(/_/g, " ")}</Badge>
+                <Badge tone={a.kind === "below_minimum_wage" || a.kind === "meal_missed" || a.kind === "missed_punch" ? "red" : AMBER.has(a.kind) ? "amber" : "gray"}>{a.kind.replace(/_/g, " ")}</Badge>
                 <span>{a.message}</span>
               </li>
             ))}
@@ -224,6 +232,36 @@ function Report({ view, canRun }: { view: PayrollView; canRun: boolean }) {
         <ShopBlockCard key={b.shopId} b={b} view={view} canRun={canRun} />
       ))}
     </div>
+  );
+}
+
+const AMBER = new Set(["owner_case", "netcomm_gap", "sales_without_hours", "sales_day_without_hours", "timesheet_not_approved", "hours_not_locked", "hours_not_from_clock"]);
+
+function HoursGate({ view }: { view: PayrollView }) {
+  if (!view.hoursOpen.length || view.locked === "all") return null;
+  const blocking = view.settings.hoursFromClock;
+  return (
+    <Card>
+      <CardHeader
+        title={blocking ? "Hours aren't locked on the time clock: approve and lock is blocked" : "Hours aren't locked on the time clock"}
+        subtitle={
+          blocking
+            ? `${hoursOpenMessage(view.hoursOpen)} A timesheet is approved once its missed punches are fixed; the period locks once every timesheet with hours is approved.`
+            : "Payroll Setup has hours from the time clock off, so this doesn't block the lock, but these hours can still change afterwards."
+        }
+      />
+      <ul className="divide-y divide-zinc-100 text-sm">
+        {view.hoursOpen.map((o) => (
+          <li key={o.shopId} className="px-4 py-2">
+            <span className="font-medium">{o.shop}</span>: {o.periods.map((p) => `${formatDate(p.start, "MMM d")} – ${formatDate(p.end, "MMM d")}`).join(" and ")} not locked
+            {o.waiting.length > 0 && `; waiting on a manager: ${o.waiting.join(", ")}`}.{" "}
+            <Link href={`/admin/timesheets?period=${o.periods[0].start}&shop=${o.shopId}`} className="text-brand-700 underline-offset-2 hover:underline">
+              Timesheets →
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }
 

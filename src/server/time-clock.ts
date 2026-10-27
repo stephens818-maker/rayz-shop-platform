@@ -1052,10 +1052,13 @@ export async function timesheetList(periodStart: LocalDate, shopIds: readonly st
 
 // ───────────────────────────── Approvals and locks ─────────────────────────────
 
+/** Missed punches: a timesheet with one can't be approved until a manager adds or fixes the punch. */
+const MISSED_PUNCH: readonly PairProblem["kind"][] = ["open_shift", "out_without_in", "double_in"];
+
 async function openProblems(staffId: string, shopId: string, period: PayPeriod) {
   const punches = await punchesBetween([staffId], new Date(period.startsAt.getTime() - DAY), new Date(period.endsAt.getTime() + DAY));
   const { problems } = pairPunches(punches.map(asLike));
-  return problems.filter((p) => p.shopId === shopId && localDateOf(p.at) >= period.start && localDateOf(p.at) <= period.end && (p.kind === "open_shift" || p.kind === "out_without_in" || p.kind === "double_in"));
+  return problems.filter((p) => p.shopId === shopId && localDateOf(p.at) >= period.start && localDateOf(p.at) <= period.end && MISSED_PUNCH.includes(p.kind));
 }
 
 /** The employee signs off their own hours at one shop for the period. */
@@ -1120,6 +1123,52 @@ export async function unlockPeriod(e: Editor, shopId: string, periodStart: Local
   const gone = await db.delete(timesheetLocks).where(and(eq(timesheetLocks.shopId, shopId), eq(timesheetLocks.periodStart, period.start))).returning({ s: timesheetLocks.periodStart });
   if (!gone.length) throw bad("This period isn't locked.");
   await audit(e.actor, "timesheet.unlock", "shop", shopId, { periodStart: period.start, reason: why }, shopId);
+}
+
+export interface PayrollHoursCheck {
+  /** Each shop's timesheet periods (the brand calendar) overlapping the pay period that aren't locked yet. */
+  unlocked: { shopId: string; periods: { start: LocalDate; end: LocalDate }[] }[];
+  /** Timesheets in those periods, with hours or missed punches, that no manager has approved. */
+  waiting: { staffId: string; label: string; shopId: string; periodStart: LocalDate; periodEnd: LocalDate }[];
+  /** Missed punches in the pay period itself. */
+  missedPunches: { staffId: string; label: string; shopId: string; kind: PairProblem["kind"]; problem: string; at: Date }[];
+}
+
+/** Whether the clock's hours at these shops are final for a pay period: locked timesheets, approvals still to give, and missed punches. */
+export async function payrollHoursCheck(shopIds: readonly string[], start: LocalDate, end: LocalDate): Promise<PayrollHoursCheck> {
+  const out: PayrollHoursCheck = { unlocked: [], waiting: [], missedPunches: [] };
+  if (!shopIds.length) return out;
+  const periods: PayPeriod[] = [];
+  for (let d = start; d <= end; ) {
+    const p = await periodFor(d);
+    periods.push(p);
+    d = addDays(p.end, 1);
+  }
+  const locks = await db
+    .select({ shopId: timesheetLocks.shopId, periodStart: timesheetLocks.periodStart })
+    .from(timesheetLocks)
+    .where(and(inArray(timesheetLocks.shopId, [...shopIds]), inArray(timesheetLocks.periodStart, periods.map((p) => p.start))));
+  const lockedFor = (shopId: string, p: PayPeriod) => locks.some((l) => l.shopId === shopId && l.periodStart === p.start);
+  for (const shopId of shopIds) {
+    const open = periods.filter((p) => !lockedFor(shopId, p));
+    if (open.length) out.unlocked.push({ shopId, periods: open.map((p) => ({ start: p.start, end: p.end })) });
+  }
+  for (const p of periods) {
+    const open = shopIds.filter((s) => !lockedFor(s, p));
+    if (!open.length) continue;
+    const { rows } = await timesheetList(p.start, open);
+    for (const r of rows)
+      if ((r.workedCenti > 0 || r.problems > 0) && !r.managerApprovedAt) out.waiting.push({ staffId: r.staffId, label: r.label, shopId: r.shopId, periodStart: p.start, periodEnd: p.end });
+  }
+  const punches = await punchesBetween(null, new Date(startOfLocalDay(start).getTime() - DAY), new Date(endOfLocalDay(end).getTime() + DAY));
+  const missed = pairPunches(punches.map(asLike)).problems.filter((p) => shopIds.includes(p.shopId) && MISSED_PUNCH.includes(p.kind) && localDateOf(p.at) >= start && localDateOf(p.at) <= end);
+  if (missed.length) {
+    const names = new Map(
+      (await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, [...new Set(missed.map((p) => p.staffId))]))).map((s) => [s.id, s.label]),
+    );
+    out.missedPunches = missed.map((p) => ({ staffId: p.staffId, label: names.get(p.staffId) ?? "", shopId: p.shopId, kind: p.kind, problem: PROBLEM_LABEL[p.kind], at: p.at }));
+  }
+  return out;
 }
 
 // ───────────────────────────── Full time / part time ─────────────────────────────

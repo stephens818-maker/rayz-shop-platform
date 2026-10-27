@@ -75,7 +75,7 @@ export default async function MyPayPage() {
     for (const p of periods) {
       if (seen.has(p.key)) continue;
       seen.add(p.key);
-      const view = await buildPayroll(p.start, p.end);
+      const view = await buildPayroll(p.start, p.end, { clockChecks: false });
       for (const b of view?.blocks ?? []) for (const l of b.lines) if (l.staffId === me) estimate.push({ shop: b.shop, l, locked: !!b.locked, stub: paystubLines(b, me) });
     }
     estimate = estimate.sort((a, b) => a.shop.localeCompare(b.shop));

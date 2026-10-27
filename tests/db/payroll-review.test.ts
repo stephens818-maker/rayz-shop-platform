@@ -4,7 +4,7 @@
  * payroll (SB-C3), and a locked period stays as exported, with drift and late imports flagged.
  */
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
-import { Mods, actor, loadModules } from "./setup";
+import { Mods, actor, loadModules, lockHours } from "./setup";
 import { signInAs } from "./session";
 
 vi.mock("server-only", () => ({}));
@@ -288,6 +288,7 @@ describe("a locked pay period stays as exported", () => {
     await asImported(squire, "ticket");
     await tl.syncTipLedger();
 
+    await lockHours(prev.start, prev.end);
     expect(await run.approveAndLock(prev.start, prev.end, actor)).toMatchObject({ locked: expect.any(Number) });
     const locked = await run.buildPayroll(prev.start, prev.end);
     const lb = blockOf(locked, sh.id);

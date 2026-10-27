@@ -92,7 +92,7 @@ export async function myPeriodEarnings(ctx: StaffAppContext, period: string | un
   const runs = new Map<string, Awaited<ReturnType<typeof buildPayroll>>>();
   for (const { p } of per) {
     const k = `${p.start}_${p.end}`;
-    if (!runs.has(k)) runs.set(k, await buildPayroll(p.start, p.end));
+    if (!runs.has(k)) runs.set(k, await buildPayroll(p.start, p.end, { clockChecks: false }));
   }
   const out = [];
   for (const { shop, p } of per) {

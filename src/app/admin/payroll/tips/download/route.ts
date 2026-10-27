@@ -13,7 +13,7 @@ export async function GET(req: Request) {
   const start = url.searchParams.get("start") ?? "";
   const end = url.searchParams.get("end") ?? "";
   if (!DATE.test(start) || !DATE.test(end)) return new Response("Bad request", { status: 400 });
-  const view = await buildPayroll(start, end);
+  const view = await buildPayroll(start, end, { clockChecks: false });
   if (!view) return new Response("No shop has a pay period with those dates.", { status: 404 });
   const t = view.tips;
   await audit(ctx.actor, "payroll.tip_report", "payroll_period", null, {

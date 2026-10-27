@@ -218,18 +218,26 @@ Anomalies never block the lock. They list what a person should look at before ap
 | Kind | When |
 | --- | --- |
 | `owner_case` | Hours at $0.00 labor cost (owner or salaried?). Q17. |
-| `sales_without_hours` | Service sales with no hours. Q17. |
+| `sales_without_hours` | Service sales with no hours: a missed clock-in, or an owner (Q17). |
 | `netcomm_gap` | NetComm typed over the formula, so the report's Total Wages and the export's Comm Sales disagree. Q17. |
 | `override` | Any hand-entered value, with its reason |
 | `missing_key` | No iSolved Employee Number yet |
 | `training_in_hours` | Training hours while Q11 is open (§3.3) |
 | `no_rate` | Sales but no wage and no commission rate |
+| `missed_punch` | A clock-out with no clock-in, no clock-out, or a clock-in again without clocking out, in the period. That shift has no hours until a manager fixes the punch. |
+| `timesheet_not_approved` | A timesheet with hours or missed punches that no manager has approved |
+| `hours_not_locked` | The shop's timesheets aren't locked for the period. Only listed when **Hours come from the time clock** is off; when it's on, this blocks the lock (§9). |
+| `sales_day_without_hours` | Service sales on a day with no hours at that shop, for someone who has hours in the period (a missed clock-in?) |
+| `hours_not_from_clock` | Worked hours typed in or imported rather than clocked (while hours come from the clock) |
+
+The time clock's flags cover shops not yet locked; a locked shop is history.
 
 The two workbook cases waiting on Q17 (the Coralville NetComm typed $123.46 above its formula, and the Moline owner row with 80 hours at $0 cost and $20 of service sales) are flagged and left exactly as entered. Nothing is guessed.
 
 ## 9. Approve and lock
 
 - Locking takes the period's dates and locks every pay group whose calendar has that period, in one transaction.
+- **Hours come from the time clock** (a payroll setting, on by default; Charles decided the basic clock ships at launch): locking is refused until every shop's timesheets are locked for each day of the period. A shop's timesheets lock (Payroll → Timesheets) only after the period ends and every timesheet with hours or missed punches is approved by a manager, which in turn needs the missed punches fixed. The refusal names the shops and the timesheets still waiting.
 - It stores a snapshot per pay group: the shop block, lines, totals and export rows, plus the OT each slice was given (`payroll_locked_ot`).
 - After locking, time entries and overrides in the period are refused, and the report shows the snapshot.
 - Each pay group's lock is audited.

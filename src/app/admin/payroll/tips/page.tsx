@@ -18,7 +18,7 @@ export default async function PayrollTipsPage({ searchParams }: { searchParams: 
   const choices = await periodChoices();
   const current = choices.findIndex((c) => c.current);
   const chosen = choices.find((c) => c.key === sp.period) ?? choices[current + 1] ?? choices[0];
-  const view = chosen ? await buildPayroll(chosen.start, chosen.end) : null;
+  const view = chosen ? await buildPayroll(chosen.start, chosen.end, { clockChecks: false }) : null;
   const rows = view?.tips.rows ?? [];
   const off = rows.filter((r) => r.problems.length);
   const sum = (f: (r: TipCheckRow) => number) => rows.reduce((a, r) => a + f(r), 0);

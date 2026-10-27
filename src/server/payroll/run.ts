@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, gt, gte, inArray, isNull, lt, lte, sql } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { payGroups, payrollEmployers, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, sales as salesTable, staff, timeEntries, timePunches } from "@/db/schema";
 import { calendarProblem, periodOf, periodStarting, periodsAround, workweeksOf, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
@@ -26,8 +26,8 @@ import {
   type Totals,
 } from "@/domain/payroll/calc";
 import { minimumWageCents, minimumWageShortfallCents, rulesFor } from "@/domain/wage-hour";
-import { dailyHours, overtimeSlices, sliceKey, weekStartOf, type Slice, type TimeEntry } from "@/domain/payroll/overtime";
-import { addDays, endOfLocalDay, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
+import { dailyHours, overtimeSlices, sliceKey, weekStartOf, type DayHours, type Slice, type TimeEntry } from "@/domain/payroll/overtime";
+import { addDays, endOfLocalDay, formatDate, localDateOf, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
 import { guaranteeTopUps, exportExtras } from "@/domain/compensation";
 import { loadCompensationSettings, payrollPlans, setupRates } from "@/server/compensation";
@@ -35,6 +35,7 @@ import { payrollSalesBetween } from "@/server/reports";
 import { declaredTipsBetween } from "@/server/tips/declarations";
 import { lockPayrollTips, payrollTipSplit } from "@/server/tips/payouts";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
+import { payrollHoursCheck, type PayrollHoursCheck } from "@/server/time-clock";
 import { isolvedTimecardExporter, type PayrollExporter } from "./export";
 import { checkPayrollTips, type TipCheck } from "./tip-reconcile";
 import { ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type LegalEntity, type PayGroup } from "./groups";
@@ -122,6 +123,8 @@ export interface PayrollView {
   ft: Record<string, FtStatus>;
   weeks: Record<string, WeekBreakdown[]>;
   locked: "none" | "some" | "all";
+  /** Shops still open whose time clock hours aren't locked for every day of the period. While hours come from the clock, approve and lock waits for them. */
+  hoursOpen: { shopId: string; shop: string; periods: { start: LocalDate; end: LocalDate }[]; waiting: string[] }[];
 }
 
 export interface EntityStateTotal {
@@ -204,9 +207,10 @@ const centi = (x: number) => x / 100;
 /**
  * Everything on the Payroll Report for one pay period: each shop (pay group) whose calendar has this
  * period, with its rows, totals, export rows, the reconciliation result and anomalies. A locked shop
- * comes back exactly as it was approved.
+ * comes back exactly as it was approved. Without `clockChecks` (an employee's own pay), the time
+ * clock's flags and hours gate are left out.
  */
-export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<PayrollView | null> {
+export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockChecks?: boolean } = {}): Promise<PayrollView | null> {
   const groups = await ensurePayGroups();
   const inRun = groups.map((g) => ({ g, p: periodStarting(g.calendar, start) })).filter((x): x is { g: PayGroup; p: CalendarPeriod } => x.p !== null && x.p.end === end && x.p.number >= 1);
   if (!inRun.length) return null;
@@ -373,6 +377,9 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
     };
   });
   const grandAndCheck = runs.length ? assembleFromBlocks(blocks) : { grand: live.grand, mismatches: live.mismatches };
+  const openShops = o.clockChecks === false ? [] : blocks.filter((b) => !b.locked).map((b) => b.shopId);
+  const [hoursCheck, serviceDays, typed] = await Promise.all([payrollHoursCheck(openShops, start, end), serviceDaysIn(openShops, start, end), typedHoursIn(openShops, start, end)]);
+  const shopName = (id: string) => groupOf.get(id)?.shop ?? "Other shop";
   const tips = await checkPayrollTips(blocks, start, end);
   const tipGate = stripePayoutsOn() ? tips.mismatches.filter((m) => !blocks.find((b) => b.shopId === m.shopId)?.locked) : [];
 
@@ -402,12 +409,145 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
     grand: grandAndCheck.grand,
     mismatches: [...grandAndCheck.mismatches, ...tipGate],
     tips,
-    anomalies: [...anomalies(blocks, settings), ...lockAnomalies(blocks), ...stateAnomalies(blocks, end, await missedMealsIn([...runShops], start, end))],
+    anomalies: [
+      ...anomalies(blocks, settings),
+      ...clockAnomalies(blocks, settings, hoursCheck, days, serviceDays, typed, start, end),
+      ...lockAnomalies(blocks),
+      ...stateAnomalies(blocks, end, await missedMealsIn([...runShops], start, end)),
+    ],
     byEntityState: byEntityState(blocks),
     ft,
     weeks: weekBreakdowns(slices, staffIds, weeks, start, runShops, (id) => groupOf.get(id)?.shop ?? "Other shop"),
     locked: runs.length === 0 ? "none" : runs.length === inRun.length ? "all" : "some",
+    hoursOpen: hoursCheck.unlocked.map((u) => ({
+      shopId: u.shopId,
+      shop: shopName(u.shopId),
+      periods: u.periods,
+      waiting: [...new Set(hoursCheck.waiting.filter((w) => w.shopId === u.shopId).map((w) => w.label))],
+    })),
   };
+}
+
+const PAID_SALE = ["paid", "partially_refunded", "refunded"] as const;
+
+/** Service sales per employee, shop and business date, counted the way payroll counts them: paid tickets, no Squire history. */
+async function serviceDaysIn(shopIds: string[], start: LocalDate, end: LocalDate) {
+  if (!shopIds.length) return [];
+  const rows = await db
+    .select({ staffId: salesTable.staffId, shopId: salesTable.shopId, date: salesTable.businessDate, cents: sql<number>`sum(${salesTable.serviceNetCents})::int` })
+    .from(salesTable)
+    .where(
+      and(
+        inArray(salesTable.shopId, shopIds),
+        gte(salesTable.businessDate, start),
+        lte(salesTable.businessDate, end),
+        inArray(salesTable.status, [...PAID_SALE]),
+        eq(salesTable.isImported, false),
+        isNotNull(salesTable.staffId),
+        sql`not exists (select 1 from payments sq where sq.sale_id = ${salesTable.id} and sq.processor = 'squire_import')`,
+      ),
+    )
+    .groupBy(salesTable.staffId, salesTable.shopId, salesTable.businessDate)
+    .having(sql`sum(${salesTable.serviceNetCents}) > 0`);
+  return rows.map((r) => ({ ...r, staffId: r.staffId! }));
+}
+
+/** Worked hours typed in or imported rather than clocked, per employee and shop, in centi-hours. */
+async function typedHoursIn(shopIds: string[], start: LocalDate, end: LocalDate) {
+  const out = new Map<string, number>();
+  if (!shopIds.length) return out;
+  const rows: TimeEntry[] = await db
+    .select({ staffId: timeEntries.staffId, shopId: timeEntries.shopId, kind: timeEntries.kind, startsAt: timeEntries.startsAt, endsAt: timeEntries.endsAt })
+    .from(timeEntries)
+    .where(
+      and(
+        inArray(timeEntries.shopId, shopIds),
+        eq(timeEntries.kind, "worked"),
+        inArray(timeEntries.source, ["manual", "import"]),
+        lt(timeEntries.startsAt, endOfLocalDay(end)),
+        gt(timeEntries.endsAt, startOfLocalDay(start)),
+      ),
+    );
+  for (const d of dailyHours(rows)) if (d.date >= start && d.date <= end) out.set(`${d.staffId}|${d.shopId}`, (out.get(`${d.staffId}|${d.shopId}`) ?? 0) + d.worked);
+  return out;
+}
+
+const day = (d: LocalDate) => formatDate(d, "EEE MMM d");
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+const listed = (xs: string[], max = 3, sep = "; ") => `${xs.slice(0, max).join(sep)}${xs.length > max ? "…" : ""}`;
+
+/**
+ * The time clock's side of the report (Charles: the hours come from the clock): missed punches,
+ * timesheets no manager has approved, hours not locked (when that doesn't already block the lock),
+ * service sales on a day with no hours at that shop, and hours typed in or imported instead of clocked.
+ * Shops already locked are history and aren't checked.
+ */
+function clockAnomalies(
+  blocks: readonly BlockView[],
+  settings: PayrollSettings,
+  check: PayrollHoursCheck,
+  days: readonly DayHours[],
+  serviceDays: { staffId: string; shopId: string; date: LocalDate; cents: number }[],
+  typed: Map<string, number>,
+  start: LocalDate,
+  end: LocalDate,
+): Anomaly[] {
+  const out: Anomaly[] = [];
+  const open = blocks.filter((b) => !b.locked);
+  const shopOf = new Map(open.map((b) => [b.shopId, b.shop]));
+  const byKey = <T extends { staffId: string; shopId: string }>(xs: readonly T[]) => {
+    const m = new Map<string, T[]>();
+    for (const x of xs) m.set(`${x.staffId}|${x.shopId}`, [...(m.get(`${x.staffId}|${x.shopId}`) ?? []), x]);
+    return m;
+  };
+  for (const list of byKey(check.missedPunches).values()) {
+    const p = list[0];
+    out.push({
+      staffId: p.staffId,
+      shopId: p.shopId,
+      kind: "missed_punch",
+      message: `${p.label} (${shopOf.get(p.shopId)}): ${plural(list.length, "missed punch", "missed punches")}: ${listed(list.map((x) => `${x.problem.toLowerCase()} on ${day(localDateOf(x.at))}`))}. That shift has no hours until a manager adds or fixes the punch, with a reason, on the timesheet.`,
+    });
+  }
+  for (const w of check.waiting)
+    out.push({
+      staffId: w.staffId,
+      shopId: w.shopId,
+      kind: "timesheet_not_approved",
+      message: `${w.label} (${shopOf.get(w.shopId)}): the timesheet for ${day(w.periodStart)} – ${day(w.periodEnd)} isn't approved by a manager yet.`,
+    });
+  if (!settings.hoursFromClock)
+    for (const u of check.unlocked)
+      out.push({
+        staffId: null,
+        shopId: u.shopId,
+        kind: "hours_not_locked",
+        message: `${shopOf.get(u.shopId)}: the time clock's hours aren't locked for ${u.periods.map((p) => `${day(p.start)} – ${day(p.end)}`).join(" and ")}, so they can still change after payroll is locked.`,
+      });
+  const hoursOn = new Set(days.filter((d) => d.date >= start && d.date <= end && d.worked + d.training > 0).map((d) => `${d.staffId}|${d.shopId}|${d.date}`));
+  const lineOf = new Map<string, Line>(open.flatMap((b) => b.lines.map((l) => [`${l.staffId}|${b.shopId}`, l] as const)));
+  for (const [k, list] of byKey(serviceDays.filter((s) => !hoursOn.has(`${s.staffId}|${s.shopId}|${s.date}`)))) {
+    const l = lineOf.get(k);
+    if (!l || l.hours + l.otHours === 0) continue;
+    out.push({
+      staffId: l.staffId,
+      shopId: list[0].shopId,
+      kind: "sales_day_without_hours",
+      message: `${l.name} (${shopOf.get(list[0].shopId)}): service sales on ${plural(list.length, "day")} with no hours at this shop: ${listed(list.map((s) => `${day(s.date)} (${fmtMoney(s.cents / 100)})`))}. A missed clock-in? A manager adds the punches on the timesheet.`,
+    });
+  }
+  if (settings.hoursFromClock)
+    for (const [k, centiHours] of typed) {
+      const l = lineOf.get(k);
+      if (!l || !centiHours) continue;
+      out.push({
+        staffId: l.staffId,
+        shopId: k.split("|")[1],
+        kind: "hours_not_from_clock",
+        message: `${l.name} (${shopOf.get(k.split("|")[1])}): ${fmtHours(centiHours / 100)} typed in or imported, not from the time clock.`,
+      });
+    }
+  return out;
 }
 
 /** Tickets imported from Squire into a locked period after its lock. They never reach payroll, but a re-export should know. */
@@ -551,12 +691,21 @@ function weekBreakdowns(slices: Slice[], staffIds: string[], weeks: LocalDate[],
   return out;
 }
 
+/** Why approve and lock waits: the shops whose clock hours aren't locked, and whose timesheets still need a manager. */
+export function hoursOpenMessage(open: PayrollView["hoursOpen"]): string {
+  const waiting = open.flatMap((o) => o.waiting);
+  return `Hours come from the time clock, and they aren't locked yet at ${open.map((o) => o.shop).join(", ")}. Lock each shop's timesheets for the period on Timesheets${
+    waiting.length ? `, after a manager approves ${plural(waiting.length, "timesheet")} still waiting (${listed(waiting, 4, ", ")})` : ""
+  }.`;
+}
+
 /** Approve and lock every shop in the period at once. Refused while anything doesn't reconcile. */
 export async function approveAndLock(start: LocalDate, end: LocalDate, actor: Actor): Promise<{ error: string; mismatches?: Mismatch[] } | { locked: number }> {
   const view = await buildPayroll(start, end);
   if (!view) return { error: "No shop has a pay period with those dates." };
   if (view.locked !== "none") return { error: "This pay period is already locked." };
   if (view.mismatches.length) return { error: "Totals don't reconcile, so the period can't be locked.", mismatches: view.mismatches };
+  if (view.settings.hoursFromClock && view.hoursOpen.length) return { error: hoursOpenMessage(view.hoursOpen) };
   const groups = await ensurePayGroups();
   const settings = view.settings;
   const runShops = new Set(view.blocks.map((b) => b.shopId));
