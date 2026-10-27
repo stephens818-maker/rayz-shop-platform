@@ -23,6 +23,7 @@ import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { CONSENT_MARKERS } from "@/domain/consent-texts";
 import { Actor, audit } from "./audit";
 import { ConsentContext, recordConsentChange } from "./consent-events";
+import { realClient } from "./demo-clients";
 import { AppError, notFound } from "./errors";
 import { getLoyaltyConfig, lockAccount } from "./loyalty";
 
@@ -494,8 +495,8 @@ export interface DuplicatePair extends DuplicateScore {
 /**
  * Candidate pairs, scored by scoreDuplicate: same phone or email; the same or a typo-close name
  * (trigram) backed by a birthday, zip, phone last 4, or one record with no contact at all (Squire
- * imports and walk-ins). Pairs someone marked "not the same person" are left out. Nothing here
- * merges automatically.
+ * imports and walk-ins). Pairs someone marked "not the same person", and Demo Shop clients, are
+ * left out. Nothing here merges automatically.
  */
 export async function duplicatePairs(opts: { forId?: string; limit?: number; squireOnly?: boolean } = {}): Promise<DuplicatePair[]> {
   const limit = opts.limit ?? 150;
@@ -519,6 +520,7 @@ export async function duplicatePairs(opts: { forId?: string; limit?: number; squ
     return (await tx.execute(sql`
       select a_id, b_id from (${candidates}) p
       where not exists (select 1 from customer_duplicate_dismissals d where d.a_id = p.a_id and d.b_id = p.b_id)
+        and not exists (select 1 from customers x where x.id in (p.a_id, p.b_id) and not ${realClient(sql.raw("x.source"))})
         ${opts.squireOnly ? sql`and (${squire("p.a_id")} or ${squire("p.b_id")})` : sql``}
       limit ${limit * 3}
     `)) as unknown as { a_id: string; b_id: string }[];

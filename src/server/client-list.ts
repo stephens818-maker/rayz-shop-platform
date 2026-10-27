@@ -8,6 +8,7 @@ import { filteredClientIds, panelSees } from "./client-filters";
 import type { ClientPolicy } from "./client-privacy";
 import { findClients } from "./client-search";
 import { shopClientsScope, visitedScope } from "./customers";
+import { clientsFor } from "./demo-clients";
 
 export interface ClientListQuery {
   /** The condition on `customers`: reach, search and filters. */
@@ -25,7 +26,7 @@ export interface ClientListQuery {
  * whole brand, one profile per person whichever shops they visit; home shop and shops visited are
  * filters, not walls. An export is a report, so it keeps to the exporter's shops' clients (home
  * shop or a visit there) unless they work brand-wide. Filters need "Use advanced client filters"
- * and are refused when they'd read a hidden detail.
+ * and are refused when they'd read a hidden detail. Demo Shop clients are the app reviewer's only.
  */
 export async function clientListQuery(
   ctx: StaffContext,
@@ -47,7 +48,7 @@ export async function clientListQuery(
     sql`, `,
   )}], ${customers.id})` : null;
   return {
-    where: and(isNull(customers.deletedAt), search, scope, filtered ? sql`${customers.id} in ${filtered}` : undefined),
+    where: and(isNull(customers.deletedAt), clientsFor(ctx.staff.demo), search, scope, filtered ? sql`${customers.id} in ${filtered}` : undefined),
     relevance,
     seg,
     problem,

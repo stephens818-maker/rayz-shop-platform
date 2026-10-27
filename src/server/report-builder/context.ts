@@ -23,7 +23,7 @@ export async function staffContextFor(staffId: string): Promise<StaffContext | n
   const access = all.uniform || !currentShopId ? all : atShop(all, currentShopId);
   const role = (currentShopId && all.byShop.get(currentShopId)?.role) || row.r;
   return {
-    staff: { id: row.s.id, firstName: row.s.firstName, displayLabel: row.s.displayLabel, roleId: role.id, roleKey: role.key, roleName: role.name, kind: row.s.kind },
+    staff: { id: row.s.id, firstName: row.s.firstName, displayLabel: row.s.displayLabel, roleId: role.id, roleKey: role.key, roleName: role.name, kind: row.s.kind, demo: row.s.isDemo },
     actor: { staffId: row.s.id, label: `${role.name}:${row.s.displayLabel}` },
     access,
     shopIds: access.shopIds,

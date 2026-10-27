@@ -120,4 +120,53 @@ describe("the Demo Shop for app review (ST-I19)", () => {
       expect(r.json.error.details, path).toMatchObject({ reason: "demo_shop" });
     }
   });
+
+  it("demo clients stay out of the brand-wide client list, its export, duplicates, the report builder and marketing", async () => {
+    reviewOn(true);
+    const { shopId, reviewerId } = await demo.ensureDemoShop(REVIEW, actor);
+    const demoIds = (await m.db.db.select({ id: S().customers.id }).from(S().customers).where(eq(S().customers.source, demo.DEMO_CLIENT_SOURCE))).map((c) => c.id);
+    expect(demoIds).toHaveLength(4);
+    const coralville = (await m.db.db.query.shops.findFirst({ where: eq(S().shops.slug, "coralville") }))!.id;
+    const [twin] = await m.db.db.insert(S().customers).values({ firstName: "Alex", lastName: "Sample", homeShopId: coralville }).returning();
+    const isDemo = (id: string) => demoIds.includes(id);
+
+    const { clientListQuery } = await import("@/server/client-list");
+    const { clientPolicy } = await import("@/server/client-privacy");
+    const { staffContextFor } = await import("@/server/report-builder/context");
+    const owner = (await staffContextFor(ids.owner))!;
+    const reviewer = (await staffContextFor(reviewerId!))!;
+    const reach = async (ctx: typeof owner, purpose: "list" | "export", q = "") => {
+      const w = await clientListQuery(ctx, await clientPolicy(ctx), { q, purpose });
+      return (await m.db.db.select({ id: S().customers.id }).from(S().customers).where(w.where)).map((r) => r.id);
+    };
+    for (const purpose of ["list", "export"] as const) {
+      const all = await reach(owner, purpose);
+      expect(all, purpose).toContain(ids.realAlex);
+      expect(all.some(isDemo), purpose).toBe(false);
+    }
+    expect(reviewer.staff.demo).toBe(true);
+    const theirs = await reach(reviewer, "list", "Alex");
+    expect(theirs.length).toBeGreaterThan(0);
+    expect(theirs.every(isDemo)).toBe(true);
+
+    const { duplicatePairs } = await import("@/server/customers");
+    const pairs = await duplicatePairs({ forId: twin.id });
+    expect(pairs.some((p) => isDemo(p.a.id) || isDemo(p.b.id))).toBe(false);
+    expect((await duplicatePairs()).some((p) => isDemo(p.a.id) || isDemo(p.b.id))).toBe(false);
+
+    const engine = await import("@/server/report-builder/engine");
+    const rb = await import("@/domain/report-builder");
+    const { SegmentSchema, EMPTY_SEGMENT } = await import("@/domain/marketing");
+    await m.db.db.insert(S().customerTags).values([ids.realAlex, twin.id, ...demoIds].map((customerId) => ({ customerId, tag: "Demo check" })));
+    const def = rb.ReportDefinition.parse({ shops: "all", columns: [{ field: "name" }], filter: SegmentSchema.parse({ tags: ["Demo check"] }) });
+    const r = await engine.runReport(owner, await clientPolicy(owner), def, { pageSize: 500 });
+    const rowIds = r.lines.flatMap((l) => (l.kind === "row" ? [l.id] : []));
+    expect(rowIds.sort()).toEqual([ids.realAlex, twin.id].sort());
+
+    const { segmentMembers, clientsOf } = await import("@/server/marketing/audiences");
+    const members = await segmentMembers(EMPTY_SEGMENT, [shopId, coralville], new Date());
+    expect(members.map((x) => x.customerId)).toContain(ids.realAlex);
+    expect(members.some((x) => isDemo(x.customerId))).toBe(false);
+    expect((await clientsOf([shopId], new Date())).get(shopId)).toEqual([]);
+  }, 60_000);
 });

@@ -8,6 +8,7 @@ import { staffPublicSlug } from "@/lib/ids";
 import { addDays, todayLocal, zonedWallTime } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
 import { AppError } from "@/server/errors";
+import { DEMO_CLIENT_SOURCE } from "./demo-clients";
 
 /**
  * ST-I19: the Demo Shop that Apple and Google review the Ray'z Staff app with. One shop (is_demo,
@@ -19,7 +20,7 @@ import { AppError } from "@/server/errors";
  */
 
 export const DEMO_SHOP_SLUG = "demo-shop";
-export const DEMO_CLIENT_SOURCE = "Demo Shop";
+export { DEMO_CLIENT_SOURCE };
 const DEMO_CLIENTS = [
   { firstName: "Alex", lastName: "Sample" },
   { firstName: "Jordan", lastName: "Example" },

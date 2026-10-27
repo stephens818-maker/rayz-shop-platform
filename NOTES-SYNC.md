@@ -576,13 +576,14 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
-### 2026-10-27: core, payroll launch items (I8, N7, N9, N6) and file links that don't prefetch
+### 2026-10-27: core, payroll launch items (I8, N7, N9, N6), Demo Shop clients and file links that don't prefetch
 - **Migrations `core_0131_payroll_final_pay` and `core_0132_aca_report`.** The next free one is `core_0133`. `core_0131` adds `payroll_final_pays` (approved off-cycle final pay, can't be edited or deleted; the note is scrubbed like every other). `core_0132` gives the ACA hours report to Brand Admin and Bookkeeper.
 - **Preparer isn't approver (I8):** whoever changed a period's figures by hand can't approve it; the Brand Owner may, recorded as self-approved.
 - **Late tips (N7):** a tip paid on a locked period's ticket is paid in the next open period, on the day it came in, in payroll and the tip ledger (`tipPostingDate`). If the app reads payroll tips, use `payrollSalesBetween` and don't group tips by the ticket's date.
 - **Final pay (N9):** Payroll → Final pay, a one-row iSolved file per shop for someone's last check. The regular run leaves them out.
 - **ACA hours (N6):** Reports → Payroll → ACA hours, hours of service per calendar month and full-time equivalents. Nothing for the app.
 - **Leavers before Stripe setup (L34):** offboarding or making someone inactive lets go of their held Stripe payouts. Open periods' tips go with their last paycheck and their final pay claims them; locked periods' are paid in cash. If the staff app shows "waiting for setup", it empties for someone who's left.
+- **Demo Shop clients out of brand-wide lists (L38):** the admin client list and its export, duplicates, the report builder and Campaign Center audiences now leave out Demo Shop clients, as search already did. If the app lists clients outside search, filter with `realClient` (`src/server/demo-clients.ts`) for everyone but the reviewer.
 - **Links to file routes don't prefetch.** Next.js prefetches a `<Link>` as it scrolls into view, which runs a route handler. On Client data access that ran the CSV export and wrote an export to the audit log on every visit. `tests/file-link-prefetch.test.ts` now requires `prefetch={false}` on any `Link` to a `route.ts`; use a plain `<a>` for downloads.
 
 ### 2026-10-27: core, the lasting sandbox is up; Charles's launch rule (everything tested before any shop goes live)

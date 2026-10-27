@@ -12,6 +12,7 @@ import { segKey } from "@/domain/report-views";
 import { addDays, endOfLocalDay, localMinutesOf, startOfLocalDay, todayLocal } from "@/lib/time";
 import { availableMinutesAt } from "../available-minutes";
 import { CLIENT_FACTS, PRIMARY_BARBER, segmentConditions } from "../client-filters";
+import { realClient } from "../demo-clients";
 import { cadenceCtes } from "../visit-cadence";
 import { consentColumns } from "./consent";
 
@@ -66,7 +67,7 @@ export async function clientsOf(shopIds: readonly string[], now: Date): Promise<
       exists (select 1 from appointments f where f.customer_id = c.id and f.starts_at > ${now.toISOString()} and f.status in ('booked', 'confirmed', 'checked_in', 'in_service')) future,
       cd.cadence, coalesce(cd.visit_days, 0) visit_days, cd.since_days
     from customers c left join v on v.customer_id = c.id left join cd on cd.customer_id = c.id
-    where coalesce(v.last_shop, c.home_shop_id) in ${uuids(shopIds)} ${cols.deleted ? sql`and c.deleted_at is null` : sql``}`)) as unknown as (ClientRow & { shop_id: string })[];
+    where coalesce(v.last_shop, c.home_shop_id) in ${uuids(shopIds)} and ${realClient(sql.raw("c.source"))} ${cols.deleted ? sql`and c.deleted_at is null` : sql``}`)) as unknown as (ClientRow & { shop_id: string })[];
   for (const r of rows) out.get(r.shop_id)?.push(r);
   return out;
 }
@@ -259,7 +260,7 @@ export async function segmentMembers(seg: Segment, shopIds: readonly string[], n
   const scope = seg.shopIds.length ? seg.shopIds.filter((s) => shopIds.includes(s)) : [...shopIds];
   if (!scope.length) return [];
   const cols = await consentColumns();
-  const where: SQL[] = [sql`coalesce(v.last_shop, c.home_shop_id) in ${uuids(scope)}`, ...(await segmentConditions(seg, now))];
+  const where: SQL[] = [sql`coalesce(v.last_shop, c.home_shop_id) in ${uuids(scope)}`, realClient(sql.raw("c.source")), ...(await segmentConditions(seg, now))];
   if (cols.deleted) where.push(sql`c.deleted_at is null`);
   const rows = (await db.execute(sql`
     with ${CLIENT_FACTS}

@@ -989,7 +989,8 @@ README "Staff app API → Staff delta for Squire" has the details. Migrations `c
 - [ ] Legal review of the privacy notice and the agency details. The release gate fails until it's done (DEPLOY step 44).
 - [ ] The CPA's confirmation of the new iSolved columns, the 45B start and the state rates.
 - [ ] The staff app's screens (two-step setup, step-up, pairing, deposit consent, data protection, Question my pay, paystub labels), by the Rayz App builder. The API is ready.
-- [ ] Brand-wide lists that aren't search (the admin client list, gift cards) can show Demo Shop clients, and the audit log and sent messages aren't purged.
+- [x] L38: Demo Shop clients stay out of brand-wide lists: the admin client list and its export, duplicates, the report builder and Campaign Center audiences, as well as search. The reviewer sees only them. Gift cards can't reach them (nothing is sold there). `tests/db/demo-shop.test.ts`.
+- [ ] The audit log and sent messages aren't purged.
 
 ## 43. The basic time clock ships at launch (Charles)
 

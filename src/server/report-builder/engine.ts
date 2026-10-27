@@ -51,6 +51,7 @@ import { CLIENT_FACTS, reportSees, segmentConditions } from "../client-filters";
 import type { ClientPolicy } from "../client-privacy";
 import { forbidden, AppError } from "../errors";
 import { reportLocations } from "../locations";
+import { realClient } from "../demo-clients";
 import { consentColumns } from "../marketing/consent";
 import { outcomesSql } from "../marketing/report";
 import { loadMarketingSettings } from "../marketing/settings";
@@ -1422,6 +1423,7 @@ async function build(
   const filtered = filterCount(def.filter) > 0;
   if (filtered) where.push(...(await segmentConditions(def.filter, now)));
   if ((await consentColumns()).deleted) where.push(sql`c.deleted_at is null`);
+  where.push(realClient(sql.raw("c.source")));
 
   const defs = ctes(scope, now);
   const used = ORDER.filter((k) => need.has(k));
