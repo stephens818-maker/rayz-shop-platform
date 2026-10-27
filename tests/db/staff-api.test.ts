@@ -343,6 +343,54 @@ describe("the time clock", () => {
     expect(punches[0]).toMatchObject({ method: "qr", source: "self" });
   });
 
+  it("a punch tapped with no signal goes in at the time it was tapped, flagged offline, and only once; too old, too new or out of order is refused (ST-I18)", async () => {
+    const { clockQrCode } = await import("@/server/clock-codes");
+    const moline = shop.moline;
+    const before = (await m.db.db.query.shops.findFirst({ where: eq(S().shops.id, moline) }))!.timeClock;
+    onTestFinished(async () => {
+      await m.db.db.update(S().shops).set({ timeClock: before }).where(eq(S().shops.id, moline));
+    });
+    await m.db.db
+      .update(S().shops)
+      .set({ timeClock: { ...(before as Record<string, unknown>), methods: ["qr"] } })
+      .where(eq(S().shops.id, moline));
+    await m.db.db
+      .update(S().timePunches)
+      .set({ voidedAt: new Date() })
+      .where(m.drizzle.and(eq(S().timePunches.staffId, ids.kat), m.drizzle.isNull(S().timePunches.voidedAt)));
+    const t = await login("kat@rayz.test");
+    const punchAt = (path: string, body: Record<string, unknown>) => call("POST", path, { token: t.accessToken, body: { shopId: moline, ...body } });
+
+    const tapped = new Date(Date.now() - 40 * 60_000);
+    const clientPunchId = crypto.randomUUID();
+    const queued = { type: "in", proof: { qr: clockQrCode(moline, tapped).code }, queuedAt: tapped.toISOString(), clientPunchId, confirmTimeOff: true };
+    const first = await punchAt("clock/punch", queued);
+    expect(first.status, JSON.stringify(first.json)).toBe(200);
+    expect(first.json).toMatchObject({ kind: "done", type: "in", at: tapped.toISOString(), flags: expect.arrayContaining(["offline"]) });
+    const again = await punchAt("clock/punch", queued);
+    expect(again.json).toMatchObject({ punchId: first.json.punchId, at: tapped.toISOString(), alreadySent: true });
+    const rows = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.clientPunchId, clientPunchId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ staffId: ids.kat, method: "qr", ip: null });
+    const [log] = await m.db.db.select().from(S().auditLog).where(m.drizzle.and(eq(S().auditLog.action, "timeclock.punch"), eq(S().auditLog.entityId, first.json.punchId)));
+    expect(log.details).toMatchObject({ offline: true, receivedAt: expect.any(String) });
+
+    // A code on the screen now doesn't prove where the phone was 10 minutes ago.
+    expect((await punchAt("clock/breaks/start", { proof: { qr: clockQrCode(moline).code }, queuedAt: new Date(Date.now() - 10 * 60_000).toISOString() })).status).toBe(403);
+    const old = new Date(Date.now() - 25 * 3600_000);
+    const tooOld = await punchAt("clock/punch", { type: "out", proof: { qr: clockQrCode(moline, old).code }, queuedAt: old.toISOString() });
+    expect(tooOld.status).toBe(400);
+    expect(tooOld.json.error).toMatchObject({ details: { field: "queuedAt" }, message: expect.stringMatching(/manager/) });
+    const ahead = new Date(Date.now() + 10 * 60_000);
+    expect((await punchAt("clock/punch", { type: "out", proof: { qr: clockQrCode(moline).code }, queuedAt: ahead.toISOString() })).status).toBe(400);
+
+    expect((await punchAt("clock/punch", { type: "out", proof: { qr: clockQrCode(moline).code } })).status).toBe(200);
+    const behind = new Date(Date.now() - 15 * 60_000);
+    const late = await punchAt("clock/breaks/start", { proof: { qr: clockQrCode(moline, behind).code }, queuedAt: behind.toISOString() });
+    expect(late.status).toBe(409);
+    expect(late.json.error.message).toMatch(/later punch/);
+  });
+
   it("cash tip declarations: list, declare, correct with a reason; only at your own shops; no attestation, no declaration", async () => {
     const t = await login("makenna@rayz.test");
     const day = m.time.addDays(today, -1);

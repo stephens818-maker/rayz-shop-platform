@@ -152,6 +152,7 @@ const OPS: Op[] = [
   { method: "post", path: "/auth/login/code", tag: "Sign-in", summary: "The authenticator code for the ticket. A wrong code is 401 with details.twoFactor to try again.", permission: "Any active staff login", body: S.LoginCodeBody, public: true },
   { method: "post", path: "/auth/refresh", tag: "Sign-in", summary: "Rotates the refresh token. Reusing an old one ends every staff app session for that person. A token from a sign-in that sent deviceId works only with the same deviceId.", permission: "A live session", body: S.RefreshBody, public: true },
   { method: "post", path: "/auth/logout", tag: "Sign-in", summary: "Ends the session; its access token and its phone's pushes stop at once. 204.", permission: "A live session", body: S.LogoutBody, public: true, empty: true },
+  { method: "post", path: "/auth/wiped", tag: "Sign-in", summary: "The app wiped its data after a 401 with details.wipe (ST-I18), sent with the session's last refresh token; recorded against that sign-in. 204, known token or not.", permission: "Any refresh token, live or ended", body: S.WipedBody, public: true, empty: true },
   { method: "get", path: "/me", tag: "Me", summary: "Who they are, their shops, the app features they may use and every permission they hold.", permission: "Signed in" },
   { method: "get", path: "/me/notifications", tag: "Me", summary: "How they hear about their own clients' bookings, changes, cancellations and arrivals, and their phones.", permission: "Their own (not a shop login)" },
   { method: "put", path: "/me/notifications", tag: "Me", summary: "Change it. push is the app.", permission: "Their own (not a shop login)", body: S.NotificationPrefsBody },
@@ -276,7 +277,7 @@ export function staffOpenApiDocument(baseUrl: string) {
       responses: {
         ...(op.method === "delete" || op.empty ? { "204": { description: "Done" } } : { "200": { description: "OK" } }),
         "400": { description: "Invalid request", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
-        "401": { description: "Sign in required" },
+        "401": { description: "Sign in required. details.reason and details.wipe (all, cache or none) say what the app deletes (see dataProtection in GET /config)" },
         "403": { description: "Their role or the location's sign-in rule doesn't allow it" },
         ...(op.path === "/config" ? {} : { "426": { description: "This app build is older than the platform's minimum (GET /config)" } }),
       },
@@ -288,7 +289,7 @@ export function staffOpenApiDocument(baseUrl: string) {
       title: "Ray'z Staff app API",
       version: "1",
       description:
-        "For the Ray'z Staff app (replacing Squire Commander). Separate from the customer API at /api/v1. Sign in with email and password (and the authenticator code where set up), then send Authorization: Bearer <accessToken>. Access tokens last an hour; refresh with the rotating refresh token. Roles, permissions, Client data masking and each location's sign-in rule are enforced on the server on every request.",
+        "For the Ray'z Staff app (replacing Squire Commander). Separate from the customer API at /api/v1. Sign in with email and password (and the authenticator code where set up), then send Authorization: Bearer <accessToken>. Access tokens last an hour; refresh with the rotating refresh token. Roles, permissions, Client data masking and each location's sign-in rule are enforced on the server on every request. Data on the phone (ST-I18): keep a response, encrypted for at most 24 hours, only when its X-Staff-Cache header is offline-24h; with no signal the app is read-only except clock punches, queued with queuedAt and clientPunchId. GET /config dataProtection has the rest: app lock, snapshot blur, no copy or share, and wipes.",
     },
     servers: [{ url: `${baseUrl}/api/staff/v1` }],
     components: {

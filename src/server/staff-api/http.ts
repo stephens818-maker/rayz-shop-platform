@@ -2,6 +2,7 @@ import "server-only";
 import type { Permission } from "@/domain/permissions";
 import { route } from "@/server/api";
 import { StaffContext, assertShopAccess, authorizeContext } from "@/server/auth/staff";
+import { STAFF_CACHE_HEADER, cacheRuleFor } from "@/domain/staff-device-policy";
 import { AppError, forbidden } from "@/server/errors";
 import { requireStaffApp } from "./auth";
 import { assertSupportedStaffClient } from "./config";
@@ -41,8 +42,15 @@ export function assertShopHeader(req: Request, ctx: StaffAppContext) {
 export function staffRoute<P = Record<string, string>>(guard: Guard, fn: (req: Request, ctx: StaffAppContext, params: P) => Promise<Response>) {
   return route<P>(async (req, params) => {
     assertSupportedStaffClient(req);
-    return fn(req, await guardedStaff(req, guard), params);
+    return withCacheRule(req, await fn(req, await guardedStaff(req, guard), params));
   });
+}
+
+/** ST-I18: whether the app may keep this response on the phone (X-Staff-Cache), and never in an HTTP cache. */
+export function withCacheRule(req: Request, res: Response): Response {
+  res.headers.set(STAFF_CACHE_HEADER, cacheRuleFor(req.method, new URL(req.url).pathname));
+  res.headers.set("Cache-Control", "private, no-store");
+  return res;
 }
 
 /** The Bearer token's staff member, held to the guard and X-Shop-Id. */

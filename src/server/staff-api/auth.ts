@@ -1,9 +1,10 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, gt, isNotNull, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { staff, staffAppTokens, staffDevices } from "@/db/schema";
 import { BLOCK_MESSAGE } from "@/domain/network-access";
+import { WIPE_FOR, type SessionEnd } from "@/domain/staff-device-policy";
 import { deviceLabel, idleTooLong } from "@/domain/staff-auth";
 import { clientIp } from "@/lib/client-ip";
 import { audit } from "@/server/audit";
@@ -27,6 +28,9 @@ import { rateLimit } from "@/server/rate-limit";
 export const STAFF_ACCESS_TTL_SECONDS = 60 * 60;
 export const STAFF_REFRESH_TTL_DAYS = 30;
 const LOGIN_WINDOW_MS = 15 * 60_000;
+
+/** A refused session, with what the app wipes (ST-I18): details.reason and details.wipe. */
+const ended = (reason: SessionEnd, message: string) => new AppError("unauthorized", message, { reason, wipe: WIPE_FOR[reason] });
 
 export interface StaffTokens {
   accessToken: string;
@@ -140,26 +144,37 @@ export async function endAllStaffAppSessions(staffId: string, now = new Date()) 
  */
 export async function refreshStaffTokens(refreshToken: string, deviceId?: string | null): Promise<StaffTokens> {
   const row = await db.query.staffAppTokens.findFirst({ where: eq(staffAppTokens.tokenHash, sha256(refreshToken)) });
-  if (!row) throw new AppError("unauthorized", "Invalid refresh token");
+  if (!row) throw ended("session_expired", "Invalid refresh token");
   if (row.deviceId && row.deviceId !== cleanDeviceId(deviceId)) {
     if (!row.revokedAt) await endStaffAppSession(row.sessionId);
-    throw new AppError("unauthorized", "This sign-in belongs to another phone; please sign in again");
+    throw ended("other_device", "This sign-in belongs to another phone; please sign in again");
   }
   if (row.revokedAt) {
-    if (row.replacedBy) await endAllStaffAppSessions(row.staffId);
-    throw new AppError("unauthorized", "Refresh token was already used; please sign in again");
+    if (row.replacedBy) {
+      await endAllStaffAppSessions(row.staffId);
+      throw ended("session_ended", "Refresh token was already used; please sign in again");
+    }
+    throw ended("session_ended", "This phone was signed out; please sign in again");
   }
-  if (row.expiresAt < new Date() || idleTooLong(row.lastUsedAt, new Date())) throw new AppError("unauthorized", "Session expired; please sign in again");
+  if (row.expiresAt < new Date() || idleTooLong(row.lastUsedAt, new Date())) throw ended("session_expired", "Session expired; please sign in again");
   const person = await db.query.staff.findFirst({ where: eq(staff.id, row.staffId), columns: { active: true, removedAt: true, sessionsValidAfter: true } });
   const started = await db.query.staffAppTokens.findFirst({ where: eq(staffAppTokens.id, row.sessionId), columns: { createdAt: true } });
   const since = (started ?? row).createdAt;
   if (!person?.active || person.removedAt || (person.sessionsValidAfter && Math.floor(since.getTime() / 1000) < Math.floor(person.sessionsValidAfter.getTime() / 1000))) {
     await endStaffAppSession(row.sessionId);
-    throw new AppError("unauthorized", "Please sign in again");
+    throw ended("account_ended", "Please sign in again");
   }
   const next = await issue(row.staffId, { deviceName: row.deviceName, deviceId: row.deviceId }, row.sessionId);
   await db.update(staffAppTokens).set({ revokedAt: new Date(), replacedBy: next.tokenId }).where(eq(staffAppTokens.id, row.id));
   return strip(next);
+}
+
+/** The phone deleted its data after a refused session (ST-I18): kept against that sign-in, in the security log. */
+export async function recordStaffAppWipe(refreshToken: string, wipe: "all" | "cache", where: Where) {
+  await rateLimit("staff_app_wiped_ip", where.ip, 30, LOGIN_WINDOW_MS, "Too many requests. Try again in 15 minutes.");
+  const row = await db.query.staffAppTokens.findFirst({ where: eq(staffAppTokens.tokenHash, sha256(refreshToken)), columns: { staffId: true, sessionId: true, deviceName: true } });
+  if (!row) return;
+  await audit({ staffId: row.staffId, label: "staff app" }, "staff.app_wiped", "staff", row.staffId, { sessionId: row.sessionId, deviceName: row.deviceName, wipe, ip: where.ip }, null);
 }
 
 export async function staffLogout(refreshToken: string) {
@@ -173,36 +188,65 @@ interface AppSession {
   iat: number;
 }
 
-/** The Bearer token's staff member and session, while the session is live. Customer tokens and web cookies don't count. */
-export async function staffAppSession(req: Request): Promise<AppSession | null> {
+/** The Bearer token's staff member and session while it's live, else why not. Customer tokens and web cookies don't count. */
+async function checkStaffAppSession(req: Request): Promise<AppSession | { end: SessionEnd | null }> {
   const h = req.headers.get("authorization");
-  if (!h?.toLowerCase().startsWith("bearer ")) return null;
+  if (!h?.toLowerCase().startsWith("bearer ")) return { end: null };
   const p = await verifyToken<{ sub: string; sid: string; iat?: number }>(h.slice(7).trim(), "staff_app_access");
-  if (!p?.sub || !p.sid) return null;
+  if (!p?.sub || !p.sid) return { end: "token_expired" };
   const [live] = await db
     .select({ id: staffAppTokens.id, createdAt: staffAppTokens.createdAt })
     .from(staffAppTokens)
     .where(and(eq(staffAppTokens.id, p.sid), eq(staffAppTokens.staffId, p.sub)))
     .limit(1);
-  if (!live) return null;
+  if (!live) return { end: "session_ended" };
   const [open] = await db
     .select({ id: staffAppTokens.id })
     .from(staffAppTokens)
     .where(and(eq(staffAppTokens.sessionId, p.sid), isNull(staffAppTokens.revokedAt), gt(staffAppTokens.expiresAt, new Date())))
     .limit(1);
-  if (!open) return null;
+  if (!open) {
+    // Rotation revokes a token and names its successor; ending the session revokes with no successor.
+    const [cut] = await db
+      .select({ id: staffAppTokens.id })
+      .from(staffAppTokens)
+      .where(and(eq(staffAppTokens.sessionId, p.sid), isNotNull(staffAppTokens.revokedAt), isNull(staffAppTokens.replacedBy)))
+      .limit(1);
+    return { end: cut ? "session_ended" : "session_expired" };
+  }
   // Signing out everywhere is checked against when the session started, not when this access token was minted.
   return { staffId: p.sub, sessionId: p.sid, iat: Math.floor(live.createdAt.getTime() / 1000) };
 }
+
+export async function staffAppSession(req: Request): Promise<AppSession | null> {
+  const s = await checkStaffAppSession(req);
+  return "end" in s ? null : s;
+}
+
+const END_MESSAGE: Record<SessionEnd, string> = {
+  token_expired: "Your sign-in needs refreshing (POST /api/staff/v1/auth/refresh)",
+  session_expired: "Your sign-in expired. Please sign in again.",
+  session_ended: "This phone was signed out of Ray'z Staff. Please sign in again.",
+  account_ended: "Please sign in again",
+  other_device: "This sign-in belongs to another phone; please sign in again",
+};
 
 /**
  * The request's staff context: the person's roles and permissions as of now, the shops this request
  * may reach from where it comes (X-Shop-Id picks one, or "all"), or 401.
  */
 export async function requireStaffApp(req: Request): Promise<StaffContext & { sessionId: string }> {
-  const s = await staffAppSession(req);
-  if (!s) throw new AppError("unauthorized", "Sign in required (Authorization: Bearer <accessToken> from /api/staff/v1/auth/login)");
+  const s = await checkStaffAppSession(req);
+  if ("end" in s) {
+    if (!s.end) throw new AppError("unauthorized", "Sign in required (Authorization: Bearer <accessToken> from /api/staff/v1/auth/login)");
+    throw ended(s.end, END_MESSAGE[s.end]);
+  }
   const ctx = await staffContextOf(s.staffId, s.iat, { ip: clientIp(req.headers), deviceShopIds: [], shopPref: req.headers.get("x-shop-id")?.trim() || null });
-  if (!ctx) throw new AppError("unauthorized", "Please sign in again");
+  if (!ctx) {
+    const person = await db.query.staff.findFirst({ where: eq(staff.id, s.staffId), columns: { active: true, sessionsValidAfter: true } });
+    const out = !person?.active || (person.sessionsValidAfter && s.iat < Math.floor(person.sessionsValidAfter.getTime() / 1000));
+    if (out) throw ended("account_ended", END_MESSAGE.account_ended);
+    throw new AppError("forbidden", BLOCK_MESSAGE, { networkBlocked: true, wipe: "cache" });
+  }
   return { ...ctx, sessionId: s.sessionId, session: { kind: "app", id: s.sessionId } };
 }

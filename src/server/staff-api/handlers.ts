@@ -11,7 +11,7 @@ import { requireInTenant } from "@/server/tenant";
 import { clockState } from "@/server/time-clock";
 import { declareCashTips, myDeclarations } from "@/server/tips/declarations";
 import { assertStripePayouts } from "@/server/tips/payout-model";
-import { refreshStaffTokens, requestWhere, staffCodeLogin, staffLogout, staffPasswordLogin } from "./auth";
+import { recordStaffAppWipe, refreshStaffTokens, requestWhere, staffCodeLogin, staffLogout, staffPasswordLogin } from "./auth";
 import { block, book, move, myCalendar, openings, runningLate, seesEveryColumn, setStatus, unblock } from "./calendar";
 import { clientCard, contactForApp, findClientsFor, revealForApp } from "./clients";
 import { KioskCaller, appPunch, clockOverview, kioskHome, kioskPunch, kioskQr, kioskQueueView, kioskStatus, kioskTeam, pairKiosk, pairedKiosk, registerKiosk, setMyPin, signedInKiosk } from "./clock";
@@ -33,7 +33,7 @@ import {
   terminalConnectionToken,
   withdrawTimeOff,
 } from "./front";
-import { StaffAppContext, guardedStaff, shopOf, signInRoute, staffRoute } from "./http";
+import { StaffAppContext, guardedStaff, shopOf, signInRoute, staffRoute, withCacheRule } from "./http";
 import { accountSession, bankingView, dashboardLink, earningsRange, myEarnings, myExternalAccounts, myPayouts, myTipsView, onboardingLink, setMyDepositConsent, setMyPayoutMethod } from "./money";
 import { myPeriodEarnings, myYearToDate, payoutSetup } from "./pay";
 import { markPopupsSeen, popupsFor } from "./popups";
@@ -101,8 +101,15 @@ export const postLogout = signInRoute(async (req) => {
   return new Response(null, { status: 204 });
 });
 
+/** POST /auth/wiped: the phone deleted its data after a refused session (ST-I18). */
+export const postWiped = signInRoute(async (req) => {
+  const v = await body(req, S.WipedBody);
+  await recordStaffAppWipe(v.refreshToken, v.wipe, requestWhere(req));
+  return new Response(null, { status: 204 });
+});
+
 /** GET /config: minimum versions, switches and links, read at launch before sign-in. Not version-gated. */
-export const getConfig = route(async (req) => json(staffAppConfig(req)));
+export const getConfig = route(async (req) => withCacheRule(req, json(staffAppConfig(req))));
 
 // ───────────────────────────── Me ─────────────────────────────
 

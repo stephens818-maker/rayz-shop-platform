@@ -848,6 +848,13 @@
       "when": 1796595240000,
       "tag": "core_0120_no_biometrics",
       "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "7",
+      "when": 1796595300000,
+      "tag": "core_0121_offline_punches",
+      "breakpoints": true
     }
   ]
 }

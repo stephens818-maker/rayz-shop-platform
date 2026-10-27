@@ -93,7 +93,7 @@ describe("every route is guarded", () => {
   const src = readFileSync(join(process.cwd(), "src/server/staff-api/handlers.ts"), "utf8");
   const exported = [...src.matchAll(/^export const (\w+)\s*=\s*([\w.]+)/gm)].map((x) => ({ name: x[1], via: x[2] }));
   /** Before sign-in: the version gate only. GET /config is read before anything else, ungated. */
-  const PUBLIC = new Set(["postLogin", "postLoginCode", "postCodeStart", "postCodeVerify", "getInvite", "postInviteAccept", "postRefresh", "postLogout", "getConfig", "postKioskPair"]);
+  const PUBLIC = new Set(["postLogin", "postLoginCode", "postCodeStart", "postCodeVerify", "getInvite", "postInviteAccept", "postRefresh", "postLogout", "postWiped", "getConfig", "postKioskPair"]);
 
   it("each handler is staffRoute (authorize + assertShopAccess), a wrapper of it, or a named sign-in route", () => {
     const handlers = exported.filter((e) => e.name !== "OPTIONS");
@@ -107,7 +107,7 @@ describe("every route is guarded", () => {
     // The front-desk clock: a paired install's own token, else the same guard as staffRoute.
     expect(src).toMatch(/const kioskRoute = [^]*?pairedKiosk\(req\);\s*if \(paired\) return fn\(req, paired\);\s*return fn\(req, await signedInKiosk\(await guardedStaff\(req, KIOSK\), req\)\)/);
     const http = readFileSync(join(process.cwd(), "src/server/staff-api/http.ts"), "utf8");
-    expect(http).toMatch(/assertSupportedStaffClient\(req\);\s*return fn\(req, await guardedStaff\(req, guard\), params\)/);
+    expect(http).toMatch(/assertSupportedStaffClient\(req\);\s*return withCacheRule\(req, await fn\(req, await guardedStaff\(req, guard\), params\)\)/);
     expect(http).toMatch(/const ctx = await requireStaffApp\(req\);\s*assertShopHeader\(req, ctx\);\s*authorizeContext\(ctx/);
   });
 
@@ -122,7 +122,7 @@ describe("every route is guarded", () => {
     const doc = staffOpenApiDocument("http://x") as { paths: Record<string, Record<string, { security?: unknown[]; description: string }>> };
     const open = Object.entries(doc.paths).flatMap(([p, ops]) => Object.entries(ops).filter(([, o]) => Array.isArray(o.security) && !o.security.length).map(([meth]) => `${meth.toUpperCase()} ${p}`));
     expect(open.sort()).toEqual(
-      ["POST /auth/login", "POST /auth/login/code", "POST /auth/code/start", "POST /auth/code/verify", "GET /auth/invite", "POST /auth/invite/accept", "POST /auth/refresh", "POST /auth/logout", "GET /config", "POST /clock/kiosk/pair"].sort(),
+      ["POST /auth/login", "POST /auth/login/code", "POST /auth/code/start", "POST /auth/code/verify", "GET /auth/invite", "POST /auth/invite/accept", "POST /auth/refresh", "POST /auth/logout", "POST /auth/wiped", "GET /config", "POST /clock/kiosk/pair"].sort(),
     );
     for (const p of ["/banking", "/banking/external-accounts", "/banking/onboarding-link", "/banking/dashboard-link", "/banking/method", "/banking/deposit-consent"])
       expect(Object.values(doc.paths[p])[0].description, p).toMatch(/403 .*FEATURE_STAFF_STRIPE_PAYOUTS=false/);
@@ -233,6 +233,66 @@ describe("signing in (ST-C1) and the account lifecycle (ST-C10)", () => {
     expect((await call("GET", "me", { token: a.accessToken })).status).toBe(401);
     const audits = await m.db.db.select().from(S().auditLog).where(and(eq(S().auditLog.action, "user.app_sign_out"), eq(S().auditLog.entityId, ids.frontdesk)));
     expect(audits).toHaveLength(1);
+  });
+});
+
+describe("data on the phone (ST-I18)", () => {
+  it("config carries the device policy: an encrypted 24-hour cache, app lock, snapshot blur, no copy or share, read-only offline but for punches, and no biometrics", async () => {
+    const r = await call("GET", "config");
+    expect(r.json.dataProtection).toMatchObject({
+      cache: { encrypted: true, ttlHours: 24, header: "X-Staff-Cache", excludeFromBackup: true },
+      appLock: { required: true, afterBackgroundSeconds: 300 },
+      snapshotBlur: { required: true },
+      copyShare: { blocked: true },
+      offline: { mode: "read_only", queued: ["clock_punch"], punchMaxAgeHours: 24 },
+      wipe: { onSignOut: true, onRevoke: true },
+    });
+    expect(r.json.biometrics).toMatchObject({ collected: false });
+    expect(r.headers.get("x-staff-cache")).toBe("offline-24h");
+  });
+
+  it("only their own day may be kept on the phone; clients, pay and anything sent never are, and nothing goes in an HTTP cache", async () => {
+    const t = await login("makenna@rayz.test");
+    for (const p of ["me", "me/calendar", "me/timecard", "clock", "schedule"]) {
+      const r = await call("GET", p, { token: t.accessToken });
+      expect(r.status, p).toBe(200);
+      expect(r.headers.get("x-staff-cache"), p).toBe("offline-24h");
+      expect(r.headers.get("cache-control"), p).toBe("private, no-store");
+    }
+    for (const p of ["me/earnings", "tips", "payouts", "clients?q=Od", "me/sessions", "me/notifications"]) {
+      const r = await call("GET", p, { token: t.accessToken });
+      expect(r.headers.get("x-staff-cache"), `${p} ${r.status}`).toBe("none");
+    }
+    expect((await call("PUT", "me/notifications", { token: t.accessToken, body: {} })).headers.get("x-staff-cache")).not.toBe("offline-24h");
+  });
+
+  it("a refused session says what to wipe: everything when signed out from elsewhere or by a manager, the cache when it only expired, nothing when the token just needs a refresh; the wipe is logged", async () => {
+    const reason = async (token: string) => (await call("GET", "me", { token })).json.error.details;
+    expect(await reason("not-a-token")).toEqual({ reason: "token_expired", wipe: "none" });
+
+    const a = await login("frontdesk@rayz.test", { deviceId: "wipe-A" });
+    const b = await login("frontdesk@rayz.test", { deviceId: "wipe-B" });
+    expect((await call("DELETE", `me/sessions/${b.sessionId}`, { token: a.accessToken })).status).toBe(204);
+    expect(await reason(b.accessToken)).toEqual({ reason: "session_ended", wipe: "all" });
+    const refused = await call("POST", "auth/refresh", { body: { refreshToken: b.refreshToken, deviceId: "wipe-B" } });
+    expect(refused.json.error.details).toEqual({ reason: "session_ended", wipe: "all" });
+    expect((await call("POST", "auth/refresh", { body: { refreshToken: a.refreshToken, deviceId: "wipe-other" } })).json.error.details).toMatchObject({ reason: "other_device", wipe: "all" });
+
+    const c = await login("frontdesk@rayz.test", { deviceId: "wipe-C" });
+    await m.db.db.update(S().staffAppTokens).set({ expiresAt: new Date(Date.now() - 60_000) }).where(eq(S().staffAppTokens.sessionId, c.sessionId));
+    expect(await reason(c.accessToken)).toEqual({ reason: "session_expired", wipe: "cache" });
+    expect((await call("POST", "auth/refresh", { body: { refreshToken: c.refreshToken, deviceId: "wipe-C" } })).json.error.details).toEqual({ reason: "session_expired", wipe: "cache" });
+
+    const d = await login("frontdesk@rayz.test", { deviceId: "wipe-D" });
+    const owner = await login("owner@rayz.test");
+    expect((await call("POST", `staff/${ids.frontdesk}/sign-out`, { token: owner.accessToken })).status).toBe(204);
+    expect(await reason(d.accessToken)).toEqual({ reason: "session_ended", wipe: "all" });
+
+    expect((await call("POST", "auth/wiped", { body: { refreshToken: d.refreshToken, wipe: "all" } })).status).toBe(204);
+    expect((await call("POST", "auth/wiped", { body: { refreshToken: "nobody-knows-this-token", wipe: "all" } })).status).toBe(204);
+    const logs = await m.db.db.select().from(S().auditLog).where(and(eq(S().auditLog.action, "staff.app_wiped"), eq(S().auditLog.entityId, ids.frontdesk)));
+    expect(logs.at(-1)?.details).toMatchObject({ sessionId: d.sessionId, wipe: "all" });
+    expect(JSON.stringify(logs)).not.toContain(d.refreshToken);
   });
 });
 
@@ -436,7 +496,7 @@ describe("earnings (ST-C6) and tip payouts (ST-C7)", () => {
     expect(r.json.defaultMethod).toBe("stripe");
     expect(r.json.stripePayouts).toEqual({ enabled: true });
     expect(r.json.shops.every((s: { method: string; path: string }) => s.method === "stripe" && /W-2/.test(s.path))).toBe(true);
-    expect(r.text).not.toMatch(/routing|account_number|\d{8,}/);
+    expect(r.text.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<id>")).not.toMatch(/routing|account_number|\d{8,}/);
     withEnv("FEATURE_STAFF_STRIPE_PAYOUTS", "false");
     const off = (await call("GET", "me/payout-setup", { token: t.accessToken })).json;
     expect(off.defaultMethod).toBe("payroll");

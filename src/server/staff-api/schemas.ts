@@ -15,6 +15,7 @@ export const LoginBody = z.object({ email: z.string().max(200), password: z.stri
 export const LoginCodeBody = z.object({ ticket: z.string().max(4000).describe("From the login response's twoFactor"), code: z.string().max(12), deviceName: Device, deviceId: DeviceId });
 export const RefreshBody = z.object({ refreshToken: z.string().min(10).max(200), deviceId: DeviceId });
 export const LogoutBody = z.object({ refreshToken: z.string().min(10).max(200) });
+export const WipedBody = z.object({ refreshToken: z.string().min(10).max(200), wipe: z.enum(["all", "cache"]).describe("What it deleted: details.wipe from the 401") });
 
 const Who = { email: z.string().max(200).nullish(), phone: z.string().max(40).nullish() };
 export const CodeStartBody = z.object(Who).refine((v) => !!(v.email || v.phone), "Send email or phone").describe("Their email or mobile number on file. The answer is the same whether or not it matches anyone.");
@@ -55,6 +56,12 @@ const CashTips = z
   .optional()
   .describe("Clocking out only, where GET /clock has cashTips: declares today's cash tips at the shop (SB-C3)");
 
+/** ST-I18: a punch tapped with no signal, sent when the phone is back online. */
+const Queued = {
+  queuedAt: z.iso.datetime({ offset: true }).optional().describe("When it was tapped with no signal (at most 24 hours ago); the punch goes in at that time, flagged offline"),
+  clientPunchId: z.uuid().optional().describe("The app's own random id for this punch: sending it again returns the first result instead of punching twice"),
+};
+
 export const PunchBody = z.object({
   shopId: z.uuid(),
   type: z.enum(["in", "out"]),
@@ -63,6 +70,7 @@ export const PunchBody = z.object({
   photo: Photo,
   confirmTimeOff: z.boolean().optional().describe("Clock in anyway during time off, after the confirm reply"),
   cashTips: CashTips,
+  ...Queued,
 });
 
 export const ClockInOutBody = PunchBody.omit({ type: true });
@@ -74,9 +82,10 @@ export const BreakStartBody = z.object({
   proof: Proof,
   gps: Gps,
   photo: Photo,
+  ...Queued,
 });
 
-export const BreakEndBody = z.object({ shopId: z.uuid().optional(), proof: Proof, gps: Gps, photo: Photo });
+export const BreakEndBody = z.object({ shopId: z.uuid().optional(), proof: Proof, gps: Gps, photo: Photo, ...Queued });
 
 export const PinBody = z.object({ pin: z.string().max(12).describe("4 to 6 digits, not one digit repeated or a run like 1234") });
 

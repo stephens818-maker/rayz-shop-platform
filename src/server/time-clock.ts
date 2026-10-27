@@ -372,6 +372,10 @@ export interface PunchRequest {
   plannedMin?: number | null;
   actor: Actor;
   now?: Date;
+  /** ST-I18: tapped with no signal and sent later; `now` is when it was tapped. Flagged for the manager. */
+  offline?: { receivedAt: Date };
+  /** The app's own id for the punch, so a retry never punches twice. */
+  clientPunchId?: string | null;
 }
 
 /** The longest break length someone can plan at break start. */
@@ -414,6 +418,14 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
     );
   }
   if (state.shift && state.shift.shopId !== req.shopId) throw bad(`You're clocked in at ${state.shift.shop}. Punch there.`);
+  if (req.offline) {
+    const [later] = await db
+      .select({ id: timePunches.id })
+      .from(timePunches)
+      .where(and(eq(timePunches.staffId, req.staffId), gt(timePunches.at, now), isNull(timePunches.voidedAt)))
+      .limit(1);
+    if (later) throw new AppError("conflict", "A later punch is already on your timecard, so this one can't go in before it. Ask a manager to add it.", { offline: true });
+  }
 
   let method: PunchMethod;
   let distanceM: number | null = null;
@@ -438,7 +450,7 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
   const date = localDateOf(now);
   if (await hoursLockedOn(req.shopId, date)) throw new AppError("conflict", "This pay period is locked, so no more punches can go into it. Ask a manager.");
 
-  const flags: PunchFlag[] = [];
+  const flags: PunchFlag[] = req.offline ? ["offline"] : [];
   const notes: string[] = [];
   if (req.type === "in") {
     const off = await db
@@ -507,6 +519,7 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
         offScheduleMin,
         reasonId: breakReasonId,
         plannedMin,
+        clientPunchId: req.clientPunchId ?? null,
         createdBy: req.actor.staffId ?? null,
       })
       .returning({ id: timePunches.id });
@@ -518,7 +531,7 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
       "timeclock.punch",
       "time_punch",
       row.id,
-      { staffId: req.staffId, type: req.type, source: req.source, method, flags, distanceM, photo: !!req.photo, approvalsCleared: cleared, ...(req.type === "break_start" ? { reasonId: breakReasonId, plannedMin } : {}) },
+      { staffId: req.staffId, type: req.type, source: req.source, method, flags, distanceM, photo: !!req.photo, approvalsCleared: cleared, ...(req.type === "break_start" ? { reasonId: breakReasonId, plannedMin } : {}), ...(req.offline ? { offline: true, receivedAt: req.offline.receivedAt.toISOString() } : {}) },
       req.shopId,
       tx,
     );
@@ -528,7 +541,7 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
   // Clients booked over a break or after an early clock-out: the managers hear now, not at the next cron run.
   if (req.type === "break_start" || req.type === "out") {
     try {
-      await sendClockFallout(now, { onlyStaffId: req.staffId, shopIds: [req.shopId] });
+      await sendClockFallout(req.offline?.receivedAt ?? now, { onlyStaffId: req.staffId, shopIds: [req.shopId] });
     } catch (e) {
       console.error("clock fallout after punch failed", e);
     }

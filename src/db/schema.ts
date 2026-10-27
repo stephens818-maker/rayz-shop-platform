@@ -3667,11 +3667,14 @@ export const timePunches = pgTable(
     note: text("note"),
     /** The shop's employer; a trigger sets it and moves it with the shop. */
     employerId: uuid("employer_id").references(() => payrollEmployers.id),
+    /** The staff app's own id for a punch (ST-I18), so a punch queued offline and retried goes in once. */
+    clientPunchId: uuid("client_punch_id"),
     createdBy: uuid("created_by").references(() => staff.id),
     createdAt: createdAt(),
   },
   (t) => [
     index("time_punches_staff_at_idx").on(t.staffId, t.at),
+    uniqueIndex("time_punches_client_punch_uq").on(t.staffId, t.clientPunchId).where(sql`${t.clientPunchId} is not null`),
     index("time_punches_shop_at_idx").on(t.shopId, t.at),
     check("time_punches_type", sql`${t.type} in ('in', 'out', 'break_start', 'break_end')`),
     check("time_punches_source", sql`${t.source} in ('self', 'kiosk', 'manager')`),

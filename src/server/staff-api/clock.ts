@@ -2,6 +2,7 @@ import "server-only";
 import { and, asc, eq, gte, inArray, isNull, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { shops, staff, staffShops, timePunches } from "@/db/schema";
+import { OFFLINE_PUNCH_CLOCK_SKEW_MS, queuedPunchProblem } from "@/domain/staff-device-policy";
 import { clockRuleText } from "@/domain/time-clock";
 import { clientIp } from "@/lib/client-ip";
 import { startOfLocalDay, todayLocal } from "@/lib/time";
@@ -9,7 +10,7 @@ import { workShopIds } from "@/server/auth/access";
 import { assertShopAccess, can, openShops } from "@/server/auth/staff";
 import { breakReasons } from "@/server/block-reasons";
 import { clockProofUrl, clockQrCode } from "@/server/clock-codes";
-import { forbidden } from "@/server/errors";
+import { AppError, forbidden } from "@/server/errors";
 import { clockInWelcome } from "@/server/milestones/day";
 import { redeemPairing, pairedDevice } from "@/server/clock-pairing";
 import { PunchResult, checkPin, clockState, deviceFromToken, onShopTeam, punch, registerDevice, setPin, shopClocks } from "@/server/time-clock";
@@ -85,21 +86,46 @@ export interface AppPunchInput {
   breakReasonId?: string | null;
   plannedMin?: number | null;
   cashTips?: { cents: number; attest: boolean };
+  /** ST-I18: when it was tapped with no signal, and the app's id for it. */
+  queuedAt?: string;
+  clientPunchId?: string;
 }
 
 const resultView = (r: PunchResult, welcome: Awaited<ReturnType<typeof clockInWelcome>> = null) =>
   r.kind === "confirm" ? r : { kind: r.kind, punchId: r.punchId, type: r.type, at: r.at.toISOString(), shop: r.shop, flags: r.flags, notes: r.notes, welcome };
 
-/** A punch from their own phone. Clocking in returns their congratulations (milestones) to pop up. */
-export async function appPunch(ctx: StaffAppContext, req: Request, v: AppPunchInput) {
+/** The punch a retry already put in, as the first send returned it. */
+async function sentBefore(staffId: string, clientPunchId: string) {
+  const [p] = await db
+    .select({ id: timePunches.id, type: timePunches.type, at: timePunches.at, flags: timePunches.flags, shop: shops.name })
+    .from(timePunches)
+    .innerJoin(shops, eq(shops.id, timePunches.shopId))
+    .where(and(eq(timePunches.staffId, staffId), eq(timePunches.clientPunchId, clientPunchId)));
+  return p ? { kind: "done" as const, punchId: p.id, type: p.type, at: p.at.toISOString(), shop: p.shop, flags: p.flags, notes: [], welcome: null, alreadySent: true } : null;
+}
+
+/**
+ * A punch from their own phone. Clocking in returns their congratulations (milestones) to pop up.
+ * ST-I18: one tapped with no signal comes with queuedAt and goes in at that time, flagged offline;
+ * the shop's Wi-Fi can't prove it then (the phone has moved networks), QR, NFC and location can.
+ */
+export async function appPunch(ctx: StaffAppContext, req: Request, v: AppPunchInput, now = new Date()) {
   assertShopAccess(ctx, v.shopId);
+  if (v.clientPunchId) {
+    const again = await sentBefore(ctx.staff.id, v.clientPunchId);
+    if (again) return again;
+  }
+  const queuedAt = v.queuedAt ? new Date(v.queuedAt) : null;
+  const late = queuedAt && queuedPunchProblem(queuedAt, now);
+  if (late) throw new AppError("bad_request", late, { field: "queuedAt" });
+  const offline = queuedAt && now.getTime() - queuedAt.getTime() > OFFLINE_PUNCH_CLOCK_SKEW_MS ? queuedAt : null;
   const device = await deviceFromToken(deviceToken(req));
   const r = await punch({
     staffId: ctx.staff.id,
     shopId: v.shopId,
     type: v.type,
     source: "self",
-    evidence: { deviceShopId: device?.shopId ?? null, ip: clientIp(req.headers), gps: v.gps ?? null },
+    evidence: { deviceShopId: device?.shopId ?? null, ip: offline ? null : clientIp(req.headers), gps: v.gps ?? null },
     proof: v.proof,
     deviceId: device?.shopId === v.shopId ? device.id : null,
     photo: v.photo ?? null,
@@ -107,6 +133,9 @@ export async function appPunch(ctx: StaffAppContext, req: Request, v: AppPunchIn
     breakReasonId: v.breakReasonId ?? null,
     plannedMin: v.plannedMin ?? null,
     actor: { ...ctx.actor, label: `${ctx.actor.label} (staff app)` },
+    now: offline ?? now,
+    ...(offline ? { offline: { receivedAt: now } } : {}),
+    clientPunchId: v.clientPunchId ?? null,
   });
   const view = resultView(r, r.kind === "done" && r.type === "in" ? await clockInWelcome(ctx.staff.id, ctx.actor, "clock") : null);
   // The punch stands either way; a declaration that can't be taken comes back as cashTips.error.
