@@ -325,7 +325,7 @@ describe("the platform transfer path (ST-C11, separate charges and transfers)", 
   it("a brand-settled shop: a transfer from the platform balance to the employee's account, then their payout, each idempotent on the payout's id, with no account debit", async () => {
     const { shop, staffId } = await person("silvis", "Abigail");
     await setMode(shop.id, "brand");
-    onTestFinished(() => setMode(shop.id, "connected"));
+    onTestFinished(async () => void (await setMode(shop.id, "connected")));
     await readyOnStripe(staffId, "acct_fake_abigail", false);
     usePlatform();
     const { draft, sent, stripeMoney } = await payOne(shop.id, staffId, 1800);
@@ -365,7 +365,7 @@ describe("the platform transfer path (ST-C11, separate charges and transfers)", 
   it("a payout Stripe refuses after the transfer: the payout fails, the transfer is reversed once, and the tips go back for the next batch", async () => {
     const { shop, staffId } = await person("silvis", "Abigail");
     await setMode(shop.id, "brand");
-    onTestFinished(() => setMode(shop.id, "connected"));
+    onTestFinished(async () => void (await setMode(shop.id, "connected")));
     await readyOnStripe(staffId, "acct_fake_abigail_fail", false);
     usePlatform();
     const ok = fake.payouts.create;
