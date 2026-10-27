@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button, Field, Input, Notice } from "@/components/ui";
 import { useAction } from "@/components/use-action";
-import { handBackAction, reconcileAction, recordFreezeAction, signOffAction, squireTipsEndAction } from "../actions";
+import { handBackAction, payoutDatesAction, payoutReportSignOffAction, reconcileAction, recordFreezeAction, signOffAction, squireTipsEndAction, ytdImportAction } from "../actions";
 
 const FILES = [
   { id: "bookings", label: "Appointments (upcoming)" },
@@ -115,6 +115,81 @@ export function HandBackForm({ shopId, current }: { shopId: string; current: str
       <Button variant="secondary" disabled={!url || pending} onClick={() => run(() => handBackAction(shopId, url))}>
         Hand back to Squire
       </Button>
+      {error && <Notice tone="red">{error}</Notice>}
+    </div>
+  );
+}
+
+export function PayoutDatesForm({ shopId, paidThrough, lastPayoutOn }: { shopId: string; paidThrough: string | null; lastPayoutOn: string | null }) {
+  const { pending, error, run } = useAction();
+  const [through, setThrough] = useState(paidThrough ?? "");
+  const [last, setLast] = useState(lastPayoutOn ?? "");
+  return (
+    <div className="flex flex-wrap items-end gap-3">
+      <Field label="Squire's last payout statement covers tips through">
+        <Input type="date" value={through} onChange={(e) => setThrough(e.target.value)} className="w-44" />
+      </Field>
+      <Field label="Squire's last payout day">
+        <Input type="date" value={last} onChange={(e) => setLast(e.target.value)} className="w-44" />
+      </Field>
+      <Button variant="secondary" disabled={pending || (through === (paidThrough ?? "") && last === (lastPayoutOn ?? ""))} onClick={() => run(() => payoutDatesAction(shopId, { paidThrough: through, lastPayoutOn: last }))}>
+        Save dates
+      </Button>
+      {error && <Notice tone="red">{error}</Notice>}
+    </div>
+  );
+}
+
+export function PayoutSignOffButton({ shopId, ready }: { shopId: string; ready: boolean }) {
+  const { pending, error, run } = useAction();
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <Button disabled={pending || !ready} onClick={() => run(() => payoutReportSignOffAction(shopId))}>
+        Sign off the payout report
+      </Button>
+      {error && <Notice tone="red">{error}</Notice>}
+    </div>
+  );
+}
+
+export function YtdImportForm({ shopId, year }: { shopId: string; year: number }) {
+  const { pending, error, run } = useAction();
+  const [through, setThrough] = useState("");
+  const [csv, setCsv] = useState("");
+  const [done, setDone] = useState<{ imported: number; unmatched: number[]; invalid: number[] } | null>(null);
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-end gap-3">
+        <Field label={`${year} totals through`}>
+          <Input type="date" value={through} onChange={(e) => setThrough(e.target.value)} className="w-44" />
+        </Field>
+        <Field label="Squire year-to-date CSV">
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            className="text-sm"
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              setCsv(f ? await f.text() : "");
+            }}
+          />
+        </Field>
+        <Button
+          variant="secondary"
+          disabled={pending || !through || !csv}
+          onClick={() => run(() => ytdImportAction(shopId, { year, throughDate: through, csv }), setDone)}
+        >
+          Import
+        </Button>
+      </div>
+      <div className="text-xs text-zinc-500">Columns: barber (staff code or name), card_tips, cash_tips, service_sales, product_sales, paid_out, in dollars. Importing the same year again replaces it.</div>
+      {done && (
+        <Notice tone={done.unmatched.length || done.invalid.length ? "amber" : "green"}>
+          {done.imported} barber{done.imported === 1 ? "" : "s"} imported.
+          {done.unmatched.length > 0 && ` No one here matches row${done.unmatched.length === 1 ? "" : "s"} ${done.unmatched.join(", ")}.`}
+          {done.invalid.length > 0 && ` Row${done.invalid.length === 1 ? "" : "s"} ${done.invalid.join(", ")} had an amount that isn't a number.`}
+        </Notice>
+      )}
       {error && <Notice tone="red">{error}</Notice>}
     </div>
   );

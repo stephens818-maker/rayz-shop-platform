@@ -4,14 +4,16 @@ import { notFound } from "next/navigation";
 import { Badge, Card, CardHeader, Notice, PageHeader, Table, Td, Th } from "@/components/ui";
 import type { CutoverSection } from "@/db/schema";
 import { ONBOARDING_LABEL } from "@/domain/staff-onboarding";
-import { formatDate, formatDateTime } from "@/lib/time";
+import { formatDate, formatDateTime, todayLocal } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { handBackReport, listCutovers, REQUIRED_FILES } from "@/server/cutover";
+import { payoutCutoverReport, ytdImports } from "@/server/payout-cutover";
 import { inTenant } from "@/server/tenant";
 import { shopOnboardingCounts } from "@/server/tips/onboarding";
+import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { Importer } from "../../import/importer";
 import { STAGE } from "../stages";
-import { FreezeForm, HandBackForm, ReconcileForm, SignOffButton, SquireTipsEndForm } from "./client";
+import { FreezeForm, HandBackForm, PayoutDatesForm, PayoutSignOffButton, ReconcileForm, SignOffButton, SquireTipsEndForm, YtdImportForm } from "./client";
 
 export const metadata: Metadata = { title: "Squire cutover" };
 
@@ -29,9 +31,12 @@ export default async function ShopCutoverPage({ params }: { params: Promise<{ sh
   const owner = can(ctx, "settings.brand");
   const rec = c?.reconciliation && c.squireFrozenAt && c.reconciledAt && c.reconciledAt > c.squireFrozenAt ? c.reconciliation : null;
   const report = stage === "live" ? await handBackReport(shopId) : null;
+  const stripe = stripePayoutsOn();
   const team = (await shopOnboardingCounts([shopId])).get(shopId)!;
-  const allSet = team.notDone.length === 0;
+  const allSet = !stripe || team.notDone.length === 0;
   const ends = c?.squireTipsEndOn ?? null;
+  const year = Number(todayLocal().slice(0, 4));
+  const [payout, ytd] = await Promise.all([payoutCutoverReport(shopId), ytdImports(shopId, year)]);
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -47,6 +52,7 @@ export default async function ShopCutoverPage({ params }: { params: Promise<{ sh
         }
       />
 
+      {stripe ? (
       <Card>
         <CardHeader
           title="Staff payout onboarding: everyone set up before Squire's payouts stop"
@@ -77,6 +83,63 @@ export default async function ShopCutoverPage({ params }: { params: Promise<{ sh
             </Link>
           )}
           <SquireTipsEndForm shopId={shopId} current={ends} />
+        </div>
+      </Card>
+      ) : (
+        <Card>
+          <CardHeader
+            title="Staff tips after the switch: through payroll"
+            subtitle="Tips taken here are paid with each person's paycheck through iSolved, with withholding. Nobody sets up a payout account; direct deposit stays in iSolved. Squire pays what it owes for tips taken on Squire."
+            action={<Badge tone="green">Payroll</Badge>}
+          />
+          <div className="space-y-3 p-4 text-sm">
+            {ends && (
+              <div>
+                Squire pays this shop&rsquo;s tips through <b>{formatDate(ends, "EEEE, MMM d")}</b>.
+              </div>
+            )}
+            <SquireTipsEndForm shopId={shopId} current={ends} />
+          </div>
+        </Card>
+      )}
+
+      <PayoutReconciliation report={payout} canDates={can(ctx, "import.run") || can(ctx, "tips.approve")} canSign={can(ctx, "tips.approve")} />
+
+      <Card>
+        <CardHeader
+          title={`${year} year to date from Squire`}
+          subtitle="Each barber's tips and sales on Squire this year, so year totals in the staff app and the W-2 reconcile with iSolved. Read-only for staff. Have the CPA check them before year end."
+        />
+        <div className="space-y-3 p-4 text-sm">
+          {ytd.length > 0 && (
+            <Table>
+              <thead>
+                <tr>
+                  <Th>Barber</Th>
+                  <Th>Through</Th>
+                  <Th right>Card tips</Th>
+                  <Th right>Cash tips</Th>
+                  <Th right>Service sales</Th>
+                  <Th right>Product sales</Th>
+                  <Th right>Paid out by Squire</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {ytd.map((r) => (
+                  <tr key={r.staffId}>
+                    <Td>{r.name}</Td>
+                    <Td>{formatDate(r.throughDate)}</Td>
+                    <Td right>{$(r.cardTipsCents)}</Td>
+                    <Td right>{$(r.cashTipsCents)}</Td>
+                    <Td right>{$(r.serviceSalesCents)}</Td>
+                    <Td right>{$(r.productSalesCents)}</Td>
+                    <Td right>{$(r.paidOutCents)}</Td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          )}
+          {can(ctx, "import.run") && <YtdImportForm shopId={shopId} year={year} />}
         </div>
       </Card>
 
@@ -139,9 +202,9 @@ export default async function ShopCutoverPage({ params }: { params: Promise<{ sh
               <Card>
                 <CardHeader
                   title="4. Sign off and switch"
-                  subtitle="An owner signs off on the reconciliation above and on staff payout onboarding. Online booking for this shop then moves here: the website and app book it here, and the Squire link stops showing."
+                  subtitle={`An owner signs off on the reconciliation above${stripe ? " and on staff payout onboarding" : ""}. Online booking for this shop then moves here: the website and app book it here, and the Squire link stops showing.`}
                 />
-                <div className="p-4">{owner ? <SignOffButton shopId={shopId} ready={stage === "reconciled"} notOnboarded={team.notDone.length} /> : <div className="text-sm text-zinc-600">An owner signs off and switches.</div>}</div>
+                <div className="p-4">{owner ? <SignOffButton shopId={shopId} ready={stage === "reconciled"} notOnboarded={stripe ? team.notDone.length : 0} /> : <div className="text-sm text-zinc-600">An owner signs off and switches.</div>}</div>
               </Card>
             </>
           )}
@@ -239,5 +302,76 @@ function SectionView({ title, s }: { title: string; s: CutoverSection }) {
         </Table>
       )}
     </div>
+  );
+}
+
+function PayoutReconciliation({ report: r, canDates, canSign }: { report: Awaited<ReturnType<typeof payoutCutoverReport>>; canDates: boolean; canSign: boolean }) {
+  return (
+    <Card>
+      <CardHeader
+        title="Tip payouts: Squire to Ray'z"
+        subtitle="What Squire still owes each barber (Squire tickets after its last payout statement, through the last day it pays this shop's tips), Squire's last payout day and the first Ray'z payout. Each barber confirms their line in the staff app; then the shop manager signs it off."
+        action={r.signedOff ? <Badge tone={r.signedOff.current ? "green" : "amber"}>{r.signedOff.current ? "Signed off" : "Changed since sign-off"}</Badge> : undefined}
+      />
+      <div className="space-y-3 p-4 text-sm">
+        {!r.squireTipsEndOn && <Notice tone="amber">Enter the last day Squire pays this shop&rsquo;s tips above first.</Notice>}
+        <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div>
+            <dt className="text-zinc-500">Squire statement covers</dt>
+            <dd>{r.squirePaidThrough ? `through ${formatDate(r.squirePaidThrough)}` : "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-zinc-500">Squire&rsquo;s last tips day</dt>
+            <dd>{r.squireTipsEndOn ? formatDate(r.squireTipsEndOn) : "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-zinc-500">Squire&rsquo;s last payout</dt>
+            <dd>{r.squireLastPayoutOn ? formatDate(r.squireLastPayoutOn) : "—"}</dd>
+          </div>
+          <div>
+            <dt className="text-zinc-500">First Ray&rsquo;z payout</dt>
+            <dd>{r.firstRayzPayout ? `${formatDate(r.firstRayzPayout.checkDate)} (${r.firstRayzPayout.via === "payroll" ? "paycheck" : "Stripe"}, tips from ${formatDate(r.firstRayzPayout.periodStart, "MMM d")})` : "—"}</dd>
+          </div>
+        </dl>
+        {canDates && <PayoutDatesForm shopId={r.shopId} paidThrough={r.squirePaidThrough} lastPayoutOn={r.squireLastPayoutOn} />}
+        {r.lines.length > 0 && (
+          <Table>
+            <thead>
+              <tr>
+                <Th>Barber</Th>
+                <Th right>Squire owes</Th>
+                <Th right>Tickets</Th>
+                <Th>Barber says</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {r.lines.map((l) => (
+                <tr key={l.staffId}>
+                  <Td>{l.name}</Td>
+                  <Td right>{$(l.squireOwedCents)}</Td>
+                  <Td right>{l.tickets}</Td>
+                  <Td>
+                    {!l.confirmation?.current ? (
+                      <span className="text-zinc-500">{l.confirmation ? "Amount changed; asked again" : "Waiting"}</span>
+                    ) : l.confirmation.status === "confirmed" ? (
+                      <Badge tone="green">Confirmed</Badge>
+                    ) : (
+                      <span>
+                        <Badge tone="red">Disputed</Badge> <span className="text-xs text-zinc-600">{l.confirmation.note}</span>
+                      </span>
+                    )}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+        <div className="text-zinc-600">
+          {$(r.totals.squireOwedCents)} owed by Squire in all. {r.totals.confirmed} confirmed, {r.totals.disputed} disputed, {r.totals.waiting} waiting.
+          {r.signedOff && ` Signed off ${formatDateTime(r.signedOff.at)}${r.signedOff.by ? ` by ${r.signedOff.by}` : ""}.`}
+        </div>
+        {canSign && <PayoutSignOffButton shopId={r.shopId} ready={r.ready && !r.totals.disputed && !r.signedOff?.current} />}
+      </div>
+    </Card>
   );
 }

@@ -10,6 +10,7 @@ import { safe } from "@/server/action";
 import { assertShopAccess, authorize } from "@/server/auth/staff";
 import { CUTOVER_FILES, handBack, reconcileShop, recordFreeze, signOffAndSwitch } from "@/server/cutover";
 import { AppError } from "@/server/errors";
+import { importYtd, setPayoutCutoverDates, signOffPayoutReport } from "@/server/payout-cutover";
 import { setSquireTipsEnd } from "@/server/tips/onboarding";
 import { isValidLocalDate } from "@/lib/time";
 
@@ -84,5 +85,44 @@ export async function handBackAction(shopId: string, url: string) {
     refresh(shopId);
     revalidatePath("/admin/settings");
     return { bookings: r.bookings.length };
+  });
+}
+
+const DateOrNull = z.string().trim().transform((d, c) => {
+  if (!d) return null;
+  if (!isValidLocalDate(d)) c.addIssue({ code: "custom", message: "Enter a date" });
+  return d;
+});
+
+/** Squire's last payout statement (tips covered through) and its last payout day for this shop. */
+export async function payoutDatesAction(shopId: string, v: { paidThrough: string; lastPayoutOn: string }) {
+  return safe(async () => {
+    const ctx = await authorize(["import.run", "tips.approve"]);
+    assertShopAccess(ctx, Shop.parse(shopId));
+    await setPayoutCutoverDates(ctx.actor, shopId, { paidThrough: DateOrNull.parse(v.paidThrough), lastPayoutOn: DateOrNull.parse(v.lastPayoutOn) });
+    refresh(shopId);
+    return null;
+  });
+}
+
+/** The shop manager signs off the Squire-to-Ray'z tip payout reconciliation. */
+export async function payoutReportSignOffAction(shopId: string) {
+  return safe(async () => {
+    const ctx = await authorize("tips.approve");
+    assertShopAccess(ctx, Shop.parse(shopId));
+    await signOffPayoutReport(ctx.actor, shopId);
+    refresh(shopId);
+    return null;
+  });
+}
+
+/** Squire's year-to-date tips and sales per barber, for W-2 continuity. */
+export async function ytdImportAction(shopId: string, v: { year: number; throughDate: string; csv: string }) {
+  return safe(async () => {
+    const ctx = await authorize("import.run");
+    assertShopAccess(ctx, Shop.parse(shopId));
+    const r = await importYtd(ctx.actor, shopId, z.object({ year: z.number().int(), throughDate: z.string(), csv: z.string().max(2_000_000) }).parse(v));
+    refresh(shopId);
+    return r;
   });
 }
