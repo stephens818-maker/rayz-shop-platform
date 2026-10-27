@@ -984,6 +984,18 @@ README "Staff app API → Staff delta for Squire" has the details. Migrations `c
 - [ ] The staff app's screens (two-step setup, step-up, pairing, deposit consent, data protection, Question my pay, paystub labels), by the Rayz App builder. The API is ready.
 - [ ] Brand-wide lists that aren't search (the admin client list, gift cards) can show Demo Shop clients, and the audit log and sent messages aren't purged.
 
+## 43. The basic time clock ships at launch (Charles)
+
+Employees clock in and out at the shop, because the Payroll Report's hours come from the time clock. README "Payroll → Hours from the time clock" and DEPLOY step 45.
+
+- [x] Hours per employee, per shop and per pay period come from punches, with breaks (unpaid at 30 minutes or more) and manager edits that need a reason and keep before and after.
+- [x] ST-I6, kiosk mode with a manager's QR pairing: built (`/clock/pair`, `POST /clock/kiosk/pair`, PIN punches with breaks). **Critical for launch** in the staff app.
+- [x] Approve and lock waits until every shop's timesheets are locked for the period (setting **Hours come from the time clock**, on by default); a timesheet locks only once it's manager-approved with no missed punches.
+- [x] Payroll Report flags: missed punches, open shifts, timesheets not approved, service sales on a day with no hours, sales with no hours in the period, and hours typed in or imported.
+- [ ] The full Payroll Report spec from Charles's spreadsheet: coming.
+- [ ] The staff app's kiosk mode, by the Rayz App builder (NOTES-SYNC Requests). The API is ready.
+- [ ] Still held: ST-C5's exact punches, cross-shop weekly overtime and buddy-punch rules, until iSolved Time is decided.
+
 ## Deferred by decision
 
 - I10 stays on destination charges for customers; `payment_transfers` isn't built, and tips aren't transferred to shops separately. Tip payouts to employees (sections 15, 35 and 40) don't move money yet: Stripe can't transfer from a shop's connected account to a barber's, and the redesign as separate charges and transfers (ST-C11) waits for Charles.

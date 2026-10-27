@@ -528,6 +528,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
   - In settings, explain `quietHours` from `GET /config` next to the notification switches, and link `/staff-app/privacy`. While `privacyNotice.reviewed` is false, show it as a draft.
   - Before each store submission, run `pnpm staff:release-check` (or push a `staff-app-v*` tag to run `.github/workflows/staff-app-release.yml`). It fails until the privacy notice's reviewer signs off its version in `src/domain/staff-privacy.ts`. For App Review, use the Demo Shop login (`FEATURE_STAFF_REVIEW_LOGIN=true` on the review deployment).
   - Optional, in `push.ts` (yours): a silent "wipe" push to a phone when its session is ended remotely, so it wipes before its next request. Today it wipes on the next 401.
+  - **Critical for launch (Charles, 2026-10-27): kiosk mode (ST-I6).** Payroll's hours come from the time clock, so the first release has to run on the shop's tablet: pair by the manager's QR code (`POST /clock/kiosk/pair`), list the team (`GET /clock/kiosk/team`), and punch in, out and breaks with each person's PIN (`/clock/kiosk/status`, `/clock/kiosk/punch`). Phone punches (QR, NFC, GPS) can follow.
 
 - (core → mobile, optional) If the customer app gets an "I'm running late" button, please call `queueStaffAlert("late", appointmentId, { detail: "about N min late" })` from `src/server/staff-alerts.ts`, so the barber gets the same alert as when the desk marks it from the staff app. Nothing goes back to the client.
 
@@ -545,6 +546,12 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
 
 ## Log
+
+### 2026-10-27: core, the basic time clock ships at launch (Charles), FYI for mobile
+- **Decision:** employees clock in and out at the shop, because the Payroll Report's hours come from the time clock. That makes **ST-I6, the front-desk kiosk with a manager's QR pairing, Critical for launch**. It's built (`POST /clock/kiosk/pair`, then `X-Clock-Device` and `X-Device-Id` on `/clock/kiosk/*`, PIN punches with breaks; see the entry below); the staff app's kiosk mode has to ship with the first release. A full Payroll Report spec, from Charles's spreadsheet, is coming.
+- **Payroll waits for the clock's hours:** a new payroll setting, `hoursFromClock` (**Hours come from the time clock**, on by default), refuses approve and lock until every shop's timesheets are locked for each day of the period. A timesheet locks only once the period ends and a manager approves it, and approval needs the missed punches fixed (a manager's correction, with a reason, kept in the edit log).
+- **New Payroll Report flags** for shops not yet locked: `missed_punch` (no clock-out, a clock-out with no clock-in, or a second clock-in), `timesheet_not_approved`, `sales_day_without_hours` (service sales on a day with no hours at that shop), `hours_not_from_clock` (worked hours typed in or imported) and, with the setting off, `hours_not_locked`. `sales_without_hours` now reads as a missed clock-in or an owner (Q17).
+- **Unchanged:** no migration (still next free `core_0126`); `GET /me/earnings` skips the clock checks. Still held: ST-C5's exact punches, cross-shop weekly OT and buddy-punch rules. Nothing under `/api/v1`, the customer openapi, `connect.ts`, `processor.ts` or `push.ts` changed.
 
 ### 2026-10-27: core, the staff delta for Squire (ST-C0a to C18, I10 to I20, N7, N8), requests for mobile
 - **Held:** ST-C5's exact punches, cross-shop weekly overtime and buddy-punch rules, until iSolved Time is decided; the basic time clock is unchanged. ST-C11 / I10 (separate charges and transfers) still waits for Charles; money movement stays abstract.

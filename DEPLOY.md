@@ -351,6 +351,10 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - **App Review (optional):** on the deployment Apple and Google review, set `FEATURE_STAFF_REVIEW_LOGIN=true`, `STAFF_APP_REVIEW_EMAIL` (a monitored inbox) and `STAFF_APP_REVIEW_PASSWORD` (12 characters or more), then run `pnpm staff:demo-shop` against its database. Run it again after switching the flag. Turn the flag off after review.
    - **Before each staff app store submission:** have the privacy notice reviewed. The reviewer's name, the date and each check go in `STAFF_PRIVACY_REVIEW` in `src/domain/staff-privacy.ts`, and the agencies are checked too. `pnpm staff:release-check`, and the workflow on `staff-app-v*` tags, fail until then.
    - The pay question escalations, and the deletions the notice promises (signed-out phones after 30 days, punch photos after 90), run with the daily notifications cron; nothing to schedule. `pnpm check:biometrics` runs in CI on every pull request.
+45. Payroll's hours come from the time clock (Charles: the basic clock ships at launch). No migration. **Payroll → Setup → Hours come from the time clock** is on by default, so approve and lock is refused until every shop's timesheets are locked for the period.
+   - Before the first pay period on the platform: pair each shop's front-desk tablet (step 44) and set everyone's PIN, so everyone clocks in and out at the shop. The staff app's kiosk mode (ST-I6) is Critical for launch.
+   - Each period, after it ends: managers fix missed punches (with a reason), approve every timesheet and lock the period on **Payroll → Timesheets**; then the Payroll Report can be approved and locked.
+   - For a period whose hours were typed in or imported (before a shop clocks in on the platform), turn the setting off for that run; the report then flags the unlocked hours instead. Turn it back on afterwards.
 
 ## Running the production build locally
 

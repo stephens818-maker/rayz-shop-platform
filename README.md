@@ -732,6 +732,13 @@ Replaces Charles's payroll workbook. The full rules are in [docs/payroll-report-
 - **Cross-shop overtime:** hours over 40 in a Sun–Sat workweek, across every shop of the same FEIN (default Ray'z Inc.), split between shops by share of hours. It works across pay periods, across Dubuque's separate calendar and through DST weeks.
 - **Pay groups:** one per shop, each with its own calendar. The main shops are on period 23 = 10/18–10/31 (check Fri 11/6). Dubuque's period 01 was 10/4–10/17 (check 10/23).
 - **Reconciliation gate:** approve-and-lock is blocked while any total is a cent off the sum of its rows, or off the export's column sums, and the mismatch is shown on screen. Anomalies (owner rows, typed values, missing Employee Numbers, training hours while Q11 is open) are listed but never block.
+- **Hours from the time clock** (Charles's decision; the setting **Hours come from the time clock**, on by default): approve-and-lock also waits until every shop's [timesheets](#time-clock-and-timesheets) are locked for the period, which needs each one manager-approved with its missed punches fixed. Until a shop is locked, the report flags, per employee and shop:
+  - missed punches (no clock-out, a clock-out with no clock-in, a second clock-in), whose shift has no hours until a manager fixes it with a reason;
+  - timesheets no manager has approved;
+  - service sales on a day with no hours at that shop (a missed clock-in?), next to the period-wide "sales with no hours" (a missed clock-in, or an owner, Q17);
+  - worked hours typed in or imported rather than clocked.
+
+  With the setting off, unlocked hours are a flag instead of a block. A full Payroll Report spec from Charles's spreadsheet is coming.
 - **iSolved files:** after approve-and-lock, one xlsx per shop, in exactly the workbook tab's columns, headers, earning codes and formatting (cell types, number formats, fonts, fills). OT goes out as hours only; iSolved applies the rate. Tips already paid out in cash or by Stripe stay in `E_Cash Tips Recd_Dollars` as tips received, so they're taxed but not paid again. Only when someone's tips are paid through payroll does an extra column appear (**Payroll → Setup**, default `E_Tips Paid In Payroll_Dollars`, to be confirmed by Charles); see [Tip payouts](#tip-payouts). Values are unrounded unless the 2-decimal half-up setting is turned on (off, pending Charles). Charles uploads them by hand through iSolved's Timecard Import. There's no iSolved API.
 - **Payroll → Hours** takes time entries (worked, training, PTO) by hand or from a shift CSV. Worked hours from the [time clock](#time-clock-and-timesheets) land here on their own, with source `clock`; hours entered by hand still count alongside them. **Payroll → Setup** holds the settings, pay groups and calendars, iSolved profiles (Employee Number, iSolved name, Key as text, row order) and rates.
 - Permissions: `payroll.run` (prepare, enter hours, download) and `payroll.approve` (lock). Both are brand-only; Brand Owner and Brand Admin have them.
@@ -847,6 +854,7 @@ Everyone is paid hourly. This reverses the earlier "no clock-in" decision.
   - The employee signs off, then a manager approves (`timesheet.approve`, never their own). A manager who approves without the employee's sign-off must leave a note, and missed punches block both steps.
   - **Lock the period** works only after the period has ended and every timesheet with hours is approved.
   - A locked period takes no punches, edits, added hours or sign-offs. Payroll's approve-and-lock also locks it, and reopening needs the owner or `payroll.run` plus a reason.
+  - **Payroll waits for it (Charles: the basic clock ships at launch, because the Payroll Report's hours come from it).** With **Hours come from the time clock** on (**Payroll → Setup**, the default), payroll's approve and lock is refused until every shop's timesheets are locked for each day of the pay period. The Payroll Report names the shops, links to their timesheets and lists who's still waiting on a manager.
 - **Full time and part time:** full time means averaging over 32 hours a week; at or under is part time.
   - Timesheets shows each person's rolling average over 4, 8, 12 or 13 full weeks, with the status and last week's hours.
   - The threshold and the look-back the alert uses are in **Payroll → Setup**.
