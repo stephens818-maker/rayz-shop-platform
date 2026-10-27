@@ -27,7 +27,7 @@ afterAll(async () => {
 
 const sql = (...a: Parameters<Mods["drizzle"]["sql"]>) => m.drizzle.sql(...a);
 const eq = (...a: Parameters<Mods["drizzle"]["eq"]>) => m.drizzle.eq(...a);
-const run = (kind: Kind, csv: string, dryRun = false) => m.importer.runImport(kind, csv, { dryRun, actor, now: fx.now, filename: `${kind}.csv` });
+const run = (kind: Kind, csv: string, dryRun = false, remind = kind === "appointments") => m.importer.runImport(kind, csv, { dryRun, actor, now: fx.now, filename: `${kind}.csv`, remind });
 async function count(q: ReturnType<typeof sql>): Promise<number> {
   const [r] = (await m.db.db.execute(q)) as unknown as { n: number }[];
   return Number(r.n);
@@ -267,6 +267,34 @@ describe("Squire import of a realistic export", () => {
 const CLIENT_HEADER = "Client ID,First Name,Last Name,Phone,Email,Location,SMS Opt In,Email Marketing";
 
 describe("Squire re-imports", () => {
+  it("upcoming bookings get reminders only when the import is told to, and a client who turns them off later isn't sent one", async () => {
+    const pending = sql`select count(*)::int n from notification_jobs j join appointments a on a.id = j.appointment_id where a.source = 'import' and j.status = 'pending'`;
+    const queued = await count(pending);
+    expect(queued).toBeGreaterThan(0);
+
+    const quiet = await run("appointments", fx.files.appointments, false, false);
+    expect(quiet.stats.remindersQueued).toBe(0);
+    expect(await count(pending)).toBe(0);
+
+    const loud = await run("appointments", fx.files.appointments);
+    expect(loud.stats.remindersQueued).toBe(queued);
+    expect(await count(pending)).toBe(queued);
+
+    const [job] = (await m.db.db.execute(sql`
+      select j.id, j.customer_id, j.run_at from notification_jobs j join appointments a on a.id = j.appointment_id
+      where a.source = 'import' and j.status = 'pending' and j.channel = 'sms' and j.kind = 'reminder_24h' limit 1`)) as unknown as { id: string; customer_id: string; run_at: Date }[];
+    const holder = (await m.db.db.query.customers.findFirst({ where: eq(m.schema.customers.id, job.customer_id) }))!;
+    const holderId = holder.guardianId ?? holder.id;
+    await m.db.db.update(m.schema.customers).set({ smsOptIn: false }).where(eq(m.schema.customers.id, holderId));
+    try {
+      await m.queue.processDueJobs({ ids: [job.id], now: new Date(new Date(job.run_at).getTime() + 1000) });
+      const [after] = await m.db.db.select().from(m.schema.notificationJobs).where(eq(m.schema.notificationJobs.id, job.id));
+      expect(after).toMatchObject({ status: "suppressed", lastError: "The client turned these reminders off after they were queued" });
+    } finally {
+      await m.db.db.update(m.schema.customers).set({ smsOptIn: true }).where(eq(m.schema.customers.id, holderId));
+    }
+  });
+
   it("a corrected phone in Squire lands on re-import (review P2#28)", async () => {
     const p = fx.people.find((x) => x.kind === "regular" && x.phone && x.records[0].sms === "Yes")!;
     const r = p.records[0];

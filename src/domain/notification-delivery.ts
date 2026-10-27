@@ -88,6 +88,7 @@ export const OPT_OUT_REASON = {
   complaint: "The client marked an email as spam, so emails to it are stopped",
   unsubscribe: "The client stopped these emails",
   staff: "Emails to this address were stopped by staff",
+  withdrawn: "The client turned these reminders off after they were queued",
 } as const;
 export type SuppressionReason = "bounce" | "complaint" | "unsubscribe" | "staff";
 const OPT_OUT_TEXTS = new Set<string>(Object.values(OPT_OUT_REASON));

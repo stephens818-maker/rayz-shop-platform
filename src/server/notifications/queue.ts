@@ -99,6 +99,45 @@ async function householdPhones(customerIds: string[], tx: DBorTx) {
   return new Map(rows.map((r) => [r.id, r.phone]));
 }
 
+/**
+ * Reminders wait in the queue, sometimes for weeks (a Squire import's upcoming bookings), so the
+ * household holder's consent and the push device are checked again when each one goes out.
+ */
+async function reminderConsent(jobs: { kind: string; channel: string; to: string; customerId: string | null }[], tx: DBorTx) {
+  const waiting = jobs.filter((j) => j.customerId && (REMINDER_KINDS as readonly string[]).includes(j.kind));
+  if (!waiting.length) return () => true;
+  const ids = [...new Set(waiting.map((j) => j.customerId!))];
+  const holders = (await tx.execute(
+    sql`select c.id, h.sms_opt_in sms, h.email_opt_in email, h.push_transactional push, h.deleted_at is not null gone
+        from customers c join customers h on h.id = coalesce(c.guardian_id, c.id)
+        where c.id in (${sql.join(
+          ids.map((i) => sql`${i}::uuid`),
+          sql`, `,
+        )})`,
+  )) as unknown as { id: string; sms: boolean; email: boolean; push: boolean; gone: boolean }[];
+  const byId = new Map(holders.map((h) => [h.id, h]));
+  const deviceIds = [...new Set(waiting.filter((j) => j.channel === "push").map((j) => j.to))];
+  const live = new Set(
+    deviceIds.length
+      ? ((await tx.execute(
+          sql`select id::text id from customer_devices where push_enabled and revoked_at is null and id::text in (${sql.join(
+            deviceIds.map((i) => sql`${i}`),
+            sql`, `,
+          )})`,
+        )) as unknown as { id: string }[]).map((d) => d.id)
+      : [],
+  );
+  return (j: { kind: string; channel: string; to: string; customerId: string | null }) => {
+    if (!j.customerId || !(REMINDER_KINDS as readonly string[]).includes(j.kind)) return true;
+    const h = byId.get(j.customerId);
+    if (!h || h.gone) return false;
+    if (j.channel === "sms") return h.sms;
+    if (j.channel === "email") return h.email;
+    if (j.channel === "push") return h.push && live.has(j.to);
+    return true;
+  };
+}
+
 /** Automated calls a client can opt out of with 9; staff calls through the shop line aren't. */
 const AUTOMATED_CALLS = new Set<string>(["callin_voice"]);
 
@@ -441,15 +480,19 @@ export async function processDueJobs(
       due.filter((j) => j.channel === "email").map((j) => j.to),
       tx,
     );
+    const stillWanted = await reminderConsent(due, tx);
 
     for (const job of due) {
       const provider = job.channel === "sms" ? sms : job.channel === "voice" ? voice : job.channel === "push" ? push : email;
       const emailStop = job.channel === "email" ? stoppedEmails.get(job.to.trim().toLowerCase()) : undefined;
-      const stopped = (job.channel === "sms" && optedOut.has(`sms:${job.to}`)) || (job.channel === "voice" && AUTOMATED_CALLS.has(job.kind) && optedOut.has(`voice:${job.to}`)) || !!emailStop;
+      const smsStop = job.channel === "sms" && optedOut.has(`sms:${job.to}`);
+      const withdrawn = !stillWanted(job);
+      const stopped = smsStop || (job.channel === "voice" && AUTOMATED_CALLS.has(job.kind) && optedOut.has(`voice:${job.to}`)) || !!emailStop || withdrawn;
       if (stopped) {
+        const why = emailStop ? SUPPRESSION_ERROR[emailStop] : smsStop ? OPT_OUT_REASON.stop : withdrawn ? OPT_OUT_REASON.withdrawn : OPT_OUT_REASON.noCalls;
         await tx
           .update(notificationJobs)
-          .set({ status: "suppressed", provider: provider.name, attempts: job.attempts + 1, lastError: emailStop ? SUPPRESSION_ERROR[emailStop] : job.channel === "sms" ? OPT_OUT_REASON.stop : OPT_OUT_REASON.noCalls })
+          .set({ status: "suppressed", provider: provider.name, attempts: job.attempts + 1, lastError: why })
           .where(eq(notificationJobs.id, job.id));
         stats.suppressed++;
         continue;

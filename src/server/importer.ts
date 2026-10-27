@@ -37,7 +37,7 @@ import { Customer, matchCustomer, mergeNotes } from "./customers";
 import { isDoubleBookingError } from "./errors";
 import { getLoyaltyConfig, lockAccount } from "./loyalty";
 import { messageContext } from "./booking";
-import { scheduleAppointmentNotifications } from "./notifications/queue";
+import { cancelPendingReminders, scheduleAppointmentNotifications } from "./notifications/queue";
 
 export type ImportKind = "clients" | "appointments" | "transactions" | "loyalty" | "gift_cards";
 export const IMPORT_KINDS: ImportKind[] = ["clients", "appointments", "transactions", "loyalty", "gift_cards"];
@@ -184,6 +184,8 @@ export interface ImportStats {
   appointmentsImported: number;
   appointmentsUpdated: number;
   upcomingImported: number;
+  /** Text, email and push reminders queued for upcoming bookings, when the import was told to send them. */
+  remindersQueued: number;
   pastVisits: number;
   noShows: number;
   cancellations: number;
@@ -207,6 +209,7 @@ const ZERO_STATS: ImportStats = {
   appointmentsImported: 0,
   appointmentsUpdated: 0,
   upcomingImported: 0,
+  remindersQueued: 0,
   pastVisits: 0,
   noShows: 0,
   cancellations: 0,
@@ -260,6 +263,8 @@ interface Run {
   onlyShop: string | null;
   now: Date;
   dryRun: boolean;
+  /** Queue reminders for upcoming bookings. Off unless asked, so a bulk import never texts clients while Squire still sends its own. */
+  remind: boolean;
   cfg: LoyaltyConfig;
   catalogs: Map<string, EffectiveService[]>;
   barbers: Map<string, string>;
@@ -334,7 +339,11 @@ export function ticketRef(get: SquireGet, r: Record<string, string>, shopId: str
 /** Rows of another shop in a delta import for one shop; clients, loyalty and gift cards are brand-wide. */
 const SHOP_SCOPED: ImportKind[] = ["appointments", "transactions"];
 
-export async function runImport(kind: ImportKind, csv: string, opts: { dryRun: boolean; actor: Actor; filename?: string; now?: Date; shopId?: string }): Promise<ImportResult> {
+export async function runImport(
+  kind: ImportKind,
+  csv: string,
+  opts: { dryRun: boolean; actor: Actor; filename?: string; now?: Date; shopId?: string; /** Appointments: queue reminders for upcoming bookings, to clients whose consent is on file. */ remind?: boolean },
+): Promise<ImportResult> {
   const { rows, headerMap, get } = readSquireCsv(kind, csv);
   const parsed = { data: rows };
   const result: ImportResult = {
@@ -358,6 +367,7 @@ export async function runImport(kind: ImportKind, csv: string, opts: { dryRun: b
     onlyShop: opts.shopId && SHOP_SCOPED.includes(kind) ? opts.shopId : null,
     now: opts.now ?? new Date(),
     dryRun: opts.dryRun,
+    remind: !!opts.remind,
     cfg: await getLoyaltyConfig(),
     catalogs: new Map(),
     barbers: new Map(),
@@ -815,9 +825,9 @@ async function importAppointment(c: Row, r: Record<string, string>): Promise<Out
   if (status === "completed") bump(c, "pastVisits");
   if (status === "no_show") bump(c, "noShows");
   if (status === "cancelled") bump(c, "cancellations");
-  if (status === "booked" && customer && !c.dryRun) {
-    await scheduleAppointmentNotifications("imported", await messageContext(apptId, c.tx), c.tx, c.now);
-  }
+  if (status === "booked" && customer && !c.dryRun && c.remind) {
+    bump(c, "remindersQueued", await scheduleAppointmentNotifications("imported", await messageContext(apptId, c.tx), c.tx, c.now));
+  } else if (existing && !c.dryRun) await cancelPendingReminders(apptId, c.tx);
   return existing ? "updated" : "inserted";
 }
 

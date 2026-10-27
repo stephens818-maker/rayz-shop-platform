@@ -16,6 +16,7 @@ export function statLines(kind: string, s: Partial<ImportStats>): [string, strin
     ["No-shows", n("noShows"), kind === "appointments" || (all && n("noShows") > 0)],
     ["Cancellations", n("cancellations"), kind === "appointments" || (all && n("cancellations") > 0)],
     ["Upcoming bookings", n("upcomingImported"), kind === "appointments" || (all && n("upcomingImported") > 0)],
+    ["Reminders queued", n("remindersQueued"), n("remindersQueued") > 0],
     ["Tickets imported", n("salesImported"), kind === "transactions" || (all && n("salesImported") > 0)],
     ["Tickets linked to a visit", n("salesLinkedToVisits"), kind === "transactions" || (all && n("salesLinkedToVisits") > 0)],
     ["Voided/refunded in Squire", n("salesVoided"), kind === "transactions" || (all && n("salesVoided") > 0)],

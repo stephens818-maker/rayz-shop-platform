@@ -17,6 +17,8 @@ const Input = z.object({
   dryRun: z.boolean(),
   /** A cutover delta import: bookings and tickets of other shops are left alone. */
   shopId: z.string().uuid().optional(),
+  /** Appointments: queue reminders for upcoming bookings. */
+  remind: z.boolean().optional(),
 });
 
 /** The full error list (with the original rows) is kept on the run; the page shows the first 2,000, with client details as the importer may see them. */
@@ -24,7 +26,7 @@ export async function importAction(raw: z.input<typeof Input>) {
   return safe<ImportResult & { errorsTruncated: number; family: FamilyImportResult | null; reconcile: SquireReconcileResult | null; matchReport: ShopMatchLine[] | null }>(async () => {
     const ctx = await authorize("import.run");
     const p = Input.parse(raw);
-    const result = await runImport(p.kind as ImportResult["kind"], p.csv, { dryRun: p.dryRun, actor: ctx.actor, filename: p.filename, shopId: p.shopId });
+    const result = await runImport(p.kind as ImportResult["kind"], p.csv, { dryRun: p.dryRun, actor: ctx.actor, filename: p.filename, shopId: p.shopId, remind: p.kind === "appointments" && !!p.remind });
     const matchReport = p.kind === "clients" && p.dryRun ? await clientMatchReport(p.csv) : null;
     // Squire kid records go on their parent's account once both are on file.
     const family = p.kind === "clients" ? await importFamilies(p.csv, { dryRun: p.dryRun, actor: ctx.actor }) : null;

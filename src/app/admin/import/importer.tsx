@@ -68,6 +68,7 @@ export function Importer({ shop, kinds }: { shop?: { id: string; name: string };
   const shown = kinds ? KINDS.filter((k) => kinds.includes(k.id)) : KINDS;
   const [kind, setKind] = useState<ImportKind>(shown[0].id);
   const [file, setFile] = useState<{ name: string; text: string } | null>(null);
+  const [remind, setRemind] = useState(false);
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
@@ -76,7 +77,7 @@ export function Importer({ shop, kinds }: { shop?: { id: string; name: string };
     if (!file) return;
     setError(null);
     start(async () => {
-      const r = await importAction({ kind, csv: file.text, filename: file.name, dryRun, shopId: shop?.id });
+      const r = await importAction({ kind, csv: file.text, filename: file.name, dryRun, shopId: shop?.id, remind: kind === "appointments" && remind });
       if (!r.ok) {
         setError(r.error);
         setResult(null);
@@ -139,6 +140,18 @@ export function Importer({ shop, kinds }: { shop?: { id: string; name: string };
             Commit import
           </Button>
         </div>
+        {kind === "appointments" && (
+          <label className="flex items-start gap-2 text-sm text-zinc-700">
+            <input type="checkbox" className="mt-0.5" checked={remind} onChange={(e) => setRemind(e.target.checked)} />
+            <span>
+              Send reminders for upcoming bookings
+              <span className="block text-xs text-zinc-500">
+                Only to clients whose text, email or app consent is on file, and checked again when each reminder goes out. Leave this off while Squire still sends its own reminders; nothing is sent
+                at import time either way.
+              </span>
+            </span>
+          </label>
+        )}
         {error && <Notice tone="red">{error}</Notice>}
         {result && <ResultView result={result} />}
       </div>
