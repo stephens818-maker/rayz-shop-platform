@@ -27,6 +27,7 @@ import { mapStatus, parseSquireDateTime, readSquireCsv, RowError, shopFinder, sq
 import { getLoyaltyConfig } from "./loyalty";
 import { toCsv } from "./reports";
 import { shopOnboardingCounts } from "./tips/onboarding";
+import { stripePayoutsOn } from "./tips/payout-model";
 
 export type CutoverFile = "bookings" | "tickets" | "loyalty" | "gift_cards";
 export const CUTOVER_FILES: CutoverFile[] = ["bookings", "tickets", "loyalty", "gift_cards"];
@@ -453,8 +454,9 @@ export async function reconcileShop(actor: Actor, shopId: string, files: Partial
 
 /**
  * An owner signs off on the reconciliation and the shop's online booking moves here in the same step.
- * Squire's payouts for the shop stop with it, so everyone on the team must have finished Ray'z
- * Stripe payout setup first, unless the owner signs off anyway with a reason (their tips wait for them).
+ * Squire's payouts for the shop stop with it. With direct Stripe tip payouts on, everyone on the team
+ * must have finished Ray'z Stripe payout setup first, unless the owner signs off anyway with a reason
+ * (their tips wait for them); with them off, tips go through payroll and nobody has anything to set up.
  */
 export async function signOffAndSwitch(actor: Actor, shopId: string, now = new Date(), o: { staffWaiver?: string | null } = {}) {
   const shop = await shopOrThrow(shopId);
@@ -466,8 +468,9 @@ export async function signOffAndSwitch(actor: Actor, shopId: string, now = new D
     throw new AppError("conflict", "The last reconciliation didn't match to the cent. Fix the differences, import again, and reconcile");
   const later = await importsSince(shopId, c.reconciledAt);
   if (later.length) throw new AppError("conflict", "Something was imported after the last reconciliation. Reconcile again before switching");
-  const team = (await shopOnboardingCounts([shopId], now)).get(shopId)!;
   const waiver = o.staffWaiver?.trim().slice(0, 500) || null;
+  if (!stripePayoutsOn()) return switchShop(actor, shop, c, now, { model: "payroll" });
+  const team = (await shopOnboardingCounts([shopId], now)).get(shopId)!;
   if (team.notDone.length && !waiver) {
     const names = team.notDone.map((p) => p.name);
     throw new AppError(
@@ -475,7 +478,11 @@ export async function signOffAndSwitch(actor: Actor, shopId: string, now = new D
       `${team.notDone.length} of ${team.total} at ${shop.name} haven't finished Stripe payout setup (${names.slice(0, 5).join(", ")}${names.length > 5 ? ", …" : ""}). Everyone should be set up before Squire's payouts stop. Invite them from Payout onboarding, or give a reason to switch anyway; their tips wait for them.`,
     );
   }
-  const staffPayouts = { onboarded: team.done, total: team.total, notOnboarded: team.notDone.map((p) => ({ staffId: p.staffId, progress: p.progress })), waiver: team.notDone.length ? waiver : null };
+  return switchShop(actor, shop, c, now, { model: "stripe", onboarded: team.done, total: team.total, notOnboarded: team.notDone.map((p) => ({ staffId: p.staffId, progress: p.progress })), waiver: team.notDone.length ? waiver : null });
+}
+
+async function switchShop(actor: Actor, shop: { id: string }, c: typeof shopCutovers.$inferSelect, now: Date, staffPayouts: Record<string, unknown>) {
+  const shopId = shop.id;
   await db.transaction(async (tx) => {
     await tx.update(shops).set({ bookingMode: "platform" }).where(eq(shops.id, shopId));
     await tx

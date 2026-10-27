@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { stripePayoutsOn } from "@/server/tips/payout-model";
 
 export const metadata: Metadata = { title: "Set up your Ray'z tip payouts", robots: { index: false } };
 
@@ -7,6 +8,15 @@ export const metadata: Metadata = { title: "Set up your Ray'z tip payouts", robo
  * Ray'z Staff app on its banking screen, or My banking on the web, both behind sign-in.
  */
 export default function Page() {
+  if (!stripePayoutsOn())
+    return (
+      <main className="mx-auto max-w-md px-4 py-16">
+        <div className="rounded-xl bg-white p-6 ring-1 ring-zinc-200">
+          <h1 className="text-xl font-bold">Your tips are paid through payroll</h1>
+          <p className="mt-2 text-sm text-zinc-600">There&rsquo;s nothing to set up: your tips come with your paycheck. Pay stubs and W-2s are in iSolved employee self-service.</p>
+        </div>
+      </main>
+    );
   const scheme = process.env.STAFF_APP_SCHEME?.trim() || "rayzstaff";
   return (
     <main className="mx-auto max-w-md px-4 py-16">

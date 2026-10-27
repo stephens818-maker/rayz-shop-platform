@@ -260,9 +260,13 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
   },
 ];
 
-/** The sidebar for someone with these permissions. Pages they can't open aren't listed. */
-export function navFor(perms: ReadonlySet<Permission>): { title: string; items: NavItem[] }[] {
-  return SECTIONS.map((s) => ({ title: s.title, items: s.items.filter((i) => pageAllowed(perms, i.href)) })).filter((s) => s.items.length > 0);
+/** Pages that only exist for direct Stripe tip payouts to employees, left out while that rail is switched off. */
+export const STRIPE_PAYOUT_PAGES: readonly AdminPage[] = ["/admin/tips/onboarding"];
+
+/** The sidebar for someone with these permissions. Pages they can't open, or that are switched off, aren't listed. */
+export function navFor(perms: ReadonlySet<Permission>, o: { hide?: readonly string[] } = {}): { title: string; items: NavItem[] }[] {
+  const hide = new Set(o.hide ?? []);
+  return SECTIONS.map((s) => ({ title: s.title, items: s.items.filter((i) => pageAllowed(perms, i.href) && !hide.has(i.href)) })).filter((s) => s.items.length > 0);
 }
 
 /** Reports this person can open, in catalog order, with whether they may export each. */

@@ -24,6 +24,7 @@ import {
   type VersionInput,
 } from "@/domain/compensation";
 import type { BrandTipPolicy, TipMethod } from "@/domain/tips";
+import { railed } from "@/server/tips/payout-model";
 import type { DayHours } from "@/domain/payroll/overtime";
 import { diffDays, todayLocal, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
@@ -103,7 +104,7 @@ export async function versionContext(staffId: string, now = new Date()) {
   const [shopIds, svc, policy, locked] = await Promise.all([
     db.select({ id: staffShops.shopId }).from(staffShops).where(eq(staffShops.staffId, staffId)),
     db.select({ id: services.id, category: services.category }).from(services),
-    settingAt<BrandTipPolicy>("tip_payouts"),
+    settingAt<BrandTipPolicy>("tip_payouts").then(railed),
     lockedThrough(),
   ]);
   return {

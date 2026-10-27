@@ -26,6 +26,7 @@ import { connectMode } from "@/server/payments/connect";
 import { moneyClient } from "@/server/payments/money-movement";
 import { stripe } from "@/server/payments/processor";
 import { tipPolicy } from "./ledger";
+import { assertStripePayouts } from "./payout-model";
 
 export type StaffPayoutAccount = typeof staffPayoutAccounts.$inferSelect;
 type AccountPatch = Partial<typeof staffPayoutAccounts.$inferInsert>;
@@ -203,6 +204,7 @@ const flagsOf = (acct: Stripe.Account): AccountPatch => ({
  * Payouts are manual so each tip payout goes out when it's approved, not on Stripe's schedule.
  */
 export async function ensureStaffAccount(staffId: string, actor: Actor): Promise<StaffPayoutAccount> {
+  assertStripePayouts();
   const existing = await staffAccount(staffId);
   if (existing?.stripeAccountId && (connectMode() === "simulator" || !existing.simulated)) return existing;
   const person = await db.query.staff.findFirst({ where: eq(staff.id, staffId) });
@@ -295,6 +297,7 @@ export async function simulateStaffOnboarding(staffId: string, actor: Actor) {
  * becomes the default with the debit card kept for instant payouts, or back to the card alone.
  */
 export async function simulateDestinationChange(staffId: string, actor: Actor) {
+  assertStripePayouts();
   const a = await staffAccount(staffId);
   if (!a?.stripeAccountId || !a.detailsSubmitted) throw new AppError("conflict", "Set up Stripe payouts first.");
   simulatorOnly(a);
@@ -351,6 +354,7 @@ export function externalAccountsView(a: StaffPayoutAccount | null) {
 
 /** A one-time sign-in to the employee's Stripe Express dashboard, where they change their card or bank. */
 export async function staffDashboardUrl(staffId: string): Promise<string | null> {
+  assertStripePayouts();
   const a = await staffAccount(staffId);
   const s = stripe();
   if (!a?.stripeAccountId || !s || a.simulated || !a.detailsSubmitted) return null;

@@ -17,6 +17,7 @@ import { noteShopSetting } from "../brand-sync/shop-settings";
 import { Actor, audit } from "@/server/audit";
 import { tipOverrides } from "@/server/compensation";
 import { AppError, notFound } from "@/server/errors";
+import { railed } from "./payout-model";
 
 /**
  * Brings the tip ledger up to date with payments and refunds: a tip entry per payment with a tip,
@@ -91,7 +92,7 @@ export async function recordOpeningTips(before: LocalDate, tx: DBorTx = db) {
 
 /** The tip payout policy at a shop (the tip_payouts setting); no shop, the brand's. */
 export async function tipPolicy(shopId?: string | null, tx: DBorTx = db): Promise<BrandTipPolicy> {
-  return settingAt<BrandTipPolicy>("tip_payouts", shopId, tx);
+  return railed(await settingAt<BrandTipPolicy>("tip_payouts", shopId, tx));
 }
 
 export async function shopTipConfig(shopId: string, tx: DBorTx = db, policy?: BrandTipPolicy): Promise<ShopTipSettings> {
@@ -105,7 +106,8 @@ export async function shopTipConfigs(
   shopIds: readonly string[],
   tx: DBorTx = db,
 ): Promise<{ policy: BrandTipPolicy; policyOf: (shopId: string) => BrandTipPolicy; byShop: Map<string, ShopTipSettings> }> {
-  const policyOf = await settingFor<BrandTipPolicy>("tip_payouts", shopIds, tx);
+  const raw = await settingFor<BrandTipPolicy>("tip_payouts", shopIds, tx);
+  const policyOf = (shopId?: string | null) => railed(raw(shopId));
   const rows = shopIds.length ? await tx.select({ id: shops.id, t: shops.tipPayouts }).from(shops).where(inArray(shops.id, [...shopIds])) : [];
   return { policy: policyOf(), policyOf, byShop: new Map(rows.map((r) => [r.id, shopTipSettings(r.t, policyOf(r.id))])) };
 }

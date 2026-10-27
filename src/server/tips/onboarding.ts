@@ -27,6 +27,7 @@ import { enqueueRaw } from "@/server/notifications/queue";
 import { connectMode } from "@/server/payments/connect";
 import { StaffPayoutAccount, staffAccountState } from "./accounts";
 import { tipPolicy } from "./ledger";
+import { assertStripePayouts, stripePayoutsOn } from "./payout-model";
 import { PAYOUT_SETUP_PATH, waitingForSetup } from "./payouts";
 
 /**
@@ -198,6 +199,7 @@ export interface InviteSkip {
  * minutes, so a double click doesn't text twice. Each invite restarts their reminders.
  */
 export async function sendOnboardingInvites(o: { actor: Actor; staffIds: readonly string[]; choice: ChannelChoice; allowedShopIds: readonly string[]; now?: Date }) {
+  assertStripePayouts();
   const now = o.now ?? new Date();
   const wanted = [...new Set(o.staffIds)];
   if (!wanted.length) throw new AppError("bad_request", "Pick who to invite");
@@ -278,7 +280,7 @@ export async function stopOnboardingReminders(actor: Actor, staffId: string, all
  */
 export async function onboardingReminderCron(now = new Date(), limit = 300) {
   const out = { sent: 0, stopped: 0, waiting: 0 };
-  if (!inSendingHours(toZoned(now).hour)) return out;
+  if (!stripePayoutsOn() || !inSendingHours(toZoned(now).hour)) return out;
   const due = await db
     .select()
     .from(staffOnboardingInvites)

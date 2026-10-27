@@ -34,6 +34,7 @@ import { tipOverrides } from "@/server/compensation";
 import { checkPin } from "@/server/time-clock";
 import { canReceive, staffAccount } from "./accounts";
 import { payoutChoices, shopTipConfigs, syncTipLedger } from "./ledger";
+import { STRIPE_PAYOUTS_HELD, stripePayoutsOn } from "./payout-model";
 
 export type TipPayout = typeof tipPayouts.$inferSelect;
 export type TipBatch = typeof tipPayoutBatches.$inferSelect;
@@ -131,7 +132,7 @@ export async function buildBatch(o: { shopId: string; kind: Exclude<TipBatchKind
       if (!p) {
         const acct = choices.get(d.staffId) ?? null;
         let method: TipMethod = methodOf(d.staffId);
-        if (method === "payroll") method = policy.methods.includes("cash") ? "cash" : "stripe";
+        if (method === "payroll") method = policy.methods.includes("stripe") && !policy.methods.includes("cash") ? "stripe" : "cash";
         const waiting = method === "stripe" && !canReceive(acct);
         const holdReason = waiting ? SETUP_HOLD_REASON : null;
         const instant = method === "stripe" && policy.instantAllowed && !!acct?.instant && !!acct?.instantEligible;
@@ -194,7 +195,9 @@ export async function approveBatch(batchId: string, actor: Actor, now = new Date
     const b = await lockBatch(tx, batchId);
     if (b.status !== "draft") throw new AppError("conflict", "This batch was already approved or cancelled.");
     const ps = await tx.select().from(tipPayouts).where(eq(tipPayouts.batchId, batchId)).for("update");
-    if (!moneyMovementReady() && ps.some((p) => p.method === "stripe" && p.status === "pending" && p.netCents > 0))
+    const stripeDue = ps.some((p) => p.method === "stripe" && p.status === "pending" && p.netCents > 0);
+    if (stripeDue && !stripePayoutsOn()) throw new AppError("conflict", `${STRIPE_PAYOUTS_HELD} Take the Stripe payouts out of this batch to pay them in cash or through payroll.`);
+    if (!moneyMovementReady() && stripeDue)
       throw new AppError("conflict", "Stripe tip payouts run in test mode only, and this deployment has live Stripe keys. Hold or remove the Stripe payouts, or pay them another way.");
     for (const p of ps.filter((x) => x.status === "pending" && x.netCents <= 0)) {
       await tx.update(tipPayouts).set({ status: "cancelled", updatedAt: now }).where(eq(tipPayouts.id, p.id));
@@ -251,6 +254,7 @@ export async function releasePayout(payoutId: string, actor: Actor, now = new Da
     const p = await lockPayout(tx, payoutId);
     if (p.status !== "held") throw new AppError("conflict", "That payout isn't held.");
     const b = await lockBatch(tx, p.batchId);
+    if (p.method === "stripe" && !stripePayoutsOn()) throw new AppError("conflict", `${STRIPE_PAYOUTS_HELD} Take this payout out of the batch to pay it another way; its tips stay reserved until then.`);
     if (p.method === "stripe" && (b.status === "approved" || p.holdKind === "stripe_setup")) {
       const a = await staffAccount(p.staffId, tx);
       if (!canReceive(a))
@@ -387,6 +391,7 @@ export async function cashAwaiting(shopId: string, tx: DBorTx = db) {
  * passed on, the employee receives net − fee; absorbed, the shop is debited net + fee.
  */
 export async function sendStripePayout(payoutId: string, now = new Date()) {
+  if (!stripePayoutsOn()) return null;
   const [p] = await db
     .update(tipPayouts)
     .set({ status: "processing", updatedAt: now })
@@ -486,6 +491,7 @@ async function holdForSetup(p: TipPayout, now: Date) {
  * already approved it) it's sent. Safe to call on every account update.
  */
 export async function releaseSetupHolds(staffId: string, now = new Date()) {
+  if (!stripePayoutsOn()) return { released: 0, sent: 0 };
   const acct = await staffAccount(staffId);
   if (!canReceive(acct)) return { released: 0, sent: 0 };
   const r = await db.transaction(async (tx) => {

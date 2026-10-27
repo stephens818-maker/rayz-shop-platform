@@ -2,17 +2,58 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Button, Card, CardHeader, Field, Input, Notice, Select } from "@/components/ui";
-import { BrandTipPolicy, DEFAULT_CARD_DELAY, METHOD_LABEL, REMINDER_DAYS, REMINDER_MAX, SCHEDULE_LABEL, ShopTipSettings, TIP_METHODS, TIP_SCHEDULES, TipMethod, TipSchedule } from "@/domain/tips";
+import {
+  Button,
+  Card,
+  CardHeader,
+  Field,
+  Input,
+  Notice,
+  Select,
+} from "@/components/ui";
+import {
+  BrandTipPolicy,
+  DEFAULT_CARD_DELAY,
+  METHOD_LABEL,
+  REMINDER_DAYS,
+  REMINDER_MAX,
+  SCHEDULE_LABEL,
+  ShopTipSettings,
+  TIP_METHODS,
+  TIP_SCHEDULES,
+  TipMethod,
+  TipSchedule,
+} from "@/domain/tips";
 import { saveShopTipSettingsAction } from "../actions";
 import { useSettingSync } from "@/components/brand-sync";
 
-const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const WEEKDAYS = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
 
-function Check({ checked, onChange, children }: { checked: boolean; onChange: (v: boolean) => void; children: React.ReactNode }) {
+function Check({
+  checked,
+  onChange,
+  children,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  children: React.ReactNode;
+}) {
   return (
     <label className="flex items-start gap-2 text-sm">
-      <input type="checkbox" className="mt-0.5" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <input
+        type="checkbox"
+        className="mt-0.5"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
       <span>{children}</span>
     </label>
   );
@@ -22,7 +63,9 @@ function useSave() {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const save = (fn: () => Promise<{ ok: true } | { ok: false; error: string }>) =>
+  const save = (
+    fn: () => Promise<{ ok: true } | { ok: false; error: string }>,
+  ) =>
     start(async () => {
       const r = await fn();
       setMsg(r.ok ? { ok: true, text: "Saved" } : { ok: false, text: r.error });
@@ -31,61 +74,149 @@ function useSave() {
   return { pending, msg, save };
 }
 
-export function PolicyForm({ policy }: { policy: BrandTipPolicy }) {
+/** `policy` is the brand's stored policy; with Stripe payouts switched off its Stripe choices are kept as they are but not shown. */
+export function PolicyForm({
+  policy,
+  stripeOn,
+}: {
+  policy: BrandTipPolicy;
+  stripeOn: boolean;
+}) {
   const [p, setP] = useState(policy);
   const { pending, msg, saveSetting, dialog } = useSettingSync("tip_payouts");
-  const toggle = (m: TipMethod, on: boolean) => setP({ ...p, methods: on ? TIP_METHODS.filter((x) => x === m || p.methods.includes(x)) : p.methods.filter((x) => x !== m) });
+  const toggle = (m: TipMethod, on: boolean) =>
+    setP({
+      ...p,
+      methods: on
+        ? TIP_METHODS.filter((x) => x === m || p.methods.includes(x))
+        : p.methods.filter((x) => x !== m),
+    });
   return (
     <Card>
-      <CardHeader title="Brand policy" subtitle="The payout methods shops may use, and whether employees choose their own." />
+      <CardHeader
+        title="Brand policy"
+        subtitle="The payout methods shops may use, and whether employees choose their own."
+      />
       <div className="space-y-3 p-4">
+        {!stripeOn && (
+          <Notice tone="blue">
+            Direct Stripe payouts to employees are on hold while the owner
+            decides how W-2 tips are withheld. Tips are paid through payroll
+            (the iSolved export), or in cash where a shop chooses it.
+          </Notice>
+        )}
         <div className="space-y-2">
-          {TIP_METHODS.map((m) => (
-            <Check key={m} checked={p.methods.includes(m)} onChange={(v) => toggle(m, v)}>
+          {TIP_METHODS.filter((m) => stripeOn || m !== "stripe").map((m) => (
+            <Check
+              key={m}
+              checked={p.methods.includes(m)}
+              onChange={(v) => toggle(m, v)}
+            >
               {METHOD_LABEL[m]}
-              {m === "stripe" && <span className="block text-xs text-zinc-500">Each employee sets up their own Stripe Express account on Stripe&rsquo;s page; the app never sees their bank details.</span>}
-              {m === "payroll" && <span className="block text-xs text-zinc-500">Not paid separately: the tips go to iSolved with the pay period.</span>}
+              {m === "stripe" && (
+                <span className="block text-xs text-zinc-500">
+                  Each employee sets up their own Stripe Express account on
+                  Stripe&rsquo;s page; the app never sees their bank details.
+                </span>
+              )}
+              {m === "payroll" && (
+                <span className="block text-xs text-zinc-500">
+                  Not paid separately: the tips go to iSolved with the pay
+                  period.
+                </span>
+              )}
             </Check>
           ))}
         </div>
-        <Check checked={p.employeeChooses} onChange={(v) => setP({ ...p, employeeChooses: v })}>
+        <Check
+          checked={p.employeeChooses}
+          onChange={(v) => setP({ ...p, employeeChooses: v })}
+        >
           Employees choose their own method from these
         </Check>
-        <Check checked={p.instantAllowed} onChange={(v) => setP({ ...p, instantAllowed: v })}>
-          Allow Stripe instant payouts to an eligible debit card (Stripe&rsquo;s instant fee is shown before the employee chooses it)
-        </Check>
-        {p.instantAllowed && (
-          <div className="ml-6">
-            <Check checked={p.instantFeePassedOn} onChange={(v) => setP({ ...p, instantFeePassedOn: v })}>
-              Pass the instant payout fee on to the employee
-              <span className="block text-xs text-zinc-500">
-                On: it comes out of their payout. Off: they get every cent and the shop pays the fee on top, out of the same account the tips come from.
-              </span>
+        <Field
+          label="iSolved employee self-service link"
+          hint="Where the staff app sends people paid through payroll for pay stubs, W-2s and direct deposit. Starts with https://."
+        >
+          <Input
+            value={p.payrollPortalUrl ?? ""}
+            placeholder="https://"
+            onChange={(e) =>
+              setP({ ...p, payrollPortalUrl: e.target.value || null })
+            }
+          />
+        </Field>
+        {stripeOn && (
+          <>
+            <Check
+              checked={p.instantAllowed}
+              onChange={(v) => setP({ ...p, instantAllowed: v })}
+            >
+              Allow Stripe instant payouts to an eligible debit card
+              (Stripe&rsquo;s instant fee is shown before the employee chooses
+              it)
             </Check>
-          </div>
+            {p.instantAllowed && (
+              <div className="ml-6">
+                <Check
+                  checked={p.instantFeePassedOn}
+                  onChange={(v) => setP({ ...p, instantFeePassedOn: v })}
+                >
+                  Pass the instant payout fee on to the employee
+                  <span className="block text-xs text-zinc-500">
+                    On: it comes out of their payout. Off: they get every cent
+                    and the shop pays the fee on top, out of the same account
+                    the tips come from.
+                  </span>
+                </Check>
+              </div>
+            )}
+            <div className="space-y-1 border-t border-zinc-100 pt-3">
+              <div className="text-sm font-medium">Payout setup reminders</div>
+              <p className="text-xs text-zinc-500">
+                After an invite from Payout onboarding, people who haven&rsquo;t
+                finished get a reminder on the same channel, between 9 AM and 7
+                PM at their shop. Reminders stop once they&rsquo;re done.
+              </p>
+              <div className="grid grid-cols-2 gap-3 sm:max-w-md">
+                <Field label="Every (days)">
+                  <Input
+                    type="number"
+                    min={REMINDER_DAYS.min}
+                    max={REMINDER_DAYS.max}
+                    value={p.reminderEveryDays}
+                    onChange={(e) =>
+                      setP({
+                        ...p,
+                        reminderEveryDays:
+                          Number(e.target.value) || REMINDER_DAYS.min,
+                      })
+                    }
+                  />
+                </Field>
+                <Field label="Reminders per invite (0 = none)">
+                  <Input
+                    type="number"
+                    min={REMINDER_MAX.min}
+                    max={REMINDER_MAX.max}
+                    value={p.reminderMax}
+                    onChange={(e) =>
+                      setP({
+                        ...p,
+                        reminderMax: Math.max(0, Number(e.target.value) || 0),
+                      })
+                    }
+                  />
+                </Field>
+              </div>
+            </div>
+          </>
         )}
-        <div className="space-y-1 border-t border-zinc-100 pt-3">
-          <div className="text-sm font-medium">Payout setup reminders</div>
-          <p className="text-xs text-zinc-500">
-            After an invite from Payout onboarding, people who haven&rsquo;t finished get a reminder on the same channel, between 9 AM and 7 PM at their shop. Reminders stop once they&rsquo;re done.
-          </p>
-          <div className="grid grid-cols-2 gap-3 sm:max-w-md">
-            <Field label="Every (days)">
-              <Input
-                type="number"
-                min={REMINDER_DAYS.min}
-                max={REMINDER_DAYS.max}
-                value={p.reminderEveryDays}
-                onChange={(e) => setP({ ...p, reminderEveryDays: Number(e.target.value) || REMINDER_DAYS.min })}
-              />
-            </Field>
-            <Field label="Reminders per invite (0 = none)">
-              <Input type="number" min={REMINDER_MAX.min} max={REMINDER_MAX.max} value={p.reminderMax} onChange={(e) => setP({ ...p, reminderMax: Math.max(0, Number(e.target.value) || 0) })} />
-            </Field>
-          </div>
-        </div>
         {msg && <Notice tone={msg.ok ? "green" : "red"}>{msg.text}</Notice>}
-        <Button disabled={pending || !p.methods.length} onClick={() => saveSetting(p)}>
+        <Button
+          disabled={pending || !p.methods.length}
+          onClick={() => saveSetting(p)}
+        >
           Save brand policy
         </Button>
         {dialog}
@@ -94,30 +225,80 @@ export function PolicyForm({ policy }: { policy: BrandTipPolicy }) {
   );
 }
 
-export function ShopTipForm({ shopId, shopName, settings, policy }: { shopId: string; shopName: string; settings: ShopTipSettings; policy: BrandTipPolicy }) {
+export function ShopTipForm({
+  shopId,
+  shopName,
+  settings,
+  policy,
+}: {
+  shopId: string;
+  shopName: string;
+  settings: ShopTipSettings;
+  policy: BrandTipPolicy;
+}) {
   const [s, setS] = useState(settings);
   const { pending, msg, save } = useSave();
   const setSchedule = (schedule: TipSchedule) =>
-    setS({ ...s, schedule, cardDelayDays: s.schedule === schedule ? s.cardDelayDays : DEFAULT_CARD_DELAY[schedule], defaultMethod: schedule === "payroll" ? "payroll" : s.defaultMethod === "payroll" ? policy.methods.find((m) => m !== "payroll") ?? "cash" : s.defaultMethod });
+    setS({
+      ...s,
+      schedule,
+      cardDelayDays:
+        s.schedule === schedule
+          ? s.cardDelayDays
+          : DEFAULT_CARD_DELAY[schedule],
+      defaultMethod:
+        schedule === "payroll"
+          ? "payroll"
+          : s.defaultMethod === "payroll"
+            ? (policy.methods.find((m) => m !== "payroll") ?? "cash")
+            : s.defaultMethod,
+    });
   return (
     <Card>
       <CardHeader title={shopName} />
       <div className="grid gap-3 p-4 md:grid-cols-2">
         <Field label="Payout schedule" className="md:col-span-2">
-          <Select value={s.schedule} onChange={(e) => setSchedule(e.target.value as TipSchedule)}>
-            {TIP_SCHEDULES.filter((x) => x !== "payroll" || policy.methods.includes("payroll")).map((x) => (
+          <Select
+            value={s.schedule}
+            onChange={(e) => setSchedule(e.target.value as TipSchedule)}
+          >
+            {TIP_SCHEDULES.filter(
+              (x) => x !== "payroll" || policy.methods.includes("payroll"),
+            ).map((x) => (
               <option key={x} value={x}>
                 {SCHEDULE_LABEL[x]}
               </option>
             ))}
           </Select>
         </Field>
-        <Field label="Card tips wait (days)" hint="Card tips become payable this many days after the sale, once the card money has settled. Cash tips are payable at once.">
-          <Input type="number" min={0} max={14} value={s.cardDelayDays} onChange={(e) => setS({ ...s, cardDelayDays: Math.max(0, Math.min(14, Math.trunc(Number(e.target.value) || 0))) })} />
+        <Field
+          label="Card tips wait (days)"
+          hint="Card tips become payable this many days after the sale, once the card money has settled. Cash tips are payable at once."
+        >
+          <Input
+            type="number"
+            min={0}
+            max={14}
+            value={s.cardDelayDays}
+            onChange={(e) =>
+              setS({
+                ...s,
+                cardDelayDays: Math.max(
+                  0,
+                  Math.min(14, Math.trunc(Number(e.target.value) || 0)),
+                ),
+              })
+            }
+          />
         </Field>
         {s.schedule === "weekly" ? (
           <Field label="Weekly on">
-            <Select value={s.weeklyDay} onChange={(e) => setS({ ...s, weeklyDay: Number(e.target.value) })}>
+            <Select
+              value={s.weeklyDay}
+              onChange={(e) =>
+                setS({ ...s, weeklyDay: Number(e.target.value) })
+              }
+            >
               {WEEKDAYS.map((d, i) => (
                 <option key={d} value={i}>
                   {d}
@@ -129,8 +310,19 @@ export function ShopTipForm({ shopId, shopName, settings, policy }: { shopId: st
           <div />
         )}
         {s.schedule !== "payroll" && (
-          <Field label={policy.employeeChooses ? "Default method (for employees who haven't chosen)" : "Method"}>
-            <Select value={s.defaultMethod} onChange={(e) => setS({ ...s, defaultMethod: e.target.value as TipMethod })}>
+          <Field
+            label={
+              policy.employeeChooses
+                ? "Default method (for employees who haven't chosen)"
+                : "Method"
+            }
+          >
+            <Select
+              value={s.defaultMethod}
+              onChange={(e) =>
+                setS({ ...s, defaultMethod: e.target.value as TipMethod })
+              }
+            >
               {policy.methods.map((m) => (
                 <option key={m} value={m}>
                   {METHOD_LABEL[m]}
@@ -140,16 +332,33 @@ export function ShopTipForm({ shopId, shopName, settings, policy }: { shopId: st
           </Field>
         )}
         <div className="md:col-span-2">
-          <Check checked={s.netCardFee} onChange={(v) => setS({ ...s, netCardFee: v })}>
-            Take each card tip&rsquo;s share of the card processing fee out of the payout
-            <span className="block text-xs text-amber-700">Confirm with the brand&rsquo;s accountant or lawyer before turning this on: some states don&rsquo;t allow it, and it changes what&rsquo;s reported.</span>
+          <Check
+            checked={s.netCardFee}
+            onChange={(v) => setS({ ...s, netCardFee: v })}
+          >
+            Take each card tip&rsquo;s share of the card processing fee out of
+            the payout
+            <span className="block text-xs text-amber-700">
+              Confirm with the brand&rsquo;s accountant or lawyer before turning
+              this on: some states don&rsquo;t allow it, and it changes
+              what&rsquo;s reported.
+            </span>
           </Check>
         </div>
         <div className="md:col-span-2 flex items-center gap-3">
-          <Button disabled={pending} onClick={() => save(() => saveShopTipSettingsAction(shopId, s))}>
+          <Button
+            disabled={pending}
+            onClick={() => save(() => saveShopTipSettingsAction(shopId, s))}
+          >
             Save {shopName}
           </Button>
-          {msg && <span className={`text-sm ${msg.ok ? "text-emerald-700" : "text-red-600"}`}>{msg.text}</span>}
+          {msg && (
+            <span
+              className={`text-sm ${msg.ok ? "text-emerald-700" : "text-red-600"}`}
+            >
+              {msg.text}
+            </span>
+          )}
         </div>
       </div>
     </Card>

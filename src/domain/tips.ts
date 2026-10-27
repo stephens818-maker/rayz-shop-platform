@@ -47,6 +47,8 @@ export interface BrandTipPolicy {
   /** Payout setup reminders: days between them, and how many after each invite (0 = none). */
   reminderEveryDays: number;
   reminderMax: number;
+  /** iSolved employee self-service (pay stubs, W-2s, direct deposit), where the staff app sends people paid through payroll. */
+  payrollPortalUrl: string | null;
 }
 
 export const DEFAULT_BRAND_TIP_POLICY: BrandTipPolicy = {
@@ -56,6 +58,41 @@ export const DEFAULT_BRAND_TIP_POLICY: BrandTipPolicy = {
   instantFeePassedOn: true,
   reminderEveryDays: DEFAULT_REMINDERS.everyDays,
   reminderMax: DEFAULT_REMINDERS.max,
+  payrollPortalUrl: null,
+};
+
+/** An https link, or null; anything else (another scheme, a typo) is dropped rather than shown to staff. */
+export function portalUrl(v: unknown): string | null {
+  if (typeof v !== "string" || !v.trim()) return null;
+  try {
+    const u = new URL(v.trim());
+    return u.protocol === "https:" ? u.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The ways tips can leave the platform right now. Direct Stripe payouts to employees are a rail the
+ * deployment switches on (FEATURE_STAFF_STRIPE_PAYOUTS); off, the policy behaves as if the brand
+ * never allowed them, so nothing is sent or set up and every tip goes through payroll or cash.
+ */
+export interface PayoutRails {
+  stripe: boolean;
+}
+
+export function withPayoutRails(p: BrandTipPolicy, rails: PayoutRails): BrandTipPolicy {
+  if (rails.stripe) return p;
+  const methods = p.methods.filter((m) => m !== "stripe");
+  return { ...p, methods: methods.length ? methods : ["payroll"], instantAllowed: false };
+}
+
+/** How tips reach an employee, as the staff app explains it. */
+export type PayoutPath = "payroll" | "cash" | "stripe";
+export const PAYOUT_PATH_TEXT: Record<PayoutPath, string> = {
+  payroll: "Your tips are paid with your paycheck through payroll (iSolved), with the usual withholding. Pay stubs and W-2s are in iSolved employee self-service.",
+  cash: "Your tips are paid in cash from the drawer, and you confirm each one.",
+  stripe: "Your tips are sent to your own debit card or bank through Stripe.",
 };
 
 export const REMINDER_DAYS = { min: 1, max: 14 } as const;
@@ -75,6 +112,7 @@ export function brandTipPolicy(raw: unknown): BrandTipPolicy {
     instantFeePassedOn: typeof r.instantFeePassedOn === "boolean" ? r.instantFeePassedOn : d.instantFeePassedOn,
     reminderEveryDays: int(r.reminderEveryDays, REMINDER_DAYS, d.reminderEveryDays),
     reminderMax: int(r.reminderMax, REMINDER_MAX, d.reminderMax),
+    payrollPortalUrl: portalUrl(r.payrollPortalUrl),
   };
 }
 
@@ -96,8 +134,11 @@ export interface ShopTipSettings {
 /** The card settlement delay when the shop hasn't set one. */
 export const DEFAULT_CARD_DELAY: Record<TipSchedule, number> = { end_of_night: 0, daily_delay: 2, weekly: 2, payroll: 0, manual: 0 };
 
-/** Out of the box nothing is paid automatically: managers build batches by hand, in cash, with no fee netting. */
-export const DEFAULT_SHOP_TIP_SETTINGS: ShopTipSettings = { schedule: "manual", cardDelayDays: 0, weeklyDay: 1, defaultMethod: "cash", netCardFee: false };
+/**
+ * Out of the box tips are paid through payroll (the iSolved export), with withholding, and nothing
+ * is paid separately. A shop switches to cash or Stripe batches on purpose.
+ */
+export const DEFAULT_SHOP_TIP_SETTINGS: ShopTipSettings = { schedule: "payroll", cardDelayDays: 0, weeklyDay: 1, defaultMethod: "payroll", netCardFee: false };
 
 export function shopTipSettings(raw: unknown, policy: BrandTipPolicy = DEFAULT_BRAND_TIP_POLICY): ShopTipSettings {
   const r = (raw && typeof raw === "object" ? raw : {}) as Partial<ShopTipSettings>;

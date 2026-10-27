@@ -8,6 +8,7 @@ import { formatCents } from "@/lib/money";
 import { formatDate, formatDateTime, todayLocal } from "@/lib/time";
 import { guardPage, reportShopIds } from "@/server/auth/staff";
 import { OnboardingRow, onboardingRoster } from "@/server/tips/onboarding";
+import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { OnboardingTracker, TrackerRow } from "./client";
 
 export const metadata: Metadata = { title: "Payout onboarding" };
@@ -32,6 +33,12 @@ function remindersOf(r: OnboardingRow) {
 
 export default async function PayoutOnboardingPage({ searchParams }: { searchParams: Promise<{ shop?: string }> }) {
   const ctx = await guardPage("/admin/tips/onboarding");
+  if (!stripePayoutsOn())
+    return (
+      <Empty title="Payout onboarding is on hold">
+        Tips are paid through payroll (the iSolved export) while the owner decides on direct Stripe payouts, so nobody has a payout account to set up.
+      </Empty>
+    );
   const sp = await searchParams;
   const shopIds = reportShopIds(ctx, sp.shop ?? (ctx.currentShopId ? ctx.currentShopId : "all"));
   if (!shopIds.length) return <Empty title="No shop selected" />;

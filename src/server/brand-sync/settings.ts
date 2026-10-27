@@ -24,7 +24,7 @@ import { FILING_LABEL, cleanTaxFiling } from "@/domain/sales-tax";
 import { cleanRules, rulesProblem, shopRules } from "@/domain/staff-time";
 import { clockRules, parseColumnMapping } from "@/domain/time-clock";
 import { intervalProblem } from "@/domain/timing";
-import { REMINDER_DAYS, REMINDER_MAX, TIP_METHODS, brandTipPolicy } from "@/domain/tips";
+import { REMINDER_DAYS, REMINDER_MAX, TIP_METHODS, brandTipPolicy, portalUrl } from "@/domain/tips";
 import { audit } from "../audit";
 import { AppError } from "../errors";
 import type { SyncAdapter, SyncItem, Who } from "./types";
@@ -185,6 +185,12 @@ const TipPolicyInput = z.object({
     .min(REMINDER_DAYS.min, `Remind at least every ${REMINDER_DAYS.max} days, and no more than once a day`)
     .max(REMINDER_DAYS.max, `Remind at least every ${REMINDER_DAYS.max} days, and no more than once a day`),
   reminderMax: z.number().int().min(REMINDER_MAX.min, "Reminders can't be negative").max(REMINDER_MAX.max, `Send at most ${REMINDER_MAX.max} reminders`),
+  payrollPortalUrl: z
+    .string()
+    .trim()
+    .max(500)
+    .refine((v) => !v || portalUrl(v) !== null, "The iSolved self-service link starts with https://")
+    .nullish(),
 });
 
 const messageSetting = (kind: TemplateKind) => {

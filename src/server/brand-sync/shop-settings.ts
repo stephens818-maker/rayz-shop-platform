@@ -7,6 +7,7 @@ import { AFTER_PAYMENT, DEFAULT_SHOP_HANDOFF, ShopHandoff, THANK_YOU_SECONDS, TI
 import type { Permission } from "@/domain/permissions";
 import { DEFAULT_OPERATOR, OPERATOR_ANSWER_LABEL, PhoneOperator, cleanOperator, operatorProblem } from "@/domain/phone-operator";
 import { BrandTipPolicy, DEFAULT_SHOP_TIP_SETTINGS, METHOD_LABEL, SCHEDULE_LABEL, ShopTipSettings, TIP_METHODS, TIP_SCHEDULES, settingsProblem, shopTipSettings } from "@/domain/tips";
+import { railed } from "@/server/tips/payout-model";
 import { audit } from "../audit";
 import { AppError } from "../errors";
 import { brandValue, putBrandValue } from "./store";
@@ -197,7 +198,7 @@ export const SHOP_SETTINGS: readonly ShopSettingDef[] = [
       return v as ShopTipSettings & Record<string, unknown>;
     },
     async patch(v, r, tx) {
-      const policy = await settingAt<BrandTipPolicy>("tip_payouts", r.id, tx);
+      const policy = railed(await settingAt<BrandTipPolicy>("tip_payouts", r.id, tx));
       const problem = settingsProblem(shopTipSettings(v, policy), policy);
       if (problem || shopTipSettings(v, policy).defaultMethod !== v.defaultMethod) bad(`${r.name}: ${problem ?? "the tip payout policy there doesn't allow that method"}`);
       return { tipPayouts: { ...v } };
