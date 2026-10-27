@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import ExcelJS from "exceljs";
+import { totalsFormulaProblems } from "@/domain/payroll/workbook-audit";
 import { DEFAULT_PAYROLL_SETTINGS, LOCATIONS_COLUMNS, assemble, computeLine, inNameOrder, locationSummary, totalsOf, type LineInput, type Line, type Overrides } from "@/domain/payroll/calc";
 import { renderIsolvedWorkbook } from "@/server/payroll/export";
 import { ACCOUNTING, NO_VALUE, locationsCsv, locationsWorkbook } from "@/server/payroll/locations";
@@ -57,7 +58,8 @@ interface GoldenExportRow {
 interface Golden {
   rows: GoldenRow[];
   export_tabs: Record<string, { headers: (string | null)[]; rows: GoldenExportRow[] }>;
-  workbook_location_totals_cached: Record<string, { E: number; N: number }>;
+  /** B, C and R of Kimberly's totals row are circular (I12): never compared. */
+  workbook_location_totals_cached: Record<string, { E: number; N: number; formula_E: string }>;
   workbook_total_ranges?: Record<string, { E: [number, number]; N: [number, number] }>;
   workbook_summary_cached: Record<string, { service_sales: number; employee_cost: number; gross_profit: number }>;
   corrected_location_totals_all_rows: Record<string, Record<"hours" | "hourly_total" | "service" | "commission" | "net_comm" | "total_wages" | "tips" | "gross_profit", number>>;
@@ -127,6 +129,8 @@ const ROW_CHECKS: [keyof GoldenRow["expected_raw"], keyof Line][] = [
 
 /** Shops whose cached workbook totals skip rows with money in them (spec §8): the corrected totals differ. */
 const SKIPPED_ROWS = ["Utica", "Rock Island", "Silvis", "Coralville", "LeClaire"];
+/** Each Locations block's totals row. */
+const TOTALS_ROW: Record<string, number> = { Utica: 9, Moline: 20, Kimberly: 30, "Rock Island": 39, Silvis: 47, Coralville: 55, LeClaire: 63 };
 
 function load(dir: string) {
   const golden = JSON.parse(readFileSync(path.join(dir, "golden.json"), "utf8")) as Golden;
@@ -198,6 +202,19 @@ for (const fx of FIXTURES) {
         expect([sc.service_sales, sc.employee_cost]).toEqual([c.E, c.N]);
         expect(near(sc.gross_profit, c.E - c.N)).toBe(true);
       }
+    });
+
+    it("I12: Kimberly's cached B, C and R totals are circular and reach into Rock Island's rows, so they're never an expected value", () => {
+      const { golden } = g();
+      const rowsOf = (shop: string) => golden.rows.filter((r) => r.inputs.location === shop).map((r) => r.inputs.row);
+      const kimberly = ["B", "C", "R"].flatMap((c) => totalsFormulaProblems({ shop: "Kimberly", column: c, row: TOTALS_ROW.Kimberly, formula: `=SUM(${c}24:${c}37)`, employeeRows: rowsOf("Kimberly") }));
+      expect(kimberly.map((p) => `${p.cell} ${p.kind}`)).toEqual(["B30 circular", "B30 outside_block", "C30 circular", "C30 outside_block", "R30 circular", "R30 outside_block"]);
+      expect(kimberly[0].message).toBe("Kimberly B30 = =SUM(B24:B37) includes itself: a circular reference, so its cached value is stale, not a sum. Never an expected value.");
+      const e = Object.entries(golden.workbook_location_totals_cached).flatMap(([shop, c]) =>
+        totalsFormulaProblems({ shop, column: "E", row: TOTALS_ROW[shop], formula: c.formula_E, employeeRows: rowsOf(shop) }),
+      );
+      expect(e.filter((p) => p.kind !== "skips_rows")).toEqual([]);
+      expect(e.map((p) => p.shop).sort()).toEqual(["Coralville", "Rock Island", "Silvis", "Utica"]);
     });
 
     it("the platform's totals include every employee (the corrected totals)", () => {
