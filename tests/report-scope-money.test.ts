@@ -49,7 +49,7 @@ describe("templates Charles asked for", () => {
 
   it("Bookkeeper / Accountant is read-only", () => {
     const a = effectiveAccess(tpl("bookkeeper"));
-    const readOnly = new Set(["sales.view", "reports.all_staff", "reports.all_shops", "reports.money", "staff.view", "payroll.rates", "payroll.export", "exports.accounting"]);
+    const readOnly = new Set(["sales.view", "reports.all_staff", "reports.all_shops", "reports.money", "staff.view", "payroll.rates", "payroll.export", "exports.accounting", "payouts.view", "payouts.chain"]);
     expect([...a.permissions].filter((p) => !readOnly.has(p) && !p.startsWith("report."))).toEqual([]);
     expect(a.permissions.has("exports.accounting")).toBe(true);
     expect(a.maxDiscountPct).toBe(0);

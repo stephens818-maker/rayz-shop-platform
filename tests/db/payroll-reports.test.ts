@@ -34,7 +34,7 @@ const fx = { a: "", b: "", aLabel: "", bLabel: "", moline: "", start: "", end: "
 const cash = { method: "cash" as const, cashTenderedCents: null };
 const at = (d: string, h = 12) => new Date(new Date(`${d}T00:00:00-05:00`).getTime() + h * 3_600_000);
 const day = (n: number) => m.time.addDays(fx.start, n);
-const PAGES = ["summary", "timesheets", "tips", "commission", "full-time", "labor-cost", "overtime", "isolved"];
+const PAGES = ["summary", "timesheets", "tips", "commission", "full-time", "labor-cost", "overtime", "isolved", "tips-paid"];
 const OTHER_SHOPS = ["Rock Island", "Coralville", "Dubuque", "Kimberly", "Le Claire", "Silvis", "Utica"];
 
 async function sell(staffId: string, d: string, o: { product?: boolean; tipCents?: number; with?: string } = {}) {
@@ -130,15 +130,15 @@ afterAll(async () => {
 describe("who can see them", () => {
   it("brand owner, brand admin and bookkeeper by default; no location role; never a shop login", async () => {
     const keys = P.PAYROLL_REPORTS.flatMap((k) => [P.reportView(k), P.reportExport(k)]);
-    expect(keys).toHaveLength(16);
+    expect(keys).toHaveLength(18);
     for (const t of P.ROLE_TEMPLATES) {
       const has = keys.filter((k) => t.permissions.includes(k));
-      expect([t.key, has.length]).toEqual([t.key, ["brand_owner", "brand_admin", "bookkeeper"].includes(t.key) ? 16 : 0]);
+      expect([t.key, has.length]).toEqual([t.key, ["brand_owner", "brand_admin", "bookkeeper"].includes(t.key) ? 18 : 0]);
     }
     for (const k of keys) expect(P.SHOP_LOGIN_NEVER.has(k)).toBe(true);
     const roles = await m.db.db.select({ key: m.schema.roles.key, permissions: m.schema.roles.permissions }).from(m.schema.roles);
     for (const r of roles.filter((x) => x.key !== P.OWNER_ROLE_KEY))
-      expect([r.key, keys.filter((k) => (r.permissions as string[]).includes(k)).length]).toEqual([r.key, ["brand_admin", "bookkeeper"].includes(r.key ?? "") ? 16 : 0]);
+      expect([r.key, keys.filter((k) => (r.permissions as string[]).includes(k)).length]).toEqual([r.key, ["brand_admin", "bookkeeper"].includes(r.key ?? "") ? 18 : 0]);
 
     await signInAs(ids["manager.moline"]);
     for (const p of PAGES) expect([p, (await open(`/admin/reports/payroll/${p}`)).kind]).toEqual([p, "denied"]);
