@@ -213,6 +213,49 @@ describe("double-payout prevention", () => {
   });
 });
 
+describe("tips are never reduced by fees (ST-C18)", () => {
+  it("a surcharge on the tip and the processor's fee stay with the shop: the payout is the whole tip", async () => {
+    const fee = await import("@/server/payments/card-fee");
+    const { shop: sh, barbers: [b] } = await barbers("kimberly", ["Beth"]);
+    const before = await fee.shopFeePolicy(sh.id);
+    await fee.saveShopFeeOverride(actor, sh.id, { enabled: true, rate: 0.03, appliesToTip: true });
+    await m.db.db.update(s().shops).set({ tipPayouts: { ...sh.tipPayouts, netCardFee: true } }).where(eq(s().shops.id, sh.id));
+    onTestFinished(async () => {
+      await fee.saveShopFeeOverride(actor, sh.id, before.override);
+      await m.db.db.update(s().shops).set({ tipPayouts: sh.tipPayouts }).where(eq(s().shops.id, sh.id));
+    });
+
+    const sale = await tipSale(sh.id, b.id, 1000, card);
+    const [row] = await m.db.db.select().from(s().sales).where(eq(s().sales.id, sale.id));
+    const [pay] = await m.db.db.select().from(s().payments).where(eq(s().payments.saleId, sale.id));
+    expect(row.tipCents).toBe(1000);
+    expect(pay.cardFeeCents).toBeGreaterThan(0);
+    const [tip] = await entriesOf(sale.id);
+    expect(tip).toMatchObject({ kind: "tip", amountCents: 1000 });
+    expect(tip.feeCents).toBeGreaterThan(0);
+
+    const batch = await tp.buildBatch({ shopId: sh.id, kind: "manual", cutoff: today, actor });
+    const p = (await mine(batch.batchId, b.id))!;
+    const inPayout = await m.db.db.select().from(s().tipLedger).where(eq(s().tipLedger.payoutId, p.id));
+    expect(inPayout.map((e) => e.id)).toContain(tip.id);
+    expect(inPayout.some((e) => e.feeCents > 0)).toBe(true);
+    expect(p.feeCents).toBe(0);
+    expect(p.grossCents).toBe(inPayout.filter((e) => e.kind !== "adjust").reduce((a, e) => a + e.amountCents, 0));
+    expect(p.netCents).toBe(p.grossCents + p.adjustCents);
+    await tp.cancelBatch(batch.batchId, "ST-C18 check only", actor);
+
+    const violates = async (q: Promise<unknown>) => {
+      const err = (await q.then(() => null, (x: unknown) => x)) as { message?: string; cause?: { message?: string } } | null;
+      return err ? `${err.message} ${err.cause?.message ?? ""}` : "no error";
+    };
+    const taken = (await payoutsOf(batch.batchId)).map((x) => x.staffId);
+    const [other] = await m.db.db.select({ id: s().staff.id }).from(s().staff).where(m.drizzle.notInArray(s().staff.id, taken)).limit(1);
+    const open = { batchId: batch.batchId, shopId: sh.id, staffId: other.id, method: "cash" as const, grossCents: 1000, feeCents: 30, netCents: 970 };
+    expect(await violates(m.db.db.insert(s().tipPayouts).values(open))).toContain("tip_payouts_no_fee_on_open");
+    expect(await violates(m.db.db.insert(s().staffCompensation).values({ staffId: b.id, effectiveFrom: today, tipCardFeeNetting: true }))).toContain("staff_compensation_no_tip_fee_netting");
+  });
+});
+
 describe("cash tips from the drawer", () => {
   it("come out of the drawer count, are acknowledged by the employee, and must be settled before close", async () => {
     const { shop: sh, barbers: [b, c] } = await barbers("coralville", ["Delaney", "Jessica"]);
@@ -317,7 +360,7 @@ describe("Stripe payouts and webhooks", () => {
     await accounts.setPayoutChoice(c.id, { method: "stripe", instant: true, acceptInstantFee: accounts.currentInstantFeeTerms() }, actor);
     expect((await accounts.staffAccount(c.id))!).toMatchObject({ instant: true, instantFeeTerms: accounts.currentInstantFeeTerms() });
     await tipSale(sh.id, c.id, 2500, card);
-    await tl.saveShopTipSettings(sh.id, { schedule: "manual", cardDelayDays: 0, weeklyDay: 1, defaultMethod: "cash", netCardFee: false }, actor);
+    await tl.saveShopTipSettings(sh.id, { schedule: "manual", cardDelayDays: 0, weeklyDay: 1, defaultMethod: "cash" }, actor);
     const r = await tp.buildBatch({ shopId: sh.id, kind: "manual", cutoff: today, actor });
     await tp.approveBatch(r.batchId, actor);
     const p = (await mine(r.batchId, c.id))!;

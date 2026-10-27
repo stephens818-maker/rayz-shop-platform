@@ -124,7 +124,6 @@ export interface CompVersion {
   guaranteeCents: number | null;
   guaranteePer: GuaranteePer | null;
   tipMethod: TipMethod | null;
-  tipCardFeeNetting: boolean | null;
   note: string | null;
 }
 
@@ -523,6 +522,5 @@ export function describePlan(v: CompVersion, names: { shop: (id: string) => stri
   if (v.boothRentCents !== null && v.boothRentFrequency) out.push({ label: "Booth rent", value: `${formatCents(v.boothRentCents)} ${RENT_LABEL[v.boothRentFrequency]}` });
   if (v.guaranteeCents !== null && v.guaranteePer) out.push({ label: "Guaranteed minimum", value: `${formatCents(v.guaranteeCents)} ${GUARANTEE_LABEL[v.guaranteePer]}` });
   if (v.tipMethod) out.push({ label: "Tips paid by", value: names.tipMethod(v.tipMethod) });
-  if (v.tipCardFeeNetting !== null) out.push({ label: "Card fee on card tips", value: v.tipCardFeeNetting ? "Taken out" : "Not taken out" });
   return out;
 }

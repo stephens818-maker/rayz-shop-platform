@@ -2587,11 +2587,11 @@ export const tipPayouts = pgTable(
     status: text("status").$type<TipPayoutStatus>().notNull().default("pending"),
     /** Tips less tip refunds in the payout. */
     grossCents: integer("gross_cents").notNull().default(0),
-    /** Card processing fee netted from card tips, where the shop nets it. */
+    /** Always 0 (ST-C18): the shop pays card fees, never the tip. Older paid payouts may show a fee netted before that rule. */
     feeCents: integer("fee_cents").notNull().default(0),
     /** Manager adjustments, each a ledger entry with a reason. */
     adjustCents: integer("adjust_cents").notNull().default(0),
-    /** gross − fee + adjust: what leaves the drawer or the Stripe balance. */
+    /** gross + adjust: what leaves the drawer or the Stripe balance. */
     netCents: integer("net_cents").notNull().default(0),
     instant: boolean("instant").notNull().default(false),
     /** Stripe's instant payout fee, estimated and shown before sending. */
@@ -2632,6 +2632,7 @@ export const tipPayouts = pgTable(
     check("tip_payouts_instant_fee_paid_by", sql`${t.instantFeePaidBy} in ('employee', 'shop')`),
     check("tip_payouts_destination", sql`(${t.destinationType} is null or ${t.destinationType} in ('bank_account', 'card')) and (${t.destinationLast4} is null or ${t.destinationLast4} ~ '^[0-9]{4}$')`),
     check("tip_payouts_hold_kind", sql`${t.holdKind} is null or ${t.holdKind} in ('manager', 'stripe_setup', 'transfers_pending')`),
+    check("tip_payouts_no_fee_on_open", sql`${t.feeCents} = 0 or ${t.status} not in ('pending', 'held')`),
     index("tip_payouts_stripe_setup").on(t.staffId).where(sql`${t.status} = 'held' and ${t.holdKind} = 'stripe_setup'`),
     uniqueIndex("tip_payouts_batch_staff_uq").on(t.batchId, t.staffId),
     uniqueIndex("tip_payouts_transfer_uq").on(t.stripeTransferId),
@@ -3304,7 +3305,7 @@ export const staffCompensation = pgTable(
     guaranteePer: text("guarantee_per").$type<"pay_period" | "week" | "month" | "year">(),
     /** Null: the shop's (or their own) tip payout method. */
     tipMethod: text("tip_method").$type<"cash" | "stripe" | "payroll">(),
-    /** Null: the shop's setting for taking the card fee out of card tips. */
+    /** Retired (ST-C18): always null, since card fees never come out of tips. */
     tipCardFeeNetting: boolean("tip_card_fee_netting"),
     note: text("note"),
     createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),

@@ -101,7 +101,6 @@ const shopSchema = z.object({
   cardDelayDays: z.number().int().min(0, "The delay can't be negative").max(14, "Use a delay of 14 days or less"),
   weeklyDay: z.number().int().min(0).max(6),
   defaultMethod: z.enum(TIP_METHODS),
-  netCardFee: z.boolean(),
 });
 
 export async function saveShopTipSettingsAction(shopId: string, input: z.input<typeof shopSchema>) {

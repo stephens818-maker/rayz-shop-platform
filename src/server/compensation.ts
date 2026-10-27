@@ -78,7 +78,6 @@ export const toVersion = (r: VersionRow): CompVersion & { id: string; staffId: s
   guaranteeCents: r.guaranteeCents,
   guaranteePer: r.guaranteePer,
   tipMethod: r.tipMethod,
-  tipCardFeeNetting: r.tipCardFeeNetting,
   note: r.note,
 });
 
@@ -152,7 +151,6 @@ const versionDetails = (v: VersionInput) => ({
   guaranteeCents: v.guaranteeCents,
   guaranteePer: v.guaranteePer,
   tipMethod: v.tipMethod,
-  tipCardFeeNetting: v.tipCardFeeNetting,
   hasNote: !!v.note,
 });
 
@@ -262,16 +260,16 @@ export async function payrollPlans(o: { staffIds: readonly string[]; start: Loca
 
 /**
  * How each employee's plan says their tips are paid, when compensation is on: a payout method that
- * beats their own choice and the shop's default (never a payroll-only shop's rule), and whether the
- * card fee comes out of their card tips. Null where the plan leaves it to the shop.
+ * beats their own choice and the shop's default (never a payroll-only shop's rule). Null where the
+ * plan leaves it to the shop. No plan takes a fee out of tips (ST-C18).
  */
-export async function tipOverrides(staffIds: readonly string[], tx: DBorTx = db, now = new Date()): Promise<Map<string, { method: TipMethod | null; netCardFee: boolean | null }>> {
-  const out = new Map<string, { method: TipMethod | null; netCardFee: boolean | null }>();
+export async function tipOverrides(staffIds: readonly string[], tx: DBorTx = db, now = new Date()): Promise<Map<string, { method: TipMethod | null }>> {
+  const out = new Map<string, { method: TipMethod | null }>();
   if (!staffIds.length || !(await loadCompensationSettings(tx)).enabled) return out;
   const today = todayLocal(now);
   for (const [staffId, vs] of await versionsFor(staffIds, tx)) {
     const v = versionOn(vs, today);
-    if (v && (v.tipMethod !== null || v.tipCardFeeNetting !== null)) out.set(staffId, { method: v.tipMethod, netCardFee: v.tipCardFeeNetting });
+    if (v?.tipMethod) out.set(staffId, { method: v.tipMethod });
   }
   return out;
 }

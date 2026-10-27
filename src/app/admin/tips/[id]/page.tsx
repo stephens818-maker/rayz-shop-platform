@@ -7,7 +7,6 @@ import { METHOD_LABEL, STATUS_LABEL, employeeFeeCents, receivedCents, shopCostCe
 import { formatCents } from "@/lib/money";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { guardPage } from "@/server/auth/staff";
-import { shopTipConfig } from "@/server/tips/ledger";
 import { inTenant } from "@/server/tenant";
 import { payoutAccountSummaries } from "@/server/tips/accounts";
 import { batchDetail } from "@/server/tips/payouts";
@@ -27,7 +26,7 @@ export default async function TipBatchPage({ params }: { params: Promise<{ id: s
   if (!d) notFound();
   const { batch, payouts } = d;
   const shop = ctx.shops.find((s) => s.id === batch.shopId);
-  const [settings, accounts] = await Promise.all([shopTipConfig(batch.shopId), payoutAccountSummaries(payouts.filter((p) => p.method === "stripe").map((p) => p.staffId))]);
+  const accounts = await payoutAccountSummaries(payouts.filter((p) => p.method === "stripe").map((p) => p.staffId));
   const live = payouts.filter((p) => p.status !== "cancelled");
   const sum = (f: (p: (typeof payouts)[number]) => number) => live.reduce((a, p) => a + f(p), 0);
   const toApprove = live.filter((p) => p.status === "pending" && p.netCents > 0);
@@ -62,9 +61,8 @@ export default async function TipBatchPage({ params }: { params: Promise<{ id: s
           </>
         }
       />
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <Stat label="Tips" value={formatCents(sum((p) => p.grossCents))} hint="less refunds" />
-        <Stat label="Card fees netted" value={formatCents(-sum((p) => p.feeCents))} hint={settings.netCardFee ? "this shop nets the card fee" : "off for this shop"} />
         <Stat label="Adjustments" value={formatCents(sum((p) => p.adjustCents), { sign: true })} />
         <Stat label="To pay" value={formatCents(sum((p) => p.netCents))} hint={`${live.length} employee${live.length === 1 ? "" : "s"}`} />
       </div>
@@ -159,7 +157,6 @@ export default async function TipBatchPage({ params }: { params: Promise<{ id: s
                 <Th>Kind</Th>
                 <Th>Paid by</Th>
                 <Th right>Tip</Th>
-                {settings.netCardFee && <Th right>Card fee</Th>}
                 <Th>Reason</Th>
               </tr>
             </thead>
@@ -181,7 +178,6 @@ export default async function TipBatchPage({ params }: { params: Promise<{ id: s
                   <Td right className={e.amountCents < 0 ? "text-red-600" : ""}>
                     {formatCents(e.amountCents)}
                   </Td>
-                  {settings.netCardFee && <Td right>{e.feeCents ? formatCents(-e.feeCents) : ""}</Td>}
                   <Td className="whitespace-normal text-zinc-600">{e.reason}</Td>
                 </tr>
               ))}

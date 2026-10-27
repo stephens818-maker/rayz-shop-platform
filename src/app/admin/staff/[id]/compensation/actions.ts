@@ -23,7 +23,6 @@ const version = z.object({
   guaranteeCents: num.nullable(),
   guaranteePer: z.enum(["pay_period", "week", "month", "year"]).nullable(),
   tipMethod: z.enum(TIP_METHODS).nullable(),
-  tipCardFeeNetting: z.boolean().nullable(),
   note: z
     .string()
     .max(500)

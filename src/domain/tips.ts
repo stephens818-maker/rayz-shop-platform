@@ -124,11 +124,6 @@ export interface ShopTipSettings {
   weeklyDay: number;
   /** For employees who haven't chosen, or everyone where the brand doesn't let them choose. */
   defaultMethod: TipMethod;
-  /**
-   * Take each card tip's share of the card processing fee out of the payout. Off by default:
-   * whether this is allowed, and how it's reported, needs the brand's accountant or lawyer to confirm.
-   */
-  netCardFee: boolean;
 }
 
 /** The card settlement delay when the shop hasn't set one. */
@@ -141,10 +136,10 @@ export const DEFAULT_CARD_DELAY: Record<TipSchedule, number> = { end_of_night: 0
  * wages and withholds on them from regular pay. Paying through payroll is the alternative a shop
  * (or an employee, where the brand lets them choose) picks on purpose.
  */
-export const DEFAULT_SHOP_TIP_SETTINGS: ShopTipSettings = { schedule: "daily_delay", cardDelayDays: 2, weeklyDay: 1, defaultMethod: "stripe", netCardFee: false };
+export const DEFAULT_SHOP_TIP_SETTINGS: ShopTipSettings = { schedule: "daily_delay", cardDelayDays: 2, weeklyDay: 1, defaultMethod: "stripe" };
 
 /** Where the deployment runs without the Stripe rail: tips go through payroll and nothing is paid separately. */
-export const PAYROLL_TIP_SETTINGS: ShopTipSettings = { schedule: "payroll", cardDelayDays: 0, weeklyDay: 1, defaultMethod: "payroll", netCardFee: false };
+export const PAYROLL_TIP_SETTINGS: ShopTipSettings = { schedule: "payroll", cardDelayDays: 0, weeklyDay: 1, defaultMethod: "payroll" };
 
 export const defaultShopTipSettings = (policy: Pick<BrandTipPolicy, "methods">): ShopTipSettings => (policy.methods.includes("stripe") ? DEFAULT_SHOP_TIP_SETTINGS : PAYROLL_TIP_SETTINGS);
 
@@ -159,7 +154,6 @@ export function shopTipSettings(raw: unknown, policy: BrandTipPolicy = DEFAULT_B
     cardDelayDays: int(r.cardDelayDays, 0, 14, DEFAULT_CARD_DELAY[schedule]),
     weeklyDay: int(r.weeklyDay, 0, 6, d.weeklyDay),
     defaultMethod: schedule === "payroll" ? "payroll" : method,
-    netCardFee: typeof r.netCardFee === "boolean" ? r.netCardFee : d.netCardFee,
   };
 }
 
@@ -180,9 +174,6 @@ export function effectiveMethod(shop: ShopTipSettings, policy: BrandTipPolicy, c
   if (policy.employeeChooses && choice && policy.methods.includes(choice)) return choice;
   return shop.defaultMethod;
 }
-
-/** Whether the card fee comes out of an employee's card tips: their compensation plan's say, else the shop's. */
-export const netsCardFee = (shop: Pick<ShopTipSettings, "netCardFee">, planned?: boolean | null) => planned ?? shop.netCardFee;
 
 export interface LedgerEntry {
   id: string;
@@ -243,12 +234,15 @@ export function flooredTips(cardCents: number, cashCents: number): { cardCents: 
   return { cardCents: card, cashCents: total - card };
 }
 
-/** A payout's amounts from its entries: tips less refunds, less their card fee share where the shop nets it, plus adjustments. */
-export function payoutTotals(entries: readonly Pick<LedgerEntry, "kind" | "amountCents" | "feeCents">[], netCardFee: boolean): PayoutTotals {
+/**
+ * A payout's amounts from its entries: tips less refunds, plus adjustments. Tips are never reduced
+ * by fees (ST-C18): an entry's card fee share is kept for the books and paid by the shop, so feeCents
+ * is always zero.
+ */
+export function payoutTotals(entries: readonly Pick<LedgerEntry, "kind" | "amountCents">[]): PayoutTotals {
   const grossCents = entries.filter((e) => e.kind !== "adjust").reduce((a, e) => a + e.amountCents, 0);
   const adjustCents = entries.filter((e) => e.kind === "adjust").reduce((a, e) => a + e.amountCents, 0);
-  const feeCents = netCardFee ? entries.filter((e) => e.kind !== "adjust").reduce((a, e) => a + e.feeCents, 0) : 0;
-  return { grossCents, feeCents, adjustCents, netCents: grossCents - feeCents + adjustCents };
+  return { grossCents, feeCents: 0, adjustCents, netCents: grossCents + adjustCents };
 }
 
 /**
@@ -256,14 +250,14 @@ export function payoutTotals(entries: readonly Pick<LedgerEntry, "kind" | "amoun
  * cutoff that's available by then. Someone whose entries net to zero or less (a refund after they
  * were paid) gets no payout; their entries stay unpaid and net against the next batch.
  */
-export function draftPayouts(entries: readonly LedgerEntry[], s: Pick<ShopTipSettings, "cardDelayDays" | "netCardFee">, cutoff: LocalDate, asOf: LocalDate, netCardFeeOf: (staffId: string) => boolean = () => s.netCardFee) {
+export function draftPayouts(entries: readonly LedgerEntry[], s: Pick<ShopTipSettings, "cardDelayDays">, cutoff: LocalDate, asOf: LocalDate) {
   const eligible = entries.filter((e) => !e.payoutId && e.businessDate <= cutoff && availableOn(e, s) <= asOf);
   const byStaff = new Map<string, LedgerEntry[]>();
   for (const e of eligible) byStaff.set(e.staffId, [...(byStaff.get(e.staffId) ?? []), e]);
   const payouts: PayoutDraft[] = [];
   const carried: { staffId: string; netCents: number }[] = [];
   for (const [staffId, list] of byStaff) {
-    const t = payoutTotals(list, netCardFeeOf(staffId));
+    const t = payoutTotals(list);
     if (t.netCents > 0) payouts.push({ staffId, entryIds: list.map((e) => e.id), ...t });
     else if (list.length) carried.push({ staffId, netCents: t.netCents });
   }

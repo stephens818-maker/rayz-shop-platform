@@ -189,7 +189,6 @@ export const SHOP_SETTINGS: readonly ShopSettingDef[] = [
       { key: "cardDelayDays", label: "Card tips wait (days)", kind: "number", min: 0, max: 14 },
       { key: "weeklyDay", label: "Weekly on (0 Sunday to 6 Saturday)", kind: "number", min: 0, max: 6 },
       { key: "defaultMethod", label: "Default method", kind: "choice", options: choices(TIP_METHODS, METHOD_LABEL) },
-      { key: "netCardFee", label: "Take the card fee out of card tips", kind: "bool" },
     ],
     read: (r) => shopTipSettings(r.tipPayouts) as ShopTipSettings & Record<string, unknown>,
     parse(raw, before) {

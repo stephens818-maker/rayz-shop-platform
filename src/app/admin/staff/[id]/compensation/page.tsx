@@ -34,7 +34,6 @@ function draftOf(v: CompVersion | null, effectiveFrom: string): Draft {
     guarantee: money(v?.guaranteeCents ?? null),
     guaranteePer: v?.guaranteePer ?? "",
     tipMethod: v?.tipMethod ?? "",
-    cardFee: v?.tipCardFeeNetting == null ? "" : v.tipCardFeeNetting ? "yes" : "no",
     note: "",
   };
 }
@@ -191,7 +190,6 @@ export default async function StaffCompensationPage({ params }: { params: Promis
               servicePct: `${pct(fb.servicePct)}%`,
               productPct: `${pct(fb.productPct)}%`,
               tipMethod: "Wins over their own choice. A shop that pays all tips through payroll still does.",
-              cardFee: "Whether Stripe's card fee comes out of their card tips.",
             }}
           />
         </Card>

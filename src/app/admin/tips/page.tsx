@@ -178,9 +178,6 @@ export default async function TipsPage() {
                       ) : a.method && policy.employeeChooses ? (
                         <span className="ml-1 text-xs text-zinc-500">(their choice)</span>
                       ) : null}
-                      {plan?.netCardFee != null && plan.netCardFee !== settings.netCardFee ? (
-                        <span className="ml-1 text-xs text-zinc-500">{plan.netCardFee ? "· card fee taken out" : "· card fee not taken out"}</span>
-                      ) : null}
                     </Td>
                     <Td>
                       <Badge tone={method === "stripe" && a.status !== "ready" ? "amber" : BANKING_STATUS_TONE[a.status]}>{BANKING_STATUS_LABEL[a.status]}</Badge>

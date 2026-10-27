@@ -22,7 +22,6 @@ export interface Draft {
   guarantee: string;
   guaranteePer: GuaranteePer | "";
   tipMethod: TipMethod | "";
-  cardFee: "" | "yes" | "no";
   note: string;
 }
 
@@ -60,7 +59,6 @@ function toVersion(d: Draft): VersionForm | string {
     guaranteeCents: cents(d.guarantee, "The guaranteed minimum"),
     guaranteePer: d.guaranteePer || null,
     tipMethod: d.tipMethod || null,
-    tipCardFeeNetting: d.cardFee === "" ? null : d.cardFee === "yes",
     note: d.note,
   };
   return bad[0] ?? v;
@@ -85,7 +83,7 @@ export function VersionEditor({
   services: { id: string; name: string; category: string }[];
   categories: string[];
   tipMethods: { value: TipMethod; label: string }[];
-  hints: { hourly: string; servicePct: string; productPct: string; tipMethod: string; cardFee: string };
+  hints: { hourly: string; servicePct: string; productPct: string; tipMethod: string };
 }) {
   const { pending, error, setError, run } = useAction();
   const [d, setD] = useState(initial);
@@ -242,13 +240,6 @@ export function VersionEditor({
                 {m.label}
               </option>
             ))}
-          </Select>
-        </Field>
-        <Field label="Card fee on card tips" hint={hints.cardFee}>
-          <Select value={d.cardFee} onChange={(e) => set("cardFee", e.target.value as Draft["cardFee"])} className="h-9 w-56">
-            <option value="">The shop&apos;s setting</option>
-            <option value="yes">Taken out of their tips</option>
-            <option value="no">Not taken out</option>
           </Select>
         </Field>
       </fieldset>

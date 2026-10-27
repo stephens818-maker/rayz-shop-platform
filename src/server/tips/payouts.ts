@@ -14,7 +14,6 @@ import {
   employeeFeeCents,
   instantFeeCents,
   instantFeePayer,
-  netsCardFee,
   payoutTotals,
   receivedCents,
   scheduledBatch,
@@ -61,10 +60,10 @@ async function lastLockedEnd(shopId: string, tx: DBorTx): Promise<LocalDate | nu
 }
 
 /** Recomputes a payout from the entries pointing at it, the only source of its amounts. `feePaidBy` follows the brand's policy; omitted, it stays as it was. */
-async function recompute(tx: DBorTx, payoutId: string, netCardFee: boolean, feePaidBy?: InstantFeePayer) {
+async function recompute(tx: DBorTx, payoutId: string, feePaidBy?: InstantFeePayer) {
   const [p] = await tx.select().from(tipPayouts).where(eq(tipPayouts.id, payoutId));
-  const entries = await tx.select({ kind: tipLedger.kind, amountCents: tipLedger.amountCents, feeCents: tipLedger.feeCents }).from(tipLedger).where(eq(tipLedger.payoutId, payoutId));
-  const t = payoutTotals(entries, netCardFee && p.method !== "payroll");
+  const entries = await tx.select({ kind: tipLedger.kind, amountCents: tipLedger.amountCents }).from(tipLedger).where(eq(tipLedger.payoutId, payoutId));
+  const t = payoutTotals(entries);
   const fee = p.instant ? instantFeeCents(t.netCents, instantRate()) : 0;
   const [row] = await tx
     .update(tipPayouts)
@@ -129,9 +128,8 @@ export async function buildBatch(o: { shopId: string; kind: Exclude<TipBatchKind
     const locked = await lastLockedEnd(o.shopId, tx);
     const { instantFeeAck } = await staffPayoutConfig(tx);
     const methodOf = (staffId: string) => effectiveMethod(settings, policy, choices.get(staffId)?.method ?? null, planned.get(staffId)?.method);
-    const feeOf = (staffId: string) => netsCardFee(settings, planned.get(staffId)?.netCardFee);
     const eligible = entries.filter((e) => !heldStaff.has(e.staffId) && (methodOf(e.staffId) !== "payroll" || (locked !== null && e.businessDate <= locked)));
-    const { payouts, carried } = draftPayouts(eligible, settings, cutoff, asOf, feeOf);
+    const { payouts, carried } = draftPayouts(eligible, settings, cutoff, asOf);
 
     for (const d of payouts) {
       let p = mine.find((x) => x.staffId === d.staffId);
@@ -163,7 +161,7 @@ export async function buildBatch(o: { shopId: string; kind: Exclude<TipBatchKind
         p.id,
         d.entryIds.filter((id) => !entries.find((e) => e.id === id)?.inDraft),
       );
-      await recompute(tx, p.id, feeOf(d.staffId), instantFeePayer(policy));
+      await recompute(tx, p.id, instantFeePayer(policy));
     }
     // Someone whose tips now net to nothing (a refund came in) comes out of the draft; their entries wait for the next batch.
     for (const p of mine.filter((x) => x.status === "pending" && !payouts.some((d) => d.staffId === x.staffId))) {
@@ -311,7 +309,6 @@ export async function adjustPayout(payoutId: string, cents: number, reason: stri
     if (p.status !== "pending" && p.status !== "held") throw new AppError("conflict", "Only a payout that hasn't been approved can be adjusted.");
     if (actor.staffId && actor.staffId === p.staffId) throw forbidden("You can't adjust your own tips.");
     const b = await lockBatch(tx, p.batchId);
-    const { byShop } = await shopTipConfigs([p.shopId], tx);
     // An adjustment is payroll tips of the day it's dated: never a pay period already sent to iSolved.
     const day = (await isLockedOn(p.shopId, b.cutoffDate)) ? todayLocal() : b.cutoffDate;
     await tx.insert(tipLedger).values({
@@ -325,7 +322,7 @@ export async function adjustPayout(payoutId: string, cents: number, reason: stri
       reason: why,
       createdBy: actor.staffId ?? null,
     });
-    const after = await recompute(tx, p.id, netsCardFee(byShop.get(p.shopId)!, (await tipOverrides([p.staffId], tx)).get(p.staffId)?.netCardFee));
+    const after = await recompute(tx, p.id);
     if (after.netCents < 0) throw new AppError("bad_request", "That would take the payout below zero.");
     await audit(actor, "tips.adjust", "tip_payout", payoutId, { reason: why, cents, staffId: p.staffId, beforeNetCents: p.netCents, afterNetCents: after.netCents }, p.shopId, tx);
   });
@@ -551,14 +548,14 @@ export async function releaseSetupHolds(staffId: string, now = new Date()) {
         await audit(STRIPE_ACTOR, "tips.hold", "tip_payout", p.id, { reason: TRANSFERS_PENDING_REASON, kind: "transfers_pending", staffId: p.staffId, netCents: p.netCents, from: "held", why: "stripe_setup_done" }, p.shopId, tx);
         continue;
       }
-      const { policyOf, byShop } = await shopTipConfigs([p.shopId], tx);
+      const { policyOf } = await shopTipConfigs([p.shopId], tx);
       const instant = instantOnFor(policyOf(p.shopId), acct, instantFeeAck);
       const status: TipPayoutStatus = b.status === "draft" ? "pending" : "approved";
       await tx
         .update(tipPayouts)
         .set({ status, holdReason: null, holdKind: null, heldBy: null, heldAt: null, instant, stripeAccountId: acct!.stripeAccountId, updatedAt: now })
         .where(eq(tipPayouts.id, p.id));
-      if (instant !== p.instant) await recompute(tx, p.id, netsCardFee(byShop.get(p.shopId)!, (await tipOverrides([p.staffId], tx, now)).get(p.staffId)?.netCardFee));
+      if (instant !== p.instant) await recompute(tx, p.id);
       await recordPayoutPeriods(tx, [p.id]);
       await audit(STRIPE_ACTOR, "tips.release", "tip_payout", p.id, { staffId: p.staffId, heldFor: p.holdReason, to: status, why: "stripe_setup_done" }, p.shopId, tx);
       released++;
@@ -846,13 +843,13 @@ export async function lockPayrollTips(tx: Tx, blocks: readonly { shopId: string;
       for (const [staffId, ids] of byStaff) {
         const [p] = await tx.insert(tipPayouts).values({ batchId: batch.id, shopId: b.shopId, staffId, method: "payroll", status: "paid", payrollPeriodStart: start, sentAt: now, paidAt: now }).returning();
         await claim(tx, p.id, ids);
-        await recompute(tx, p.id, false);
+        await recompute(tx, p.id);
         await recordPayoutPeriods(tx, [p.id]);
       }
     }
     for (const h of held.filter((x) => heldEntries.some((e) => e.payoutId === x.id))) {
       const [{ n }] = await tx.select({ n: sql<number>`count(*)::int` }).from(tipLedger).where(eq(tipLedger.payoutId, h.id));
-      if (n) await recompute(tx, h.id, netsCardFee(settings, planned.get(h.staffId)?.netCardFee));
+      if (n) await recompute(tx, h.id);
       else await tx.update(tipPayouts).set({ status: "cancelled", holdReason: `Paid through payroll for the pay period ${start} to ${end}`, updatedAt: now }).where(eq(tipPayouts.id, h.id));
       await recordPayoutPeriods(tx, [h.id]);
       await audit(actor, "tips.owed_to_payroll", "tip_payout", h.id, { staffId: h.staffId, periodStart: start, periodEnd: end, holdKind: h.holdKind, entries: heldEntries.filter((e) => e.payoutId === h.id).length, emptied: !n }, b.shopId, tx);

@@ -49,7 +49,6 @@ const plan = (o: Partial<Form> = {}): Form => ({
   guaranteeCents: null,
   guaranteePer: null,
   tipMethod: null,
-  tipCardFeeNetting: null,
   note: null,
   ...o,
 });
@@ -216,7 +215,7 @@ describe("dated versions", () => {
     expect(await tab.addVersionAction(fx.a, plan({ tipMethod: "payroll", boothRentCents: 5000, boothRentFrequency: null }))).toMatchObject({ ok: false, error: expect.stringMatching(/Booth rent/) });
 
     const today = m.time.todayLocal();
-    expect(await tab.addVersionAction(fx.a, plan({ effectiveFrom: today, servicePct: 0.4, tipMethod: "payroll", tipCardFeeNetting: true, note: "Agreed at review" }))).toMatchObject({ ok: true });
+    expect(await tab.addVersionAction(fx.a, plan({ effectiveFrom: today, servicePct: 0.4, tipMethod: "payroll", note: "Agreed at review" }))).toMatchObject({ ok: true });
     expect(await tab.addVersionAction(fx.a, plan({ servicePct: 0.45, productPct: 0.25 }))).toMatchObject({ ok: true });
     expect(await tab.addVersionAction(fx.a, plan({ servicePct: 0.5, productPct: 0.2 }))).toMatchObject({ ok: true });
     const list = D.timeline((await C.versionsFor([fx.a])).get(fx.a)!, today);
@@ -305,7 +304,7 @@ describe("commission and payroll", () => {
 
   it("pays tips the way the plan says, while compensation is on", async () => {
     expect(await ledger.methodFor(fx.a, fx.moline)).toBe("payroll");
-    expect((await C.tipOverrides([fx.a, fx.b])).get(fx.a)).toEqual({ method: "payroll", netCardFee: true });
+    expect((await C.tipOverrides([fx.a, fx.b])).get(fx.a)).toEqual({ method: "payroll" });
     expect((await C.tipOverrides([fx.a, fx.b])).has(fx.b)).toBe(false);
     const fallback = await ledger.methodFor(fx.b, fx.moline);
     await settings({ enabled: false });

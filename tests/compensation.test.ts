@@ -49,7 +49,6 @@ const version = (o: Partial<CompVersion> = {}): CompVersion => ({
   guaranteeCents: null,
   guaranteePer: null,
   tipMethod: null,
-  tipCardFeeNetting: null,
   note: null,
   ...o,
 });
@@ -372,7 +371,6 @@ describe("describing a plan", () => {
       guaranteeCents: 100000,
       guaranteePer: "pay_period",
       tipMethod: "payroll",
-      tipCardFeeNetting: false,
     });
     expect(describePlan(full, names).map((l) => `${l.label}: ${l.value}`)).toEqual([
       "Hourly: $15.50/h",
@@ -385,7 +383,6 @@ describe("describing a plan", () => {
       "Booth rent: $250.00 a week",
       "Guaranteed minimum: $1,000.00 a pay period",
       "Tips paid by: PAYROLL",
-      "Card fee on card tips: Not taken out",
     ]);
   });
 });

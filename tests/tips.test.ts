@@ -39,17 +39,15 @@ describe("tip ledger math with refunds", () => {
     const tip = e({ amountCents: 2000, feeCents: 62 });
     const refund = e({ kind: "refund", amountCents: -2000, feeCents: -reversalFeeCents(tip, 2000) });
     expect(refund.feeCents).toBe(-62);
-    expect(payoutTotals([tip, refund], true)).toEqual({ grossCents: 0, feeCents: 0, adjustCents: 0, netCents: 0 });
+    expect(payoutTotals([tip, refund])).toEqual({ grossCents: 0, feeCents: 0, adjustCents: 0, netCents: 0 });
     expect(draftPayouts([tip, refund], settings(), "2026-10-20", "2026-10-20").payouts).toEqual([]);
   });
 
-  it("a partial tip refund takes back its share of the fee, rounded, and nets the rest", () => {
+  it("a partial tip refund takes back only the refunded tip, never a fee", () => {
     const tip = e({ amountCents: 1500, feeCents: 47 });
     const back = reversalFeeCents(tip, 500);
     expect(back).toBe(16);
-    const t = payoutTotals([tip, e({ kind: "refund", amountCents: -500, feeCents: -back })], true);
-    expect(t).toEqual({ grossCents: 1000, feeCents: 31, adjustCents: 0, netCents: 969 });
-    expect(payoutTotals([tip, e({ kind: "refund", amountCents: -500, feeCents: -back })], false).netCents).toBe(1000);
+    expect(payoutTotals([tip, e({ kind: "refund", amountCents: -500, feeCents: -back })])).toEqual({ grossCents: 1000, feeCents: 0, adjustCents: 0, netCents: 1000 });
   });
 
   it("a refund after the tip was paid out carries a negative balance that the next batch nets off", () => {
@@ -64,9 +62,9 @@ describe("tip ledger math with refunds", () => {
     expect(second.payouts).toEqual([expect.objectContaining({ staffId: "b1", grossCents: 700, netCents: 700, entryIds: [refund.id, next.id, later.id] })]);
   });
 
-  it("adjustments add to the net but aren't tips and don't carry a card fee", () => {
-    const t = payoutTotals([e({ amountCents: 1000, feeCents: 30 }), e({ kind: "adjust", method: "adjust", amountCents: -250, feeCents: 99 })], true);
-    expect(t).toEqual({ grossCents: 1000, feeCents: 30, adjustCents: -250, netCents: 720 });
+  it("adjustments add to the net but aren't tips", () => {
+    const t = payoutTotals([e({ amountCents: 1000, feeCents: 30 }), e({ kind: "adjust", method: "adjust", amountCents: -250, feeCents: 99 })]);
+    expect(t).toEqual({ grossCents: 1000, feeCents: 0, adjustCents: -250, netCents: 750 });
   });
 
   it("the card fee share is pro rata to the charge", () => {
@@ -147,7 +145,7 @@ describe("settings and methods", () => {
     expect(shopTipSettings(null)).toEqual(DEFAULT_SHOP_TIP_SETTINGS);
     expect(shopTipSettings({ schedule: "daily_delay" }).cardDelayDays).toBe(2);
     expect(shopTipSettings({ schedule: "daily_delay", cardDelayDays: 3 }).cardDelayDays).toBe(3);
-    expect(shopTipSettings({ schedule: "nope", cardDelayDays: -1, weeklyDay: 9, netCardFee: "yes" })).toEqual(DEFAULT_SHOP_TIP_SETTINGS);
+    expect(shopTipSettings({ schedule: "nope", cardDelayDays: -1, weeklyDay: 9 })).toEqual(DEFAULT_SHOP_TIP_SETTINGS);
     expect(shopTipSettings({ schedule: "payroll", defaultMethod: "cash" }).defaultMethod).toBe("payroll");
   });
 

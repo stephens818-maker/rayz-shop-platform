@@ -92,6 +92,18 @@ describe("checkout: credit-only card fee", () => {
     expect(t.cardFeeCents).toBe(Math.round((3300 + 231 + 700) * 0.03));
   });
 
+  it("never takes the fee out of the tip, whatever the fee is charged on (ST-C18)", () => {
+    for (const appliesToTip of [false, true]) {
+      for (const cardFee of [{ ...fee, appliesToTip }, { ...fee, appliesToTip, type: "flat" as const, rate: 0, flatCents: 150 }]) {
+        const t = computeCheckout({ ...base, cardFee, tender: { method: "card", cardFunding: "credit" } });
+        expect(t.cardFeeCents).toBeGreaterThan(0);
+        expect(t.tipCents).toBe(700);
+        expect(t.totalCents).toBe(t.preFeeTotalCents + t.cardFeeCents);
+        expect(t.preFeeTotalCents - t.serviceNetCents - t.productNetCents - t.giftCardSalesCents - t.taxCents).toBe(700);
+      }
+    }
+  });
+
   it("is capped at 3% even if misconfigured", () => {
     const t = computeCheckout({ ...base, cardFee: { ...fee, rate: 0.05 }, tender: { method: "card", cardFunding: "credit" } });
     expect(t.cardFeeRate).toBe(0.03);

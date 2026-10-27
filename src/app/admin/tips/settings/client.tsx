@@ -332,20 +332,9 @@ export function ShopTipForm({
             </Select>
           </Field>
         )}
-        <div className="md:col-span-2">
-          <Check
-            checked={s.netCardFee}
-            onChange={(v) => setS({ ...s, netCardFee: v })}
-          >
-            Take each card tip&rsquo;s share of the card processing fee out of
-            the payout
-            <span className="block text-xs text-amber-700">
-              Confirm with the brand&rsquo;s accountant or lawyer before turning
-              this on: some states don&rsquo;t allow it, and it changes
-              what&rsquo;s reported.
-            </span>
-          </Check>
-        </div>
+        <p className="md:col-span-2 text-xs text-zinc-500">
+          Card processing fees are never taken out of tips; the shop pays them.
+        </p>
         <div className="md:col-span-2 flex items-center gap-3">
           <Button
             disabled={pending}
