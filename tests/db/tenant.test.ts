@@ -324,11 +324,14 @@ async function seedCanaries() {
 }
 
 /** Every Coralville row the actions below could touch. */
+/** Rows compared as sets: without an ORDER BY, Postgres may return them in a different order. */
+const unordered = (o: Record<string, unknown>) => JSON.stringify(Object.fromEntries(Object.entries(o).map(([k, v]) => [k, Array.isArray(v) ? v.map((r) => JSON.stringify(r)).sort() : v])));
+
 async function coralvilleState() {
   const s = m.schema;
   const cv = shop.coralville;
   const q = m.db.db;
-  return JSON.stringify({
+  return unordered({
     shop: await q.select().from(s.shops).where(eq(s.shops.id, cv)),
     paymentAccount: await q.select().from(s.shopPaymentAccounts).where(eq(s.shopPaymentAccounts.shopId, cv)),
     owners: await q.select().from(s.ownerEntities),
