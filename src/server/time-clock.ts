@@ -65,7 +65,7 @@ import { clockFallout } from "./clock-live";
 import { refreshClockBlocks, syncClockBlocks } from "./clock-blocks";
 import { usableReason } from "./block-reasons";
 import { enqueueShopEmail } from "./notifications/queue";
-import { queueStaffNotice } from "./staff-alerts";
+import { queueStaffNotice, releaseHeldStaffNotices } from "./staff-alerts";
 import { brandCalendar, DEFAULT_CALENDAR, ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings } from "./payroll/groups";
 import { randomToken, sha256 } from "./auth/tokens";
 import { nfcValid, qrValid } from "./clock-codes";
@@ -536,6 +536,7 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
       tx,
     );
     await syncClockBlocks([req.staffId], { from: now, to: now }, { tx, now, actor: req.actor });
+    if (req.type === "in" || req.type === "break_end") await releaseHeldStaffNotices(req.staffId, req.offline?.receivedAt ?? now, tx);
     return row.id;
   });
   // Clients booked over a break or after an early clock-out: the managers hear now, not at the next cron run.

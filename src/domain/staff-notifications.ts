@@ -4,6 +4,8 @@
  * the defaults: no alerts to the barber, reminders 24 hours and 2 hours before.
  */
 
+import { addDays, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
+
 export const STAFF_EVENTS = ["confirm", "reschedule", "cancel", "arrived", "late", "waitlist", "clock_out", "meal_break", "schedule"] as const;
 export type StaffEvent = (typeof STAFF_EVENTS)[number];
 export const STAFF_EVENT_LABEL: Record<StaffEvent, string> = {
@@ -60,6 +62,85 @@ export function reminderHours(p: StaffNotificationPrefs | null | undefined, loca
 }
 
 export const channelsFor = (p: StaffNotificationPrefs | null | undefined, e: StaffEvent): StaffChannel[] => p?.events[e] ?? (PUSH_BY_DEFAULT.includes(e) ? ["push"] : []);
+
+/**
+ * Quiet hours: off the clock, a non-urgent app alert or text waits for the person's work time, so
+ * nobody is pulled into work on their own time. Email isn't held. These always go at once: a client
+ * here or running late, being up next, their own clock-out and meal reminders.
+ */
+export const URGENT_EVENTS: readonly StaffEvent[] = ["arrived", "late", "waitlist", "clock_out", "meal_break"];
+/** Anything about an appointment starting this soon is urgent too, and a held one goes by then. */
+export const URGENT_WITHIN_MIN = 120;
+export const QUIET_CHANNELS: readonly StaffChannel[] = ["sms", "push"];
+/** With no shift coming up in the next week, held messages go at 9 AM. */
+export const QUIET_MORNING_MIN = 9 * 60;
+export const QUIET_LOOKAHEAD_DAYS = 7;
+/** A break with no planned length is taken to run this long. */
+export const QUIET_BREAK_MIN = 30;
+
+export const QUIET_HOURS_POLICY = {
+  heldChannels: QUIET_CHANNELS,
+  urgentEvents: URGENT_EVENTS,
+  urgentWithinMin: URGENT_WITHIN_MIN,
+  summary:
+    "When you're off the clock or on a break, non-urgent texts and app alerts wait until you clock in, your break ends or your next scheduled shift starts (9 AM if you have none this week). Clients arriving or running late, being up next, clock-out and meal reminders, and anything about an appointment in the next two hours still come right away. Email isn't held.",
+} as const;
+
+export type WorkNow = { state: "working" } | { state: "on_break"; until: Date } | { state: "off" };
+export interface QuietShift {
+  weekday: number;
+  startMin: number;
+  endMin: number;
+}
+
+/**
+ * When a held message should go, or null to send it now. Off the clock but inside a scheduled shift
+ * counts as work time (someone running late still hears about today); a shift that starts during
+ * time off is skipped.
+ */
+export function quietUntil(
+  event: StaffEvent,
+  o: { now: Date; work: WorkNow; shifts: readonly QuietShift[]; timeOff?: readonly { startsAt: Date; endsAt: Date }[]; startsAt?: Date | null },
+): Date | null {
+  if (isUrgent(event, o.now, o.startsAt) || o.work.state === "working") return null;
+  const timeOff = o.timeOff ?? [];
+  let hold = o.work.state === "on_break" ? o.work.until : (nextShiftStart(o.now, o.shifts, timeOff) ?? nextMorning(o.now, timeOff));
+  if (o.startsAt) {
+    const latest = new Date(o.startsAt.getTime() - URGENT_WITHIN_MIN * 60_000);
+    if (latest < hold) hold = latest;
+  }
+  return hold > o.now ? hold : null;
+}
+
+export const isUrgent = (event: StaffEvent, now: Date, startsAt?: Date | null) =>
+  URGENT_EVENTS.includes(event) || (!!startsAt && startsAt.getTime() - URGENT_WITHIN_MIN * 60_000 <= now.getTime());
+
+function nextShiftStart(now: Date, shifts: readonly QuietShift[], timeOff: readonly { startsAt: Date; endsAt: Date }[]): Date | null {
+  const today = todayLocal(now);
+  let best: Date | null = null;
+  for (let d = -1; d <= QUIET_LOOKAHEAD_DAYS; d++) {
+    const date = addDays(today, d);
+    for (const s of shifts) {
+      if (s.weekday !== weekdayOf(date)) continue;
+      const start = zonedWallTime(date, s.startMin).toJSDate();
+      const end = zonedWallTime(date, s.endMin).toJSDate();
+      if (end <= now) continue;
+      const at = start > now ? start : now;
+      if (timeOff.some((t) => t.startsAt <= at && t.endsAt > at)) continue;
+      if (!best || at < best) best = at;
+    }
+  }
+  return best;
+}
+
+function nextMorning(now: Date, timeOff: readonly { startsAt: Date; endsAt: Date }[]): Date {
+  const today = todayLocal(now);
+  for (let d = 0; d <= QUIET_LOOKAHEAD_DAYS; d++) {
+    const at = zonedWallTime(addDays(today, d), QUIET_MORNING_MIN).toJSDate();
+    if (at > now && !timeOff.some((t) => t.startsAt <= at && t.endsAt > at)) return at;
+  }
+  return zonedWallTime(addDays(today, QUIET_LOOKAHEAD_DAYS + 1), QUIET_MORNING_MIN).toJSDate();
+}
 
 /** The barber's own alert: short, with the client's first name only and no contact details. */
 export function staffAlertText(e: (typeof APPOINTMENT_EVENTS)[number], a: { firstName: string | null; when: string; shopName: string; services?: string[]; detail?: string | null }): string {

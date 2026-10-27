@@ -3022,10 +3022,13 @@ export const notificationJobs = pgTable(
     deliveredAt: ts("delivered_at"),
     /** The call-in outreach this message is part of. */
     outreachId: uuid("outreach_id").references((): AnyPgColumn => appointmentOutreach.id, { onDelete: "set null" }),
+    /** Held for quiet hours (src/domain/staff-notifications.ts): this person clocking in or ending a break sends it then. */
+    heldForStaffId: uuid("held_for_staff_id").references(() => staff.id, { onDelete: "cascade" }),
     createdAt: createdAt(),
   },
   (t) => [
     index("notification_jobs_due_idx").on(t.status, t.runAt),
+    index("notification_jobs_held_idx").on(t.heldForStaffId).where(sql`${t.heldForStaffId} is not null`),
     index("notification_jobs_appt_idx").on(t.appointmentId),
     index("notification_jobs_provider_msg_idx").on(t.providerMessageId),
     index("notification_jobs_outreach_idx").on(t.outreachId),

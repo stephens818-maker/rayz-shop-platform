@@ -862,6 +862,13 @@
       "when": 1796595360000,
       "tag": "core_0122_demo_shop",
       "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1796595420000,
+      "tag": "core_0123_staff_quiet_hours",
+      "breakpoints": true
     }
   ]
 }

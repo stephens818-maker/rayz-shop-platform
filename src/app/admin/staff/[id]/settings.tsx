@@ -265,7 +265,7 @@ export function NotificationsCard({ staffId, prefs, canEdit, self }: { staffId: 
             ))}
           </tbody>
         </table>
-        <p className="text-xs text-zinc-500">App alerts start when the staff app sends push; texts and emails go to the phone and email on the profile.</p>
+        <p className="text-xs text-zinc-500">App alerts start when the staff app sends push; texts and emails go to the phone and email on the profile. Off the clock, non-urgent texts and app alerts wait until they clock in or their next shift starts.</p>
         <div className="flex flex-wrap gap-4 text-sm">
           <label>
             <span className="block text-xs text-zinc-500">First client reminder</span>
