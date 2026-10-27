@@ -174,7 +174,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
   const salesOf = new Map(sales.map((r) => [`${r.staffId}|${r.shopId}`, r]));
   const overrides = await db.select().from(payrollOverrides).where(and(eq(payrollOverrides.periodStart, start), inArray(payrollOverrides.shopId, [...runShops])));
   const tipSplit = await payrollTipSplit([...runShops], start, end);
-  const keys = new Set([...hours.keys(), ...salesOf.keys(), ...overrides.map((o) => `${o.staffId}|${o.shopId}`), ...[...tipSplit.entries()].filter(([, v]) => v.adjustCents || v.inPayrollCents).map(([k]) => k)]);
+  const keys = new Set([...hours.keys(), ...salesOf.keys(), ...overrides.map((o) => `${o.staffId}|${o.shopId}`), ...[...tipSplit.entries()].filter(([, v]) => v.adjustCents || v.absorbedCents || v.inPayrollCents).map(([k]) => k)]);
   const staffIds = [...new Set([...keys].map((k) => k.split("|")[0]))];
 
   const [people, profiles, rates] = staffIds.length
@@ -220,7 +220,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
       trainingHours: centi(h.training),
       serviceSales: (s?.serviceSalesCents ?? 0) / 100,
       productSales: (s?.productSalesCents ?? 0) / 100,
-      tips: ((s?.cardTipsCents ?? 0) + (s?.cashTipsCents ?? 0) + (s?.giftCardTipsCents ?? 0) + (tipSplit.get(k)?.adjustCents ?? 0)) / 100,
+      tips: ((s?.cardTipsCents ?? 0) + (s?.cashTipsCents ?? 0) + (s?.giftCardTipsCents ?? 0) + (tipSplit.get(k)?.adjustCents ?? 0) + (tipSplit.get(k)?.absorbedCents ?? 0)) / 100,
       tipsInPayroll: (tipSplit.get(k)?.inPayrollCents ?? 0) / 100,
       tipsPaidOut: (tipSplit.get(k)?.paidOutCents ?? 0) / 100,
       overrides: Object.keys(ov).length ? ov : undefined,
