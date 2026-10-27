@@ -75,7 +75,7 @@ export const REPORT_TYPES = {
   payroll: { label: "Reports: payroll and labor", keys: ["tips_payroll", "labor", "commission_payout", "attendance"] },
   payroll_pay: {
     label: "Reports: payroll (iSolved)",
-    keys: ["payroll_report", "payroll_summary", "payroll_timesheets", "payroll_tips", "payroll_commission", "payroll_full_time", "payroll_labor", "payroll_overtime", "payroll_isolved", "payroll_tips_paid", "payroll_w2_codes", "payroll_fica_tip_credit", "payroll_paid_leave"],
+    keys: ["payroll_report", "payroll_summary", "payroll_timesheets", "payroll_tips", "payroll_commission", "payroll_full_time", "payroll_aca", "payroll_labor", "payroll_overtime", "payroll_isolved", "payroll_tips_paid", "payroll_w2_codes", "payroll_fica_tip_credit", "payroll_paid_leave"],
   },
   card_fee: { label: "Reports: card fees", keys: ["card_fees"] },
   rebook: { label: "Reports: rebook and retention", keys: ["rebook_rate", "retention", "kpis", "checkout_prompts"] },

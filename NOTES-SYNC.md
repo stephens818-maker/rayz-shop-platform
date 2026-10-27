@@ -457,6 +457,13 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Requests for the other agent
 
+- (core → mobile) **Launch rule (Charles, 2026-10-27).** No shop goes live until the whole scope is built and tested in the sandbox, mobile included. Only the direct iSolved integration waits (download-only at launch); direct Stripe tip payouts are built and tested but stay behind `FEATURE_TIP_TO_BARBER` until the CPA signs off. PR #1's description has the one launch-readiness list, and mobile owns these items:
+  - **L31, ST-C11 charge side:** connected shops leave card tips on the platform at checkout (read `flags.tipToBarber()` in `chargeCard`). Core's transfer side is built and tested behind the flag.
+  - **L43:** rebase PRs #2–#8 onto `cursor/rayz-barbershop-v1-8f0b` and drop what core already has (see "PR #2 against core's branch" below). Core is at `core_0132`; the next free migration is `core_0133`.
+  - **L44:** Web Push for the booking site.
+  - **L45:** App Attest and Play Integrity (C2).
+  - Please test against the sandbox URL in the log (the Vercel branch alias; ask Charles for the share link, which is never written in this public repo) and post each item's status here, so core can mark it on PR #1.
+
 - (core → mobile) When you add the platform Stripe Customer and saved cards, pass the platform Customer id into `chargeCard({ customerId, paymentMethodId, ... })` in `src/server/payments/processor.ts`. That function routes the charge to the shop's connected account (I10), so a saved card can pay at any shop. Please don't create PaymentIntents anywhere else.
 - (core → mobile) An app checkout or prepayment for a shop that isn't onboarded fails with `payment_failed` and `details.reason = "payments_not_ready"`. Please show that as "This shop isn't taking cards in the app yet" instead of as a card decline.
 - (core → mobile) Card charges should now go through `chargeRoute` (see "Per-location banking"). A cash-only shop fails with `details.reason = "cash_only"`; please show it as "This shop takes cash only" and don't offer card prepayment there.
@@ -568,6 +575,14 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
 
 ## Log
+
+### 2026-10-27: core, payroll launch items (I8, N7, N9, N6) and file links that don't prefetch
+- **Migrations `core_0131_payroll_final_pay` and `core_0132_aca_report`.** The next free one is `core_0133`. `core_0131` adds `payroll_final_pays` (approved off-cycle final pay, can't be edited or deleted; the note is scrubbed like every other). `core_0132` gives the ACA hours report to Brand Admin and Bookkeeper.
+- **Preparer isn't approver (I8):** whoever changed a period's figures by hand can't approve it; the Brand Owner may, recorded as self-approved.
+- **Late tips (N7):** a tip paid on a locked period's ticket is paid in the next open period, on the day it came in, in payroll and the tip ledger (`tipPostingDate`). If the app reads payroll tips, use `payrollSalesBetween` and don't group tips by the ticket's date.
+- **Final pay (N9):** Payroll → Final pay, a one-row iSolved file per shop for someone's last check. The regular run leaves them out.
+- **ACA hours (N6):** Reports → Payroll → ACA hours, hours of service per calendar month and full-time equivalents. Nothing for the app.
+- **Links to file routes don't prefetch.** Next.js prefetches a `<Link>` as it scrolls into view, which runs a route handler. On Client data access that ran the CSV export and wrote an export to the audit log on every visit. `tests/file-link-prefetch.test.ts` now requires `prefetch={false}` on any `Link` to a `route.ts`; use a plain `<a>` for downloads.
 
 ### 2026-10-27: core, the lasting sandbox is up; Charles's launch rule (everything tested before any shop goes live)
 - **Sandbox URL (lasting, replaces the Cloudflare tunnel in the 2026-10-26 entry):** https://rayz-shop-platform-git-cursor-rayz-barb-350473-rayz-barber-shop.vercel.app. This is the Vercel branch alias of `cursor/rayz-barbershop-v1-8f0b`. Every push builds, migrates the Neon database (`rayz-sandbox`, US East 2) and moves the alias, so the sandbox always runs the latest core push. It's in demo mode on the demo seed: cards run on the simulator, and no texts, emails, calls or push go out.

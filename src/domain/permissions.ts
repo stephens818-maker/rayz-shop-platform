@@ -759,6 +759,12 @@ export const REPORTS = [
     hint: "Each employee's average weekly hours over the payroll full-time window, flagged full time above the threshold (32 hours by default), week by week.",
   },
   {
+    key: "payroll_aca",
+    label: "ACA hours",
+    href: "/admin/reports/payroll/aca",
+    hint: "Each employee's hours of service per calendar month (worked, training and paid time off, at every shop) over a 3, 6 or 12-month measurement period, flagged full time at an average of 130 a month, with full-time equivalents by month. For the CPA.",
+  },
+  {
     key: "payroll_labor",
     label: "Labor cost vs sales",
     href: "/admin/reports/payroll/labor-cost",
@@ -1045,6 +1051,7 @@ export const PAYROLL_REPORTS = [
   "payroll_tips",
   "payroll_commission",
   "payroll_full_time",
+  "payroll_aca",
   "payroll_labor",
   "payroll_overtime",
   "payroll_report",

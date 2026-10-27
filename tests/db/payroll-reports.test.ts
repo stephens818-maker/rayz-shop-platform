@@ -34,7 +34,7 @@ const fx = { a: "", b: "", aLabel: "", bLabel: "", moline: "", start: "", end: "
 const cash = { method: "cash" as const, cashTenderedCents: null };
 const at = (d: string, h = 12) => new Date(new Date(`${d}T00:00:00-05:00`).getTime() + h * 3_600_000);
 const day = (n: number) => m.time.addDays(fx.start, n);
-const PAGES = ["summary", "report", "timesheets", "tips", "commission", "full-time", "labor-cost", "overtime", "isolved", "tips-paid", "w2-codes", "fica-tip-credit", "paid-leave"];
+const PAGES = ["summary", "report", "timesheets", "tips", "commission", "full-time", "aca", "labor-cost", "overtime", "isolved", "tips-paid", "w2-codes", "fica-tip-credit", "paid-leave"];
 const OTHER_SHOPS = ["Rock Island", "Coralville", "Dubuque", "Kimberly", "Le Claire", "Silvis", "Utica"];
 
 async function sell(staffId: string, d: string, o: { product?: boolean; tipCents?: number; with?: string } = {}) {
@@ -75,6 +75,7 @@ const col = (t: ReportTable, label: string) => {
 };
 const body = (t: ReportTable) => t.rows.filter((_, i) => !t.rowStyles?.[i]);
 const rowOf = (t: ReportTable, label: string) => body(t).find((r) => r[0] === label)!;
+const rowOf2 = (t: ReportTable, label: string) => body(t).find((r) => r[1] === label)!;
 const molineLines = async () => (await run.buildPayroll(fx.start, fx.end))!.blocks.find((b) => b.shopId === fx.moline)!.lines;
 const cents = (x: number) => Math.round(x * 100);
 
@@ -130,15 +131,15 @@ afterAll(async () => {
 describe("who can see them", () => {
   it("brand owner, brand admin and bookkeeper by default; no location role; never a shop login", async () => {
     const keys = P.PAYROLL_REPORTS.flatMap((k) => [P.reportView(k), P.reportExport(k)]);
-    expect(keys).toHaveLength(26);
+    expect(keys).toHaveLength(28);
     for (const t of P.ROLE_TEMPLATES) {
       const has = keys.filter((k) => t.permissions.includes(k));
-      expect([t.key, has.length]).toEqual([t.key, ["brand_owner", "brand_admin", "bookkeeper"].includes(t.key) ? 26 : 0]);
+      expect([t.key, has.length]).toEqual([t.key, ["brand_owner", "brand_admin", "bookkeeper"].includes(t.key) ? 28 : 0]);
     }
     for (const k of keys) expect(P.SHOP_LOGIN_NEVER.has(k)).toBe(true);
     const roles = await m.db.db.select({ key: m.schema.roles.key, permissions: m.schema.roles.permissions }).from(m.schema.roles);
     for (const r of roles.filter((x) => x.key !== P.OWNER_ROLE_KEY))
-      expect([r.key, keys.filter((k) => (r.permissions as string[]).includes(k)).length]).toEqual([r.key, ["brand_admin", "bookkeeper"].includes(r.key ?? "") ? 26 : 0]);
+      expect([r.key, keys.filter((k) => (r.permissions as string[]).includes(k)).length]).toEqual([r.key, ["brand_admin", "bookkeeper"].includes(r.key ?? "") ? 28 : 0]);
 
     await signInAs(ids["manager.moline"]);
     for (const p of PAGES) expect([p, (await open(`/admin/reports/payroll/${p}`)).kind]).toEqual([p, "denied"]);
@@ -224,6 +225,39 @@ describe("full time and overtime", () => {
     expect(rowOf(t, fx.aLabel)[col(t, "Average a week")]).toBeCloseTo((40 + 40 + 45 + 40) / 4, 2);
     expect(rowOf(t, fx.bLabel)[col(t, "Status")]).toMatch(/Part time/);
     expect(data.bars?.[0].reference?.value).toBe(32 * 60);
+  });
+
+  it("ACA hours: worked, training and PTO per calendar month, full time at an average of 130", async () => {
+    const month = (mm: string) => Array.from({ length: 20 }, (_, k) => `2028-${mm}-${String(k + 1).padStart(2, "0")}`);
+    const entry = (staffId: string, d: string, from: number, to: number, kind: "worked" | "training" | "pto" = "worked") => ({ staffId, shopId: fx.moline, kind, startsAt: at(d, from), endsAt: at(d, to) });
+    const entries = [
+      ...["01", "02", "03"].flatMap((mm) => month(mm).map((d) => entry(fx.a, d, 8, 15))),
+      entry(fx.a, "2028-01-03", 9, 11, "training"),
+      ...["01", "02", "03"].flatMap((mm) => month(mm).map((d) => entry(fx.b, d, 8, 14))),
+      entry(fx.b, "2028-02-25", 8, 10, "training"),
+      entry(fx.b, "2028-03-27", 8, 16, "pto"),
+    ];
+    expect(await run.addTimeEntries(entries, actor)).toMatchObject({ added: entries.length });
+    const { data } = await report("payroll_aca", { from: "2028-01-01", to: "2028-03-31", params: { months: "3" } });
+    const t = table(data, "employees");
+    expect(t.columns.slice(2, 5).map((c) => c.label)).toEqual(["Jan 2028", "Feb 2028", "Mar 2028"]);
+    const a = rowOf2(t, fx.aLabel);
+    const b = rowOf2(t, fx.bLabel);
+    expect(a.slice(2, 5)).toEqual([140, 140, 140]);
+    expect(a[col(t, "Status")]).toBe("Full time (ACA)");
+    expect(a[col(t, "Months at 130 or more")]).toBe(3);
+    expect(b.slice(2, 5)).toEqual([120, 122, 128]);
+    expect(b[col(t, "Average a month")]).toBeCloseTo(123.33, 2);
+    expect(b[col(t, "Status")]).toBe("Under 130 a month");
+    expect(table(data, "fte").rows).toEqual([
+      ["Jan 2028", 1, 1, 2],
+      ["Feb 2028", 1, 1, 2],
+      ["Mar 2028", 1, 1, 2],
+    ]);
+    expect(data.stats?.find((s) => s.label === "Within 10 hours of the line")?.value).toBe("1");
+    expect(data.bars?.[0].reference?.value).toBe(130 * 60);
+    const twelve = table((await report("payroll_aca", { from: "2028-01-01", to: "2028-03-31" })).data, "employees");
+    expect(twelve.columns.slice(2, 14).map((c) => c.label)).toEqual(["Apr 2027", "May 2027", "Jun 2027", "Jul 2027", "Aug 2027", "Sep 2027", "Oct 2027", "Nov 2027", "Dec 2027", "Jan 2028", "Feb 2028", "Mar 2028"]);
   });
 
   it("watches overtime by workweek: over, close, and everyone with show=all", async () => {

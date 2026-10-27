@@ -78,6 +78,7 @@ import { tipPayoutsData } from "./tips/report";
 import {
   payrollCommissionData,
   payrollFullTimeData,
+  payrollAcaData,
   payrollIsolvedData,
   payrollReportData,
   payrollTipsPaidData,
@@ -833,6 +834,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async payroll_full_time({ scope, loc, viewer }) {
     return payrollFullTimeData({ scope, loc, perms: viewer.permissions });
+  },
+
+  async payroll_aca({ scope, loc, viewer, params }) {
+    return payrollAcaData({ scope, loc, perms: viewer.permissions, params });
   },
 
   async payroll_labor({ scope, loc, viewer }) {

@@ -1,4 +1,4 @@
-import { and, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { db } from "@/db";
 import { payGroups, payrollEmployers, payrollExportSends, payrollProfiles, shops, staff, timeEntries, tipAbsorptions, tipLedger, tipPayouts, type PayrollSendShop } from "@/db/schema";
@@ -18,7 +18,8 @@ import type { ReportChart, ReportData, ReportOption } from "@/server/report-data
 import { PAID, rows as sqlRows, uuids } from "@/server/report-sql";
 import { itemMix, staffSelection, type ReportScope } from "@/server/reports";
 import { ftOverview, hoursSlices, periodFor, punchEditsBetween, scheduledMinutesLeft, shiftsBetween, timesheetList } from "@/server/time-clock";
-import { weekStartOf } from "@/domain/payroll/overtime";
+import { dailyHours, weekStartOf } from "@/domain/payroll/overtime";
+import { ACA_DEFAULT_MONTHS, ACA_FTE_MONTHLY_CAP, ACA_MEASUREMENT_MONTHS, ACA_MONTHLY_HOURS, ACA_STATUS_LABEL, acaMonths, acaRows, fteByMonth, measurementMonths, monthFirstDay, monthLastDay } from "@/domain/payroll/aca";
 import { addIsolvedSheet, exportFileName } from "./export";
 import { loadSettings } from "./groups";
 import { locationBlocks, locationsRow, locationsTotals, type LocationsCell } from "./locations";
@@ -1641,6 +1642,124 @@ export async function payrollPaidLeaveData(i: PayrollReportInput): Promise<Repor
       ...law,
       "Hours are counted where they're worked: hours at an Iowa shop earn nothing here, whatever state the employee lives in. Employees can use leave 90 days after their hire date; the employer may limit a year's use to 40 hours.",
       "PTO here comes from time entries marked PTO at these shops. iSolved pays the leave; this is the balance the law requires to be kept and shown on request. The CPA confirms the method each January.",
+    ],
+  };
+}
+
+// ───────────────────────────── ACA hours of service (N6) ─────────────────────────────
+
+export async function payrollAcaData(i: PayrollReportInput): Promise<ReportData> {
+  const { scope, loc } = i;
+  const sel = staffSelection(scope);
+  const count = acaMonths(i.params?.months);
+  const months = measurementMonths(scope.to, count);
+  const toDate = months.at(-1)! < scope.to.slice(0, 7) ? scope.to.slice(0, 7) : null;
+  const from = monthFirstDay(months[0]);
+  const to = toDate ? scope.to : monthLastDay(months.at(-1)!);
+  const presets = await payPeriodPresets(undefined, scope.shopIds);
+  const here =
+    (sel && !sel.length) || !scope.shopIds.length
+      ? []
+      : await db
+          .select({ staffId: timeEntries.staffId, shopId: timeEntries.shopId, sec: sql<number>`sum(extract(epoch from ${timeEntries.endsAt} - ${timeEntries.startsAt}))::float` })
+          .from(timeEntries)
+          .where(and(inArray(timeEntries.shopId, scope.shopIds), lt(timeEntries.startsAt, endOfLocalDay(to)), gte(timeEntries.endsAt, startOfLocalDay(from)), sel ? inArray(timeEntries.staffId, sel) : undefined))
+          .groupBy(timeEntries.staffId, timeEntries.shopId);
+  const mainShop = new Map<string, { shopId: string; sec: number }>();
+  for (const r of here) if ((mainShop.get(r.staffId)?.sec ?? -1) < r.sec) mainShop.set(r.staffId, { shopId: r.shopId, sec: r.sec });
+  const ids = [...mainShop.keys()];
+  const [entries, people, employerOf] = await Promise.all([
+    ids.length
+      ? db
+          .select({ staffId: timeEntries.staffId, shopId: timeEntries.shopId, kind: timeEntries.kind, startsAt: timeEntries.startsAt, endsAt: timeEntries.endsAt })
+          .from(timeEntries)
+          .where(and(inArray(timeEntries.staffId, ids), lt(timeEntries.startsAt, endOfLocalDay(to)), gt(timeEntries.endsAt, startOfLocalDay(from))))
+      : [],
+    ids.length ? db.select({ id: staff.id, label: staff.displayLabel, hireDate: staff.hireDate }).from(staff).where(inArray(staff.id, ids)) : [],
+    employersOf([...new Set([...mainShop.values()].map((m) => m.shopId))]),
+  ]);
+  const days = dailyHours(entries).filter((d) => d.date >= from && d.date <= to);
+  const who = new Map(people.map((p) => [p.id, p]));
+  const hireMonth = new Map(people.map((p) => [p.id, p.hireDate && p.hireDate.slice(0, 7) > months[0] ? p.hireDate.slice(0, 7) : null]));
+  const rows = acaRows(days, ids, months, hireMonth);
+  const sofar = new Map(toDate ? acaRows(days, ids, [toDate]).map((r) => [r.staffId, r.monthly[0]]) : []);
+  const fte = fteByMonth(rows, months);
+  const avgAle = fte.length ? h2(sumOf(fte, (f) => f.total) / fte.length) : 0;
+  const close = rows.filter((r) => r.status === "part_time" && r.average >= ACA_MONTHLY_HOURS - 10);
+  const label = (m: string) => formatDate(monthFirstDay(m), "MMM yyyy");
+  const span = `${label(months[0])} – ${label(months.at(-1)!)}`;
+  const fullTime = rows.filter((r) => r.status === "full_time");
+  return {
+    presets,
+    options: [
+      {
+        param: "months",
+        label: "Measurement period",
+        value: count === ACA_DEFAULT_MONTHS ? "" : String(count),
+        choices: ACA_MEASUREMENT_MONTHS.map((n) => ({ value: n === ACA_DEFAULT_MONTHS ? "" : String(n), label: `${n} months` })),
+      } satisfies ReportOption,
+    ],
+    bars: rows.length
+      ? [
+          {
+            id: "average",
+            title: "Average hours of service a month",
+            subtitle: rows.length > 12 ? `Top 12 of ${rows.length}` : undefined,
+            kind: "hours",
+            shape: "rank",
+            reference: { value: chartMin(ACA_MONTHLY_HOURS), label: `Full time (ACA): ${ACA_MONTHLY_HOURS} h a month or more` },
+            bars: [...rows]
+              .sort((a, b) => b.average - a.average)
+              .slice(0, 12)
+              .map((r) => ({ label: who.get(r.staffId)?.label ?? "Unknown", value: chartMin(r.average), warn: r.status === "full_time" })),
+          },
+        ]
+      : [],
+    stats: [
+      { label: "Full time (ACA)", value: String(fullTime.length), hint: `averaging ${ACA_MONTHLY_HOURS} h a month or more` },
+      { label: "Under 130 a month", value: String(rows.length - fullTime.length) },
+      { label: "Within 10 hours of the line", value: String(close.length), hint: close.length ? close.map((r) => who.get(r.staffId)?.label ?? "Unknown").slice(0, 3).join(", ") : undefined },
+      { label: "Full time and equivalents", value: String(avgAle), hint: "a month on average, for the 50-employee test; the CPA counts every entity together" },
+      { label: "Measurement period", value: `${count} months`, hint: span },
+    ],
+    tables: [
+      listTable(noBarber(loc), {
+        id: "employees",
+        title: "Hours of service by month",
+        subtitle: "Worked, training and paid time off hours at every shop. A blank month is before the hire date.",
+        columns: [
+          text("Employer"),
+          text("Employee"),
+          ...months.map((m) => hrs(label(m))),
+          hrs("Average a month", false),
+          int("Months at 130 or more"),
+          text("Status"),
+          ...(toDate ? [hrs(`${label(toDate)} to ${formatDate(scope.to, "MMM d")}`)] : []),
+        ],
+        rows: rows.map((r) => {
+          const shopId = mainShop.get(r.staffId)!.shopId;
+          return {
+            shopId,
+            staffId: r.staffId,
+            key: r.staffId,
+            cells: [employerOf(shopId).name, who.get(r.staffId)?.label ?? "Unknown", ...r.monthly, r.average, r.monthsAt130, ACA_STATUS_LABEL[r.status], ...(toDate ? [sofar.get(r.staffId) ?? 0] : [])],
+          };
+        }),
+        totals: false,
+        sort: (a, b) => Number(b[count + 2] ?? 0) - Number(a[count + 2] ?? 0),
+      }),
+      {
+        id: "fte",
+        title: "Full-time employees and equivalents by month",
+        subtitle: `Part-time hours count up to ${ACA_FTE_MONTHLY_CAP} each a month, and every ${ACA_FTE_MONTHLY_CAP} make one equivalent.`,
+        columns: [text("Month"), { label: "Full time", kind: "int", sum: false }, { label: "Equivalents", kind: "decimal", sum: false }, { label: "Total", kind: "decimal", sum: false }],
+        rows: fte.map((f) => [label(f.month), f.fullTime, f.fte, f.total]),
+      },
+    ],
+    notes: [
+      `The ACA counts every paid hour (worked, training and paid time off) and treats ${ACA_MONTHLY_HOURS} hours of service in a month as full time. This is separate from the full-time line in Payroll setup (${(await loadSettings()).ftHoursPerWeek} hours a week), which stays the brand's own rule.`,
+      `Full time here is an average of ${ACA_MONTHLY_HOURS} hours or more a month over the ${count} calendar months ${span}, counted from the hire month for anyone hired during it. Hours at every shop count; training inside clocked time is counted once.${toDate ? ` ${label(toDate)} isn't over, so its hours so far are shown last and not counted yet.` : ""}`,
+      "Hours of service come from the time clock and the hours entered under Payroll → Hours. Paid time not entered there (a holiday paid in iSolved, for example) isn't counted. The CPA and iSolved decide the measurement and stability periods, coverage offers and the 1095-C.",
     ],
   };
 }
