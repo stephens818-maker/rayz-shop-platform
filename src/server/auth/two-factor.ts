@@ -6,6 +6,7 @@ import { staff } from "@/db/schema";
 import { TOTP_LOCK_MINUTES, TOTP_MAX_FAILURES } from "@/domain/users";
 import { open, seal } from "@/lib/secret-box";
 import { groupedSecret, newTotpSecret, otpauthUri, verifyTotp } from "@/lib/totp";
+import { audit } from "@/server/audit";
 import { signToken, verifyToken } from "./tokens";
 
 const TICKET_TTL = 10 * 60;
@@ -34,6 +35,20 @@ export async function repeatPrompt(ticket: string, t: { es?: string }, email: st
 }
 
 export const readTwoFactorTicket = (ticket: string) => verifyToken<{ sub: string; es?: string }>(ticket, "login_2fa");
+
+/** The person a password-checked ticket is for, once their code is right (finishing setup when the ticket carries a new key); or why not. */
+export async function finishTwoFactor(ticket: string, code: string): Promise<{ user: typeof staff.$inferSelect } | { error: string; twoFactor?: TwoFactorPrompt }> {
+  const t = await readTwoFactorTicket(ticket);
+  if (!t) return { error: "That took too long. Sign in again." };
+  const user = await db.query.staff.findFirst({ where: and(eq(staff.id, t.sub), eq(staff.active, true), isNull(staff.removedAt)) });
+  if (!user?.passwordHash) return { error: "Email or password is incorrect" };
+  const secret = t.es ? open(t.es) : null;
+  if (t.es && !secret) return { error: "Sign in again" };
+  const r = secret ? await enrollTotp(user.id, secret, code) : await checkTotp(user.id, code);
+  if (!r.ok) return { error: r.error, twoFactor: await repeatPrompt(ticket, t, user.email) };
+  if (secret) await audit({ staffId: user.id, label: user.displayLabel }, "user.two_factor_setup", "staff", user.id, { via: "sign_in" }, null);
+  return { user };
+}
 
 type Checked = { ok: true } | { ok: false; error: string };
 

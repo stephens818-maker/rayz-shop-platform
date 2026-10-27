@@ -694,6 +694,13 @@
       "when": 1796234400000,
       "tag": "core_0098_pay_reports_brand",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1796238000000,
+      "tag": "core_0099_staff_app",
+      "breakpoints": true
     }
   ]
 }

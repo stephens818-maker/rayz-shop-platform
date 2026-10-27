@@ -1,6 +1,6 @@
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { staff, staffSchedules, staffShops, timeBlockSeries, timeOffRequests } from "@/db/schema";
+import { staff, staffAppTokens, staffDevices, staffSchedules, staffShops, timeBlockSeries, timeOffRequests } from "@/db/schema";
 import { Actor, audit } from "./audit";
 import { AppError, notFound } from "./errors";
 import { AffectedAppointment, affectedByRequests, endSeries } from "./staff-time";
@@ -27,6 +27,8 @@ export async function offboardStaff(staffId: string, actor: Actor & { staffId: s
   if (!person.active) throw new AppError("conflict", `${person.displayLabel} is already inactive`);
   const counts = await db.transaction(async (tx) => {
     await tx.update(staff).set({ active: false, isBookable: false, sessionsValidAfter: now }).where(eq(staff.id, staffId));
+    await tx.update(staffAppTokens).set({ revokedAt: now }).where(and(eq(staffAppTokens.staffId, staffId), isNull(staffAppTokens.revokedAt)));
+    await tx.update(staffDevices).set({ revokedAt: now }).where(and(eq(staffDevices.staffId, staffId), isNull(staffDevices.revokedAt)));
     const schedules = await tx.delete(staffSchedules).where(eq(staffSchedules.staffId, staffId)).returning({ shopId: staffSchedules.shopId });
     await tx.update(staffShops).set({ visibleOnline: false }).where(eq(staffShops.staffId, staffId));
     const requests = await tx

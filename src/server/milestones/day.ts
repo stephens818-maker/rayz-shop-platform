@@ -251,7 +251,7 @@ export async function markWelcomed(
   staffId: string,
   ids: string[],
   actor: Actor,
-  via: "clock" | "kiosk",
+  via: "clock" | "kiosk" | "app",
 ) {
   if (!ids.length) return 0;
   const got = await db

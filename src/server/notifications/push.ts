@@ -2,16 +2,17 @@ import { createPrivateKey, createSign, sign } from "node:crypto";
 import http2 from "node:http2";
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { customerDevices } from "@/db/schema";
+import { customerDevices, staffDevices } from "@/db/schema";
 import type { PushOptions, PushProvider, SendResult } from "./providers";
 
 type Env = Record<string, string | undefined>;
 
 /**
  * App push straight to Apple (APNs, token auth over HTTP/2) and Google (FCM HTTP v1), by the device's
- * row in customer_devices. Real but off until its keys are set: NOTIFICATIONS_PUSH_PROVIDER=native with
- * APNS_KEY_ID, APNS_TEAM_ID, APNS_PRIVATE_KEY and APNS_BUNDLE_ID (APNS_ENVIRONMENT=production for
- * App Store builds), and FCM_SERVICE_ACCOUNT_JSON (or FCM_PROJECT_ID, FCM_CLIENT_EMAIL and FCM_PRIVATE_KEY).
+ * row in customer_devices, or in staff_devices for the staff app. Real but off until its keys are set:
+ * NOTIFICATIONS_PUSH_PROVIDER=native with APNS_KEY_ID, APNS_TEAM_ID, APNS_PRIVATE_KEY and APNS_BUNDLE_ID
+ * (APNS_ENVIRONMENT=production for App Store builds; STAFF_APNS_BUNDLE_ID for the staff app, the same key
+ * signs for both), and FCM_SERVICE_ACCOUNT_JSON (or FCM_PROJECT_ID, FCM_CLIENT_EMAIL and FCM_PRIVATE_KEY).
  * A token Apple or Google says is gone revokes the device, so nothing is sent to it again.
  */
 
@@ -22,6 +23,8 @@ export interface ApnsConfig {
   teamId: string;
   privateKey: string;
   bundleId: string;
+  /** The staff app's bundle id, the topic for staff_devices; the customer app's when unset. */
+  staffBundleId?: string;
   production: boolean;
 }
 
@@ -39,7 +42,7 @@ export function apnsConfig(env: Env = process.env): ApnsConfig | null {
   const privateKey = env.APNS_PRIVATE_KEY?.trim();
   const bundleId = env.APNS_BUNDLE_ID?.trim();
   if (!keyId || !teamId || !privateKey || !bundleId) return null;
-  return { keyId, teamId, privateKey: pem(privateKey), bundleId, production: env.APNS_ENVIRONMENT?.trim() === "production" };
+  return { keyId, teamId, privateKey: pem(privateKey), bundleId, staffBundleId: env.STAFF_APNS_BUNDLE_ID?.trim() || bundleId, production: env.APNS_ENVIRONMENT?.trim() === "production" };
 }
 
 export function fcmConfig(env: Env = process.env): FcmConfig | null {
@@ -106,7 +109,7 @@ const http2Post: Http2Post = (origin, path, headers, body) =>
     req.end(body);
   });
 
-type Device = { id: string; provider: string; token: string; pushEnabled: boolean; revokedAt: Date | null };
+type Device = { id: string; provider: string; token: string; pushEnabled: boolean; revokedAt: Date | null; staffApp?: boolean };
 
 export class NativePush implements PushProvider {
   name = "native";
@@ -120,16 +123,25 @@ export class NativePush implements PushProvider {
     private io: { post?: Http2Post; fetch?: typeof fetch; device?: (id: string) => Promise<Device | null>; revoke?: (id: string) => Promise<void> } = {},
   ) {}
 
-  private device(id: string) {
-    return this.io.device ? this.io.device(id) : db.query.customerDevices.findFirst({ where: eq(customerDevices.id, id) }).then((d) => d ?? null);
+  private async device(id: string): Promise<Device | null> {
+    if (this.io.device) return this.io.device(id);
+    const c = await db.query.customerDevices.findFirst({ where: eq(customerDevices.id, id) });
+    if (c) return c;
+    const s = await db.query.staffDevices.findFirst({ where: eq(staffDevices.id, id) });
+    return s ? { ...s, staffApp: true } : null;
   }
 
   private async revoke(id: string) {
     if (this.io.revoke) return this.io.revoke(id);
+    const now = new Date();
     await db
       .update(customerDevices)
-      .set({ revokedAt: new Date() })
+      .set({ revokedAt: now })
       .where(and(eq(customerDevices.id, id), isNull(customerDevices.revokedAt)));
+    await db
+      .update(staffDevices)
+      .set({ revokedAt: now })
+      .where(and(eq(staffDevices.id, id), isNull(staffDevices.revokedAt)));
   }
 
   async sendPush(deviceId: string, title: string, body: string, o: PushOptions = {}): Promise<SendResult> {
@@ -152,7 +164,7 @@ export class NativePush implements PushProvider {
       `/3/device/${encodeURIComponent(d.token)}`,
       {
         authorization: `bearer ${this.apnsToken.jwt}`,
-        "apns-topic": c.bundleId,
+        "apns-topic": (d.staffApp && c.staffBundleId) || c.bundleId,
         "apns-push-type": "alert",
         "apns-priority": "10",
       },

@@ -1645,6 +1645,52 @@ export const refreshTokens = pgTable(
   (t) => [index("refresh_tokens_session_idx").on(t.sessionId).where(sql`${t.revokedAt} is null`), index("refresh_tokens_customer_live_idx").on(t.customerId).where(sql`${t.revokedAt} is null`)],
 );
 
+/** The staff app's sign-ins (/api/staff/v1): rotating refresh tokens, apart from the customer app's. */
+export const staffAppTokens = pgTable(
+  "staff_app_tokens",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    /** The first token's id, carried through every rotation. */
+    sessionId: uuid("session_id").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    deviceName: text("device_name"),
+    expiresAt: ts("expires_at").notNull(),
+    revokedAt: ts("revoked_at"),
+    replacedBy: uuid("replaced_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("staff_app_tokens_session_idx").on(t.sessionId).where(sql`${t.revokedAt} is null`), index("staff_app_tokens_staff_live_idx").on(t.staffId).where(sql`${t.revokedAt} is null`)],
+);
+
+/** The staff app's phones, for booking pushes. Signing out of the app revokes its device. */
+export const staffDevices = pgTable(
+  "staff_devices",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    platform: text("platform").$type<"ios" | "android">().notNull(),
+    provider: text("provider").$type<"apns" | "fcm" | "expo">().notNull(),
+    token: text("token").notNull(),
+    appVersion: text("app_version"),
+    osVersion: text("os_version"),
+    pushEnabled: boolean("push_enabled").notNull().default(true),
+    lastSeenAt: ts("last_seen_at").notNull().defaultNow(),
+    revokedAt: ts("revoked_at"),
+    sessionId: uuid("session_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("staff_devices_token_uq").on(t.token),
+    index("staff_devices_staff_idx").on(t.staffId),
+    index("staff_devices_session_idx").on(t.sessionId).where(sql`${t.sessionId} is not null`),
+  ],
+);
+
 // ───────────────────────────── Appointments & walk-ins ─────────────────────────────
 
 export const appointments = pgTable(

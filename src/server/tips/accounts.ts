@@ -244,11 +244,11 @@ export async function ensureStaffAccount(staffId: string, actor: Actor): Promise
  * tax and bank details; the app never sees them. In the simulator there's no Stripe page: setup
  * finishes at once (simulateStaffOnboarding).
  */
-export async function staffOnboardingUrl(staffId: string, actor: Actor, origin: string): Promise<string | null> {
+export async function staffOnboardingUrl(staffId: string, actor: Actor, origin: string, returnPath: string = MY_BANKING): Promise<string | null> {
   const a = await ensureStaffAccount(staffId, actor);
   const s = stripe();
   if (!s || a.simulated) return null;
-  const back = `${origin}${MY_BANKING}`;
+  const back = `${origin}${returnPath}`;
   const link = await s.accountLinks
     .create({ account: a.stripeAccountId!, type: "account_onboarding", collection_options: { fields: "eventually_due" }, refresh_url: `${back}?stripe=refresh`, return_url: `${back}?stripe=return` })
     .catch((e: Stripe.errors.StripeError) => {

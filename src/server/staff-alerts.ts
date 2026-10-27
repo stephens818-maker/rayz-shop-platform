@@ -1,13 +1,13 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { appointmentItems, appointments, customers, notificationJobs, shops, staff } from "@/db/schema";
-import { StaffEvent, channelsFor, cleanNotificationPrefs, staffAlertText } from "@/domain/staff-notifications";
+import { appointmentItems, appointments, customers, notificationJobs, shops, staff, staffDevices } from "@/db/schema";
+import { STAFF_EVENT_LABEL, StaffEvent, channelsFor, cleanNotificationPrefs, staffAlertText } from "@/domain/staff-notifications";
 import { formatDate, formatTime } from "@/lib/time";
 
 /**
  * Tells a barber about their own client's booking, change, cancellation or arrival on the channels
- * they picked. Never when they made the change themselves. App alerts wait for the staff app's
- * push (requested in NOTES-SYNC); texts and emails go out now. Returns how many were queued.
+ * they picked. Never when they made the change themselves. App alerts go to each staff app phone
+ * signed in as them (staff_devices); the push carries the appointment id. Returns how many were queued.
  */
 export async function queueStaffAlert(event: StaffEvent, appointmentId: string, opts: { actorStaffId?: string | null; now?: Date } = {}, tx: DBorTx = db): Promise<number> {
   const [row] = await tx
@@ -34,9 +34,16 @@ export async function queueStaffAlert(event: StaffEvent, appointmentId: string, 
   const when = `${formatDate(row.startsAt, "EEE MMM d")} at ${formatTime(row.startsAt)}`;
   const body = staffAlertText(event, { firstName: row.firstName, when, shopName: row.shopName, services: items.map((i) => i.name) });
   const now = opts.now ?? new Date();
+  const phones = channels.includes("push")
+    ? await tx
+        .select({ id: staffDevices.id })
+        .from(staffDevices)
+        .where(and(eq(staffDevices.staffId, row.staffId), isNull(staffDevices.revokedAt), eq(staffDevices.pushEnabled, true)))
+    : [];
   const rows = [
     ...(channels.includes("sms") && row.phone ? [{ channel: "sms", to: row.phone, subject: null }] : []),
     ...(channels.includes("email") && row.email ? [{ channel: "email", to: row.email, subject: body.split(": ")[1]?.slice(0, 80) ?? "Your schedule" }] : []),
+    ...phones.map((d) => ({ channel: "push", to: d.id, subject: STAFF_EVENT_LABEL[event] })),
   ].map((r) => ({ ...r, kind: `staff_${event}`, body, appointmentId, shopId: row.shopId, runAt: now }));
   if (rows.length) await tx.insert(notificationJobs).values(rows);
   return rows.length;

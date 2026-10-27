@@ -88,23 +88,32 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
   if (await lockedHandoff(jar.get(HANDOFF_COOKIE)?.value)) return null;
   const payload = await verifyToken<{ sub: string; iat?: number }>(token, "staff_session");
   if (!payload) return null;
+  const device = await devicesFromCookie(jar.get(TRUSTED_DEVICE_COOKIE)?.value);
+  return staffContextOf(payload.sub, payload.iat, { ip: clientIp(await headers()), deviceShopIds: approvedShopIds(device), shopPref: jar.get(SHOP_COOKIE)?.value ?? null });
+});
+
+/**
+ * One request's context for a signed-in staff member, from the web session or the staff app's token:
+ * active, not signed out everywhere since `iat`, and held to each location's sign-in rule from where
+ * the request comes. `shopPref` is the shop they picked ("all" for all their shops).
+ */
+export async function staffContextOf(staffId: string, iat: number | undefined, where: { ip: string | null; deviceShopIds: string[]; shopPref: string | null }): Promise<StaffContext | null> {
   const [row] = await db
     .select({ s: staff, r: roles })
     .from(staff)
     .innerJoin(roles, eq(roles.id, staff.roleId))
-    .where(and(eq(staff.id, payload.sub), eq(staff.active, true)));
+    .where(and(eq(staff.id, staffId), eq(staff.active, true)));
   if (!row) return null;
   const me = row.s;
   // Token times are whole seconds, so a sign-in in the same second as a reset stays valid.
-  if (me.sessionsValidAfter && (payload.iat ?? 0) < Math.floor(me.sessionsValidAfter.getTime() / 1000)) return null;
+  if (me.sessionsValidAfter && (iat ?? 0) < Math.floor(me.sessionsValidAfter.getTime() / 1000)) return null;
   const all = await accessFor(me, row.r);
-  const device = await devicesFromCookie(jar.get(TRUSTED_DEVICE_COOKIE)?.value);
-  const verdict = await evaluateNetwork(all, { ip: clientIp(await headers()), deviceShopIds: approvedShopIds(device) });
+  const verdict = await evaluateNetwork(all, { ip: where.ip, deviceShopIds: where.deviceShopIds });
   if (verdict.full) return null;
   const assigned = withoutShops(all, new Set(verdict.blocked.map((b) => b.shopId)));
   // Brand-wide people keep the all-shops view when a shop runs its own version of their role: there they get what they can do somewhere.
   const combinedView = (assigned.uniform || assigned.scope === "all") && assigned.shopIds.length > 1;
-  const pref = jar.get(SHOP_COOKIE)?.value;
+  const pref = where.shopPref;
   const open = assigned.shops.filter((s) => s.status !== "archived");
   let currentShopId: string | null;
   if (pref === "all" && combinedView) currentShopId = null;
@@ -133,7 +142,7 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
     permissions: access.permissions,
     maxDiscountPct: access.maxDiscountPct,
   };
-});
+}
 
 export const can = (ctx: Pick<StaffContext, "permissions">, p: Permission) => ctx.permissions.has(p);
 

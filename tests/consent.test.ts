@@ -92,8 +92,9 @@ describe("native push", () => {
     const { NativePush, PermanentSendError } = await import("@/server/notifications/push");
     const ec = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
     const rsa = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
-    const devices: Record<string, { id: string; provider: string; token: string; pushEnabled: boolean; revokedAt: Date | null }> = {
+    const devices: Record<string, { id: string; provider: string; token: string; pushEnabled: boolean; revokedAt: Date | null; staffApp?: boolean }> = {
       ios: { id: "ios", provider: "apns", token: "aa11", pushEnabled: true, revokedAt: null },
+      staffIos: { id: "staffIos", provider: "apns", token: "ee55", pushEnabled: true, revokedAt: null, staffApp: true },
       gone: { id: "gone", provider: "apns", token: "bb22", pushEnabled: true, revokedAt: null },
       droid: { id: "droid", provider: "fcm", token: "cc33", pushEnabled: true, revokedAt: null },
       off: { id: "off", provider: "fcm", token: "dd44", pushEnabled: false, revokedAt: null },
@@ -102,7 +103,7 @@ describe("native push", () => {
     const posts: { origin: string; path: string; headers: Record<string, string>; body: string }[] = [];
     const fetches: { url: string; body: string }[] = [];
     const push = new NativePush(
-      { keyId: "K", teamId: "T", privateKey: ec, bundleId: "com.rayz.app", production: false },
+      { keyId: "K", teamId: "T", privateKey: ec, bundleId: "com.rayz.app", staffBundleId: "com.rayz.staff", production: false },
       { projectId: "rayz-app", clientEmail: "push@rayz.iam.gserviceaccount.com", privateKey: rsa },
       {
         device: async (id) => devices[id] ?? null,
@@ -121,6 +122,8 @@ describe("native push", () => {
     expect(await push.sendPush("ios", "Ray'z", "See you at 3", { data: { kind: "reminder_2h" } })).toEqual({ providerMessageId: "apns-1" });
     expect(posts[0]).toMatchObject({ origin: "https://api.sandbox.push.apple.com", path: "/3/device/aa11", headers: { "apns-topic": "com.rayz.app", "apns-push-type": "alert" } });
     expect(JSON.parse(posts[0].body)).toEqual({ aps: { alert: { title: "Ray'z", body: "See you at 3" }, sound: "default" }, kind: "reminder_2h" });
+    await push.sendPush("staffIos", "New booking", "Jordan booked you for 3:00");
+    expect(posts[1]).toMatchObject({ path: "/3/device/ee55", headers: { "apns-topic": "com.rayz.staff" } });
     await expect(push.sendPush("gone", "Ray'z", "Hi")).rejects.toBeInstanceOf(PermanentSendError);
     expect(revoked).toEqual(["gone"]);
 

@@ -15,8 +15,9 @@ function secret(): Uint8Array {
  * trusted_device: a browser's device secret. device_request: a blocked sign-in that may ask for device approval.
  * handoff: this browser is handed to a client for one ticket.
  * login_2fa: a correct password waiting for its authenticator code (or for setting one up).
+ * staff_app_access: the staff app's Bearer token (/api/staff/v1), naming its sign-in (sid).
  */
-export type TokenType = "staff_session" | "customer_access" | "otp_select" | "trusted_device" | "device_request" | "handoff" | "login_2fa";
+export type TokenType = "staff_session" | "customer_access" | "otp_select" | "trusted_device" | "device_request" | "handoff" | "login_2fa" | "staff_app_access";
 
 export async function signToken(payload: Record<string, unknown>, typ: TokenType, ttlSeconds: number): Promise<string> {
   return new SignJWT({ ...payload, typ })
