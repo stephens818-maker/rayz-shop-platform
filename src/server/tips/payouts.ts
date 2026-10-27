@@ -30,7 +30,7 @@ import { appBaseUrl } from "@/lib/deployment";
 import { Actor, SYSTEM, audit } from "@/server/audit";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { enqueueRaw, enqueueShopEmail } from "@/server/notifications/queue";
-import { MovementError, TRANSFERS_PENDING_REASON, directPayoutsAvailable, moneyClient, moneyMovement, moneyMovementReady } from "@/server/payments/money-movement";
+import { MovementError, type MovedIds, TRANSFERS_PENDING_REASON, directPayoutsAvailable, moneyClient, moneyMovement, moneyMovementReady } from "@/server/payments/money-movement";
 import { tipOverrides } from "@/server/compensation";
 import { checkPin } from "@/server/time-clock";
 import { TAX_FORMS_HOLD_REASON, canReceive, currentInstantFeeTerms, instantRate, issues1099K, staffAccount, type StaffPayoutAccount } from "./accounts";
@@ -450,8 +450,9 @@ export async function sendStripePayout(payoutId: string, now = new Date()) {
   }
   const mm = moneyMovement();
   if (!mm) return holdForTransfers(p, now);
+  let ids: MovedIds;
   try {
-    const ids = await mm.send(
+    ids = await mm.send(
       {
         key: `tip-${p.id}`,
         shopId: p.shopId,
@@ -467,22 +468,23 @@ export async function sendStripePayout(payoutId: string, now = new Date()) {
         await db.update(tipPayouts).set({ stripeAccountId: acct!.stripeAccountId, stripeDebitId: x.debitId, stripeTransferId: x.transferId, stripePayoutId: x.payoutId, ...where, updatedAt: new Date() }).where(eq(tipPayouts.id, p.id));
       },
     );
-    const [row] = await db.update(tipPayouts).set({ sentAt: new Date(), updatedAt: new Date() }).where(eq(tipPayouts.id, p.id)).returning();
-    await audit(
-      SYSTEM,
-      "tips.stripe_sent",
-      "tip_payout",
-      p.id,
-      { staffId: p.staffId, amountCents: amount, instant: sending.instant, instantFeePaidBy: sending.instantFeePaidBy, transferId: ids.transferId, payoutId: ids.payoutId, debitId: ids.debitId, via: mm.name },
-      p.shopId,
-    );
-    await notifyPayout(row, "sent");
-    return row;
   } catch (e) {
-    const done = e instanceof MovementError ? e.done : { debitId: null, transferId: null };
-    await db.update(tipPayouts).set({ stripeDebitId: done.debitId, stripeTransferId: done.transferId }).where(eq(tipPayouts.id, p.id));
+    // Whatever `save` already recorded stays, so markFailed can unwind it.
+    if (e instanceof MovementError) await db.update(tipPayouts).set({ stripeDebitId: e.done.debitId, stripeTransferId: e.done.transferId }).where(eq(tipPayouts.id, p.id));
     return markFailed(p.id, `Stripe: ${(e as Error).message}`.slice(0, 500));
   }
+  // The money has moved: nothing after this may fail the payout.
+  const [row] = await db.update(tipPayouts).set({ sentAt: new Date(), updatedAt: new Date() }).where(eq(tipPayouts.id, p.id)).returning();
+  await audit(
+    SYSTEM,
+    "tips.stripe_sent",
+    "tip_payout",
+    p.id,
+    { staffId: p.staffId, amountCents: amount, instant: sending.instant, instantFeePaidBy: sending.instantFeePaidBy, transferId: ids.transferId, payoutId: ids.payoutId, debitId: ids.debitId, via: mm.name },
+    p.shopId,
+  );
+  await notifyPayout(row, "sent");
+  return row;
 }
 
 /** An approved Stripe payout whose employee can't be paid yet: it waits, with its tips, until their setup is done. Nothing moved. */
