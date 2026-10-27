@@ -1,3 +1,4 @@
+import { formatTimeOfDay } from "@/lib/time-parse";
 /**
  * The phone operator answers a shop's Twilio number when nobody at the shop can: after hours, when
  * the shop phone rings out, or first on every call if the shop wants it to. It is a keypad menu, not
@@ -127,12 +128,7 @@ export function operatorScript(o: { shop: string; greeting: string | null; open:
 }
 
 const DAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-function clock(min: number) {
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  const h12 = h % 12 || 12;
-  return `${h12}${m ? `:${String(m).padStart(2, "0")}` : ""} ${h < 12 ? "AM" : "PM"}`;
-}
+const clock = (min: number) => formatTimeOfDay(min);
 
 /** "We're open Monday through Friday, 9 AM to 7 PM. Saturday, 8 AM to 3 PM. Closed Sunday." */
 export function spokenHours(hours: readonly { weekday: number; openMin: number; closeMin: number }[]): string {

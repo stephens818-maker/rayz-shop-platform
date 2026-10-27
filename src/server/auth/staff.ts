@@ -12,6 +12,7 @@ import { Permission, ShopScope } from "@/domain/permissions";
 import { RatingViewer } from "@/domain/ratings";
 import { Actor } from "@/server/audit";
 import type { NetworkManager } from "@/server/sign-in-security";
+import { loadDisplay } from "@/server/display";
 import { forbidden } from "@/server/errors";
 import { clientIp } from "@/lib/client-ip";
 import { assertShop } from "@/server/tenant";
@@ -158,7 +159,7 @@ export const canAny = (ctx: Pick<StaffContext, "permissions">, ps: readonly Perm
 
 /** Any signed-in staff member. Pages redirect to sign-in; nothing here checks a permission. */
 export async function requireStaff(): Promise<StaffContext> {
-  const ctx = await getStaffContext();
+  const [ctx] = await Promise.all([getStaffContext(), loadDisplay()]);
   if (!ctx) redirect("/login");
   return ctx;
 }
@@ -202,7 +203,7 @@ export function assertCan(ctx: Pick<StaffContext, "permissions">, perms: Permiss
 
 /** For route handlers: the context, or the response to send instead. */
 export async function routeStaff(perms: Permission | readonly Permission[] | null): Promise<StaffContext | Response> {
-  const ctx = await getStaffContext();
+  const [ctx] = await Promise.all([getStaffContext(), loadDisplay()]);
   if (!ctx) return new Response("Sign in required", { status: 401 });
   if (perms && !canAny(ctx, typeof perms === "string" ? [perms] : perms)) return new Response("You don't have permission to do that", { status: 403 });
   return ctx;

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { DateTime } from "luxon";
 import { Badge, Card, CardHeader, LinkButton, PageHeader, cx } from "@/components/ui";
 import { CHANNEL_LABEL } from "@/domain/marketing";
+import { formatClock } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { campaignCalendar, type CalendarEntry } from "@/server/marketing/calendar";
 import { BLAST_STATUS } from "../blasts/status";
@@ -82,11 +83,11 @@ export default async function CalendarPage({ searchParams }: { searchParams: Pro
                     <Link
                       key={`${e.campaignId}:${e.at.toISOString()}:${e.state}`}
                       href={`/admin/campaign-center/blasts/${e.campaignId}`}
-                      title={`${e.name} · ${BLAST_STATUS[e.state]?.label ?? e.state} · ${DateTime.fromJSDate(e.at).setZone(cal.timeZone).toFormat("h:mm a")} · ${e.channels.map((c) => CHANNEL_LABEL[c]).join(", ")}${e.sent ? ` · ${e.sent} sent` : ""}`}
+                      title={`${e.name} · ${BLAST_STATUS[e.state]?.label ?? e.state} · ${formatClock(DateTime.fromJSDate(e.at).setZone(cal.timeZone))} · ${e.channels.map((c) => CHANNEL_LABEL[c]).join(", ")}${e.sent ? ` · ${e.sent} sent` : ""}`}
                       className={cx("block truncate rounded px-1.5 py-0.5 text-[11px] ring-1 ring-inset hover:underline", TONE[e.state])}
                     >
                       {e.recurring ? "↻ " : ""}
-                      {DateTime.fromJSDate(e.at).setZone(cal.timeZone).toFormat("h:mma").toLowerCase()} {e.name}
+                      {formatClock(DateTime.fromJSDate(e.at).setZone(cal.timeZone))} {e.name}
                     </Link>
                   ))}
                 </div>

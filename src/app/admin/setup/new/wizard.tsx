@@ -13,10 +13,11 @@ import { REVIEW_FOLLOW_UP_DEFAULT } from "@/domain/reviews";
 import { DEFAULT_NETWORK_RULE, REQUIREMENT_LABEL } from "@/domain/network-access";
 import { DEFAULT_HOURS, SUPPORTED_TIMEZONE, US_TIMEZONES } from "@/domain/location-lifecycle";
 import { slugify } from "@/lib/ids";
-import { WEEKDAYS, hhmmToMinutes, minutesToHHMM, minutesToLabel } from "@/lib/time";
+import { WEEKDAYS, minutesToLabel } from "@/lib/time";
 import { checkSlugAction, createLocationAction, startPaymentsOnboardingAction } from "../actions";
 import { AddressLookup, type GeocodeSource } from "../../settings/address-lookup";
 import { AMENITIES, SOCIAL, SOCIAL_KEYS, e164, fullAddress, socialLink, type TaxJurisdiction } from "@/domain/location-profile";
+import { TimeInput } from "@/components/time-input";
 
 type Options = Awaited<ReturnType<typeof import("@/server/location-admin").wizardOptions>>;
 
@@ -434,10 +435,10 @@ export function LocationWizard({
                         />
                       </Td>
                       <Td>
-                        <Input type="time" disabled={!h.open} value={minutesToHHMM(h.openMin)} onChange={(e) => setHours(hours.map((x, j) => (j === i ? { ...x, openMin: hhmmToMinutes(e.target.value) } : x)))} />
+                        <TimeInput aria-label={`${WEEKDAYS[h.weekday]} opens`} disabled={!h.open} value={h.openMin} onChange={(m) => setHours(hours.map((x, j) => (j === i ? { ...x, openMin: m } : x)))} className="h-9 w-full text-sm" />
                       </Td>
                       <Td>
-                        <Input type="time" disabled={!h.open} value={minutesToHHMM(h.closeMin)} onChange={(e) => setHours(hours.map((x, j) => (j === i ? { ...x, closeMin: hhmmToMinutes(e.target.value) } : x)))} />
+                        <TimeInput aria-label={`${WEEKDAYS[h.weekday]} closes`} disabled={!h.open} value={h.closeMin} onChange={(m) => setHours(hours.map((x, j) => (j === i ? { ...x, closeMin: m } : x)))} className="h-9 w-full text-sm" />
                       </Td>
                     </tr>
                   ))}
@@ -909,19 +910,17 @@ export function LocationWizard({
                                   </label>
                                   {r && (
                                     <div className="mt-1 flex gap-1">
-                                      <input
-                                        type="time"
+                                      <TimeInput
                                         aria-label={`${p.label} ${WEEKDAYS[wd]} start`}
-                                        className="w-full rounded border border-zinc-200 px-1"
-                                        value={minutesToHHMM(r.startMin)}
-                                        onChange={(e) => set({ schedule: row.schedule.map((x) => (x.weekday === wd ? { ...x, startMin: hhmmToMinutes(e.target.value) } : x)) })}
+                                        className="w-full"
+                                        value={r.startMin}
+                                        onChange={(m) => set({ schedule: row.schedule.map((x) => (x.weekday === wd ? { ...x, startMin: m } : x)) })}
                                       />
-                                      <input
-                                        type="time"
+                                      <TimeInput
                                         aria-label={`${p.label} ${WEEKDAYS[wd]} end`}
-                                        className="w-full rounded border border-zinc-200 px-1"
-                                        value={minutesToHHMM(r.endMin)}
-                                        onChange={(e) => set({ schedule: row.schedule.map((x) => (x.weekday === wd ? { ...x, endMin: hhmmToMinutes(e.target.value) } : x)) })}
+                                        className="w-full"
+                                        value={r.endMin}
+                                        onChange={(m) => set({ schedule: row.schedule.map((x) => (x.weekday === wd ? { ...x, endMin: m } : x)) })}
                                       />
                                     </div>
                                   )}

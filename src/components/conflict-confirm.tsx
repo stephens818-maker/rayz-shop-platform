@@ -2,9 +2,10 @@
 
 import type { BookedConflict } from "@/server/staff-time";
 import { Button } from "./ui";
+import { formatDateTime } from "@/lib/time";
 
 const when = (iso: string) =>
-  new Date(iso).toLocaleString("en-US", { timeZone: "America/Chicago", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  formatDateTime(iso, "EEE, MMM d", ", ");
 
 /** Booked appointments inside time someone is about to block. Saving anyway keeps every one of them booked. */
 export function ConflictConfirm({

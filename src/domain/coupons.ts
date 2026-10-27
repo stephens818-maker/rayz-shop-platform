@@ -6,6 +6,7 @@
 import { z } from "zod";
 import type { CartLine, Discount, DiscountTarget } from "./checkout";
 import { formatCents } from "@/lib/money";
+import { formatTimeOfDay } from "@/lib/time-parse";
 
 export const COUPON_TYPES = ["percent", "amount", "free_item"] as const;
 export type CouponType = (typeof COUPON_TYPES)[number];
@@ -95,11 +96,7 @@ export interface CouponLimits {
 
 export const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const hm = (s: string) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5));
-const clock = (s: string) => {
-  const m = hm(s);
-  const h = Math.floor(m / 60) % 12 || 12;
-  return `${h}${m % 60 ? `:${String(m % 60).padStart(2, "0")}` : ""} ${m >= 720 ? "PM" : "AM"}`;
-};
+const clock = (s: string) => formatTimeOfDay(hm(s));
 
 /** "Tue, Wed", "Weekdays", "Tue, Wed, 10 AM to 2 PM", or null for any time. */
 export function couponWhenLabel(p: Pick<CouponLimits, "daysOfWeek" | "timeFrom" | "timeTo">): string | null {

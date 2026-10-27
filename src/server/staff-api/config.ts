@@ -1,6 +1,8 @@
 import "server-only";
 import { appBaseUrl, demoMode } from "@/lib/deployment";
 import { flags } from "@/lib/flags";
+import { payrollHoursStyle } from "@/lib/hours";
+import { SHOP_TZ, clockFormat, minutesToLabel, timePattern } from "@/lib/time";
 import { clientPlatform, versionLessThan, type AppPlatform } from "@/server/app-config";
 import { AppError } from "@/server/errors";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
@@ -96,6 +98,14 @@ export function staffAppConfig(req: Request) {
     privacyNotice: { reviewed: privacyReviewed(), version: STAFF_LEGAL_VERSIONS.privacy },
     payQuestions: { topics: PAY_QUESTION_TOPICS, managerDays: PAY_QUESTION_MANAGER_DAYS, ownerDays: PAY_QUESTION_OWNER_DAYS, agencies: PAY_AGENCIES },
     support: staffSupport(),
+    /** How times and hours read on every screen (the brand's setting). Times in responses stay UTC ISO; show them in the shop's zone. */
+    display: {
+      clockFormat: clockFormat(),
+      timePattern: timePattern(),
+      example: minutesToLabel(17 * 60 + 30),
+      timeZone: SHOP_TZ,
+      payrollHours: payrollHoursStyle(),
+    },
     environment: demoMode() ? ("demo" as const) : process.env.VERCEL_ENV === "production" ? ("production" as const) : ("development" as const),
   };
 }

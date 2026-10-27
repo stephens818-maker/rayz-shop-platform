@@ -22,13 +22,9 @@ import {
   setReaderActiveAction,
 } from "./actions";
 import { ReviewFields } from "./review-fields";
+import { TimeInput } from "@/components/time-input";
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
-const mins = (s: string) => {
-  const [h, m] = s.split(":").map(Number);
-  return h * 60 + (m || 0);
-};
 
 export function useSave() {
   const router = useRouter();
@@ -193,9 +189,9 @@ export function HoursEditor({ shopId, initial, canSetSunday, locked = false }: {
               </label>
               {r ? (
                 <>
-                  <input type="time" step={900} aria-label={`${DAYS[d]} opens`} className="rounded px-2 py-1 ring-1 ring-zinc-300" value={hhmm(r.openMin)} onChange={(e) => setRows(rows.map((x) => (x === r ? { ...r, openMin: mins(e.target.value) } : x)))} />
+                  <TimeInput aria-label={`${DAYS[d]} opens`} className="px-2 py-1 text-sm" value={r.openMin} onChange={(m) => setRows(rows.map((x) => (x === r ? { ...r, openMin: m } : x)))} />
                   <span>to</span>
-                  <input type="time" step={900} aria-label={`${DAYS[d]} closes`} className="rounded px-2 py-1 ring-1 ring-zinc-300" value={hhmm(r.closeMin)} onChange={(e) => setRows(rows.map((x) => (x === r ? { ...r, closeMin: mins(e.target.value) } : x)))} />
+                  <TimeInput aria-label={`${DAYS[d]} closes`} className="px-2 py-1 text-sm" value={r.closeMin} onChange={(m) => setRows(rows.map((x) => (x === r ? { ...r, closeMin: m } : x)))} />
                 </>
               ) : (
                 <span className="text-zinc-400">Closed</span>

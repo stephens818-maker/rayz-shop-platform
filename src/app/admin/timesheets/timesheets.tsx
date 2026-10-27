@@ -6,6 +6,8 @@ import { useAction } from "@/components/use-action";
 import { PUNCH_LABEL, isRepeatedWallTime, type PunchType } from "@/domain/time-clock";
 import { clearPinAction } from "../clock/actions";
 import { addPunchAction, approveManagerAction, approveOwnAction, editPunchAction, lockPeriodAction, unlockPeriodAction, voidPunchAction } from "./actions";
+import { DateTimeInput } from "@/components/time-input";
+import { hhmmLabel } from "@/lib/time";
 
 type Shop = { id: string; name: string };
 type When = { local: string; later: boolean };
@@ -20,11 +22,11 @@ function WhenInput({ value, onChange }: { value: When; onChange: (w: When) => vo
   const repeated = value.local.length === 16 && isRepeatedWallTime(value.local);
   return (
     <span className="inline-flex flex-wrap items-center gap-2">
-      <Input type="datetime-local" value={value.local} onChange={(e) => onChange({ ...value, local: e.target.value })} className="w-52" aria-label="Date and time" required />
+      <DateTimeInput value={value.local} onChange={(local) => onChange({ ...value, local })} required />
       {repeated && (
         <label className="inline-flex items-center gap-1 text-xs text-zinc-600">
           <input type="checkbox" checked={value.later} onChange={(e) => onChange({ ...value, later: e.target.checked })} />
-          The second {value.local.slice(11)} (after clocks fell back)
+          The second {hhmmLabel(value.local.slice(11))} (after clocks fell back)
         </label>
       )}
     </span>

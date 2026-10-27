@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button, Field, Input, Notice } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { cpaSignOffAction, handBackAction, payoutDatesAction, payoutReportSignOffAction, reconcileAction, recordFreezeAction, signOffAction, squireTipsEndAction, ytdImportAction } from "../actions";
+import { DateTimeInput } from "@/components/time-input";
 
 const FILES = [
   { id: "bookings", label: "Appointments (upcoming)" },
@@ -18,7 +19,7 @@ export function FreezeForm({ shopId }: { shopId: string }) {
   return (
     <div className="flex flex-wrap items-end gap-3">
       <Field label="Squire booking turned off at (shop time)">
-        <Input type="datetime-local" value={local} onChange={(e) => setLocal(e.target.value)} className="w-56" />
+        <DateTimeInput aria-label="Squire booking turned off at" value={local} onChange={setLocal} />
       </Field>
       <Button disabled={!local || pending} onClick={() => run(() => recordFreezeAction(shopId, local))}>
         Record freeze

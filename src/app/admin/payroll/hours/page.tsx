@@ -8,6 +8,7 @@ import { endOfLocalDay, formatDate, formatDateTime, startOfLocalDay } from "@/li
 import { guardPage } from "@/server/auth/staff";
 import { periodChoices } from "@/server/payroll/run";
 import { AddEntry, DeleteEntry, ImportCsv } from "./client";
+import { formatPayHours } from "@/lib/hours";
 
 export const metadata: Metadata = { title: "Payroll hours" };
 
@@ -87,7 +88,7 @@ export default async function PayrollHoursPage({ searchParams }: { searchParams:
         </div>
       </Card>
       <Card>
-        <CardHeader title={`${rows.length} entries · ${total.toFixed(2)} hours`} subtitle={chosen ? `${formatDate(chosen.start, "MMM d")} – ${formatDate(chosen.end, "MMM d, yyyy")}` : undefined} />
+        <CardHeader title={`${rows.length} entries · ${formatPayHours(total, { unit: "hours" })}`} subtitle={chosen ? `${formatDate(chosen.start, "MMM d")} – ${formatDate(chosen.end, "MMM d, yyyy")}` : undefined} />
         <div className="max-h-[640px] overflow-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-zinc-50 text-left text-xs text-zinc-500">
@@ -111,7 +112,7 @@ export default async function PayrollHoursPage({ searchParams }: { searchParams:
                   <td className="px-3 py-1.5">{KIND[e.kind]}</td>
                   <td className="px-3 py-1.5 tabular-nums">{formatDateTime(e.startsAt)}</td>
                   <td className="px-3 py-1.5 tabular-nums">{formatDateTime(e.endsAt)}</td>
-                  <td className="px-3 py-1.5 text-right tabular-nums">{((e.endsAt.getTime() - e.startsAt.getTime()) / 3600_000).toFixed(2)}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">{formatPayHours((e.endsAt.getTime() - e.startsAt.getTime()) / 3600_000)}</td>
                   <td className="px-3 py-1.5 text-xs text-zinc-500">{e.source}</td>
                   <td className="px-3 py-1.5 text-xs text-zinc-500">{e.note}</td>
                   <td className="px-3 py-1.5">{locked.has(e.shopId) ? <span className="text-xs text-zinc-400">locked</span> : <DeleteEntry id={e.id} />}</td>

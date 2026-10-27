@@ -7,6 +7,7 @@ import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import { CLOCK_METHODS, METHOD_LABEL, type ClockMethod, type ShopClockSettings } from "@/domain/time-clock";
 import { revokeDeviceAction, startPairingAction } from "../clock/actions";
 import { nfcTagAction, saveShopClockAction } from "./actions";
+import { formatTime } from "@/lib/time";
 
 type RulesInput = { unpaidBreakFromMinutes: number; autoMealMinutes: number; autoMealAfterHours: number; forgotOutAfterMinutes: number; maxShiftHours: number; graceMinutes: number; mapping: string };
 
@@ -265,7 +266,7 @@ export function PairDevice({ shops }: { shops: { id: string; name: string }[] })
       <div className="space-y-3 p-4" data-testid="clock-pairing">
         <p className="text-sm">
           On the tablet, scan this code with the camera, or open <span className="font-mono">/clock/pair</span> and type <span className="font-mono text-base font-semibold tracking-wider">{pairing.code}</span>. It works once, until{" "}
-          {new Date(pairing.expiresAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })}.
+          {formatTime(pairing.expiresAt)}.
         </p>
         <div className="h-48 w-48" dangerouslySetInnerHTML={{ __html: pairing.svg }} />
         <Button size="sm" variant="secondary" onClick={() => setPairing(null)}>

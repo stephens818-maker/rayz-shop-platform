@@ -4,6 +4,7 @@ import { route } from "@/server/api";
 import { StaffContext, assertShopAccess, authorizeContext } from "@/server/auth/staff";
 import { STAFF_CACHE_HEADER, cacheRuleFor } from "@/domain/staff-device-policy";
 import { DEMO_BLOCKED_MESSAGE, demoBlocked } from "@/server/demo-shop";
+import { loadDisplay } from "@/server/display";
 import { AppError, forbidden } from "@/server/errors";
 import { requireStaffApp } from "./auth";
 import { assertSupportedStaffClient } from "./config";
@@ -43,7 +44,8 @@ export function assertShopHeader(req: Request, ctx: StaffAppContext) {
 export function staffRoute<P = Record<string, string>>(guard: Guard, fn: (req: Request, ctx: StaffAppContext, params: P) => Promise<Response>) {
   return route<P>(async (req, params) => {
     assertSupportedStaffClient(req);
-    return withCacheRule(req, await fn(req, await guardedStaff(req, guard), params));
+    const [ctx] = await Promise.all([guardedStaff(req, guard), loadDisplay()]);
+    return withCacheRule(req, await fn(req, ctx, params));
   });
 }
 
@@ -68,6 +70,7 @@ export async function guardedStaff(req: Request, guard: Guard): Promise<StaffApp
 export function signInRoute<P = Record<string, string>>(fn: (req: Request, params: P) => Promise<Response>) {
   return route<P>(async (req, params) => {
     assertSupportedStaffClient(req);
+    await loadDisplay();
     return fn(req, params);
   });
 }

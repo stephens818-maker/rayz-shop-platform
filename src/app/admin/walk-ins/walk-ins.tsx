@@ -15,6 +15,7 @@ import { FAMILY_BOOKING_MAX } from "@/domain/family";
 import { searchCustomersAction, startCheckoutAction } from "../calendar/actions";
 import { ClientEntryFields, entryPayload, type EntryField, type EntryValues } from "@/components/client-entry-fields";
 import { linkWalkInsAction, notifyAction, seatAction, waitlistStatusAction, walkInAction } from "./actions";
+import { formatTime } from "@/lib/time";
 
 type Barber = { id: string; label: string; color: string; state: "free" | "busy" | "off"; note: string; until: string | null; untilKind: "busy" | "next" | null };
 type Entry = {
@@ -30,7 +31,7 @@ type Entry = {
   notes?: NoteBrief | null;
 };
 
-const t = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
+const t = (iso: string) => formatTime(iso);
 
 export function WalkIns({
   shopId,

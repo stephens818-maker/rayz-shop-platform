@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { Button, Card, CardHeader, Input, Notice, cx } from "@/components/ui";
 import { RECEIPT_PURPOSE_LABEL, type ReceiptPurpose } from "@/domain/receipts";
 import { sendReceiptAction } from "../actions";
+import { formatDateTime } from "@/lib/time";
 
 export interface OnFile {
   /** In full, or masked (***-***-1234) where this person's Client data settings don't show it. */
@@ -36,7 +37,7 @@ const STATUS: Record<string, string> = {
   snoozed: "Not sent: tapped the review link lately",
   none: "",
 };
-const when = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const when = (iso: string) => formatDateTime(iso, "MMM d", ", ");
 
 /** Text, email or (at checkout) no receipt: what's on file is offered first, without showing more of it than this person may see. */
 function Chooser({ saleId, onFile, atCheckout, onDone }: { saleId: string; onFile: OnFile; atCheckout: boolean; onDone: (msg: string) => void }) {

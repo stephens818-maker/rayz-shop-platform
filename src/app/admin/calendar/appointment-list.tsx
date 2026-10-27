@@ -7,6 +7,7 @@ import { STATUS_LABEL, Select, StatusBadge, Table, Td, Th } from "@/components/u
 import { BOOKING_METHOD_LABEL, type BookingMethod } from "@/domain/appointment-report";
 import type { ListStatus, ListedAppointment } from "@/server/appointment-list";
 import { ViewToggle } from "./day-calendar";
+import { minutesToLabel } from "@/lib/time";
 
 const STATUS_CHOICES: { key: ListStatus; label: string }[] = [
   { key: "all", label: "All" },
@@ -15,11 +16,7 @@ const STATUS_CHOICES: { key: ListStatus; label: string }[] = [
   { key: "missed", label: "Cancelled and no-shows" },
 ];
 
-function time(min: number) {
-  const h = Math.floor(min / 60) % 24;
-  const m = min % 60;
-  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
-}
+const time = (min: number) => minutesToLabel(min);
 const shiftDate = (d: string, n: number) => {
   const dt = new Date(`${d}T12:00:00Z`);
   dt.setUTCDate(dt.getUTCDate() + n);

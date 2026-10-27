@@ -10,8 +10,9 @@ export type Cell = string | number | boolean | null;
 /**
  * `hours` values are minutes, shown as hours; `decimal` is an average like 4.25 stars; `minutes` is
  * an average or median in minutes, to a tenth; `minutes_delta` is the same with a sign, like +11.0.
+ * `pay_hours` is payroll hours: on screen in the brand's style (79.94 or 79h 56m), decimal in a CSV.
  */
-export type ColumnKind = "text" | "int" | "money" | "pct" | "bool" | "hours" | "decimal" | "minutes" | "minutes_delta";
+export type ColumnKind = "text" | "int" | "money" | "pct" | "bool" | "hours" | "decimal" | "pay_hours" | "minutes" | "minutes_delta";
 export interface Column {
   label: string;
   kind?: ColumnKind;
@@ -486,7 +487,7 @@ function csvCell(v: Cell, kind: ColumnKind | undefined): string | number | null 
   if (kind === "money") return (v / 100).toFixed(2);
   if (kind === "pct") return pctText(v);
   if (kind === "hours") return (v / 60).toFixed(2);
-  if (kind === "decimal") return v.toFixed(2);
+  if (kind === "decimal" || kind === "pay_hours") return v.toFixed(2);
   if (kind === "minutes" || kind === "minutes_delta") return v.toFixed(1);
   return v;
 }

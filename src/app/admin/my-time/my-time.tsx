@@ -9,6 +9,8 @@ import type { ShownReason } from "@/domain/block-reasons";
 import { LUNCH_NOW_MIN, QUICK_DURATIONS, weekdaysLabel } from "@/domain/staff-time";
 import type { BookedConflict, RequestView } from "@/server/staff-time";
 import { cancelMyRequestAction, createMySeriesAction, endMySeriesAction, lunchNowAction, quickBlockAction, removeMyBlockAction, requestTimeOffAction } from "./actions";
+import { formatDateTime, formatTime, minutesToLabel } from "@/lib/time";
+import { ClockInput } from "@/components/time-input";
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 type Saved = { saved: boolean; conflicts: BookedConflict[] };
@@ -31,19 +33,14 @@ function useRun() {
   return { pending, error, ok, run };
 }
 
-const label = (min: number) => {
-  const h = Math.floor(min / 60) % 24;
-  const m = min % 60;
-  return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${h >= 12 ? "PM" : "AM"}`;
-};
+const label = (min: number) => minutesToLabel(min);
 const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 const mins = (s: string) => {
   const [h, m] = s.split(":").map(Number);
   return h * 60 + (m || 0);
 };
-const TZ = "America/Chicago";
-const when = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: TZ, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-const timeOnly = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" });
+const when = (iso: string) => formatDateTime(iso, "EEE, MMM d", ", ");
+const timeOnly = (iso: string) => formatTime(iso);
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function Messages({ error, ok }: { error: string | null; ok: string | null }) {
@@ -124,7 +121,7 @@ export function QuickBlock({ today, defaultStartMin, limits, reasons }: { today:
             <Input type="date" min={today} value={date} onChange={(e) => setDate(e.target.value)} />
           </Field>
           <Field label="Start">
-            <Input type="time" step={300} value={start} onChange={(e) => setStart(e.target.value)} />
+            <ClockInput step={5} value={start} onChange={setStart} />
           </Field>
         </div>
         <Field label="How long">
@@ -223,10 +220,10 @@ export function Recurring({ series, today, limits, reasons }: { series: SeriesVi
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="From">
-            <Input type="time" step={300} value={start} onChange={(e) => setStart(e.target.value)} />
+            <ClockInput step={5} value={start} onChange={setStart} />
           </Field>
           <Field label="To">
-            <Input type="time" step={300} value={end} onChange={(e) => setEnd(e.target.value)} />
+            <ClockInput step={5} value={end} onChange={setEnd} />
           </Field>
           <Field label="Starting">
             <Input type="date" min={today} value={startsOn} onChange={(e) => setStartsOn(e.target.value)} />
@@ -350,10 +347,10 @@ export function TimeOffForm({
               <Input type="date" min={today} value={from} onChange={(e) => setFrom(e.target.value)} />
             </Field>
             <Field label="From">
-              <Input type="time" step={900} value={start} onChange={(e) => setStart(e.target.value)} />
+              <ClockInput value={start} onChange={setStart} />
             </Field>
             <Field label="To">
-              <Input type="time" step={900} value={end} onChange={(e) => setEnd(e.target.value)} />
+              <ClockInput value={end} onChange={setEnd} />
             </Field>
           </div>
         )}

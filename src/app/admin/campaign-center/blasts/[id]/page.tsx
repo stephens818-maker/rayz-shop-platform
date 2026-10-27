@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { Badge, Card, Notice, PageHeader } from "@/components/ui";
 import { FREQ_LABEL, recurrenceLabel } from "@/domain/campaign-schedule";
-import { SHOP_TZ, formatDateTime, todayLocal } from "@/lib/time";
+import { formatDateTime, hhmmLabel, SHOP_TZ, todayLocal } from "@/lib/time";
 import { can, guardPage, openShops } from "@/server/auth/staff";
 import { decodeFilter } from "@/domain/client-filters";
 import { clientPolicy } from "@/server/client-privacy";
@@ -54,7 +54,7 @@ export default async function BlastPage({ params, searchParams }: { params: Prom
             <Link href="/admin/campaign-center/blasts" className="underline">
               Blasts
             </Link>{" "}
-            · Goes only to clients who agreed to marketing, once each, outside quiet hours ({settings.quietStart}–{settings.quietEnd} local) and within the brand&apos;s limits.
+            · Goes only to clients who agreed to marketing, once each, outside quiet hours ({hhmmLabel(settings.quietStart)}–{hhmmLabel(settings.quietEnd)} local) and within the brand&apos;s limits.
           </>
         }
         actions={blast && <BlastActions id={blast.id} name={blast.name} status={blast.status} mayWrite={mayCreate} maySend={maySend} mayManage={blast.inScope} />}

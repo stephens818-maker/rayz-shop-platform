@@ -1,3 +1,5 @@
+import { clockFormat, type ClockFormat } from "./time";
+
 /**
  * Typed times of day for the fast time picker: "9", "930", "9:30", "5p", "5:15pm", "17:00", "noon".
  * Without am or pm, 7 to 11 read as morning and 12 to 6 as afternoon (barbershop hours), and a
@@ -23,11 +25,20 @@ export function parseTimeOfDay(input: string): number | null {
   return h * 60 + min;
 }
 
-/** "9:30 AM", "12 PM": how a time of day reads in the picker. */
-export function formatTimeOfDay(min: number): string {
+/** "9:30 AM", "12 PM": how a time of day reads in the picker ("09:30", "12:00" on the 24-hour setting). */
+export function formatTimeOfDay(min: number, f: ClockFormat = clockFormat()): string {
   const h = Math.floor(min / 60) % 24;
   const m = min % 60;
+  if (f === "24h") return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
   return `${h % 12 || 12}${m ? `:${String(m).padStart(2, "0")}` : ""} ${h < 12 ? "AM" : "PM"}`;
+}
+
+/** A tight grid's time of day: "9a", "5:30p" ("09:00", "17:30" on the 24-hour setting). 24:00 is midnight, "12a". */
+export function compactTimeOfDay(min: number, f: ClockFormat = clockFormat()): string {
+  if (f === "24h") return formatTimeOfDay(min, f);
+  const h = Math.floor(min / 60) % 24;
+  const m = min % 60;
+  return `${h % 12 || 12}${m ? `:${String(m).padStart(2, "0")}` : ""}${h < 12 ? "a" : "p"}`;
 }
 
 /** Up or down a step (15 minutes by default), staying within the day. An off-step time snaps to the next one that way. */

@@ -93,6 +93,7 @@ import {
 } from "../actions";
 import { CheckoutPrompts, type PromptsProps } from "./prompts";
 import { StripeCardEntry } from "./stripe-card";
+import { formatTime } from "@/lib/time";
 
 type Line = {
   key: string;
@@ -1014,10 +1015,7 @@ export function Pos(props: {
           {props.withClient.via === "app" ? (
             <span>
               Sent to the client&apos;s app by {props.withClient.by} at{" "}
-              {new Date(props.withClient.startedAt).toLocaleTimeString([], {
-                hour: "numeric",
-                minute: "2-digit",
-              })}
+              {formatTime(props.withClient.startedAt)}
               . It closes here when they pay. End it to take payment here
               instead.
             </span>
@@ -1025,10 +1023,7 @@ export function Pos(props: {
             <span>
               This ticket is with the client on the customer screen (handed
               over by {props.withClient.by} at{" "}
-              {new Date(props.withClient.startedAt).toLocaleTimeString([], {
-                hour: "numeric",
-                minute: "2-digit",
-              })}
+              {formatTime(props.withClient.startedAt)}
               ). A staff PIN on that screen takes it back.
             </span>
           )}
@@ -3100,10 +3095,7 @@ function PeopleCard(props: {
   onChanged: () => void;
 }) {
   const at = (iso: string) =>
-    new Date(iso).toLocaleTimeString([], {
-      hour: "numeric",
-      minute: "2-digit",
-    });
+    formatTime(iso);
   const [picking, setPicking] = useState(false);
   const [q, setQ] = useState("");
   const [found, setFound] = useState<Awaited<

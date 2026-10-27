@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button, Card, CardHeader, Field, Input, Notice, Select, Textarea, buttonClass } from "@/components/ui";
 import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import { ATTRIBUTE_ON_LABEL, type MarketingSettings } from "@/domain/marketing";
+import { ClockInput } from "@/components/time-input";
 
 export function MarketingSettingsForm({ initial, mayEdit, mayExport, campaigns }: { initial: MarketingSettings; mayEdit: boolean; mayExport: boolean; campaigns: { id: string; name: string }[] }) {
   const { pending, msg, saveSetting, dialog } = useSettingSync("marketing");
@@ -19,10 +20,10 @@ export function MarketingSettingsForm({ initial, mayEdit, mayExport, campaigns }
           <CardHeader title="Quiet hours and limits" subtitle="Nothing marketing goes out in quiet hours, in each location's own time zone; messages due then wait until they end." />
           <div className="grid gap-3 p-4 sm:grid-cols-4">
             <Field label="Quiet from">
-              <Input type="time" value={v.quietStart} onChange={(e) => set("quietStart", e.target.value)} />
+              <ClockInput aria-label="Quiet from" className="w-full" value={v.quietStart} onChange={(t) => set("quietStart", t)} />
             </Field>
             <Field label="Quiet until">
-              <Input type="time" value={v.quietEnd} onChange={(e) => set("quietEnd", e.target.value)} />
+              <ClockInput aria-label="Quiet until" className="w-full" value={v.quietEnd} onChange={(t) => set("quietEnd", t)} />
             </Field>
             <Field label="Most per client a week" hint="All campaigns and blasts together">
               <Input type="number" min={1} max={14} value={v.capPerWeek} onChange={(e) => set("capPerWeek", n(e.target.value))} />

@@ -7,6 +7,7 @@ import { Button, Card, Empty, cx } from "@/components/ui";
 import { ACTION_LABEL, BULK_HINT, BULK_LABEL, type BulkAction, type ShownStatus, STATUS_LABEL, type SyncArea } from "@/domain/brand-sync";
 import type { BatchDetail, ControlRow, HistoryBatch, Matrix, MatrixRow } from "@/server/brand-sync/engine";
 import { batchDetailAction, bulkSyncAction, cancelScheduledAction, rollbackSyncAction, runScheduledNowAction, setSyncControlAction } from "./actions";
+import { formatDateTime } from "@/lib/time";
 
 type Tab = "matrix" | "history" | "controls";
 type StatusFilter = "all" | "attention" | ShownStatus;
@@ -19,7 +20,7 @@ const CELL_TONE: Record<ShownStatus, string> = {
 };
 const DOT: Record<ShownStatus, string> = { in_sync: "bg-emerald-500", overridden: "bg-violet-500", out_of_sync: "bg-amber-500", pending: "bg-sky-500" };
 
-const at = (iso: string) => new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const at = (iso: string) => formatDateTime(iso, "MMM d", ", ");
 const cellId = (key: string, shopId: string) => `${key}|${shopId}`;
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 

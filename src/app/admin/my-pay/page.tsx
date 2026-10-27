@@ -22,6 +22,7 @@ import { addDays, diffDays, formatDate, todayLocal, type LocalDate } from "@/lib
 import { guardPage } from "@/server/auth/staff";
 import { commissionLines, loadCompensationSettings, setupRates, versionsFor } from "@/server/compensation";
 import { buildPayroll, periodChoices } from "@/server/payroll/run";
+import { formatPayHours } from "@/lib/hours";
 
 export const metadata: Metadata = { title: "My pay" };
 
@@ -175,7 +176,7 @@ export default async function MyPayPage() {
                       {shop}
                       {locked && <span className="ml-1 text-xs text-zinc-500">(approved)</span>}
                     </Td>
-                    <Td right>{(l.hours + l.otHours).toFixed(2)}</Td>
+                    <Td right>{formatPayHours(l.hours + l.otHours)}</Td>
                     <Td right>{dollars(l.hourlyTotal)}</Td>
                     <Td right>{dollars(l.commission)}</Td>
                     <Td right>{dollars(l.productTotal)}</Td>
@@ -198,7 +199,7 @@ export default async function MyPayPage() {
                 stub.length ? (
                   <p key={shop}>
                     <span className="font-medium">{shop}:</span>{" "}
-                    {stub.map((s) => `${s.name} ${s.unit === "hours" ? `${s.amount.toFixed(2)} hrs` : dollars(s.amount)}${s.memo ? " (already paid to you)" : ""}`).join(" · ")}
+                    {stub.map((s) => `${s.name} ${s.unit === "hours" ? formatPayHours(s.amount, { unit: "hrs" }) : dollars(s.amount)}${s.memo ? " (already paid to you)" : ""}`).join(" · ")}
                   </p>
                 ) : null,
               )}

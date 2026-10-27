@@ -4,8 +4,9 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Button, Card, CardHeader, Input, Notice, Select, cx } from "@/components/ui";
 import type { OpeningsPreview, OpeningsResult, OpeningsSetup } from "@/server/marketing/openings";
-import { formatTime } from "@/lib/time";
+import { formatTime, hhmmToMinutes } from "@/lib/time";
 import { previewOpeningsAction, sendOpeningsAction } from "./actions";
+import { formatTimeOfDay } from "@/lib/time-parse";
 
 type DayMode = "today" | "tomorrow" | "both" | "other";
 const MAX_TIMES = 10;
@@ -264,7 +265,4 @@ export function OpeningsComposer({ setup }: { setup: OpeningsSetup }) {
   );
 }
 
-function fmtHHMM(s: string) {
-  const [h, m] = s.split(":").map(Number);
-  return `${h % 12 || 12}${m ? `:${String(m).padStart(2, "0")}` : ""} ${h < 12 ? "AM" : "PM"}`;
-}
+const fmtHHMM = (s: string) => formatTimeOfDay(hhmmToMinutes(s));

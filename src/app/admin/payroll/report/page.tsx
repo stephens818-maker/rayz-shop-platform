@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Badge, Card, CardHeader, Notice, PageHeader, cx } from "@/components/ui";
+import { formatPayHours } from "@/lib/hours";
 import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, fmtHours, fmtMoney, type Line, type Totals } from "@/domain/payroll/calc";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { reportView } from "@/domain/permissions";
@@ -10,10 +11,13 @@ import { LockButton, OverrideForm } from "./client";
 
 export const metadata: Metadata = { title: "Payroll report" };
 
-const hrs = (x: number) => x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const hrs = (x: number) => formatPayHours(x);
+const hrsH = (x: number) => formatPayHours(x, { unit: true });
 const pct = (x: number | null) => (x === null ? "—" : `${(x * 100).toLocaleString("en-US", { maximumFractionDigits: 2 })}%`);
-const ratio = (x: number | null) => (x === null ? "—" : hrs(x));
+const ratio = (x: number | null) => (x === null ? "—" : x.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const cell = (k: string, v: number) => (HOUR_COLUMNS.has(k) ? hrs(v) : fmtMoney(v));
+/** The iSolved file's own numbers: hours stay decimal there whatever the screen shows. */
+const fileCell = (k: string, v: number) => (HOUR_COLUMNS.has(k) ? formatPayHours(v, { style: "decimal" }) : fmtMoney(v));
 
 type Col = { key: keyof Line & string; label: string; fmt: (l: Line) => string; total?: (t: Totals) => string; extra?: boolean; onlyIf?: (b: BlockView) => boolean };
 const COLS: Col[] = [
@@ -532,18 +536,18 @@ function ShopBlockCard({ b, view, canRun }: { b: BlockView; view: PayrollView; c
                     <p>
                       <span className="font-medium">Training Pay</span>:{" "}
                       {s.trainingPayInCost
-                        ? `${hrs(l.trainingHours)} h × ${fmtMoney(l.input.trainingRate ?? l.wage)}${l.input.trainingRate === null ? " (hourly rate)" : " training rate"} = ${fmtMoney(l.trainingPay)}`
+                        ? `${hrsH(l.trainingHours)} × ${fmtMoney(l.input.trainingRate ?? l.wage)}${l.input.trainingRate === null ? " (hourly rate)" : " training rate"} = ${fmtMoney(l.trainingPay)}`
                         : "left out of labor cost (setting)"}
                       {!s.trainingCountsTowardOt && l.trainingHours > 0 && " · training doesn't count toward the weekly 40 (C2 off, Q11)"}
                     </p>
                     {view.ft[l.staffId] && (
                       <p>
-                        <span className="font-medium">{view.ft[l.staffId].fullTime ? "Full time" : "Part time"}</span>: averaged {hrs(view.ft[l.staffId].averageHours)} h/week over the last{" "}
+                        <span className="font-medium">{view.ft[l.staffId].fullTime ? "Full time" : "Part time"}</span>: averaged {hrsH(view.ft[l.staffId].averageHours)}/week over the last{" "}
                         {view.ft[l.staffId].weeks} weeks ({FT_BASIS_LABEL[s.ftBasis].toLowerCase()}); full time is more than {s.ftHoursPerWeek}. Pending Charles.
                       </p>
                     )}
                     <p className="text-xs text-zinc-500">
-                      Worked {hrs(l.input.workedHours)} h at {b.shop} this period = {hrs(l.hours)} regular + {hrs(l.otHours)} OT. Gross service {fmtMoney(l.service)} (card + cash + gift card,
+                      Worked {hrsH(l.input.workedHours)} at {b.shop} this period = {hrs(l.hours)} regular + {hrs(l.otHours)} OT. Gross service {fmtMoney(l.service)} (card + cash + gift card,
                       before tax and tips).
                     </p>
                   </div>
@@ -642,7 +646,7 @@ function ExportPreview({ b }: { b: BlockView }) {
                 const from = i < EXPORT_COLUMNS.length ? EXPORT_COLUMNS[i].from : b.exportFrom?.[i - EXPORT_COLUMNS.length];
                 return (
                   <td key={h} className="px-2 py-0.5 text-right">
-                    {from === "wage" ? "" : cell(from ?? "", b.exportRows.reduce((a, r) => a + (r.values[i] ?? 0), 0))}
+                    {from === "wage" ? "" : fileCell(from ?? "", b.exportRows.reduce((a, r) => a + (r.values[i] ?? 0), 0))}
                   </td>
                 );
               })}

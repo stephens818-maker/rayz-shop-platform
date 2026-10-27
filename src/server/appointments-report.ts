@@ -18,6 +18,7 @@ import {
 } from "@/domain/appointment-report";
 import { Cell, Column, ViewCtx, listTable, staffName } from "@/domain/report-views";
 import { formatCents } from "@/lib/money";
+import { hhmmLabel } from "@/lib/time";
 import type { ReportData, ReportOption } from "./report-data";
 import { PAID, ReportScope, ids, rows, staffFilter } from "./report-sql";
 
@@ -123,7 +124,7 @@ export async function appointmentsReportData(scope: ReportScope, loc: ViewCtx, p
           shopId: x.shopId,
           cells: [
             x.day,
-            x.time,
+            hhmmLabel(x.time),
             staffName(loc, x.staffId),
             x.services,
             APPOINTMENT_STATUS_LABEL[x.status] ?? x.status,

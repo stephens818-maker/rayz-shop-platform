@@ -56,7 +56,7 @@ import { ledgerEntries, movement, poHistory, sellThrough, valuation, vendorSpend
 import { stockLevels } from "./inventory/stock";
 import { suggestionsFor } from "./inventory/purchasing";
 import { ADJUST_REASON_LABEL, LEDGER_KIND_LABEL, PO_STATUS_LABEL, poNumber } from "@/domain/inventory";
-import { addDays, diffDays, formatDate, formatDateTime } from "@/lib/time";
+import { addDays, diffDays, formatDate, formatDateTime, localStampLabel } from "@/lib/time";
 import { EXCEPTION_LABEL } from "@/domain/morning-dashboard";
 import { morningDoc } from "@/domain/morning-render";
 import { ACCOUNT_STATE_LABEL, PAYMENTS_MODE_LABEL } from "@/domain/connect";
@@ -1575,7 +1575,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           title: "Cash register history",
           subtitle: "Every open, paid in, paid out, no-sale open and close, newest first.",
           columns: [text("When"), text("Event"), money("Amount"), text("Who"), text("Reason or note"), money("Expected"), money("Over / short")],
-          rows: events.map((e) => ({ shopId: e.shopId, cells: [e.at, REGISTER_EVENT_LABEL[e.event], e.amountCents, e.who, e.note, e.expectedCents, e.varianceCents] })),
+          rows: events.map((e) => ({ shopId: e.shopId, cells: [localStampLabel(e.at), REGISTER_EVENT_LABEL[e.event], e.amountCents, e.who, e.note, e.expectedCents, e.varianceCents] })),
           keepShop: loc.shops.length > 1,
           totals: false,
         }),

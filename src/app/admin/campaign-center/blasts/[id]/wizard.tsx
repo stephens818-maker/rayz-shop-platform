@@ -10,12 +10,13 @@ import type { FilterOptions, PanelSees } from "@/domain/client-filters";
 import { AB_METRICS, AB_METRIC_LABEL, FREQS, FREQ_LABEL, HOLDOUT_MAX, abChanges, variantTemplates, type AbMetric, type Freq } from "@/domain/campaign-schedule";
 import { CHANNELS, CHANNEL_LABEL, CLIENT_STAGES, EMPTY_SEGMENT, SAMPLE_VALUES, STAGE_FIELDS, render, stageSegment, templatesProblem, type Channel, type ClientStage, type Segment, type Templates } from "@/domain/marketing";
 import { formatCents } from "@/lib/money";
-import { formatDateTime } from "@/lib/time";
+import { formatDateTime, hhmmLabel } from "@/lib/time";
 import { cancelBlastAction, draftBlastAction, previewBlastAction, saveBlastAction, scheduleBlastAction } from "../../actions";
 import { ChannelPreview } from "../../channel-preview";
 import { ChannelOrder, TemplateFields } from "../../template-fields";
 import { TestSend } from "../../test-send";
 import { WIZARD_STEPS } from "../status";
+import { DateTimeInput } from "@/components/time-input";
 
 export interface WizardBlast {
   id: string;
@@ -402,7 +403,7 @@ export function BlastWizard(p: {
           </Card>
 
           <Card>
-            <CardHeader title="When" subtitle={`No marketing goes out ${p.settings.quietStart}–${p.settings.quietEnd} local time; messages due then wait until it ends.`} />
+            <CardHeader title="When" subtitle={`No marketing goes out ${hhmmLabel(p.settings.quietStart)}–${hhmmLabel(p.settings.quietEnd)} local time; messages due then wait until it ends.`} />
             <div className="grid gap-3 p-4 md:grid-cols-4">
               <Field label="Send">
                 <Select value={when} disabled={!p.maySend && ro} onChange={(e) => setWhen(e.target.value as "now" | "later")}>
@@ -412,7 +413,7 @@ export function BlastWizard(p: {
               </Field>
               {when === "later" && (
                 <Field label="First send (your time)">
-                  <Input type="datetime-local" value={at} onChange={(e) => setAt(e.target.value)} />
+                  <DateTimeInput aria-label="First send" value={at} onChange={setAt} />
                 </Field>
               )}
               <Field label="Repeat" hint={repeating ? "Same weekday (or day of the month) and time as the first send" : undefined}>
@@ -651,7 +652,7 @@ export function BlastWizard(p: {
               <EditLink to={1} go={go} ro={ro} />
               <dt className="text-zinc-500">Limits</dt>
               <dd>
-                {p.settings.capPerWeek}/week, {p.settings.capPerMonth}/month per client; quiet {p.settings.quietStart}–{p.settings.quietEnd}
+                {p.settings.capPerWeek}/week, {p.settings.capPerMonth}/month per client; quiet {hhmmLabel(p.settings.quietStart)}–{hhmmLabel(p.settings.quietEnd)}
               </dd>
               <span />
             </dl>

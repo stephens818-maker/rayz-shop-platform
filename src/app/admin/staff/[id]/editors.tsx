@@ -3,22 +3,20 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { ConflictConfirm } from "@/components/conflict-confirm";
-import { TimeInput } from "@/components/time-input";
+import { ClockInput, TimeInput } from "@/components/time-input";
 import { type PickReason, ReasonPicker, ReasonTag } from "@/components/reason-picker";
 import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, cx } from "@/components/ui";
 import type { ShownReason } from "@/domain/block-reasons";
 import type { BookedConflict } from "@/server/staff-time";
 import { addTimeOffAction, deleteTimeOffAction, offboardStaffAction, saveProfileAction, saveScheduleAction } from "../actions";
+import { compactTimeOfDay } from "@/lib/time-parse";
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const mins = (s: string) => {
   const [h, m] = s.split(":").map(Number);
   return h * 60 + (m || 0);
 };
-const label = (m: number) => {
-  const h = Math.floor(m / 60);
-  return `${h % 12 || 12}${m % 60 ? `:${String(m % 60).padStart(2, "0")}` : ""}${h >= 12 ? "p" : "a"}`;
-};
+const label = (m: number) => compactTimeOfDay(m);
 
 function useRun() {
   const router = useRouter();
@@ -350,8 +348,8 @@ export function TimeOff({
             </label>
             {!allDay && (
               <>
-                <input type="time" step={900} className="w-[92px] rounded px-1 py-1 text-xs ring-1 ring-zinc-300" value={start} onChange={(e) => setStart(e.target.value)} />
-                <input type="time" step={900} className="w-[92px] rounded px-1 py-1 text-xs ring-1 ring-zinc-300" value={end} onChange={(e) => setEnd(e.target.value)} />
+                <ClockInput aria-label="From" className="h-7 w-[92px] text-xs" value={start} onChange={setStart} />
+                <ClockInput aria-label="To" className="h-7 w-[92px] text-xs" value={end} onChange={setEnd} />
               </>
             )}
           </div>

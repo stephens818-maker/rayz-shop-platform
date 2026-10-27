@@ -8,6 +8,7 @@ import { useSettingSync } from "@/components/brand-sync";
 import type { StaffTimeRules } from "@/domain/staff-time";
 import type { AffectedAppointment, RequestView } from "@/server/staff-time";
 import { askRescheduleAction, cancelTimeOffAction, decideTimeOffAction, reassignAction, reassignOptionsAction, saveRulesAction } from "./actions";
+import { formatDateTime } from "@/lib/time";
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -30,7 +31,7 @@ function useRun() {
 }
 
 const when = (iso: string) =>
-  new Date(iso).toLocaleString("en-US", { timeZone: "America/Chicago", weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  formatDateTime(iso, "EEE, MMM d", ", ");
 
 export function AffectedRow({ a }: { a: AffectedAppointment }) {
   const { pending, error, ok, run } = useRun();

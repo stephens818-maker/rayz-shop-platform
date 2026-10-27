@@ -2,6 +2,8 @@
 
 /** Browser client for /api/v1 — the same endpoints the future mobile app will call. */
 
+import { formatTime } from "./time";
+
 const TOKENS_KEY = "rayz.tokens";
 
 export interface Tokens {
@@ -68,7 +70,7 @@ export async function api<T>(path: string, init: RequestInit & { auth?: boolean;
 export const dollars = (c: number) => `$${(c / 100).toFixed(c % 100 === 0 ? 0 : 2)}`;
 
 export function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" });
+  return formatTime(iso);
 }
 export function fmtDay(isoOrDate: string, opts: Intl.DateTimeFormatOptions = { weekday: "short", month: "short", day: "numeric" }) {
   const d = isoOrDate.length === 10 ? new Date(`${isoOrDate}T12:00:00Z`) : new Date(isoOrDate);

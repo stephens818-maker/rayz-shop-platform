@@ -10,6 +10,7 @@ import { audit } from "../../audit";
 import { AppError } from "../../errors";
 import { brandValue, putBrandValue } from "../store";
 import type { SyncAdapter } from "../types";
+import { compactTimeOfDay } from "@/lib/time-parse";
 
 // ───────────────────────────── Location defaults ─────────────────────────────
 
@@ -91,11 +92,7 @@ const HoursRow = z.object({ weekday: z.number().int().min(0).max(6), openMin: z.
 export type HoursValue = z.output<typeof HoursRow>[];
 const sortHours = (rows: HoursValue): HoursValue => [...rows].map((r) => ({ weekday: r.weekday, openMin: r.openMin, closeMin: r.closeMin })).sort((a, b) => a.weekday - b.weekday);
 const DAY = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const clock = (m: number) => {
-  const h = Math.floor(m / 60);
-  const mm = m % 60;
-  return `${((h + 11) % 12) + 1}${mm ? `:${String(mm).padStart(2, "0")}` : ""}${h < 12 || h === 24 ? "a" : "p"}`;
-};
+const clock = (m: number) => compactTimeOfDay(m);
 
 export const hoursAdapter: SyncAdapter<HoursValue, HoursValue> = {
   type: "hours",

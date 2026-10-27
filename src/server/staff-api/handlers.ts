@@ -4,6 +4,7 @@ import { body, json, options, query, route } from "@/server/api";
 import { addDays, todayLocal } from "@/lib/time";
 import { assertShopAccess, can, canAny } from "@/server/auth/staff";
 import { stepUp } from "@/server/auth/sign-in-guard";
+import { loadDisplay } from "@/server/display";
 import { AppError } from "@/server/errors";
 import { answerPayoutCutover, myPayoutCutover } from "@/server/payout-cutover";
 import { answerPayQuestion, askPayQuestion, escalatePayQuestion, myPayQuestions, resolvePayQuestion, teamPayQuestions } from "@/server/pay-questions";
@@ -110,7 +111,10 @@ export const postWiped = signInRoute(async (req) => {
 });
 
 /** GET /config: minimum versions, switches and links, read at launch before sign-in. Not version-gated. */
-export const getConfig = route(async (req) => withCacheRule(req, json(staffAppConfig(req))));
+export const getConfig = route(async (req) => {
+  await loadDisplay();
+  return withCacheRule(req, json(staffAppConfig(req)));
+});
 
 // ───────────────────────────── Me ─────────────────────────────
 

@@ -9,6 +9,7 @@ import { DateTime } from "luxon";
 import { z } from "zod";
 import { formatPhone, normalizePhone } from "@/lib/phone";
 import { googleReviewLink } from "./reviews";
+import { formatTimeOfDay } from "@/lib/time-parse";
 
 export const BRAND_NAME = "Ray'z Barber Shop";
 const E164 = /^\+1[2-9]\d{9}$/;
@@ -325,11 +326,7 @@ export const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thurs
 const SCHEMA_DAYS = WEEKDAY_NAMES.map((d) => `https://schema.org/${d}`);
 
 const hhmm = (min: number) => `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
-const clock = (min: number) => {
-  const h = Math.floor(min / 60) % 24;
-  const m = min % 60;
-  return `${h % 12 === 0 ? 12 : h % 12}${m ? `:${String(m).padStart(2, "0")}` : ""} ${h >= 12 ? "PM" : "AM"}`;
-};
+const clock = (min: number) => formatTimeOfDay(min);
 
 /** Monday first, as clients read a week: "Mon: 9 AM – 7 PM", Sunday "Closed". */
 export function weeklyHours(hours: readonly HoursRow[]) {

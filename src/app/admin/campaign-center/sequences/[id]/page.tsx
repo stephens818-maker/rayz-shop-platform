@@ -6,7 +6,7 @@ import { db } from "@/db";
 import { staff, staffShops } from "@/db/schema";
 import { Suspense } from "react";
 import { PageHeader } from "@/components/ui";
-import { todayLocal } from "@/lib/time";
+import { hhmmLabel, todayLocal } from "@/lib/time";
 import { can, guardPage, openShops } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
 import { couponOptions } from "@/server/marketing/campaigns";
@@ -51,7 +51,7 @@ export default async function SequencePage({ params }: { params: Promise<{ id: s
             <Link href="/admin/campaign-center" className="underline">
               Campaign Center
             </Link>{" "}
-            · Only clients who agreed to marketing, outside quiet hours ({settings.quietStart}–{settings.quietEnd} local) and within the brand&apos;s limits.
+            · Only clients who agreed to marketing, outside quiet hours ({hhmmLabel(settings.quietStart)}–{hhmmLabel(settings.quietEnd)} local) and within the brand&apos;s limits.
           </>
         }
       />

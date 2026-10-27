@@ -12,6 +12,8 @@ import { settingAt } from "@/server/brand-sync/settings";
 import { taxesAdapter } from "@/server/brand-sync/adapters/money";
 import { closureAdapter } from "@/server/brand-sync/adapters/closures";
 import { locationDefaultsBoard } from "@/server/location-defaults";
+import type { ClockFormat } from "@/lib/time";
+import { TimeFormatEditor } from "../settings/display-editors";
 import { HoursEditor } from "../settings/editors";
 import { DefaultsBoard } from "./board";
 import { brandShopSettings } from "@/server/brand-sync/shop-settings";
@@ -22,13 +24,14 @@ export const metadata: Metadata = { title: "Brand defaults" };
 export default async function BrandDefaultsPage() {
   const ctx = await guardPage("/admin/brand-defaults");
   const shopIds = ctx.currentShopId ? [ctx.currentShopId] : openShops(ctx).map((s) => s.id);
-  const [board, roleRows, hours, taxes, receipt, brandName] = await Promise.all([
+  const [board, roleRows, hours, taxes, receipt, brandName, clock] = await Promise.all([
     locationDefaultsBoard(shopIds),
     db.select({ key: roles.key, name: roles.name, scope: roles.defaultScope }).from(roles).orderBy(asc(roles.sortOrder), asc(roles.name)),
     hoursAdapter.brand(db, ["week"]),
     taxesAdapter.brand(db, ["rates"]),
     receiptAdapter.brand(db, ["branding"]),
     settingAt<string>("brand_name"),
+    settingAt<ClockFormat>("display.clock"),
   ]);
   const brandEditor = ctx.brandWide && can(ctx, "settings.brand");
   const closureItems = brandEditor ? await closureAdapter.items(db) : [];
@@ -60,6 +63,7 @@ export default async function BrandDefaultsPage() {
             <BrandTaxEditor initial={taxes.get("rates") ?? { serviceRate: 0, productRate: 0 }} canEdit={ctx.brandWide && can(ctx, "settings.taxes")} />
             <BrandReceiptEditor initial={receipt.get("branding")!} canEdit />
             <BrandNameEditor initial={brandName} />
+            <TimeFormatEditor initial={clock} canEdit />
           </div>
         </div>
       )}

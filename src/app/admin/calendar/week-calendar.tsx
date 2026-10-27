@@ -9,15 +9,11 @@ import { reasonText } from "@/domain/block-reasons";
 import type { CalBlock, WeekCalendarData, WeekDay } from "@/server/calendar";
 import { GroupLinkIcon } from "@/components/group-options";
 import { ViewToggle, blockLabel, blockTitle } from "./day-calendar";
+import { formatTimeOfDay } from "@/lib/time-parse";
 
 const PX = 1.1;
 
-function label(min: number) {
-  const h = Math.floor(min / 60) % 24;
-  const m = min % 60;
-  const ap = h >= 12 ? "PM" : "AM";
-  return m ? `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ap}` : `${h % 12 || 12} ${ap}`;
-}
+const label = (min: number) => formatTimeOfDay(min);
 const shiftDate = (d: string, n: number) => {
   const dt = new Date(`${d}T12:00:00Z`);
   dt.setUTCDate(dt.getUTCDate() + n);

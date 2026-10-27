@@ -20,6 +20,7 @@ import { LocationNotice, ReportFilters, locationProps, optionValues, reportQuery
 import { ReportParams, resolveScope } from "./scope";
 import { SavedViews } from "./saved-views";
 import { cleanViewQuery, listReportViews } from "@/server/report-views-saved";
+import { compactTimeOfDay } from "@/lib/time-parse";
 
 /** Report categories on top (only those with a report this person may open), then every report in the active one's category. Nothing sits behind a "More" menu. */
 export function ReportTabs({ ctx, active }: { ctx: StaffContext; active: ReportKey }) {
@@ -136,8 +137,7 @@ function Heatmap({ title, cells }: { title: string; cells: { dow: number; hour: 
               <th />
               {hours.map((h) => (
                 <th key={h} className="px-1 pb-1 font-normal text-zinc-500">
-                  {h % 12 || 12}
-                  {h < 12 ? "a" : "p"}
+                  {compactTimeOfDay(h * 60)}
                 </th>
               ))}
             </tr>

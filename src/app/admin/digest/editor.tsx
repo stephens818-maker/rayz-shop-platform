@@ -1,11 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select } from "@/components/ui";
+import { Badge, Button, Card, CardHeader, Field, Notice, Select } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { MORNING_SECTIONS, type MorningSettings, SECTION_HINT, SECTION_LABEL, type VersionKind, versionPlans } from "@/domain/morning-dashboard";
 import { sendTestMorningAction } from "./actions";
 import { useSettingSync } from "@/components/brand-sync";
+import { TimeInput } from "@/components/time-input";
 
 export interface MorningPerson {
   id: string;
@@ -22,12 +23,6 @@ export interface MorningPerson {
 type Mode = "role" | "always" | "never";
 
 const KIND_LABEL: Record<VersionKind, string> = { combined: "All locations in one email", per_shop: "One email per shop", both: "Both" };
-
-const toTime = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
-const fromTime = (s: string) => {
-  const [h, m] = s.split(":").map(Number);
-  return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null;
-};
 
 export function MorningEditor({ initial, roles, people, lastSent }: { initial: MorningSettings; roles: { key: string; name: string }[]; people: MorningPerson[]; lastSent: string }) {
   const { pending: running, error, run } = useAction();
@@ -78,16 +73,12 @@ export function MorningEditor({ initial, roles, people, lastSent }: { initial: M
             <input type="checkbox" checked={s.enabled} onChange={(e) => setS({ ...s, enabled: e.target.checked })} /> Send the Morning Dashboard email
           </label>
           <Field label="Send at (Central time)" hint="Any minute from 4:00 to 11:00 AM. If the job is down at that time it catches up until noon, then skips the day.">
-            <Input
-              type="time"
-              step={60}
-              min="04:00"
-              max="11:00"
-              value={toTime(s.sendAtMin)}
-              onChange={(e) => {
-                const m = fromTime(e.target.value);
-                if (m !== null) setS({ ...s, sendAtMin: m });
-              }}
+            <TimeInput
+              aria-label="Send at"
+              step={5}
+              value={s.sendAtMin}
+              className="h-9 w-32 text-sm"
+              onChange={(m) => setS({ ...s, sendAtMin: m })}
             />
           </Field>
           <div className="space-y-2 text-sm">

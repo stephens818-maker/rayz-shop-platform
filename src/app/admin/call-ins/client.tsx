@@ -8,6 +8,8 @@ import { Badge, Button, Card, CardHeader, Field, Input, Notice, Select, Table, T
 import { CALL_IN_KINDS, CALL_IN_KIND_LABEL, CallInKind, OPTION_LABEL, OUTREACH_OPTIONS, OutreachOption, OutreachRules, STATUS_LABEL, STATUS_TONE, isOpen } from "@/domain/outreach";
 import type { OutreachResult, OutreachView } from "@/server/call-ins";
 import { callInFromClockBlockAction, cancelCallInAction, closeOutreachAction, markCallInAction, sendOutreachAction } from "./actions";
+import { formatDateTime, formatTime } from "@/lib/time";
+import { ClockInput } from "@/components/time-input";
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -30,8 +32,8 @@ function useRun() {
 }
 
 const TZ = "America/Chicago";
-const when = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: TZ, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-const timeOnly = (iso: string) => new Date(iso).toLocaleTimeString("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" });
+const when = (iso: string) => formatDateTime(iso, "EEE, MMM d", ", ");
+const timeOnly = (iso: string) => formatTime(iso);
 const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 const mins = (s: string) => {
   const [h, m] = s.split(":").map(Number);
@@ -225,11 +227,11 @@ export function MarkCallIn({
               <Input type="date" min={today} value={from} onChange={(e) => setFrom(e.target.value)} />
             </Field>
             <Field label="From">
-              <Input type="time" step={900} value={start} onChange={(e) => setStart(e.target.value)} />
+              <ClockInput value={start} onChange={setStart} />
             </Field>
             {span === "part" && (
               <Field label="To">
-                <Input type="time" step={900} value={end} onChange={(e) => setEnd(e.target.value)} />
+                <ClockInput value={end} onChange={setEnd} />
               </Field>
             )}
           </div>
@@ -257,10 +259,10 @@ export function OutreachRulesEditor({ rules }: { rules: OutreachRules }) {
           <Input type="number" min={1} max={48} value={retry} onChange={(e) => setRetry(e.target.value)} />
         </Field>
         <Field label="Quiet hours from">
-          <Input type="time" step={900} value={qs} onChange={(e) => setQs(e.target.value)} />
+          <ClockInput value={qs} onChange={setQs} />
         </Field>
         <Field label="Quiet hours until">
-          <Input type="time" step={900} value={qe} onChange={(e) => setQe(e.target.value)} />
+          <ClockInput value={qe} onChange={setQe} />
         </Field>
         <Field label="Rebook links last (hours)">
           <Input type="number" min={1} max={336} value={ttl} onChange={(e) => setTtl(e.target.value)} />

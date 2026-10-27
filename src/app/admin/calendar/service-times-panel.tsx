@@ -2,12 +2,13 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
+import { ClockInput } from "@/components/time-input";
 import { Button, Input, Notice, cx } from "@/components/ui";
 import { FINISHED_VIA_LABEL, FLAG_LABEL, REVIEW_LABEL, formatMinutes, type Stamp, type TimesView } from "@/domain/service-times";
+import { formatTime } from "@/lib/time";
 import { correctServiceTimesAction, finishServiceAction, reviewServiceTimeAction, setStatusAction } from "./actions";
 
 const TZ = "America/Chicago";
-const clock = new Intl.DateTimeFormat("en-US", { timeZone: TZ, hour: "numeric", minute: "2-digit" });
 const hhmm = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 const wall = (s: Stamp | null) => (s ? hhmm.format(new Date(s.at)) : "");
 
@@ -33,7 +34,7 @@ function Line({ label, s, extra }: { label: string; s: Stamp | null; extra?: str
       <dd className="col-span-2">
         {s ? (
           <>
-            <span className="tabular">{clock.format(new Date(s.at))}</span>
+            <span className="tabular">{formatTime(s.at)}</span>
             {s.by && <span className="text-zinc-500"> · {s.by}</span>}
             {extra && <span className="text-zinc-500"> · {extra}</span>}
           </>
@@ -195,7 +196,7 @@ function CorrectForm({ appointmentId, times, onDone }: { appointmentId: string; 
         ).map(([k, label]) => (
           <label key={k} className="block">
             <span className="text-zinc-500">{label}</span>
-            <Input type="time" value={v[k]} onChange={(e) => setV({ ...v, [k]: e.target.value })} className="h-8 text-xs" />
+            <ClockInput allowEmpty placeholder="None" aria-label={label} value={v[k]} onChange={(t) => setV({ ...v, [k]: t })} className="h-8 w-full text-xs" />
           </label>
         ))}
       </div>

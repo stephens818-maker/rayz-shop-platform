@@ -58,6 +58,7 @@ import {
   saveReportAction,
 } from "./actions";
 import type { BuilderOptions } from "./data";
+import { TimeInput } from "@/components/time-input";
 
 export interface SavedMeta {
   id: string;
@@ -94,8 +95,6 @@ const DEFAULT_SCHEDULE = (me: string): ReportSchedule => ({
   format: "csv",
   recipients: [me],
 });
-const clock = (min: number) =>
-  `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
 
 function download(name: string, type: string, base64: string) {
   const bytes = Uint8Array.from(atob(base64), (ch) => ch.charCodeAt(0));
@@ -1271,16 +1270,11 @@ export function ReportBuilder({
                 </Select>
               )}
               <span className="text-zinc-500">at</span>
-              <Input
-                type="time"
+              <TimeInput
                 aria-label="Time"
-                className="w-32"
-                value={clock(schedule.timeMin)}
-                onChange={(e) => {
-                  const [h, m] = e.target.value.split(":").map(Number);
-                  if (Number.isFinite(h) && Number.isFinite(m))
-                    setSchedule({ ...schedule, timeMin: h * 60 + m });
-                }}
+                className="h-9 w-32 text-sm"
+                value={schedule.timeMin}
+                onChange={(m) => setSchedule({ ...schedule, timeMin: m })}
               />
               <span className="text-zinc-500">with</span>
               <Select

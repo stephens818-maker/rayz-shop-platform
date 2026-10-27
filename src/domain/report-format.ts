@@ -1,3 +1,4 @@
+import { formatPayHours } from "@/lib/hours";
 import { formatCents } from "@/lib/money";
 import type { Cell, ColumnKind } from "./report-views";
 
@@ -8,10 +9,11 @@ export function formatCell(v: Cell, kind: ColumnKind | undefined) {
   if (kind === "pct" && typeof v === "number") return `${Math.round(v * 100)}%`;
   if (kind === "hours" && typeof v === "number") return (v / 60).toFixed(1);
   if (kind === "decimal" && typeof v === "number") return v.toFixed(2);
+  if (kind === "pay_hours" && typeof v === "number") return formatPayHours(v);
   if (kind === "minutes" && typeof v === "number") return v.toFixed(1);
   if (kind === "minutes_delta" && typeof v === "number") return `${v > 0.05 ? "+" : v < -0.05 ? "−" : ""}${Math.abs(v).toFixed(1)}`;
   if (kind === "bool") return v ? "Yes" : "";
   return String(v);
 }
 
-export const numericKind = (k?: ColumnKind) => k === "money" || k === "int" || k === "pct" || k === "hours" || k === "decimal" || k === "minutes" || k === "minutes_delta";
+export const numericKind = (k?: ColumnKind) => k === "money" || k === "int" || k === "pct" || k === "hours" || k === "decimal" || k === "pay_hours" || k === "minutes" || k === "minutes_delta";

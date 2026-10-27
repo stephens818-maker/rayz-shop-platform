@@ -7,6 +7,7 @@ import { Button, Field, Input, Notice, Select } from "@/components/ui";
 import { CODE_MODES, CODE_MODE_LABEL, COUPON_TYPES, COUPON_TYPE_LABEL, DAY_NAMES, type CodeMode, type CouponType } from "@/domain/coupons";
 import { saveCouponAction, togglePromoAction } from "./actions";
 import type { CouponFormValues } from "./coupon-input";
+import { ClockInput } from "@/components/time-input";
 
 export function PromoToggle({ id, active }: { id: string; active: boolean }) {
   const router = useRouter();
@@ -200,10 +201,10 @@ export function CouponForm({ initial, editingId, locked, shops, allShops, servic
           />
         </Field>
         <Field label="From" hint="Blank: any time">
-          <Input type="time" value={v.timeFrom ?? ""} onChange={(e) => set({ timeFrom: e.target.value || null, timeTo: e.target.value ? (v.timeTo ?? null) : null })} />
+          <ClockInput allowEmpty aria-label="From" className="w-full" value={v.timeFrom ?? ""} onChange={(t) => set({ timeFrom: t || null, timeTo: t ? (v.timeTo ?? null) : null })} />
         </Field>
         <Field label="Until">
-          <Input type="time" value={v.timeTo ?? ""} disabled={!v.timeFrom} onChange={(e) => set({ timeTo: e.target.value || null })} />
+          <ClockInput allowEmpty aria-label="Until" className="w-full" value={v.timeTo ?? ""} disabled={!v.timeFrom} onChange={(t) => set({ timeTo: t || null })} />
         </Field>
       </div>
       <div className="flex flex-wrap gap-5 text-sm">

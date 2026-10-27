@@ -6,6 +6,7 @@
  * Money is dollars as JavaScript numbers (IEEE doubles, the same arithmetic Excel uses) and each
  * formula runs in the workbook's order, so an unrounded export matches the workbook to the last digit.
  */
+import { formatPayHours, payrollHoursStyle } from "@/lib/hours";
 import type { LocalDate } from "@/lib/time";
 import { DEFAULT_BRAND_CALENDAR, calendarProblem, type PayCalendar } from "./calendar";
 
@@ -777,4 +778,4 @@ export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Ano
 }
 
 export const fmtMoney = (x: number) => `${x < 0 ? "-" : ""}$${Math.abs(x).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-export const fmtHours = (x: number) => `${x.toLocaleString("en-US", { maximumFractionDigits: 2 })}h`;
+export const fmtHours = (x: number) => (payrollHoursStyle() === "hm" ? formatPayHours(x) : `${x.toLocaleString("en-US", { maximumFractionDigits: 2 })}h`);

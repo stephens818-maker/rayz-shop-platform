@@ -11,12 +11,15 @@ import { can, canAny, guardPage } from "@/server/auth/staff";
 import { narrowShops } from "@/server/tenant";
 import { chosenPeriod, ftOverview, recentPeriods, timesheetList } from "@/server/time-clock";
 import { LockPeriod } from "./timesheets";
+import { formatPayHours } from "@/lib/hours";
 
 export const metadata: Metadata = { title: "Timesheets" };
 
 const WINDOWS = [4, 8, 12, 13] as const;
-const hours = (centi: number) => (centi / 100).toFixed(2);
-const fromMin = (min: number) => (min / 60).toFixed(2);
+const hours = (centi: number) => formatPayHours(centi / 100);
+const fromMin = (min: number) => formatPayHours(min / 60);
+const hoursH = (centi: number) => formatPayHours(centi / 100, { unit: true });
+const fromMinH = (min: number) => formatPayHours(min / 60, { unit: true });
 
 export default async function TimesheetsPage({ searchParams }: { searchParams: Promise<{ period?: string; shop?: string; window?: string }> }) {
   const ctx = await guardPage("/admin/timesheets");
@@ -94,7 +97,7 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
 
       <Card>
         <CardHeader
-          title={`${rows.length} timesheet${rows.length === 1 ? "" : "s"} · ${hours(total.worked)} h worked · ${hours(total.ot)} h overtime · ${fromMin(total.sched)} h scheduled`}
+          title={`${rows.length} timesheet${rows.length === 1 ? "" : "s"} · ${hoursH(total.worked)} worked · ${hoursH(total.ot)} overtime · ${fromMinH(total.sched)} scheduled`}
           subtitle={`${formatDate(period.start, "MMM d")} – ${formatDate(period.end, "MMM d, yyyy")}${ended ? "" : ". Still running: lock it after it ends."}`}
         />
         {rows.length ? (
@@ -210,11 +213,11 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
                 .map((r) => (
                   <tr key={r.staffId}>
                     <Td>{label.get(r.staffId)}</Td>
-                    <Td className="text-right tabular-nums">{r.average.toFixed(2)}</Td>
+                    <Td className="text-right tabular-nums">{formatPayHours(r.average)}</Td>
                     <Td>
                       <Badge tone={r.status === "full_time" ? "blue" : "gray"}>{FT_LABEL[r.status]}</Badge>
                     </Td>
-                    <Td className="text-right tabular-nums">{r.weeks.at(-1)?.hours.toFixed(2)}</Td>
+                    <Td className="text-right tabular-nums">{r.weeks.length ? formatPayHours(r.weeks[r.weeks.length - 1].hours) : ""}</Td>
                   </tr>
                 ))}
             </tbody>
@@ -224,7 +227,7 @@ export default async function TimesheetsPage({ searchParams }: { searchParams: P
               <div className="mb-1 text-xs font-medium uppercase tracking-wide text-zinc-500">Recent changes</div>
               {changes.map((c) => (
                 <div key={c.id}>
-                  {label.get(c.staffId)}: {FT_LABEL[c.fromStatus]} to {FT_LABEL[c.toStatus]} for the week of {formatDate(c.weekStart, "MMM d")} ({Number(c.averageHours).toFixed(2)} h over {c.windowWeeks} weeks)
+                  {label.get(c.staffId)}: {FT_LABEL[c.fromStatus]} to {FT_LABEL[c.toStatus]} for the week of {formatDate(c.weekStart, "MMM d")} ({formatPayHours(Number(c.averageHours), { unit: true })} over {c.windowWeeks} weeks)
                 </div>
               ))}
             </div>

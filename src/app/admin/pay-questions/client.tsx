@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { Badge, Button, Field, Notice, Select, Textarea } from "@/components/ui";
 import { PAY_QUESTION_TOPICS, PAY_QUESTION_TOPIC_LABEL } from "@/domain/staff-privacy";
 import { answerPayQuestionAction, askPayQuestionAction, escalatePayQuestionAction, resolvePayQuestionAction } from "./actions";
+import { formatDateTime } from "@/lib/time";
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -39,7 +40,7 @@ export interface QuestionView {
   canAnswer: boolean;
 }
 
-const when = (iso: string) => new Date(iso).toLocaleString("en-US", { timeZone: "America/Chicago", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+const when = (iso: string) => formatDateTime(iso, "MMM d", ", ");
 const KIND_LABEL: Record<string, string> = { asked: "Asked", answered: "Answered", escalated: "Sent to the owners", resolved: "Closed", reminded: "Owners reminded" };
 
 export function AskForm({ shops, periods }: { shops: { id: string; name: string }[]; periods: { start: string; label: string }[] }) {

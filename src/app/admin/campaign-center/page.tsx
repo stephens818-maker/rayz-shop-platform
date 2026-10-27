@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { Card, CardHeader, LinkButton, Notice, PageHeader } from "@/components/ui";
 import { CHANNEL_LABEL } from "@/domain/marketing";
-import { todayLocal } from "@/lib/time";
+import { hhmmLabel, todayLocal } from "@/lib/time";
 import { can, guardPage, openShops } from "@/server/auth/staff";
 import { couponOptions, listAutomations } from "@/server/marketing/campaigns";
 import { centerKpis } from "@/server/marketing/results";
@@ -130,7 +130,7 @@ export default async function CampaignCenterPage() {
       <Card>
         <CardHeader
           title="Automated campaigns"
-          subtitle={`The brand writes each campaign; each location switches it on and can reword it. Checked every 15 minutes. Quiet hours ${settings.quietStart}–${settings.quietEnd}; at most ${settings.capPerWeek} a week and ${settings.capPerMonth} a month per client.`}
+          subtitle={`The brand writes each campaign; each location switches it on and can reword it. Checked every 15 minutes. Quiet hours ${hhmmLabel(settings.quietStart)}–${hhmmLabel(settings.quietEnd)}; at most ${settings.capPerWeek} a week and ${settings.capPerMonth} a month per client.`}
         />
         <ul className="divide-y divide-zinc-100">
           {list.map((a) => (

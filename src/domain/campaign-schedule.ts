@@ -6,6 +6,7 @@
  */
 import { DateTime } from "luxon";
 import { z } from "zod";
+import { formatClock } from "@/lib/time";
 import { TEMPLATE_PART_LABEL, TemplatesSchema, type Templates } from "./marketing";
 
 // ───────────────────────────── Recurring schedules ─────────────────────────────
@@ -75,7 +76,7 @@ export function recurrenceLabel(r: Recurrence | null, timeZone: string): string 
   if (!r) return FREQ_LABEL.once;
   const a = r.anchor ? DateTime.fromISO(r.anchor).setZone(timeZone) : null;
   const on = a ? (r.freq === "monthly" ? ` on the ${a.toFormat("d")}${ordinal(a.day)}` : ` on ${a.toFormat("cccc")}`) : "";
-  const time = a ? ` at ${a.toFormat("h:mm a")}` : "";
+  const time = a ? ` at ${formatClock(a)}` : "";
   return `${FREQ_LABEL[r.freq]}${on}${time}${r.endsOn ? `, until ${DateTime.fromISO(r.endsOn).toFormat("MMM d, yyyy")}` : ""}`;
 }
 const ordinal = (d: number) => (d % 100 >= 11 && d % 100 <= 13 ? "th" : (["th", "st", "nd", "rd"][d % 10] ?? "th"));

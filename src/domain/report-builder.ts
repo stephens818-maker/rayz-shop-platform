@@ -6,7 +6,7 @@
  * fields (src/server/report-builder/engine.ts); nothing in a definition is ever run as SQL.
  */
 import { z } from "zod";
-import { LocalDate, addDays, formatDate, weekdayOf } from "@/lib/time";
+import { addDays, formatDate, LocalDate, localStampLabel, minutesToLabel, weekdayOf } from "@/lib/time";
 import { CATEGORIES, EVENTS } from "./analytics";
 import { filterSees, type PanelSees } from "./client-filters";
 import { BUILTIN_FIELDS, type FieldKey, type Level } from "./client-privacy";
@@ -1649,7 +1649,7 @@ export function cellText(type: FieldType, v: Cell, masked = false): string {
         ? formatDate(v, "MMM d, yyyy")
         : String(v);
     default:
-      return String(v);
+      return typeof v === "string" ? localStampLabel(v) : String(v);
   }
 }
 
@@ -1668,7 +1668,7 @@ export function cellValue(
   if (type === "number" || type === "stars")
     return Math.round(Number(v) * 100) / 100;
   if (type === "int") return Number(v);
-  return String(v);
+  return typeof v === "string" ? localStampLabel(v, "yyyy-MM-dd") : String(v);
 }
 
 /** The header of a total: "Sum of Total spend". */
@@ -1942,11 +1942,7 @@ export function nextSend(
   return today;
 }
 
-const clock = (min: number) => {
-  const h = Math.floor(min / 60);
-  const m = String(min % 60).padStart(2, "0");
-  return `${h % 12 === 0 ? 12 : h % 12}:${m} ${h >= 12 ? "PM" : "AM"}`;
-};
+const clock = (min: number) => minutesToLabel(min);
 const ordinal = (n: number) =>
   `${n}${n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th"}`;
 

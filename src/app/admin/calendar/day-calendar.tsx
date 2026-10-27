@@ -98,6 +98,9 @@ import { ContactClient } from "../customers/privacy";
 import { ServiceTimesBox } from "./service-times-panel";
 import { AppointmentMessages } from "./appointment-messages";
 import { ClientEntryFields, entryPayload, type EntryField, type EntryValues } from "@/components/client-entry-fields";
+import { formatTime } from "@/lib/time";
+import { ClockInput } from "@/components/time-input";
+import { formatTimeOfDay } from "@/lib/time-parse";
 
 const PX = 1.6; // pixels per minute
 const SNAP = 15;
@@ -161,13 +164,7 @@ type Svc = {
 };
 
 const money = (c: number) => `$${(c / 100).toFixed(c % 100 ? 2 : 0)}`;
-function label(min: number) {
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  const ap = h >= 12 ? "PM" : "AM";
-  const hh = h % 12 === 0 ? 12 : h % 12;
-  return m ? `${hh}:${String(m).padStart(2, "0")} ${ap}` : `${hh} ${ap}`;
-}
+const label = (min: number) => formatTimeOfDay(min);
 const hhmm = (min: number) =>
   `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
 const fromHHMM = (s: string) => {
@@ -1596,11 +1593,7 @@ function GroupBox({
 }
 
 function fmtClock(iso: string) {
-  return new Date(iso).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: "America/Chicago",
-  });
+  return formatTime(iso);
 }
 
 function SidePanel({
@@ -2046,18 +2039,10 @@ function ClockBlockPanel({
           <div className="text-sm font-medium">Manager override</div>
           <div className="grid grid-cols-2 gap-2">
             <Field label="From">
-              <Input
-                type="time"
-                value={start}
-                onChange={(e) => setStart(e.target.value)}
-              />
+              <ClockInput className="w-full" value={start} onChange={setStart} />
             </Field>
             <Field label="To">
-              <Input
-                type="time"
-                value={end}
-                onChange={(e) => setEnd(e.target.value)}
-              />
+              <ClockInput className="w-full" value={end} onChange={setEnd} />
             </Field>
           </div>
           <Field label="Why (kept in the audit log)">
@@ -2407,12 +2392,7 @@ function NewPanel({
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <Field label="Start">
-              <Input
-                type="time"
-                step={(squeeze ? 5 : col.intervalMin) * 60}
-                value={time}
-                onChange={(e) => setTime(e.target.value)}
-              />
+              <ClockInput className="w-full" step={squeeze ? 5 : col.intervalMin} value={time} onChange={setTime} />
             </Field>
             <Field label={`Length with ${col.label}`}>
               <div className="flex h-[38px] items-center text-sm text-zinc-600">
@@ -2746,20 +2726,10 @@ function NewPanel({
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <Field label="From">
-              <Input
-                type="time"
-                step={900}
-                value={time}
-                onChange={(e) => setTime(e.target.value)}
-              />
+              <ClockInput className="w-full" value={time} onChange={setTime} />
             </Field>
             <Field label="To">
-              <Input
-                type="time"
-                step={900}
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-              />
+              <ClockInput className="w-full" value={endTime} onChange={setEndTime} />
             </Field>
           </div>
           <ReasonPicker

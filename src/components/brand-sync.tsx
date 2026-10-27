@@ -5,6 +5,8 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { type CellStatus, type FieldChange, type OverrideChoice, SCOPE_HINT, SCOPE_LABEL, STATUS_LABEL, type SyncScope, type SyncType } from "@/domain/brand-sync";
 import type { CommitResult, Preview, PreviewKey } from "@/server/brand-sync/engine";
 import { commitBrandSyncAction, previewBrandSyncAction } from "@/app/admin/sync-status/actions";
+import { formatDateTime, localStampLabel } from "@/lib/time";
+import { DateTimeInput } from "./time-input";
 import { Button, cx } from "./ui";
 
 export interface BrandChange {
@@ -62,10 +64,8 @@ function defaultRunAt() {
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-const whenText = (local: string) => {
-  const d = new Date(local);
-  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-};
+/** A datetime-local value (browser wall time) or a saved instant (ISO with a zone). */
+const whenText = (s: string) => (s.length < 16 ? "" : /(Z|[+-]\d{2}:?\d{2})$/.test(s) ? formatDateTime(s, "EEE, MMM d", ", ") : localStampLabel(s.slice(0, 16), "EEE, MMM d"));
 
 interface ShopLine {
   id: string;
@@ -411,13 +411,7 @@ function BrandSyncDialog({ req, onClose, onDone }: { req: OpenSync & { preview: 
                     ]}
                   />
                   {when === "later" && (
-                    <input
-                      type="datetime-local"
-                      value={runAt}
-                      onChange={(e) => setRunAt(e.target.value)}
-                      aria-label="Run at"
-                      className="h-7 rounded-md border-0 bg-white px-2 text-xs ring-1 ring-inset ring-zinc-300 focus:ring-2 focus:ring-brand-600"
-                    />
+                    <DateTimeInput value={runAt} onChange={setRunAt} aria-label="Run at" className="text-xs" />
                   )}
                 </>
               )}
@@ -456,7 +450,7 @@ function BrandSyncDialog({ req, onClose, onDone }: { req: OpenSync & { preview: 
 
 /** For a brand editor's save bar: what the last sync did. */
 export function syncedText(r: CommitResult) {
-  if (r.status === "scheduled") return `Scheduled for ${new Date(r.runAt!).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
+  if (r.status === "scheduled") return `Scheduled for ${formatDateTime(r.runAt!, "EEE, MMM d", ", ")}`;
   const kept = r.kept ? `; ${r.kept} kept ${r.kept === 1 ? "its" : "their"} own` : "";
   return (r.shops ? `Saved and synced to ${r.shops} shop${r.shops === 1 ? "" : "s"}` : "Saved to the brand") + kept;
 }

@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
+import { DisplaySync } from "@/components/display-sync";
 import { demoMode } from "@/lib/deployment";
+import { loadDisplay } from "@/server/display";
 import "./globals.css";
 
 const inter = localFont({
@@ -17,10 +19,12 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1, themeColor: "#111318" };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const display = await loadDisplay();
   return (
     <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body>
+        <DisplaySync clockFormat={display.clockFormat} payrollHours={display.payrollHours} />
         {demoMode() && (
           <div role="note" className="bg-amber-300 px-4 py-1 text-center text-xs font-medium text-amber-950">
             Demo preview on sample data. Cards aren&apos;t charged, and no texts or emails are sent; see them under Notifications.

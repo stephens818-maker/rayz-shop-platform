@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button, Input, Select, Textarea } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { addTimeEntryAction, deleteTimeEntryAction, importTimeCsvAction } from "../actions";
+import { ClockInput } from "@/components/time-input";
 
 export function AddEntry({ staff, shops, defaultDate }: { staff: { id: string; label: string }[]; shops: { id: string; name: string }[]; defaultDate: string }) {
   const { pending, error, run } = useAction();
@@ -32,8 +33,8 @@ export function AddEntry({ staff, shops, defaultDate }: { staff: { id: string; l
           <option value="pto">PTO</option>
         </Select>
         <Input aria-label="Date" type="date" value={v.date} onChange={set("date")} className="h-9 w-40" />
-        <Input aria-label="Start" type="time" value={v.start} onChange={set("start")} className="h-9 w-28" />
-        <Input aria-label="End" type="time" value={v.end} onChange={set("end")} className="h-9 w-28" />
+        <ClockInput aria-label="Start" value={v.start} onChange={(t) => setV({ ...v, start: t })} className="h-9 w-28" />
+        <ClockInput aria-label="End" value={v.end} onChange={(t) => setV({ ...v, end: t })} className="h-9 w-28" />
         <Input aria-label="Note" placeholder="Note" value={v.note} onChange={set("note")} className="h-9 w-48" />
         <Button size="sm" className="h-9" disabled={pending} onClick={() => run(() => addTimeEntryAction(v))}>
           Add

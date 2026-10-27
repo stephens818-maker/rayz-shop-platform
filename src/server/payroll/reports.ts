@@ -10,6 +10,7 @@ import type { BarChart } from "@/domain/report-charts";
 import { ABSORPTION_LABEL, TIPS_PAID_STATUS_LABEL, employerTaxIdLabel, tipsPaidStatus, type TipsPaidBuckets, type TipsPaidStatus } from "@/domain/staff-payouts";
 import { Cell, Column, ListRow, ViewCtx, listTable } from "@/domain/report-views";
 import { formatCents } from "@/lib/money";
+import { formatPayHours } from "@/lib/hours";
 import { SHOP_TZ, addDays, endOfLocalDay, formatDate, formatDateTime, formatTime, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
 import { AppError } from "@/server/errors";
@@ -60,7 +61,9 @@ const money = (label: string): Column => ({ label, kind: "money" });
 const rate = (label: string): Column => ({ label, kind: "money", sum: false });
 const pct = (label: string): Column => ({ label, kind: "pct", sum: false });
 /** Hours to the hundredth, as iSolved takes them. */
-const hrs = (label: string, sum = true): Column => ({ label, kind: "decimal", sum });
+const hrs = (label: string, sum = true): Column => ({ label, kind: "pay_hours", sum });
+/** The iSolved file's columns: decimal hours, as the file has them. */
+const fileHrs = (label: string): Column => ({ label, kind: "decimal", sum: true });
 const bool = (label: string): Column => ({ label, kind: "bool", sum: false });
 
 const h2 = (x: number) => Math.round(x * 100) / 100;
@@ -273,7 +276,7 @@ export async function payrollSummaryData(i: PayrollReportInput): Promise<ReportD
     bars,
     stats: [
       { label: "Pay periods", value: String(runs.length), hint: runs.length === 1 ? EXPORT_STATUS_LABEL[statusOf(runs[0].view, sends.has(runs[0].key))] : undefined },
-      { label: "Regular hours", value: h2(sumOf(lines, (l) => l.hours)).toFixed(2), hint: `${h2(sumOf(lines, (l) => l.otHours)).toFixed(2)} h overtime` },
+      { label: "Regular hours", value: formatPayHours(h2(sumOf(lines, (l) => l.hours))), hint: `${formatPayHours(h2(sumOf(lines, (l) => l.otHours)), { unit: true })} overtime` },
       { label: "Commission to iSolved", value: formatCents(sumOf(lines, (l) => toCents(l.netComm))), hint: "E_Comm Sales: commission over hourly, plus product commission" },
       { label: "Tips", value: formatCents(sumOf(lines, (l) => toCents(l.tips))), hint: `card ${formatCents(card)} · cash ${formatCents(cash)}` },
       { label: "Already paid via Stripe", value: formatCents(stripe), hint: "reported to iSolved, not paid again" },
@@ -347,7 +350,7 @@ export async function payrollTimesheetsData(i: PayrollReportInput): Promise<Repo
         : [],
     stats: [
       { label: "Shifts", value: String(shifts.length), hint: `${shifts.filter((s) => !s.end).length} still open` },
-      { label: "Hours worked", value: (sumOf(shifts, (s) => s.workedMin) / 60).toFixed(2), hint: `${sumOf(shifts, (s) => s.breaks.length)} breaks, ${(sumOf(shifts, (s) => s.unpaidBreakMin) / 60).toFixed(2)} h unpaid` },
+      { label: "Hours worked", value: formatPayHours(sumOf(shifts, (s) => s.workedMin) / 60), hint: `${sumOf(shifts, (s) => s.breaks.length)} breaks, ${formatPayHours(sumOf(shifts, (s) => s.unpaidBreakMin) / 60, { unit: true })} unpaid` },
       { label: "Edited shifts", value: String(shifts.filter((s) => s.edited).length), hint: `${edits.length} punch changes by a manager` },
       { label: "Waiting on a manager", value: String(waiting), hint: `of ${approvals.length} timesheets with hours` },
     ],
@@ -1125,7 +1128,7 @@ export async function payrollLaborData(i: PayrollReportInput): Promise<ReportDat
             { label: "Labor % of revenue", value: revenue ? `${((all.labor / revenue) * 100).toFixed(1)}%` : "—" },
           ]
         : []),
-      { label: "Revenue per labor hour", value: all.hours ? formatCents(Math.round(revenue / all.hours)) : "—", hint: `${all.hours.toFixed(2)} labor hours` },
+      { label: "Revenue per labor hour", value: all.hours ? formatCents(Math.round(revenue / all.hours)) : "—", hint: `${formatPayHours(all.hours, { unit: "labor hours" })}` },
     ],
     tables: [
       listTable(combined(loc), { id: "shops", title: "By shop", columns, rows: shopRows, merge: true, derive, sort: byText(0) }),
@@ -1213,7 +1216,7 @@ export async function payrollOvertimeData(i: PayrollReportInput): Promise<Report
         ]
       : [],
     stats: [
-      { label: "In overtime", value: String(new Set(list.filter((r) => r.status === "over").map((r) => r.staffId)).size), hint: `${h2(sumOf(list, (r) => r.ot)).toFixed(2)} OT hours` },
+      { label: "In overtime", value: String(new Set(list.filter((r) => r.status === "over").map((r) => r.staffId)).size), hint: `${formatPayHours(h2(sumOf(list, (r) => r.ot)), { unit: "hours" })} OT` },
       { label: "Projected over this week", value: String(list.filter((r) => r.status === "projected").length), hint: "hours so far plus what they're still scheduled" },
       { label: `Within ${OT_NEAR_HOURS} h of ${threshold}`, value: String(list.filter((r) => r.status === "near").length) },
       { label: "Weeks", value: String(new Set(list.map((r) => r.week)).size), hint: `${formatDate(firstWeek, "MMM d")} – ${formatDate(addDays(lastWeek, 6), "MMM d")}` },
@@ -1387,12 +1390,12 @@ export async function payrollIsolvedData(i: PayrollReportInput): Promise<ReportD
           text("Pay period"),
           text("iSolved name"),
           text("Employee key"),
-          hrs("E_Regular_Hours"),
-          hrs("E_Overtime 1.5_Hours"),
+          fileHrs("E_Regular_Hours"),
+          fileHrs("E_Overtime 1.5_Hours"),
           money("E_Cash Tips Recd_Dollars"),
           money("E_Comm Sales_Dollars"),
-          hrs("E_Ray'z Paid Time_Hours"),
-          hrs("E_Training_Hours"),
+          fileHrs("E_Ray'z Paid Time_Hours"),
+          fileHrs("E_Training_Hours"),
           money("Tips in payroll"),
           money("Tips already paid (memo)"),
           money("Paid via Stripe"),
@@ -1693,7 +1696,7 @@ export async function payrollW2CodesData(i: PayrollReportInput): Promise<ReportD
     stats: [
       { label: `Qualified tips (code ${codes.qualifiedTipsCode})`, value: formatCents(tp), hint: `charged ${formatCents(sumOf(list, (a) => a.charged))} · cash ${formatCents(sumOf(list, (a) => a.pos + a.declared))}` },
       { label: "Cash tips declared", value: formatCents(sumOf(list, (a) => a.declared)) },
-      { label: "Overtime hours", value: h2(sumOf(list, (a) => a.ot)).toFixed(2) },
+      { label: "Overtime hours", value: formatPayHours(h2(sumOf(list, (a) => a.ot))) },
       { label: `Overtime premium (code ${codes.overtimeCode})`, value: formatCents(sumOf(list, (a) => a.base)), hint: `at the base rate; ${formatCents(sumOf(list, (a) => a.blended))} at the blended regular rate` },
     ],
     tables: [

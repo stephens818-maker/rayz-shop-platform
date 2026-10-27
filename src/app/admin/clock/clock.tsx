@@ -29,6 +29,7 @@ import {
   setOpensEarlyAction,
   setPinAction,
 } from "./actions";
+import { formatTime } from "@/lib/time";
 
 /** The shared clock closes their congratulations by itself, for the next person in line. */
 const KIOSK_WELCOME_MS = 15_000;
@@ -44,11 +45,7 @@ type Done = {
 };
 
 const time = (d: Date | string) =>
-  new Date(d).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: "America/Chicago",
-  });
+  formatTime(d);
 
 const BUTTON_TONE: Record<
   PunchType,

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Card, CardHeader, Empty, PageHeader } from "@/components/ui";
-import { formatDate } from "@/lib/time";
+import { formatDateTime } from "@/lib/time";
 import { guardPage } from "@/server/auth/staff";
 import { clientPolicy, recordClientAccess } from "@/server/client-privacy";
 import { HELP_REASON_LABEL, helpRequests } from "@/server/identity-help";
@@ -28,7 +28,7 @@ export default async function SignInHelpPage() {
             <Card key={r.id}>
               <CardHeader
                 title={policy.name(r.firstName, r.lastName)}
-                subtitle={`${HELP_REASON_LABEL[r.reason]} · ${formatDate(r.createdAt, "MMM d, h:mm a")}`}
+                subtitle={`${HELP_REASON_LABEL[r.reason]} · ${formatDateTime(r.createdAt, "MMM d", ", ")}`}
               />
               <div className="grid gap-4 p-4 md:grid-cols-2">
                 <div className="space-y-1 text-sm">

@@ -4,18 +4,21 @@ import { and, eq } from "drizzle-orm";
 import { Card, CardHeader, Notice, PageHeader } from "@/components/ui";
 import { db } from "@/db";
 import { payrollProfiles, payrollRates, staff } from "@/db/schema";
-import { guardPage } from "@/server/auth/staff";
+import type { PayrollHoursStyle } from "@/domain/display";
+import { can, guardPage } from "@/server/auth/staff";
+import { settingAt } from "@/server/brand-sync/settings";
 import { TEMPLATE_TABS } from "@/server/payroll/export";
 import { ensurePayGroups, loadSettings } from "@/server/payroll/run";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { payrollEmployerList } from "@/server/payroll/groups";
+import { PayrollHoursEditor } from "../../settings/display-editors";
 import { EmployerRow, EmployerStatesRow, PayGroupRow, ProfileRowForm, SettingsForm } from "./client";
 
 export const metadata: Metadata = { title: "Payroll setup" };
 
 export default async function PayrollSetupPage() {
-  await guardPage("/admin/payroll/setup");
-  const [settings, groups] = await Promise.all([loadSettings(), ensurePayGroups()]);
+  const ctx = await guardPage("/admin/payroll/setup");
+  const [settings, groups, hoursStyle] = await Promise.all([loadSettings(), ensurePayGroups(), settingAt<PayrollHoursStyle>("display.payroll_hours")]);
   const employers = await payrollEmployerList();
   const people = await db
     .select({ id: staff.id, label: staff.displayLabel, p: payrollProfiles })
@@ -37,6 +40,10 @@ export default async function PayrollSetupPage() {
         <div className="px-4 py-3">
           <SettingsForm initial={settings} memoRequired={stripePayoutsOn()} />
         </div>
+      </Card>
+      <Card>
+        <CardHeader title="Payroll hours" subtitle="How hours read on the Payroll Report, timesheets, payroll reports and pay screens. Charles's payroll workbook uses decimal hours. Times of day follow the brand's time format under Brand defaults." />
+        <PayrollHoursEditor initial={hoursStyle} canEdit={ctx.brandWide && can(ctx, "payroll.run")} />
       </Card>
       <Card>
         <CardHeader

@@ -14,11 +14,14 @@ import { chosenPeriod, recentPeriods, timesheetView } from "@/server/time-clock"
 import { declarationRules, myDeclarations } from "@/server/tips/declarations";
 import { DeclarationList, DeclareCashTips } from "../../my-tips/declare";
 import { AddPunch, ApproveOwn, ClearPin, EditPunch, ManagerApprove } from "../timesheets";
+import { formatPayHours } from "@/lib/hours";
 
 export const metadata: Metadata = { title: "Timesheet" };
 
-const hours = (centi: number) => (centi / 100).toFixed(2);
-const fromMin = (min: number) => (min / 60).toFixed(2);
+const hours = (centi: number) => formatPayHours(centi / 100);
+const fromMin = (min: number) => formatPayHours(min / 60);
+const hoursH = (centi: number) => formatPayHours(centi / 100, { unit: true });
+const fromMinH = (min: number) => formatPayHours(min / 60, { unit: true });
 const DAY_MS = 86_400_000;
 
 type Snap = { type: PunchType; at: string; shopId: string; voided: boolean } | null;
@@ -88,10 +91,10 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
               title={s.shop}
               subtitle={
                 <>
-                  {hours(s.totals.workedCenti)} h worked ({hours(s.totals.regularCenti)} regular, {hours(s.totals.otCenti)} overtime) against {fromMin(s.totals.scheduledMin)} h scheduled{running ? `, ${fromMin(dueMin)} h of it through today` : ""} ({diff >= 0 ? "+" : ""}
-                  {hours(diff)}). Breaks {fromMin(s.totals.breakMin)} h, {fromMin(s.totals.unpaidBreakMin)} h unpaid.
-                  {s.totals.ptoCenti > 0 && ` PTO ${hours(s.totals.ptoCenti)} h.`}
-                  {s.totals.trainingCenti > 0 && ` Training ${hours(s.totals.trainingCenti)} h.`}
+                  {hoursH(s.totals.workedCenti)} worked ({hours(s.totals.regularCenti)} regular, {hours(s.totals.otCenti)} overtime) against {fromMinH(s.totals.scheduledMin)} scheduled{running ? `, ${fromMinH(dueMin)} of it through today` : ""} ({diff >= 0 ? "+" : ""}
+                  {hours(diff)}). Breaks {fromMinH(s.totals.breakMin)}, {fromMinH(s.totals.unpaidBreakMin)} unpaid.
+                  {s.totals.ptoCenti > 0 && ` PTO ${hoursH(s.totals.ptoCenti)}.`}
+                  {s.totals.trainingCenti > 0 && ` Training ${hoursH(s.totals.trainingCenti)}.`}
                 </>
               }
               action={locked ? <Badge tone="gray">{s.payrollLocked ? "Payroll locked" : "Locked"}</Badge> : undefined}
@@ -182,7 +185,7 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
               <div className="flex flex-wrap gap-4 border-t border-zinc-100 px-4 py-2 text-xs text-zinc-600">
                 {s.weeks.map((w) => (
                   <span key={w.weekStart}>
-                    Week of {formatDate(w.weekStart, "MMM d")}: {hours(w.workedCenti)} h worked here, {hours(w.otCenti)} h OT, {fromMin(w.scheduledMin)} h scheduled
+                    Week of {formatDate(w.weekStart, "MMM d")}: {hoursH(w.workedCenti)} worked here, {hoursH(w.otCenti)} OT, {fromMinH(w.scheduledMin)} scheduled
                   </span>
                 ))}
               </div>
