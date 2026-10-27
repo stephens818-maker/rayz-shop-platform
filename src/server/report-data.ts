@@ -80,6 +80,8 @@ import {
   payrollFullTimeData,
   payrollIsolvedData,
   payrollTipsPaidData,
+  payrollW2CodesData,
+  payrollFicaTipCreditData,
   payrollLaborData,
   payrollOvertimeData,
   payrollSummaryData,
@@ -841,6 +843,14 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async payroll_tips_paid({ scope, loc, viewer }) {
     return payrollTipsPaidData({ scope, loc, perms: viewer.permissions });
+  },
+
+  async payroll_w2_codes({ scope, loc, viewer }) {
+    return payrollW2CodesData({ scope, loc, perms: viewer.permissions });
+  },
+
+  async payroll_fica_tip_credit({ scope, loc, viewer }) {
+    return payrollFicaTipCreditData({ scope, loc, perms: viewer.permissions });
   },
 
   async payroll_isolved({ scope, loc, viewer }) {

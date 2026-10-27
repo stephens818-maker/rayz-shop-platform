@@ -1,7 +1,7 @@
 import { and, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { db } from "@/db";
-import { payrollEmployers, payrollExportSends, payrollProfiles, staff, timeEntries, tipAbsorptions, tipLedger, tipPayouts, type PayrollSendShop } from "@/db/schema";
+import { payGroups, payrollEmployers, payrollExportSends, payrollProfiles, staff, timeEntries, tipAbsorptions, tipLedger, tipPayouts, type PayrollSendShop } from "@/db/schema";
 import { EXPORT_COLUMNS, extraFromOf, toCents, type ExtraFrom, type Line } from "@/domain/payroll/calc";
 import { FLAG_LABEL, FT_LABEL, PUNCH_LABEL, csv, type PunchType } from "@/domain/time-clock";
 import type { Permission } from "@/domain/permissions";
@@ -148,8 +148,8 @@ function paidDirect(view: PayrollView) {
 }
 
 const hourlyPay = (l: Line) => toCents(l.hourlyTotal) + toCents(l.otPay) + toCents(l.trainingPay);
-/** Gross wages the iSolved file stands for: labor cost (hourly, OT, training, commission, top-ups) and every tip. */
-const toIsolved = (l: Line) => toCents(l.laborCost) + toCents(l.tips);
+/** Gross wages the iSolved file stands for: labor cost (hourly, OT, training, commission, top-ups) and every tip, declared cash tips included. */
+const toIsolved = (l: Line) => toCents(l.laborCost) + toCents(l.tips) + toCents(l.declaredCashTips ?? 0);
 
 // ───────────────────────────── Payroll summary ─────────────────────────────
 
@@ -191,6 +191,7 @@ export async function payrollSummaryData(i: PayrollReportInput): Promise<ReportD
           tips,
           toCents(l.tipsInPayroll),
           stripe,
+          toCents(l.declaredCashTips ?? 0),
           ...(rates ? [toIsolved(l)] : []),
         ],
       });
@@ -214,6 +215,7 @@ export async function payrollSummaryData(i: PayrollReportInput): Promise<ReportD
           sumOf(mine, (l) => toCents(l.netComm)),
           sumOf(mine, (l) => toCents(l.tips)),
           sumOf(mine, (l) => paid.get(`${l.staffId}|${l.shopId}`)?.stripe ?? 0),
+          sumOf(mine, (l) => toCents(l.declaredCashTips ?? 0)),
           ...(rates ? [sumOf(mine, toIsolved)] : []),
         ],
       });
@@ -244,6 +246,7 @@ export async function payrollSummaryData(i: PayrollReportInput): Promise<ReportD
     money("Tips"),
     money("Tips in payroll"),
     money("Tips already paid via Stripe"),
+    money("Cash tips declared"),
     ...(rates ? [money("Total to iSolved")] : []),
   ];
   const parts = rates ? ["Hourly, OT and training pay", "Commission", "Tips"] : ["Commission", "Tips"];
@@ -289,6 +292,7 @@ export async function payrollSummaryData(i: PayrollReportInput): Promise<ReportD
           money("Commission to iSolved"),
           money("Tips"),
           money("Tips already paid via Stripe"),
+          money("Cash tips declared"),
           ...(rates ? [money("Total to iSolved")] : []),
         ],
         rows: periodRows.reverse(),
@@ -298,7 +302,7 @@ export async function payrollSummaryData(i: PayrollReportInput): Promise<ReportD
     notes: [
       ...periodNotes(runs, capped),
       "iSolved is the payroll company and the system of record: it computes the paychecks, taxes and overtime at the blended rate. Hours come from the time clock (worked time, unpaid breaks out); regular hours are worked hours less overtime past 40 in a workweek across shops.",
-      "Cash tips include gift card tips. Tip adjustments are manager adjustments and overrides on the Payroll Report. Tips already paid (cash, or direct to their bank via Stripe) are reported to iSolved as tips received, so they're taxed but not paid again.",
+      "Cash tips include gift card tips. Cash tips declared are cash employees were handed and declared (never rung up): they go to iSolved under their own earning code and aren't paid again. Tip adjustments are manager adjustments and overrides on the Payroll Report. Tips already paid (cash, or direct to their bank via Stripe) are reported to iSolved as tips received, so they're taxed but not paid again.",
       ...(rates
         ? ["Total to iSolved is the gross wages the file stands for: hourly pay, overtime at 1.5× the base rate, training pay, commission, any guaranteed-minimum top-up, and every tip. Paid time off goes to iSolved as hours."]
         : ['Hourly rates, hourly pay and the total show only with "See pay rates and labor cost".']),
@@ -1479,4 +1483,243 @@ export async function undoIsolvedSent(start: LocalDate, end: LocalDate, actor: A
     .returning({ id: payrollExportSends.id, sentAt: payrollExportSends.sentAt });
   if (!gone.length) throw bad("This pay period isn't marked sent.");
   await audit(actor, "payroll.isolved_unsent", "payroll_period", `${start}_${end}`, { periodStart: start, periodEnd: end, sentAt: gone[0].sentAt.toISOString(), reason: why.slice(0, 300) });
+}
+
+// ───────────────────────────── W-2 tip and overtime codes (SB-C7) ─────────────────────────────
+
+/** Each shop's employer (one FEIN), from its pay group. */
+async function employersOf(shopIds: readonly string[]) {
+  const rows = shopIds.length
+    ? await db
+        .select({ shopId: payGroups.shopId, legalEntity: payGroups.legalEntity, employer: payrollEmployers.legalName, taxIdLast4: payrollEmployers.taxIdLast4 })
+        .from(payGroups)
+        .leftJoin(payrollEmployers, eq(payrollEmployers.id, payGroups.employerId))
+        .where(inArray(payGroups.shopId, [...shopIds]))
+    : [];
+  const by = new Map(rows.map((r) => [r.shopId, { name: r.employer ?? r.legalEntity ?? NO_EMPLOYER, taxId: employerTaxIdLabel(r.taxIdLast4 ?? null) }]));
+  return (shopId: string) => by.get(shopId) ?? { name: NO_EMPLOYER, taxId: employerTaxIdLabel(null) };
+}
+
+/** Straight-time pay for the FLSA regular rate: hourly for every hour worked, commission, training and any top-up; never tips. */
+const straightTimeCents = (l: Line) => toCents(l.laborCost) - toCents(l.otPay) + toCents(l.wage * l.otHours);
+const workedHours = (l: Line) => l.hours + l.otHours + l.trainingHours;
+
+/**
+ * The 2026 W-2 fields for "no tax on tips" and "no tax on overtime", per employer and employee over
+ * the pay periods picked (a year to date for the W-2): qualified tips for box 12 code TP (tips rung up
+ * plus declared cash tips, charged and cash apart) with the employee's tipped occupation code, and the
+ * overtime premium for code TT (the half of time-and-a-half), by FLSA workweek. iSolved files the W-2;
+ * the CPA confirms the codes, the occupation list and the regular-rate method before year end.
+ */
+export async function payrollW2CodesData(i: PayrollReportInput): Promise<ReportData> {
+  const { scope, loc } = i;
+  const rates = !!i.perms?.has("payroll.rates");
+  const [{ runs, capped }, presets] = await Promise.all([runsIn(scope), payPeriodPresets(undefined, scope.shopIds)]);
+  const settings = runs[0]?.view.settings ?? (await loadSettings());
+  const codes = settings.tipTax;
+  const employer = await employersOf([...new Set(runs.flatMap((r) => r.blocks.map((b) => b.shopId)))]);
+  const ids = [...new Set(runs.flatMap((r) => r.lines.map((l) => l.staffId)))];
+  const occupation = new Map((ids.length ? await db.select({ id: payrollProfiles.staffId, code: payrollProfiles.tippedOccupationCode }).from(payrollProfiles).where(inArray(payrollProfiles.staffId, ids)) : []).map((p) => [p.id, p.code]));
+
+  type Acc = { employer: string; taxId: string; staffId: string; shopId: string; name: string; charged: number; pos: number; declared: number; ot: number; base: number; blended: number; periods: number; locked: number };
+  const people = new Map<string, Acc>();
+  const weekRows: ListRow[] = [];
+  for (const r of runs) {
+    for (const l of r.lines) {
+      const e = employer(l.shopId);
+      const k = `${e.name}|${l.staffId}`;
+      const a = people.get(k) ?? { employer: e.name, taxId: e.taxId, staffId: l.staffId, shopId: l.shopId, name: l.name, charged: 0, pos: 0, declared: 0, ot: 0, base: 0, blended: 0, periods: 0, locked: 0 };
+      a.charged += toCents(l.chargedTips);
+      a.pos += toCents(l.tips) - toCents(l.chargedTips);
+      a.declared += toCents(l.declaredCashTips ?? 0);
+      a.ot += l.otHours;
+      a.base += Math.round(toCents(l.wage) * l.otHours * 0.5);
+      const hours = workedHours(l);
+      a.blended += hours > 0 ? Math.round((straightTimeCents(l) / hours) * l.otHours * 0.5) : 0;
+      a.periods++;
+      if (r.blocks.find((b) => b.shopId === l.shopId)?.locked) a.locked++;
+      people.set(k, a);
+    }
+    for (const l of r.lines) {
+      const shop = r.blocks.find((b) => b.shopId === l.shopId)?.shop;
+      for (const w of r.view.weeks[l.staffId] ?? []) {
+        const ot = h2(sumOf(w.slices.filter((x) => x.inThisRun && x.shop === shop), (x) => x.ot));
+        if (!ot) continue;
+        weekRows.push({
+          shopId: l.shopId,
+          staffId: l.staffId,
+          key: `${r.key}|${l.staffId}|${l.shopId}|${w.weekStart}`,
+          cells: [employer(l.shopId).name, l.name, w.weekStart, h2(w.basis), ot, ...(rates ? [toCents(l.wage)] : []), Math.round(toCents(l.wage) * ot * 0.5)],
+        });
+      }
+    }
+  }
+  const list = [...people.values()].sort((a, b) => a.employer.localeCompare(b.employer) || a.name.localeCompare(b.name));
+  const rowsOut: ListRow[] = list.map((a) => ({
+    shopId: a.shopId,
+    staffId: a.staffId,
+    key: `${a.employer}|${a.staffId}`,
+    cells: [
+      a.employer,
+      a.taxId,
+      a.name,
+      occupation.get(a.staffId) ?? "",
+      a.charged,
+      a.pos + a.declared,
+      a.declared,
+      a.charged + a.pos + a.declared,
+      h2(a.ot),
+      a.base,
+      a.blended,
+      a.locked === a.periods ? "Locked" : `${a.periods - a.locked} of ${a.periods} periods not locked`,
+      [
+        ...(a.charged + a.pos + a.declared && !occupation.get(a.staffId) ? ["No tipped occupation code: set it in Payroll setup"] : []),
+        ...(a.blended > a.base ? ["Commission raises the regular rate: the CPA decides which premium goes in TT"] : []),
+      ].join("; "),
+    ],
+  }));
+  const tp = sumOf(list, (a) => a.charged + a.pos + a.declared);
+  return {
+    presets,
+    stats: [
+      { label: `Qualified tips (code ${codes.qualifiedTipsCode})`, value: formatCents(tp), hint: `charged ${formatCents(sumOf(list, (a) => a.charged))} · cash ${formatCents(sumOf(list, (a) => a.pos + a.declared))}` },
+      { label: "Cash tips declared", value: formatCents(sumOf(list, (a) => a.declared)) },
+      { label: "Overtime hours", value: h2(sumOf(list, (a) => a.ot)).toFixed(2) },
+      { label: `Overtime premium (code ${codes.overtimeCode})`, value: formatCents(sumOf(list, (a) => a.base)), hint: `at the base rate; ${formatCents(sumOf(list, (a) => a.blended))} at the blended regular rate` },
+    ],
+    tables: [
+      listTable(combined(loc), {
+        id: "employees",
+        title: "By employer and employee",
+        columns: [
+          text("Employer"),
+          text("FEIN"),
+          text("Employee"),
+          text("Tipped occupation code"),
+          money(`Charged tips (${codes.qualifiedTipsCode})`),
+          money(`Cash tips (${codes.qualifiedTipsCode})`),
+          money("Of which declared"),
+          money(`Qualified tips, box 12 ${codes.qualifiedTipsCode}`),
+          hrs("Overtime hours"),
+          money(`OT premium at base rate, box 12 ${codes.overtimeCode}`),
+          money("OT premium at blended regular rate"),
+          text("Periods"),
+          text("Check"),
+        ],
+        rows: rowsOut,
+        sort: byText(0),
+      }),
+      listTable(combined(loc), {
+        id: "workweeks",
+        title: "Overtime by FLSA workweek",
+        subtitle: "Sunday to Saturday, across every shop of the same employer; the premium is half the base rate for each overtime hour.",
+        columns: [text("Employer"), text("Employee"), text("Week of"), hrs("Hours toward overtime", false), hrs("Overtime hours"), ...(rates ? [rate("Base rate")] : []), money(`OT premium (${codes.overtimeCode})`)],
+        rows: weekRows,
+        sort: byText(2),
+      }),
+    ],
+    notes: [
+      ...periodNotes(runs, capped),
+      `Qualified tips are every tip that went through payroll or was paid out (card, cash and gift card tips rung up, adjustments) plus cash tips employees declared, never the card surcharge or a service charge. Box 12 code ${codes.qualifiedTipsCode} and the overtime premium code ${codes.overtimeCode} are set in Payroll setup.`,
+      "iSolved files the W-2s. Before year end the CPA and iSolved confirm the codes, each employee's tipped occupation code (Treasury's list), and whether the overtime premium uses the base rate or the blended regular rate (commission raises it). Nothing here changes a paycheck.",
+      ...(rates ? [] : ['Base rates show only with "See pay rates and labor cost".']),
+    ],
+  };
+}
+
+// ───────────────────────────── 45B FICA tip credit (SB-C6) ─────────────────────────────
+
+/**
+ * Tips that count toward the 45B credit for employer FICA on tips, per pay period, employer and
+ * employee: tips (charged, cash rung up and declared) over what it takes to bring cash wages up to the
+ * credit's floor ($5.15 an hour unless the CPA says otherwise), times the employer FICA rate. Only from
+ * the date in Payroll setup. The CPA claims it (Form 8846) and confirms barbering qualifies for the year.
+ */
+export async function payrollFicaTipCreditData(i: PayrollReportInput): Promise<ReportData> {
+  const { scope, loc } = i;
+  const rates = !!i.perms?.has("payroll.rates");
+  const [{ runs, capped }, presets] = await Promise.all([runsIn(scope), payPeriodPresets(undefined, scope.shopIds)]);
+  const settings = runs[0]?.view.settings ?? (await loadSettings());
+  const { creditFrom, creditWageCentsPerHour: floor, ficaRate } = settings.tipTax;
+  const employer = await employersOf([...new Set(runs.flatMap((r) => r.blocks.map((b) => b.shopId)))]);
+  const rowsOut: ListRow[] = [];
+  const byEmployer = new Map<string, { shopId: string; tips: number; creditable: number; credit: number }>();
+  let skipped = 0;
+  for (const r of runs) {
+    if (r.ref.end < creditFrom) {
+      skipped++;
+      continue;
+    }
+    for (const l of r.lines) {
+      const e = employer(l.shopId);
+      const hours = workedHours(l);
+      const wages = toCents(l.laborCost);
+      const charged = toCents(l.chargedTips);
+      const posCash = toCents(l.tips) - charged;
+      const declared = toCents(l.declaredCashTips ?? 0);
+      const tips = charged + posCash + declared;
+      if (!tips && !hours) continue;
+      const shortfall = Math.max(0, Math.round(floor * hours) - wages);
+      const creditable = Math.max(0, tips - shortfall);
+      const credit = Math.round(creditable * ficaRate);
+      rowsOut.push({
+        shopId: l.shopId,
+        staffId: l.staffId,
+        key: `${r.key}|${l.staffId}|${l.shopId}`,
+        cells: [r.label, e.name, e.taxId, l.name, h2(hours), ...(rates ? [wages] : []), charged, posCash, declared, tips, shortfall, creditable, credit, r.blocks.find((b) => b.shopId === l.shopId)?.locked ? "Locked" : "Draft"],
+      });
+      const t = byEmployer.get(e.name) ?? { shopId: l.shopId, tips: 0, creditable: 0, credit: 0 };
+      t.tips += tips;
+      t.creditable += creditable;
+      t.credit += credit;
+      byEmployer.set(e.name, t);
+    }
+  }
+  const total = { tips: sumOf([...byEmployer.values()], (x) => x.tips), creditable: sumOf([...byEmployer.values()], (x) => x.creditable), credit: sumOf([...byEmployer.values()], (x) => x.credit) };
+  return {
+    presets,
+    stats: [
+      { label: "Tips", value: formatCents(total.tips), hint: "charged, cash rung up and declared" },
+      { label: "Tips that count", value: formatCents(total.creditable), hint: `over ${formatCents(floor)} an hour in cash wages` },
+      { label: "Estimated credit", value: formatCents(total.credit), hint: `${(ficaRate * 100).toFixed(2)}% employer FICA` },
+    ],
+    tables: [
+      listTable(combined(loc), {
+        id: "employees",
+        title: "By pay period and employee",
+        columns: [
+          text("Pay period"),
+          text("Employer"),
+          text("FEIN"),
+          text("Employee"),
+          hrs("Hours worked"),
+          ...(rates ? [money("Cash wages")] : []),
+          money("Charged tips"),
+          money("Cash tips rung up"),
+          money("Cash tips declared"),
+          money("Reported tips"),
+          money("Needed to reach the floor"),
+          money("Tips that count"),
+          money("Estimated credit"),
+          text("Status"),
+        ],
+        rows: rowsOut,
+        sort: byText(0),
+      }),
+      listTable(combined(loc), {
+        id: "employers",
+        title: "By employer",
+        columns: [text("Employer"), money("Reported tips"), money("Tips that count"), money("Estimated credit")],
+        rows: [...byEmployer.entries()].map(([name, t]) => ({ shopId: t.shopId, key: name, cells: [name, t.tips, t.creditable, t.credit] })),
+        sort: byText(0),
+      }),
+    ],
+    notes: [
+      ...periodNotes(runs, capped),
+      ...(skipped ? [`${skipped === 1 ? "A pay period ends" : `${skipped} pay periods end`} before ${formatDate(creditFrom, "MMM d, yyyy")}, when the credit starts in Payroll setup, so ${skipped === 1 ? "it's" : "they're"} left out.`] : []),
+      `Cash wages are hourly, overtime, training and commission pay, never tips. Tips needed to bring them to ${formatCents(floor)} an hour don't count; the rest earn ${(ficaRate * 100).toFixed(2)}% of employer Social Security and Medicare back. The floor, the rate and the start date are set in Payroll setup.`,
+      "An estimate for the CPA, who claims the credit (Form 8846) and confirms the shops qualify for the year and the floor to use. Nothing here changes a paycheck or the iSolved file.",
+      ...(rates ? [] : ['Cash wages show only with "See pay rates and labor cost"; the credit still uses them.']),
+    ],
+  };
 }

@@ -111,6 +111,7 @@ const DEFAULT_PRESET: Partial<Record<ReportKey, string>> = {
   acquisition: "30d",
   ...Object.fromEntries(PAYROLL_REPORTS.map((k) => [k, "pp:last"])),
   payroll_overtime: "pp:current",
+  payroll_w2_codes: "ytd",
 };
 
 /** Without "See every barber's numbers", reports that break down by barber show only the viewer's own. "My sales" always does. */

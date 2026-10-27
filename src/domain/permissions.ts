@@ -777,6 +777,18 @@ export const REPORTS = [
     hint: "Per pay period, employer (FEIN) and employee: tips earned, paid via Stripe, in cash and through payroll, owed, reversed and absorbed by the shop, final only when it adds up to the cent. The CSV for iSolved.",
   },
   {
+    key: "payroll_w2_codes",
+    label: "W-2 tip and overtime codes",
+    href: "/admin/reports/payroll/w2-codes",
+    hint: "Per employer and employee, for the 2026 W-2: qualified tips for box 12 code TP (charged and cash, declared cash tips included) with the tipped occupation code, and the overtime premium for code TT by FLSA workweek. For the CPA and iSolved to confirm.",
+  },
+  {
+    key: "payroll_fica_tip_credit",
+    label: "FICA tip credit (45B)",
+    href: "/admin/reports/payroll/fica-tip-credit",
+    hint: "Per pay period, employer and employee: hours, cash wages, tips charged, cash and declared, the tips over the $5.15 an hour floor that count toward the 45B credit, and the estimated credit. For the CPA.",
+  },
+  {
     key: "payroll_isolved",
     label: "iSolved export preview",
     href: "/admin/reports/payroll/isolved",
@@ -1025,6 +1037,8 @@ export const PAYROLL_REPORTS = [
   "payroll_overtime",
   "payroll_isolved",
   "payroll_tips_paid",
+  "payroll_w2_codes",
+  "payroll_fica_tip_credit",
 ] as const satisfies readonly ReportKey[];
 export const BRAND_PAY_REPORTS: readonly ReportKey[] = ["tips_payroll", "tip_payouts", "commission_payout", ...PAYROLL_REPORTS];
 const LOCATION_REPORTS = ALL_REPORTS.filter((k) => !BRAND_CAMPAIGN_CENTER.has(reportView(k)) && !BRAND_PAY_REPORTS.includes(k));

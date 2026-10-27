@@ -41,6 +41,8 @@ export const REPORT_GROUP: Record<ReportKey, ReportGroupId> = {
   payroll_overtime: "payroll",
   payroll_isolved: "payroll",
   payroll_tips_paid: "payroll",
+  payroll_w2_codes: "payroll",
+  payroll_fica_tip_credit: "payroll",
   tips_payroll: "payroll",
   tip_payouts: "payroll",
   commission_payout: "payroll",
