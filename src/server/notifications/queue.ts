@@ -533,7 +533,7 @@ export async function processDueJobs(
                 : await voice.bridgeCall(job.to, job.subject, { jobId: job.id, callerId: line })
               : job.channel === "push"
                 ? await push.sendPush(job.to, job.subject ?? "Ray'z Barber Shop", job.body, {
-                    data: { kind: job.kind, ...(job.appointmentId ? { appointmentId: job.appointmentId } : {}) },
+                    data: { ...(job.pushData ?? {}), kind: job.kind, ...(job.appointmentId ? { appointmentId: job.appointmentId } : {}) },
                     marketing: MARKETING_SMS.has(job.kind),
                   })
                 : await sendEmailJob(email, job);

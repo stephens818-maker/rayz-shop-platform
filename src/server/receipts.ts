@@ -24,7 +24,7 @@ import {
   tenderLabel,
 } from "@/domain/receipts";
 import { TOKEN_SHAPE, hashToken, newRebookToken } from "@/domain/rebook-token";
-import { reviewRequestEmail, reviewRequestSms } from "@/domain/reviews";
+import { reviewRequestEmail, reviewRequestPush, reviewRequestSms } from "@/domain/reviews";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatCents } from "@/lib/money";
 import { formatPhone, normalizeEmail, normalizePhone } from "@/lib/phone";
@@ -296,7 +296,8 @@ export const APP_MASK = "the Ray'z app";
 /**
  * In the app: the receipt is on the client's receipts list (GET /me/receipts) and, when they turned
  * appointment notifications on, a push to the household's devices says so. A child's receipt goes to
- * the parent who holds the account.
+ * the parent who holds the account. The review follow-up (I4) is a push only, with its own tracked
+ * review link in the push data.
  */
 async function deliverToApp(sale: { id: string; shopId: string; customerId: string | null }, o: DeliverInput, now: Date, tx: DBorTx): Promise<DeliverResult> {
   const [holder] = sale.customerId
@@ -305,17 +306,22 @@ async function deliverToApp(sale: { id: string; shopId: string; customerId: stri
   if (!holder || (o.to && o.to !== holder.id)) throw new AppError("conflict", "This ticket isn't on an app account");
   const d = await receiptData(sale.id, tx, now);
   const update = o.update ?? null;
-  const body =
-    update?.kind === "void"
+  const review = o.purpose === "review";
+  const token = newRebookToken();
+  const body = review
+    ? reviewRequestPush({ title: d.shop.title, firstName: d.firstName })
+    : update?.kind === "void"
       ? `Ticket #${d.sale.number} was voided and ${formatCents(d.totalCents)} goes back to you.`
       : update?.kind === "refund"
         ? `${formatCents(update.refundedCents)} was refunded on ticket #${d.sale.number}.`
         : `Your receipt: ${formatCents(d.totalCents)}, ticket #${d.sale.number}. Tap to see it.`;
+  const pushData: Record<string, string> = review ? { saleId: sale.id, url: reviewLinkUrl(token) } : { saleId: sale.id };
   const devices = await pushDevices(sale.customerId, tx);
+  if (review && !devices.length) throw new AppError("conflict", "No phone with the app's notifications on");
   const jobs = devices.length
     ? await tx
         .insert(notificationJobs)
-        .values(devices.map((to) => ({ kind: "receipt", channel: "push", to, shopId: sale.shopId, customerId: sale.customerId, subject: d.shop.title, body, runAt: now })))
+        .values(devices.map((to) => ({ kind: review ? "review_request" : "receipt", channel: "push", to, shopId: sale.shopId, customerId: sale.customerId, subject: d.shop.title, body, pushData, runAt: now })))
         .returning({ id: notificationJobs.id })
     : [];
   const [row] = await tx
@@ -328,7 +334,7 @@ async function deliverToApp(sale: { id: string; shopId: string; customerId: stri
       destination: holder.id,
       masked: APP_MASK,
       purpose: o.purpose,
-      tokenHash: hashToken(newRebookToken()),
+      tokenHash: hashToken(token),
       jobId: jobs[0]?.id ?? null,
       sentBy: o.sentBy ?? null,
       createdAt: now,

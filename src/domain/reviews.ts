@@ -134,6 +134,11 @@ export function reviewRequestSms(o: { title: string; firstName: string | null; u
   return `${o.firstName ? `Hi ${o.firstName}, thanks` : "Thanks"} for visiting ${o.title}. We'd appreciate an honest review on Google: ${o.url} Reply STOP to opt out.`;
 }
 
+/** The app push: no link in the text; tapping it opens the review link from the push data. */
+export function reviewRequestPush(o: { title: string; firstName: string | null }): string {
+  return `${o.firstName ? `Hi ${o.firstName}, how` : "How"} was your visit to ${o.title}? We'd appreciate an honest review on Google. Tap to leave one.`;
+}
+
 export function reviewRequestEmail(o: { title: string; firstName: string | null; url: string; receiptUrl: string; footer: string }): { subject: string; body: string } {
   return {
     subject: `Review your visit to ${o.title} on Google`,

@@ -3015,6 +3015,8 @@ export const notificationJobs = pgTable(
     /** Emails only: the HTML version, sent alongside the plain text body. */
     htmlBody: text("html_body"),
     attachments: jsonb("attachments").$type<EmailAttachment[]>(),
+    /** Push only: more strings for the app when it's tapped, beside kind and appointmentId (the review link). */
+    pushData: jsonb("push_data").$type<Record<string, string>>(),
     runAt: ts("run_at").notNull(),
     status: notificationStatus("status").notNull().default("pending"),
     attempts: integer("attempts").notNull().default(0),

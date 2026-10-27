@@ -10,6 +10,7 @@ import { localMinutesOf } from "@/lib/time";
 import { SYSTEM, audit } from "./audit";
 import { settingFor } from "./brand-sync/settings";
 import { contactFor } from "./household-contact";
+import { pushDevices } from "./notifications/queue";
 import { deliverReceipt, isOptedOut } from "./receipts";
 import { reviewTiming } from "./review-rules";
 
@@ -44,7 +45,9 @@ export type ReviewAsk = "queued" | ReceiptSkip | "done";
  * Asks for a review for one paid ticket, once. Who's asked never depends on how the visit went:
  * the only checks are the visit count (from the Nth visit, across all locations), a tap on this
  * location's link lately, the location's "ask again after" days, and consent (agreed to texts or
- * emails, and not opted out). Texts first if the client agreed to texts, otherwise email.
+ * emails, and not opted out). A push to the app first when the client (or the parent who holds their
+ * account) has the app with appointment notifications on (I4); then a text if they agreed to texts,
+ * otherwise email.
  */
 export async function askForReview(saleId: string, repeatDays: number, now: Date, tx: DBorTx, brand?: ReviewRules): Promise<ReviewAsk> {
   const sale = await tx.query.sales.findFirst({ where: eq(sales.id, saleId), columns: { id: true, shopId: true, customerId: true } });
@@ -69,6 +72,11 @@ export async function askForReview(saleId: string, repeatDays: number, now: Date
       columns: { id: true },
     });
     if (recent) return skip("recent");
+  }
+  if ((await pushDevices(sale.customerId, tx)).length) {
+    await deliverReceipt({ saleId, channel: "app", purpose: "review", now }, tx);
+    await audit(SYSTEM, "review.requested", "sale", saleId, { channel: "push" }, sale.shopId, tx);
+    return "queued";
   }
   const c = await contactFor(tx, sale.customerId);
   const options: [ReceiptSendChannel, string | null | undefined, boolean | undefined][] = [
