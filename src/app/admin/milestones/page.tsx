@@ -23,6 +23,7 @@ import {
   milestoneViewer,
   personFor,
   progressFor,
+  shopGoalsFor,
   teamFeed,
   teamOverview,
   trophyCase,
@@ -104,11 +105,12 @@ export default async function MilestonesPage({
     );
   }
   const me = ctx.staff.kind === "person";
-  const [congrats, overview, feed, mine] = await Promise.all([
+  const [congrats, overview, feed, mine, goals] = await Promise.all([
     me ? congratsFor(ctx.staff.id, now, s) : [],
     teamOverview(v, s, now, { recentDays: 14 }),
     teamFeed(v, s, now),
     me ? personFor(v, s, ctx.staff.id) : null,
+    shopGoalsFor(ctx.currentShopId ? [ctx.currentShopId] : ctx.shopIds, s, now),
   ]);
   const mayCelebrate = can(ctx, "campaign_center.create");
   return (
@@ -124,6 +126,7 @@ export default async function MilestonesPage({
         </Notice>
       )}
       {congrats.length > 0 && <Congrats items={congrats} />}
+      {goals.length > 0 && <ShopGoals goals={goals} />}
       {overview.people > 0 && (
         <TeamOverview
           recent={overview.recent}
@@ -181,6 +184,52 @@ export default async function MilestonesPage({
       )}
       {mine && <OwnSections person={mine} settings={s} now={now} />}
     </div>
+  );
+}
+
+function ShopGoals({
+  goals,
+}: {
+  goals: Awaited<ReturnType<typeof shopGoalsFor>>;
+}) {
+  return (
+    <Card data-testid="shop-goals">
+      <CardHeader
+        title="Shop goals"
+        subtitle="The whole shop's count, set by the brand. Everyone at the shop sees it."
+      />
+      <ul className="divide-y divide-zinc-100">
+        {goals.map((g) => (
+          <li key={`${g.id}-${g.shopId}`} className="space-y-1.5 px-4 py-3 text-sm">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <span className="font-medium text-zinc-900">
+                {g.shop}: {g.label}
+              </span>
+              <span className="text-xs text-zinc-500">
+                {g.periodLabel}, {formatDate(g.from, "MMM d")} to {formatDate(g.to, "MMM d")}
+              </span>
+            </div>
+            <div
+              className="h-2 overflow-hidden rounded-full bg-zinc-100"
+              role="progressbar"
+              aria-label={`${g.shop}: ${g.label}`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={g.pct}
+            >
+              <div
+                className={g.reached ? "h-full bg-emerald-500" : "h-full bg-amber-500"}
+                style={{ width: `${g.pct}%` }}
+              />
+            </div>
+            <div className="text-xs text-zinc-600">
+              {g.current.toLocaleString("en-US")} of {g.target.toLocaleString("en-US")} {g.unit}
+              {g.reached ? ". Reached!" : ""}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }
 

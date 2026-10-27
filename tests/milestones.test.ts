@@ -49,6 +49,7 @@ describe("milestone settings", () => {
       welcomeModal: true,
       liveToast: true,
       allLocations: false,
+      goals: [],
     });
   });
 

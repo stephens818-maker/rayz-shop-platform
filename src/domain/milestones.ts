@@ -8,7 +8,7 @@
  */
 import { DateTime } from "luxon";
 import { z } from "zod";
-import { LocalDate, SHOP_TZ, addDays, diffDays, formatDate } from "@/lib/time";
+import { LocalDate, SHOP_TZ, addDays, diffDays, formatDate, weekdayOf } from "@/lib/time";
 
 export const MILESTONE_KINDS = [
   "count",
@@ -171,6 +171,43 @@ export const PACE_DAYS = 28;
 
 // ───────────────────────────── Settings ─────────────────────────────
 
+// ───────────────────────────── ST-I2 Shop goals ─────────────────────────────
+
+/** What a shop goal counts: the shop's totals for the week or month, never money or one barber's numbers. */
+export const GOAL_METRICS = ["services", "new_clients", "rebooks", "products"] as const;
+export type GoalMetric = (typeof GOAL_METRICS)[number];
+export const GOAL_PERIODS = ["week", "month"] as const;
+export type GoalPeriod = (typeof GOAL_PERIODS)[number];
+export const GOAL_PERIOD_LABEL: Record<GoalPeriod, string> = { week: "This week", month: "This month" };
+
+export const ShopGoal = z.object({
+  id: z.string().trim().min(1).max(40),
+  metric: z.enum(GOAL_METRICS),
+  period: z.enum(GOAL_PERIODS),
+  target: z.number().int().min(1, "Set each goal to at least 1").max(1_000_000, "Keep each goal under a million"),
+  /** Empty: every shop. */
+  shopIds: z.array(z.uuid()).max(200).default([]),
+});
+export type ShopGoal = z.output<typeof ShopGoal>;
+
+/** The goals that apply at a shop. */
+export const goalsAt = (goals: readonly ShopGoal[], shopId: string) => goals.filter((g) => !g.shopIds.length || g.shopIds.includes(shopId));
+
+/** A goal's dates: the Sunday-to-Saturday week or the calendar month that today is in. */
+export function goalPeriod(period: GoalPeriod, today: LocalDate): { from: LocalDate; to: LocalDate } {
+  if (period === "week") {
+    const from = addDays(today, -weekdayOf(today));
+    return { from, to: addDays(from, 6) };
+  }
+  const d = DateTime.fromISO(today, { zone: SHOP_TZ });
+  return { from: d.startOf("month").toISODate()!, to: d.endOf("month").toISODate()! };
+}
+
+/** "120 of 400 cuts", whole percent (capped at 100) and whether it's reached. */
+export function goalProgress(target: number, current: number) {
+  return { current, target, pct: Math.min(100, Math.floor((current / target) * 100)), reached: current >= target };
+}
+
 export const MilestoneSettings = z.object({
   enabled: z.boolean().default(true),
   /** Off: no birthdays recorded, asked for or shown. */
@@ -204,6 +241,8 @@ export const MilestoneSettings = z.object({
   liveToast: z.boolean().default(true),
   /** Banners and toasts at every location, not only the shops the person works at. */
   allLocations: z.boolean().default(false),
+  /** ST-I2: shop goals everyone at the shop sees with their milestones. */
+  goals: z.array(ShopGoal).max(20, "Up to 20 shop goals").default([]),
 });
 export type MilestoneSettings = z.output<typeof MilestoneSettings>;
 

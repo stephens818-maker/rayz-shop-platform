@@ -8,6 +8,9 @@ import { useAction } from "@/components/use-action";
 import {
   COUNT_METRICS,
   CUSTOM_KINDS,
+  GOAL_METRICS,
+  GOAL_PERIODS,
+  type ShopGoal,
   KIND_LABEL,
   METRICS,
   type MilestoneKind,
@@ -104,8 +107,10 @@ const ON_THE_DAY: {
 
 export function MilestoneSettingsForm({
   initial,
+  shops,
 }: {
   initial: MilestoneSettings;
+  shops: Option[];
 }) {
   const { pending, msg, save, dialog } = useSyncSave();
   const [s, setS] = useState(initial);
@@ -137,6 +142,12 @@ export function MilestoneSettingsForm({
         </legend>
         {ON_THE_DAY.map(toggle)}
       </fieldset>
+      <ShopGoalsFields
+        goals={s.goals}
+        shops={shops}
+        disabled={!s.enabled}
+        onChange={(goals) => set({ goals })}
+      />
       <Field
         label="Coming up looks ahead"
         hint="Days, on the Milestones page and the Morning Dashboard."
@@ -162,6 +173,128 @@ export function MilestoneSettingsForm({
         {dialog}
       </div>
     </div>
+  );
+}
+
+const newGoalId = () => Math.random().toString(36).slice(2, 10);
+
+/** ST-I2: the shop's count for the week or month, shown with milestones at clock-in and on Milestones. */
+function ShopGoalsFields({
+  goals,
+  shops,
+  disabled,
+  onChange,
+}: {
+  goals: ShopGoal[];
+  shops: Option[];
+  disabled: boolean;
+  onChange: (goals: ShopGoal[]) => void;
+}) {
+  const edit = (i: number, patch: Partial<ShopGoal>) =>
+    onChange(goals.map((g, j) => (j === i ? { ...g, ...patch } : g)));
+  return (
+    <fieldset
+      className="space-y-3 border-t border-zinc-100 pt-3"
+      data-testid="shop-goals"
+      disabled={disabled}
+    >
+      <legend className="pt-3 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        Shop goals
+      </legend>
+      <p className="text-xs text-zinc-500">
+        A count for the whole shop this week (Sunday to Saturday) or month. Everyone at the shop sees
+        the progress with their milestones, in the staff app and here. Shop totals only, never money or
+        one barber&rsquo;s numbers.
+      </p>
+      {goals.map((g, i) => (
+        <div
+          key={g.id}
+          className="space-y-2 rounded-lg bg-zinc-50 p-3 ring-1 ring-inset ring-zinc-200"
+        >
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="Counts">
+              <Select
+                value={g.metric}
+                onChange={(e) => edit(i, { metric: e.target.value as ShopGoal["metric"] })}
+              >
+                {GOAL_METRICS.map((m) => (
+                  <option key={m} value={m}>
+                    {METRICS[m].label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Each">
+              <Select
+                value={g.period}
+                onChange={(e) => edit(i, { period: e.target.value as ShopGoal["period"] })}
+              >
+                {GOAL_PERIODS.map((p) => (
+                  <option key={p} value={p}>
+                    {p === "week" ? "Week" : "Month"}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Goal">
+              <Input
+                type="number"
+                className="w-28"
+                min={1}
+                value={g.target}
+                onChange={(e) => edit(i, { target: Math.round(Number(e.target.value)) })}
+              />
+            </Field>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => onChange(goals.filter((_, j) => j !== i))}
+            >
+              Remove
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+            <label className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={!g.shopIds.length}
+                onChange={(e) => edit(i, { shopIds: e.target.checked ? [] : shops.map((x) => x.id) })}
+              />
+              Every shop
+            </label>
+            {g.shopIds.length > 0 &&
+              shops.map((x) => (
+                <label key={x.id} className="flex items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={g.shopIds.includes(x.id)}
+                    disabled={g.shopIds.length === 1 && g.shopIds[0] === x.id}
+                    onChange={(e) =>
+                      edit(i, {
+                        shopIds: e.target.checked
+                          ? [...g.shopIds, x.id]
+                          : g.shopIds.filter((y) => y !== x.id),
+                      })
+                    }
+                  />
+                  {x.name}
+                </label>
+              ))}
+          </div>
+        </div>
+      ))}
+      {goals.length < 20 && (
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() =>
+            onChange([...goals, { id: newGoalId(), metric: "services", period: "month", target: 400, shopIds: [] }])
+          }
+        >
+          Add a shop goal
+        </Button>
+      )}
+    </fieldset>
   );
 }
 

@@ -453,7 +453,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - **Known gaps, for the app builder's list:**
   - Approved-device sign-in is in (L36, 2026-10-27): see the log entry. The app needs the screen for it.
   - A location block that starts after sign-in turns token requests into 401 "Please sign in again"; signing in again then shows the block message (403, `details.networkBlocked`).
-  - Shop goals (ST-I2): the platform has none, so `/me/milestones` shows personal ones only.
+  - Shop goals (ST-I2) are in (L37, 2026-10-27): `shopGoals` in `GET /me/milestones`; see the log entry.
 
 ## Requests for the other agent
 
@@ -576,7 +576,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
-### 2026-10-27: core, payroll launch items (I8, N7, N9, N6), staff app approved devices, Demo Shop clients and file links that don't prefetch
+### 2026-10-27: core, payroll launch items (I8, N7, N9, N6), staff app approved devices and shop goals, Demo Shop clients and file links that don't prefetch
 - **Migrations `core_0131_payroll_final_pay` and `core_0132_aca_report`.** The next free one is `core_0133`. `core_0131` adds `payroll_final_pays` (approved off-cycle final pay, can't be edited or deleted; the note is scrubbed like every other). `core_0132` gives the ACA hours report to Brand Admin and Bookkeeper.
 - **Preparer isn't approver (I8):** whoever changed a period's figures by hand can't approve it; the Brand Owner may, recorded as self-approved.
 - **Late tips (N7):** a tip paid on a locked period's ticket is paid in the next open period, on the day it came in, in payroll and the tip ledger (`tipPostingDate`). If the app reads payroll tips, use `payrollSalesBetween` and don't group tips by the ticket's date.
@@ -584,6 +584,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - **ACA hours (N6):** Reports → Payroll → ACA hours, hours of service per calendar month and full-time equivalents. Nothing for the app.
 - **Leavers before Stripe setup (L34):** offboarding or making someone inactive lets go of their held Stripe payouts. Open periods' tips go with their last paycheck and their final pay claims them; locked periods' are paid in cash. If the staff app shows "waiting for setup", it empties for someone who's left.
 - **Approved-device sign-in for the staff app (L36), for the Rayz App builder:** where a location's rule takes approved devices, a blocked sign-in is 403 with `details.networkBlocked`, `details.deviceTicket` (15 minutes) and `details.deviceShops` (`[{ id, name }]`). Show "Ask a manager to approve this phone" with those shops; `POST /auth/device/request` `{ ticket, shopId, label? }` returns `{ shop, status: "pending", deviceToken }`. Keep `deviceToken` in secure storage (it lasts 400 days) and send it as `X-Device-Token` on sign-in and every request. `null` means the install already has one. While signed in at a location blocked from where the phone is, send the Bearer token instead of a ticket. `GET /auth/device` (with `X-Device-Token`) shows `pending`, `approved`, `declined` or `revoked` per shop, so the app can say when to try again. Managers approve under **Sign-in security** on the web, as for browsers.
+- **Shop goals (L37, ST-I2), for the Rayz App builder:** `GET /me/milestones` now has `shopGoals`: the brand's goals at the `X-Shop-Id` shop (or all of theirs), each `{ id, shopId, shop, metric, label, unit, period, periodLabel, from, to, current, target, pct, reached }`. Show them with the milestones after clock-in, e.g. "Coralville: 76 of 152 cuts this week" with a bar at `pct`. Shop totals only, never money; an empty list when the brand has set none.
 - **Demo Shop clients out of brand-wide lists (L38):** the admin client list and its export, duplicates, the report builder and Campaign Center audiences now leave out Demo Shop clients, as search already did. If the app lists clients outside search, filter with `realClient` (`src/server/demo-clients.ts`) for everyone but the reviewer.
 - **Links to file routes don't prefetch.** Next.js prefetches a `<Link>` as it scrolls into view, which runs a route handler. On Client data access that ran the CSV export and wrote an export to the audit log on every visit. `tests/file-link-prefetch.test.ts` now requires `prefetch={false}` on any `Link` to a `route.ts`; use a plain `<a>` for downloads.
 

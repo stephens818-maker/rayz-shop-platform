@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, ne } from "drizzle-orm";
 import { db } from "@/db";
-import { services, staff, staffMilestoneBaselines } from "@/db/schema";
+import { services, shops, staff, staffMilestoneBaselines } from "@/db/schema";
 import { Card, CardHeader, PageHeader, Table, Td, Th } from "@/components/ui";
 import { KIND_LABEL, METRICS, MILESTONE_KINDS, type MilestoneMetric, type RuleLike, ruleUnit } from "@/domain/milestones";
 import { formatDate, todayLocal } from "@/lib/time";
@@ -24,12 +24,13 @@ function summary(r: RuleLike, serviceNames: Map<string, string>): string {
 
 export default async function MilestoneSettingsPage() {
   const ctx = await guardPage("/admin/milestones/settings");
-  const [s, rules, serviceRows, team, baselineRows] = await Promise.all([
+  const [s, rules, serviceRows, team, baselineRows, shopRows] = await Promise.all([
     loadMilestoneSettings(),
     loadRules(),
     db.select({ id: services.id, name: services.name }).from(services).where(and(eq(services.active, true), eq(services.kind, "service"))).orderBy(asc(services.name)),
     people(),
     db.select({ b: staffMilestoneBaselines, label: staff.displayLabel }).from(staffMilestoneBaselines).innerJoin(staff, eq(staff.id, staffMilestoneBaselines.staffId)).orderBy(asc(staff.displayLabel), asc(staffMilestoneBaselines.metric)),
+    db.select({ id: shops.id, name: shops.name }).from(shops).where(and(eq(shops.isDemo, false), ne(shops.status, "archived"))).orderBy(asc(shops.name)),
   ]);
   const serviceNames = new Map(serviceRows.map((x) => [x.id, x.name]));
   const noHire = team.filter((p) => !p.hireDate);
@@ -51,7 +52,7 @@ export default async function MilestoneSettingsPage() {
       />
       <Card>
         <CardHeader title="Settings" />
-        <MilestoneSettingsForm initial={s} />
+        <MilestoneSettingsForm initial={s} shops={shopRows} />
       </Card>
       <Card>
         <CardHeader

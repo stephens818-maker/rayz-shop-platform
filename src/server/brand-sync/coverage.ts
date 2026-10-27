@@ -134,6 +134,7 @@ export const TABLES: Record<string, Coverage> = {
   payroll_approvals: LOG,
   payroll_commission_adjustments: is("record", "Commission for a locked pay period, paid in a later one for one barber"),
   payroll_export_sends: LOG,
+  payroll_final_pays: REC,
   payroll_locked_ot: REC,
   payroll_overrides: is("record", "A value typed over the computed one for one barber and pay period"),
   payroll_profiles: is("person", "One person's payroll identity"),

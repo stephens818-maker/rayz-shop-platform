@@ -877,7 +877,7 @@ From the builder's `staff-api-gaps.md` and `staff-app-plan.md`. Every route goes
 - [x] ST-I9 per-employee Stripe Express accounts with Stripe-hosted onboarding from the staff app (Charles's decision, 2026-10-27), with the rest of sections 35 and 36: standard and instant payouts, payout webhooks, the onboarding tracker, bulk invites with reminders, and tips held until onboarding is done. On by default.
 
 **Still open:**
-- [ ] Shop goals (ST-I2): the platform has no shop goals, so the app shows personal milestones only.
+- [x] L37: shop goals (ST-I2). The brand sets them under Setup → Staff milestones (counts only, week or month, every shop or some); `GET /me/milestones` returns `shopGoals` and the web Milestones page shows them. Shop totals only, never money.
 - [ ] Tap to Pay (`FEATURE_STAFF_TAP_TO_PAY`) needs Apple's entitlement and a Terminal location per shop, when Charles says go.
 
 ## 38. W-2 safeguards for tips paid straight to employees

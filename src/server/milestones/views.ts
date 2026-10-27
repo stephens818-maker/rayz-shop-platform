@@ -19,6 +19,7 @@ import {
 import {
   CONGRATS_DAYS,
   FEED_DAYS,
+  GOAL_PERIOD_LABEL,
   type MilestoneKind,
   type MilestoneMetric,
   type MilestoneSettings,
@@ -27,6 +28,9 @@ import {
   SHAREABLE,
   type StreakMetric,
   anniversaryDate,
+  goalPeriod,
+  goalProgress,
+  goalsAt,
   clientPhrase,
   recordedSentence,
   recordedTitle,
@@ -58,6 +62,7 @@ import {
   loadMilestoneSettings,
   loadRules,
   people,
+  shopTotals,
   streakEvents,
   upcomingFor,
 } from "./engine";
@@ -240,6 +245,38 @@ export async function progressFor(p: Person, now: Date) {
         ? { years: nextYears, on: anniversaryDate(p.hireDate, nextYears) }
         : null,
   };
+}
+
+/**
+ * ST-I2: the brand's shop goals at these shops, with each shop's progress this week or month. Shop
+ * totals only, so everyone at the shop sees them; no one barber's numbers and never money.
+ */
+export async function shopGoalsFor(shopIds: readonly string[], s: MilestoneSettings, now: Date) {
+  if (!s.enabled || !s.goals.length || !shopIds.length) return [];
+  const names = new Map((await db.select({ id: shops.id, name: shops.name }).from(shops).where(inArray(shops.id, [...shopIds]))).map((r) => [r.id, r.name]));
+  const today = todayLocal(now);
+  const out = [];
+  for (const g of s.goals) {
+    const at = [...names.keys()].filter((id) => goalsAt([g], id).length);
+    if (!at.length) continue;
+    const { from, to } = goalPeriod(g.period, today);
+    const totals = await shopTotals(g.metric, at, from, to, now);
+    for (const shopId of at)
+      out.push({
+        id: g.id,
+        shopId,
+        shop: names.get(shopId)!,
+        metric: g.metric,
+        label: METRICS[g.metric].label,
+        unit: METRICS[g.metric].unit ?? "",
+        period: g.period,
+        periodLabel: GOAL_PERIOD_LABEL[g.period],
+        from,
+        to,
+        ...goalProgress(g.target, totals.get(shopId) ?? 0),
+      });
+  }
+  return out.sort((a, b) => a.shop.localeCompare(b.shop) || (a.period === b.period ? 0 : a.period === "week" ? -1 : 1));
 }
 
 /** New milestones to congratulate them on in their portal, until they dismiss them. */

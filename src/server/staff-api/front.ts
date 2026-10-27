@@ -18,7 +18,7 @@ import { customerAccess, textingDeclined } from "@/server/customers";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { stockLevels } from "@/server/inventory/stock";
 import { loadMilestoneSettings } from "@/server/milestones/engine";
-import { congratsFor, milestoneViewer, personFor, progressFor, todayMilestones, trophyCase } from "@/server/milestones/views";
+import { congratsFor, milestoneViewer, personFor, progressFor, shopGoalsFor, todayMilestones, trophyCase } from "@/server/milestones/views";
 import { enqueueRaw } from "@/server/notifications/queue";
 import { computeCardFee } from "@/server/payments/card-fee";
 import { ensureTerminalLocation } from "@/server/payments/connect";
@@ -109,12 +109,13 @@ export async function myMilestones(ctx: StaffAppContext, now = new Date()) {
   if (!s.enabled) return { enabled: false as const };
   const me = await personFor(await milestoneViewer(ctx), s, ctx.staff.id);
   if (!me) return { enabled: false as const };
-  const [trophies, progress, congrats, rebook, today] = await Promise.all([
+  const [trophies, progress, congrats, rebook, today, shopGoals] = await Promise.all([
     trophyCase(ctx.staff.id),
     progressFor(me, now),
     congratsFor(ctx.staff.id, now, s),
     can(ctx, reportView("rebook_rate")) ? myRebook(ctx.staff.id, ctx.shopIds, todayLocal(now), now) : null,
     can(ctx, "reports.all_staff") ? todayMilestones(ctx, ctx.shopIds, now) : null,
+    shopGoalsFor(ctx.currentShopId ? [ctx.currentShopId] : ctx.shopIds, s, now),
   ]);
   return {
     enabled: true as const,
@@ -123,6 +124,7 @@ export async function myMilestones(ctx: StaffAppContext, now = new Date()) {
     congrats,
     rebook: rebook ? { rates: rebook.rates, brand: rebook.brand, second: rebook.second, brandSecond: rebook.brandSecond } : null,
     team: today ? today.team : null,
+    shopGoals,
   };
 }
 

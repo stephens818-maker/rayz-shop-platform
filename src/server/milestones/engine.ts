@@ -17,6 +17,7 @@ import {
   type BestMetric,
   COUNT_METRICS,
   type CountMetric,
+  type GoalMetric,
   MIN_REBOOK_VISITS,
   type MilestoneKind,
   type MilestoneSettings,
@@ -299,6 +300,16 @@ export async function countTotals(
     }
   }
   return out;
+}
+
+/** ST-I2: each shop's total for a goal's metric between two days (inclusive), counted as the milestones count it. */
+export async function shopTotals(metric: GoalMetric, shopIds: readonly string[], from: LocalDate, to: LocalDate, now: Date): Promise<Map<string, number>> {
+  if (!shopIds.length) return new Map();
+  const got = await rows<{ shop_id: string; n: number }>(sql`
+    select ev.shop_id, coalesce(sum(ev.w), 0)::int n from (${eventsSql(metric, [], now)}) ev
+    where ev.shop_id in ${uuids([...shopIds])} and ev.day_ between ${from}::date and ${to}::date
+    group by 1`);
+  return new Map(got.map((g) => [g.shop_id, Number(g.n)]));
 }
 
 /** The day and shop of each person's Nth counted row. */

@@ -297,4 +297,49 @@ describe("staff milestones", () => {
     await engine.runMilestones(new Date(), { send: false, staffIds: [p.id] });
     expect(await milestone("lindsay", "5-year work anniversary")).toMatchObject({ achievedOn: "2024-06-01", silent: true });
   });
+
+  it("shows the brand's shop goals to everyone at the shop: the shop's count this week or month, in the staff app and on Milestones (ST-I2)", async () => {
+    const { goalPeriod } = await import("@/domain/milestones");
+    const week = goalPeriod("week", today);
+    expect(m.time.weekdayOf(week.from)).toBe(0);
+    const [{ n }] = await m.db.db
+      .select({ n: m.drizzle.sql<number>`count(*)::int` })
+      .from(m.schema.appointments)
+      .where(
+        m.drizzle.and(
+          eq(m.schema.appointments.shopId, shop.coralville),
+          eq(m.schema.appointments.status, "completed"),
+          m.drizzle.sql`${m.schema.appointments.startsAt} <= now() and (${m.schema.appointments.startsAt} at time zone 'America/Chicago')::date between ${week.from}::date and ${week.to}::date`,
+        ),
+      );
+    const target = Math.max(n, 1) * 2;
+    await setSettings({
+      goals: [
+        { id: "cuts-week", metric: "services", period: "week", target, shopIds: [] },
+        { id: "moline-products", metric: "products", period: "month", target: 50, shopIds: [shop.moline] },
+      ],
+    });
+    expect((await settings()).goals).toHaveLength(2);
+    await expect(setSettings({ goals: [{ id: "x", metric: "services", period: "week", target: 0, shopIds: [] }] })).rejects.toThrow(/at least 1/);
+
+    const { staffApp } = await import("./staff-app");
+    const api = await staffApp();
+    const t = await api.login("makenna@rayz.test");
+    const r = await api.call("GET", "me/milestones", { token: t.accessToken, shop: shop.coralville });
+    expect(r.status, r.text).toBe(200);
+    expect(r.json.shopGoals).toEqual([
+      { id: "cuts-week", shopId: shop.coralville, shop: "Coralville", metric: "services", label: "Cuts and services", unit: "cuts", period: "week", periodLabel: "This week", from: week.from, to: week.to, current: n, target, pct: Math.floor((n / target) * 100), reached: false },
+    ]);
+    const moline = await api.call("GET", "me/milestones", { token: (await api.login("manager.moline@rayz.test")).accessToken, shop: shop.moline });
+    expect(moline.json.shopGoals.map((g: { id: string; shop: string }) => `${g.id} ${g.shop}`).sort()).toEqual(["cuts-week Moline", "moline-products Moline"]);
+
+    await ctxOf("makenna");
+    const page = await open("/admin/milestones");
+    expect(page.text).toContain("Shop goals");
+    expect(page.text).toContain(`${n.toLocaleString("en-US")} of ${target.toLocaleString("en-US")} cuts`);
+    expect(page.text).not.toContain("Moline : Products sold");
+
+    await setSettings({ goals: [] });
+    expect((await api.call("GET", "me/milestones", { token: t.accessToken, shop: shop.coralville })).json.shopGoals).toEqual([]);
+  });
 });
