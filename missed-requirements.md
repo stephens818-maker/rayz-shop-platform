@@ -621,6 +621,10 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [x] Date presets (or custom dates, or all time) and location and barber pickers, groups included.
 - [x] **Sales** source, one row per paid ticket (refunded ones too): ticket, status, tenders, new or returning, imported, paid at, business day, weekday, hour, month, location, barber, client number, and the measures tickets, services, products, net sales (after refunds), discounts, tax, gift card sales, tips, card fee, total, refunded and items. Tickets link to the ticket.
 - [x] **Appointments** source, one row per appointment: status, how it was booked, services, new or returning, any barber, family booking, cancel reason, start, day, weekday, hour, month, booked on, location, barber, client number, and the measures appointments, completed, no-shows, cancellations, booked minutes, lead days and estimate.
+- [x] **Staff** source, one row per barber and location: role, active, main location, hire date, and over the dates appointments, completed, no-shows, cancellations, clients served, new clients, booked hours, clocked and overtime hours (as on the Labor report), utilization, service and product sales (as payroll counts them), sales per clocked hour, tickets, tips and rebooked at checkout. Needs **Barber performance**; hours, utilization and sales per hour also need **Labor hours and cost**.
+- [x] **Inventory** source, one row per product and location: product, SKU, brand, category, sold here, on hand, reorder point, par, low stock, price, value at cost and retail, and over the dates received, sold, returned, transferred in and out, back bar, shrink and its cost, sell-through and product sales, as on the stock movement and sell-through reports. Needs **Inventory valuation**.
+- [x] **Tips** source, one row per tip entry (a barber's share of a tip, a tip given back, an adjustment): left by, ticket, payout status and method, paid out on, reason, day, location, barber, amount and card fee share. Needs **Tip payouts**.
+- [x] **Campaigns** source, one row per Campaign Center message sent: campaign, kind, channel, A/B wording, sent at, location, barber, client number, delivered, opened, clicked, bookings, revenue, coupons used, cost, unsubscribes and already booked, credited as on the Campaign Center report. Needs **Campaign Center**.
 - [x] Dollar amounts on sales and appointments need **See dollar amounts in reports**, and each person's tips need **Tips and payroll export** (an event log tip shows no amount without it). A barber without **See every barber's numbers** gets only their own tickets and appointments.
 
 **2. Saving and sharing:**
@@ -641,7 +645,6 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [x] Tests: `tests/report-builder.test.ts` and `tests/db/report-builder.test.ts`.
 
 **Still open:**
-- [ ] Staff, inventory, tips and campaigns sources: listed as coming next; each needs its fields and their SQL. Customers, event log, sales and appointments are done.
 - [ ] Scheduled emails need the email provider's key set (Resend and Postmark are built).
 
 ## 26. Rayz Assistant
@@ -669,7 +672,7 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 
 **Still open:**
 - [ ] Zero data retention has to be agreed with OpenAI or Anthropic for the brand's organization; the app can't turn it on.
-- [ ] The tools cover the existing reports, the customer source and the event log. The report builder now has sales and appointments sources, but the assistant doesn't have a tool for them yet, so ticket-level and appointment-level questions outside a report still go unanswered.
+- [ ] The tools cover the existing reports, the customer source and the event log. The report builder's sales, appointments, staff, inventory, tips and campaigns sources don't have an assistant tool yet, so row-level questions about them outside a report still go unanswered.
 - [ ] Answers aren't streamed; the panel waits for the whole reply.
 
 ## 27. Shop login parity with Squire, tighter
