@@ -3,6 +3,7 @@ import type { Permission } from "@/domain/permissions";
 import { route } from "@/server/api";
 import { StaffContext, assertShopAccess, authorizeContext } from "@/server/auth/staff";
 import { STAFF_CACHE_HEADER, cacheRuleFor } from "@/domain/staff-device-policy";
+import { DEMO_BLOCKED_MESSAGE, demoBlocked } from "@/server/demo-shop";
 import { AppError, forbidden } from "@/server/errors";
 import { requireStaffApp } from "./auth";
 import { assertSupportedStaffClient } from "./config";
@@ -59,6 +60,7 @@ export async function guardedStaff(req: Request, guard: Guard): Promise<StaffApp
   assertShopHeader(req, ctx);
   authorizeContext(ctx, guard.perms ?? [], guard.message);
   if (guard.person && ctx.staff.kind !== "person") throw new AppError("forbidden", "A shop login can't do that. Sign in to the app as yourself.");
+  if (ctx.staff.demo && demoBlocked(req.method, new URL(req.url).pathname)) throw new AppError("forbidden", DEMO_BLOCKED_MESSAGE, { reason: "demo_shop" });
   return ctx;
 }
 

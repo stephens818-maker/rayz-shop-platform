@@ -34,7 +34,8 @@ export async function checkPassword(email: string, password: string, where: { ip
   await rateLimit(`staff_${where.via}_login_ip`, where.ip, LOGIN_PER_IP, windowMs, TOO_MANY_SIGN_INS);
   await rateCheck(emailBucket, clean || null, LOGIN_PER_EMAIL, windowMs, TOO_MANY_SIGN_INS);
   const row = clean ? await db.query.staff.findFirst({ where: and(eq(staff.email, clean), eq(staff.active, true), isNull(staff.removedAt)) }) : undefined;
-  if (!row?.passwordHash) {
+  // The Demo Shop's app review login (ST-I19) is for the staff app only.
+  if (!row?.passwordHash || (row.isDemo && where.via !== "app")) {
     await bcrypt.compare(password, await dummy());
     await rateRecord(emailBucket, clean || null);
     throw new AppError("unauthorized", INCORRECT);

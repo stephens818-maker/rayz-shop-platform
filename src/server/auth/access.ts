@@ -116,12 +116,12 @@ export async function accessFor(s: typeof staff.$inferSelect, role: Role, tx: DB
   const cols = { id: shops.id, name: shops.name, slug: shops.slug, address: shops.address, city: shops.city, status: shops.status, ownerEntityId: shops.ownerEntityId };
   const shopRows: (StaffAccess["shops"][number] & { roleId: string | null; ownerEntityId: string | null })[] =
     scope === "all"
-      ? (await tx.select(cols).from(shops).orderBy(asc(shops.name))).map((r) => ({ ...r, roleId: null }))
+      ? (await tx.select(cols).from(shops).where(eq(shops.isDemo, false)).orderBy(asc(shops.name))).map((r) => ({ ...r, roleId: null }))
       : await tx
           .select({ ...cols, roleId: staffAccessShops.roleId })
           .from(staffAccessShops)
           .innerJoin(shops, eq(shops.id, staffAccessShops.shopId))
-          .where(eq(staffAccessShops.staffId, s.id))
+          .where(and(eq(staffAccessShops.staffId, s.id), eq(shops.isDemo, s.isDemo === true)))
           .orderBy(asc(shops.name));
   const otherIds = [...new Set(shopRows.map((r) => r.roleId).filter((id): id is string => !!id && id !== role.id))];
   const others = new Map((otherIds.length ? await tx.select().from(roles).where(inArray(roles.id, otherIds)) : []).map((r) => [r.id, r]));

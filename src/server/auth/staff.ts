@@ -26,7 +26,7 @@ import { signToken, verifyToken } from "./tokens";
 export { SESSION_COOKIE, SHOP_COOKIE };
 
 export interface StaffContext {
-  staff: { id: string; firstName: string; displayLabel: string; roleId: string; roleKey: string | null; roleName: string; kind: "person" | "shop" };
+  staff: { id: string; firstName: string; displayLabel: string; roleId: string; roleKey: string | null; roleName: string; kind: "person" | "shop"; demo?: boolean };
   actor: Actor;
   access: StaffAccess;
   /** Row-level scope: shops this user may read and write right now. */
@@ -129,7 +129,7 @@ export async function staffContextOf(staffId: string, iat: number | undefined, w
   const role = (currentShopId && assigned.byShop.get(currentShopId)?.role) || row.r;
 
   return {
-    staff: { id: me.id, firstName: me.firstName, displayLabel: me.displayLabel, roleId: role.id, roleKey: role.key, roleName: role.name, kind: me.kind },
+    staff: { id: me.id, firstName: me.firstName, displayLabel: me.displayLabel, roleId: role.id, roleKey: role.key, roleName: role.name, kind: me.kind, demo: me.isDemo },
     actor: { staffId: me.id, label: `${role.name}:${me.displayLabel}` },
     access,
     shopIds: access.shopIds,

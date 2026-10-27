@@ -194,6 +194,8 @@ export const shops = pgTable("shops", {
   closedNote: text("closed_note"),
   wentLiveAt: ts("went_live_at"),
   archivedAt: ts("archived_at"),
+  /** ST-I19: the Demo Shop for Apple and Google app review. Left out of brand-wide access, so no report, payroll or admin list sees it. */
+  isDemo: boolean("is_demo").notNull().default(false),
   /** Online booking switch for a live shop. Clients can book only when the shop is live and this is on. */
   bookingEnabled: boolean("booking_enabled").notNull().default(true),
   /** platform: clients book here. external: online booking here is off and the website and app send clients to externalBookingUrl (the old booking site while shops move over one at a time). */
@@ -472,6 +474,8 @@ export const staff = pgTable("staff", {
   /** Replaces the role's dollar limits for this person, key by key; null is no limit. */
   moneyLimits: jsonb("money_limits").$type<Partial<Record<"discountCents" | "refundCents" | "waiverCents", number | null>>>().notNull().default(sql`'{}'::jsonb`),
   isBookable: boolean("is_bookable").notNull().default(true),
+  /** ST-I19: the app review login. Signs in only while FEATURE_STAFF_REVIEW_LOGIN is on; sees the Demo Shop only; no money moves. */
+  isDemo: boolean("is_demo").notNull().default(false),
   /** This barber's slot interval at every shop; null follows each shop. staff_shops can override it per shop. */
   slotIntervalMinutes: integer("slot_interval_minutes"),
   active: boolean("active").notNull().default(true),

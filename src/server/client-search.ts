@@ -11,6 +11,7 @@ import { can, type StaffContext } from "./auth/staff";
 import { shownBadges } from "./badges";
 import { ClientPolicy, clientPolicy, recordClientAccess } from "./client-privacy";
 import { shopClientsScope, visitedScope } from "./customers";
+import { DEMO_CLIENT_SOURCE } from "./demo-shop";
 import { loyaltyCardValid } from "./loyalty-card";
 import { ratingSummaries } from "./ratings";
 
@@ -187,6 +188,11 @@ export async function findClients(ctx: StaffContext, policy: ClientPolicy, term:
   if (o.ownClientsOf && ranked.length) {
     const ok = new Set((await db.select({ id: customers.id }).from(customers).where(and(inArray(customers.id, ranked.map((r) => r.id)), visitedScope({ staffId: o.ownClientsOf })))).map((r) => r.id));
     ranked = ranked.filter((r) => ok.has(r.id));
+  }
+  // ST-I19: the Demo Shop's reviewer finds only demo clients, and nobody else ever finds them.
+  if (ranked.length) {
+    const demo = new Set((await db.select({ id: customers.id }).from(customers).where(and(inArray(customers.id, ranked.map((r) => r.id)), eq(customers.source, DEMO_CLIENT_SOURCE)))).map((r) => r.id));
+    ranked = ranked.filter((r) => demo.has(r.id) === !!ctx.staff.demo);
   }
   // A matched child's parent comes along even past the limit: the pickers list the family under them.
   ranked = o.ownClientsOf ? ranked.slice(0, limit) : await withGuardians(ranked.slice(0, limit));

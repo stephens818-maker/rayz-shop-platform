@@ -8,10 +8,12 @@
  *   from regular pay. "false" turns the rail off: tips go through payroll (the iSolved export) or cash.
  * - staffTapToPay (ST-I4): Stripe Terminal Tap to Pay in the staff app. Needs Apple's Tap to Pay entitlement and each shop's
  *   Terminal location; until then checkout stays at the front desk.
+ * - staffReviewLogin (ST-I19): the Demo Shop reviewer login for the staff app's App Store and Google Play review.
  */
 export const flags = {
   reviewLogin: () => process.env.FEATURE_REVIEW_LOGIN === "true",
   walletFee: () => process.env.FEATURE_WALLET_FEE === "true",
   staffStripePayouts: () => process.env.FEATURE_STAFF_STRIPE_PAYOUTS !== "false",
   staffTapToPay: () => process.env.FEATURE_STAFF_TAP_TO_PAY === "true",
+  staffReviewLogin: () => process.env.FEATURE_STAFF_REVIEW_LOGIN === "true",
 };

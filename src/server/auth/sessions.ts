@@ -1,7 +1,7 @@
 import "server-only";
 import { and, desc, eq, gt, isNull, ne } from "drizzle-orm";
 import { db } from "@/db";
-import { staffAppTokens, staffWebSessions } from "@/db/schema";
+import { staff, staffAppTokens, staffWebSessions } from "@/db/schema";
 import { STEP_UP_MESSAGE, deviceLabel, stepUpFresh, type StepUpAction } from "@/domain/staff-auth";
 import { AppError } from "@/server/errors";
 import { sha256 } from "./tokens";
@@ -18,6 +18,8 @@ const TOUCH_EVERY_MS = 5 * 60_000;
 export type SessionRef = { kind: "web" | "app"; id: string };
 
 export async function openWebSession(staffId: string, o: { ip: string | null; userAgent: string | null; deviceKey: string | null }, now = new Date()) {
+  const who = await db.query.staff.findFirst({ where: eq(staff.id, staffId), columns: { isDemo: true } });
+  if (who?.isDemo) throw new AppError("unauthorized", "The app review login works in the Ray'z Staff app only.");
   const [row] = await db
     .insert(staffWebSessions)
     .values({

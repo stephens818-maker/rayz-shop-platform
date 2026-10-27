@@ -300,6 +300,7 @@ export const COLUMNS: Record<string, Record<string, Coverage>> = {
     geocodeSource: PROFILE,
     geocodedAt: PROFILE,
     legalEntityId: is("structure", "The legal entity (FEIN) the shop's staff work for, from its pay group"),
+    isDemo: is("structure", "The Demo Shop for app review, never synced"),
     createdAt: WHEN,
   },
   services: {
@@ -461,6 +462,7 @@ export const WRITERS: Record<string, Record<string, string>> = {
   },
   shop_hours: {
     "src/app/admin/settings/actions.ts": "A shop's own week",
+    "src/server/demo-shop.ts": "The Demo Shop for app review (ST-I19), which no brand change reaches",
     "src/server/location-admin.ts": "A new shop starting from the brand's template",
   },
   shop_products: {
@@ -477,6 +479,7 @@ export const WRITERS: Record<string, Record<string, string>> = {
     "src/app/admin/services/actions.ts": "A shop's own price, length and menu, noted as its own",
     "src/server/bulk-edit.ts": "Bulk edit at the shops picked, as a sync where it changes a brand value",
     "src/server/catalog-import.ts": "Which shops offer a service, picked in the upload",
+    "src/server/demo-shop.ts": "The Demo Shop's menu for app review (ST-I19)",
     "src/server/location-admin.ts": "A new shop starting from the brand's menu",
   },
   shops: {
@@ -485,6 +488,7 @@ export const WRITERS: Record<string, Record<string, string>> = {
     "src/app/admin/setup/actions.ts": "Opening, closing and archiving a shop",
     "src/server/clock-codes.ts": "The shop's clock-in code",
     "src/server/cutover.ts": "Squire cutover, shop by shop",
+    "src/server/demo-shop.ts": "Creating the Demo Shop for app review (ST-I19)",
     "src/server/drawer.ts": "A shop's own drawer opening balance, noted as its own",
     "src/server/handoff.ts": "A shop's own customer screen, noted as its own",
     "src/server/inventory/adjust.ts": "A shop's own inventory settings, noted as its own",

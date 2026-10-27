@@ -855,6 +855,13 @@
       "when": 1796595300000,
       "tag": "core_0121_offline_punches",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1796595360000,
+      "tag": "core_0122_demo_shop",
+      "breakpoints": true
     }
   ]
 }

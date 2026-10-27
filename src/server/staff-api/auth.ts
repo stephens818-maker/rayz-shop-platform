@@ -14,6 +14,7 @@ import { checkPassword, noteSignInDevice, signInFactorFor } from "@/server/auth/
 import { StaffContext, staffContextOf } from "@/server/auth/staff";
 import { randomToken, sha256, signToken, verifyToken } from "@/server/auth/tokens";
 import { TwoFactorPrompt, finishTwoFactor, twoFactorPrompt } from "@/server/auth/two-factor";
+import { refreshDemoDay, staffReviewLoginOn } from "@/server/demo-shop";
 import { AppError } from "@/server/errors";
 import { rateLimit } from "@/server/rate-limit";
 
@@ -83,6 +84,7 @@ export type SignInVia = "password" | "code" | "invite";
 /** The first step was right (and the authenticator code, if they have one): held to the location sign-in rules, then a new session. */
 export async function admit(user: typeof staff.$inferSelect, where: Where, install: Install, twoStep: boolean, via: SignInVia = "password"): Promise<StaffTokens> {
   if (!user.active || user.removedAt || (user.kind !== "person" && via !== "password")) throw new AppError("unauthorized", "Email or password is incorrect");
+  if (user.isDemo && (!staffReviewLoginOn() || via !== "password")) throw new AppError("unauthorized", "Email or password is incorrect");
   // Whatever the way in, someone who needs two-step sign-in only gets tokens after their code (ST-C0c).
   if (!twoStep && (await signInFactorFor(user))) throw new AppError("unauthorized", "Two-step sign-in is required. Sign in again.");
   const deviceName = cleanDevice(install.deviceName);
@@ -97,6 +99,7 @@ export async function admit(user: typeof staff.$inferSelect, where: Where, insta
   const tokens = await issue(user.id, { deviceName, deviceId });
   await noteSignInDevice(user, "app", { deviceKey: deviceId, label: deviceName ?? deviceLabel(where.userAgent), ip: where.ip });
   await db.update(staff).set({ lastSignInAt: new Date() }).where(eq(staff.id, user.id));
+  if (user.isDemo) await refreshDemoDay();
   await audit(
     { staffId: user.id, label: `${access.role.name}:${user.displayLabel}` },
     "staff.login",

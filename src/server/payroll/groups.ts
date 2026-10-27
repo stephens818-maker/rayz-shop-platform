@@ -33,9 +33,9 @@ export interface PayGroup {
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
 
-/** Every open shop gets a pay group the first time payroll looks: labelled after the shop, on the brand's calendar. */
+/** Every open shop gets a pay group the first time payroll looks: labelled after the shop, on the brand's calendar. Never the Demo Shop (ST-I19). */
 export async function ensurePayGroups(): Promise<PayGroup[]> {
-  const list = await db.select({ id: shops.id, name: shops.name, pg: payGroups.id }).from(shops).leftJoin(payGroups, eq(payGroups.shopId, shops.id)).where(eq(shops.active, true));
+  const list = await db.select({ id: shops.id, name: shops.name, pg: payGroups.id }).from(shops).leftJoin(payGroups, eq(payGroups.shopId, shops.id)).where(and(eq(shops.active, true), eq(shops.isDemo, false)));
   const missing = list.filter((s) => !s.pg);
   if (missing.length) {
     const cal = await brandCalendar();
@@ -57,7 +57,7 @@ export async function ensurePayGroups(): Promise<PayGroup[]> {
       )
       .onConflictDoNothing();
   }
-  const rows = await db.select({ g: payGroups, shop: shops.name, state: shops.state }).from(payGroups).innerJoin(shops, eq(shops.id, payGroups.shopId)).where(eq(shops.active, true)).orderBy(shops.name);
+  const rows = await db.select({ g: payGroups, shop: shops.name, state: shops.state }).from(payGroups).innerJoin(shops, eq(shops.id, payGroups.shopId)).where(and(eq(shops.active, true), eq(shops.isDemo, false))).orderBy(shops.name);
   return rows.map(({ g, shop, state }) => ({
     id: g.id,
     shopId: g.shopId,
