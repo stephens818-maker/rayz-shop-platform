@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, payGroups, payrollApprovals, payrollEmployers, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, sales as salesTable, staff, timeEntries, timePunches, type PayrollApprovalTotals } from "@/db/schema";
+import { auditLog, payGroups, payrollApprovals, payrollCommissionAdjustments, payrollEmployers, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, sales as salesTable, staff, timeEntries, timePunches, type PayrollApprovalTotals } from "@/db/schema";
 import { calendarProblem, periodOf, periodStarting, periodsAround, sameCalendar, workweeksOf, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
 import {
   OVERRIDABLE,
@@ -12,11 +12,14 @@ import {
   fmtMoney,
   ftStatus,
   locationSummary,
+  regularRateAdjustments,
+  retroOtPremiumFor,
   toCents,
   reconcile,
   totalsOf,
   type Anomaly,
   type FtStatus,
+  type LateCommission,
   type Line,
   type LineInput,
   type Mismatch,
@@ -34,7 +37,7 @@ import { AppError } from "@/server/errors";
 import { notSquireEra } from "@/server/squire-era";
 import { guaranteeTopUps, exportExtras } from "@/domain/compensation";
 import { loadCompensationSettings, payrollPlans, setupRates } from "@/server/compensation";
-import { payrollSalesBetween, unassignedSalesBetween } from "@/server/reports";
+import { payrollSalesBetween, unassignedSalesBetween, type PayrollSalesRow } from "@/server/reports";
 import { declaredTipsBetween } from "@/server/tips/declarations";
 import { lockPayrollTips, payrollTipSplit } from "@/server/tips/payouts";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
@@ -155,7 +158,7 @@ interface Snapshot {
  * guaranteed minimums, nobody had a top-up; before declarations and post-payout refunds, none of either.
  */
 function upgradeBlock(b: ShopBlock): ShopBlock {
-  type Cols = { tips: number; cardTipsOutside?: number; salesTax?: number; tipsInPayroll?: number; tipsOutside?: number; tipsPaidOut?: number; guaranteeTopUp?: number; declaredCashTips?: number; chargedTips?: number; lateTipRefunds?: number; tipRefundsShopCost?: number };
+  type Cols = { tips: number; otPremiumAdj?: number; cardTipsOutside?: number; salesTax?: number; tipsInPayroll?: number; tipsOutside?: number; tipsPaidOut?: number; guaranteeTopUp?: number; declaredCashTips?: number; chargedTips?: number; lateTipRefunds?: number; tipRefundsShopCost?: number };
   const tipCols = <T extends Cols>(x: T): T => ({
     ...x,
     tipsInPayroll: x.tipsInPayroll ?? 0,
@@ -168,6 +171,7 @@ function upgradeBlock(b: ShopBlock): ShopBlock {
     tipRefundsShopCost: x.tipRefundsShopCost ?? 0,
     cardTipsOutside: x.cardTipsOutside ?? 0,
     salesTax: x.salesTax ?? 0,
+    otPremiumAdj: x.otPremiumAdj ?? 0,
   });
   return { ...b, lines: b.lines.map(tipCols), totals: tipCols(b.totals) };
 }
@@ -269,12 +273,14 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
   const sales = await payrollSalesBetween({ shopIds: [...runShops] }, start, end);
   const salesOf = new Map(sales.map((r) => [`${r.staffId}|${r.shopId}`, r]));
   const overrides = await db.select().from(payrollOverrides).where(and(eq(payrollOverrides.periodStart, start), inArray(payrollOverrides.shopId, [...runShops])));
+  const lateOf = await lateCommissionsFor([...runShops], start, settings);
   const [tipSplit, declared] = await Promise.all([payrollTipSplit([...runShops], start, end), declaredTipsBetween([...runShops], start, end)]);
   const keys = new Set([
     ...hours.keys(),
     ...salesOf.keys(),
     ...declared.keys(),
     ...overrides.map((o) => `${o.staffId}|${o.shopId}`),
+    ...lateOf.keys(),
     ...[...tipSplit.entries()].filter(([, v]) => v.adjustCents || v.absorbedCents || v.inPayrollCents).map(([k]) => k),
   ]);
   const staffIds = [...new Set([...keys].map((k) => k.split("|")[0]))];
@@ -337,8 +343,8 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       ptoHours: settings.ptoSource === "manager" ? 0 : centi(h.pto),
       trainingHours: settings.trainingSource === "manager" ? 0 : centi(h.training),
       ...(h.trainingOverlap && settings.trainingSource !== "manager" ? { trainingOverlapHours: centi(h.trainingOverlap) } : {}),
-      serviceSales: (s?.serviceSalesCents ?? 0) / 100,
-      productSales: (s?.productSalesCents ?? 0) / 100,
+      serviceSales: ((s?.serviceSalesCents ?? 0) + baseExtra(s, "service", settings)) / 100,
+      productSales: ((s?.productSalesCents ?? 0) + baseExtra(s, "product", settings)) / 100,
       tips: tipsCents / 100,
       tipsInPayroll: (split?.inPayrollCents ?? 0) / 100,
       tipsPaidOut: (split?.paidOutCents ?? 0) / 100,
@@ -350,6 +356,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       salesTax: (s?.salesTaxCents ?? 0) / 100,
       zeroHourlyPay: pr?.zeroHourlyPay ?? false,
       ...(plan?.mixed.length ? { mixedRates: plan.mixed } : {}),
+      ...(lateOf.has(k) ? { lateCommissions: lateOf.get(k) } : {}),
       overrides: Object.keys(ov).length ? ov : undefined,
     };
     inputsByShop.set(shopId, [...(inputsByShop.get(shopId) ?? []), input]);
@@ -362,6 +369,11 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
     const topUps = guaranteeTopUps(probe, (id) => plans.guaranteeOf(id));
     for (const list of inputsByShop.values()) for (const i of list) if (topUps.has(`${i.staffId}|${i.shopId}`)) i.guaranteeTopUp = topUps.get(`${i.staffId}|${i.shopId}`);
   }
+  const rr = regularRateAdjustments(
+    [...inputsByShop.values()].flat().map((i) => computeLine(i, settings)),
+    settings,
+  );
+  for (const list of inputsByShop.values()) for (const i of list) if (rr.has(`${i.staffId}|${i.shopId}`)) i.otRegularRateAdj = rr.get(`${i.staffId}|${i.shopId}`);
   const order = (a: LineInput, b: LineInput) =>
     (profile.get(a.staffId)?.exportPosition ?? 1e9) - (profile.get(b.staffId)?.exportPosition ?? 1e9) || a.name.localeCompare(b.name);
 
@@ -456,6 +468,40 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       waiting: [...new Set(hoursCheck.waiting.filter((w) => w.shopId === u.shopId).map((w) => w.label))],
     })),
   };
+}
+
+/** I10: the card surcharge and loyalty rewards in the commission base, when the brand counts them. */
+function baseExtra(s: PayrollSalesRow | undefined, kind: "service" | "product", settings: PayrollSettings): number {
+  if (!s) return 0;
+  const fee = settings.commissionBase.cardFee === "include" ? (kind === "service" ? s.cardFeeServiceCents : s.cardFeeProductCents) : 0;
+  const loyalty = settings.commissionBase.loyalty === "shop_absorbs" ? (kind === "service" ? s.loyaltyServiceCents : s.loyaltyProductCents) : 0;
+  return (fee ?? 0) + (loyalty ?? 0);
+}
+
+/** Late commissions paid in the period starting `start`, by `${staffId}|${shopId}`, each with the half-time it adds to its locked period's overtime there. */
+async function lateCommissionsFor(shopIds: string[], start: LocalDate, settings: PayrollSettings): Promise<Map<string, LateCommission[]>> {
+  const out = new Map<string, LateCommission[]>();
+  if (!shopIds.length) return out;
+  const rows = await db
+    .select()
+    .from(payrollCommissionAdjustments)
+    .where(and(eq(payrollCommissionAdjustments.periodStart, start), inArray(payrollCommissionAdjustments.shopId, shopIds)))
+    .orderBy(asc(payrollCommissionAdjustments.createdAt));
+  if (!rows.length) return out;
+  const groups = await ensurePayGroups();
+  const locked = await db
+    .select({ payGroupId: payrollRuns.payGroupId, periodStart: payrollRuns.periodStart, snapshot: payrollRuns.snapshot })
+    .from(payrollRuns)
+    .where(inArray(payrollRuns.periodStart, [...new Set(rows.map((r) => r.earnedStart))]));
+  for (const r of rows) {
+    const g = groups.find((x) => x.shopId === r.shopId);
+    const run = locked.find((x) => x.payGroupId === g?.id && x.periodStart === r.earnedStart);
+    const line = run ? ((run.snapshot as Snapshot).block.lines.find((l) => l.staffId === r.staffId) ?? null) : null;
+    const amount = r.amountCents / 100;
+    const k = `${r.staffId}|${r.shopId}`;
+    out.set(k, [...(out.get(k) ?? []), { id: r.id, earnedStart: r.earnedStart, earnedEnd: r.earnedEnd, amount, reason: r.reason, retroOtPremium: retroOtPremiumFor(amount, line, settings) }]);
+  }
+  return out;
 }
 
 const PAID_SALE = ["paid", "partially_refunded", "refunded"] as const;
@@ -1115,6 +1161,41 @@ export async function setOverride(shopId: string, periodStart: LocalDate, staffI
     .values({ shopId, periodStart, staffId, field, value, reason: reason.trim(), createdBy: actor.staffId ?? null })
     .onConflictDoUpdate({ target: [payrollOverrides.shopId, payrollOverrides.periodStart, payrollOverrides.staffId, payrollOverrides.field], set: { value, reason: reason.trim(), createdBy: actor.staffId ?? null } });
   await audit(actor, "payroll.override", "staff", staffId, { field, value, reason: reason.trim(), periodStart }, shopId);
+  return null;
+}
+
+/**
+ * I2: commission owed for a locked pay period, paid in the open one starting periodStart. Adds pay
+ * only. The locked period keeps its file; the half-time the commission adds to its overtime is
+ * worked out from its locked figures.
+ */
+export async function addLateCommission(
+  v: { shopId: string; periodStart: LocalDate; staffId: string; earnedStart: LocalDate; amount: number; reason: string },
+  actor: Actor,
+): Promise<string | null> {
+  const g = (await ensurePayGroups()).find((x) => x.shopId === v.shopId);
+  if (!g || !periodStarting(g.calendar, v.periodStart)) return "Pick a pay period of that shop.";
+  if (await isLockedOn(v.shopId, v.periodStart)) return "This pay period is locked.";
+  const earned = periodStarting(g.calendar, v.earnedStart);
+  if (!earned || earned.end >= v.periodStart) return "Pick an earlier pay period the commission was earned in.";
+  if (!(await isLockedOn(v.shopId, v.earnedStart))) return "That pay period isn't locked yet: fix its sales or type over its figures there instead.";
+  const cents = Math.round(v.amount * 100);
+  if (!Number.isFinite(v.amount) || cents <= 0 || cents > 10_000_000) return "Enter the commission owed, more than $0.";
+  if (!v.reason.trim()) return "Say what the commission is for.";
+  const [row] = await db
+    .insert(payrollCommissionAdjustments)
+    .values({ shopId: v.shopId, periodStart: v.periodStart, staffId: v.staffId, earnedStart: earned.start, earnedEnd: earned.end, amountCents: cents, reason: v.reason.trim().slice(0, 300), createdBy: actor.staffId ?? null })
+    .returning({ id: payrollCommissionAdjustments.id });
+  await audit(actor, "payroll.late_commission", "staff", v.staffId, { id: row.id, periodStart: v.periodStart, earnedStart: earned.start, amountCents: cents, reason: v.reason.trim() }, v.shopId);
+  return null;
+}
+
+export async function removeLateCommission(id: string, actor: Actor): Promise<string | null> {
+  const [r] = await db.select().from(payrollCommissionAdjustments).where(eq(payrollCommissionAdjustments.id, id));
+  if (!r) return "That adjustment is gone.";
+  if (await isLockedOn(r.shopId, r.periodStart)) return "This pay period is locked.";
+  await db.delete(payrollCommissionAdjustments).where(eq(payrollCommissionAdjustments.id, id));
+  await audit(actor, "payroll.late_commission_remove", "staff", r.staffId, { id, periodStart: r.periodStart, amountCents: r.amountCents }, r.shopId);
   return null;
 }
 

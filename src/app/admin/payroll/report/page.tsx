@@ -6,9 +6,9 @@ import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, fmtHours, f
 import { formatDate, formatDateTime } from "@/lib/time";
 import { reportView } from "@/domain/permissions";
 import { can, guardPage } from "@/server/auth/staff";
-import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, hoursOpenMessage, payrollTrail, periodChoices, periodKey, RECORD_LABEL, type ApprovalStatus, type ApprovalView, type BlockView, type PayrollView } from "@/server/payroll/run";
+import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, hoursOpenMessage, payrollTrail, periodChoices, periodKey, RECORD_LABEL, type ApprovalStatus, type PeriodChoice, type ApprovalView, type BlockView, type PayrollView } from "@/server/payroll/run";
 import { ApprovalControls } from "./approval";
-import { OverrideForm } from "./client";
+import { LateCommissionForm, OverrideForm } from "./client";
 import { ApprovalNotice, PayrollTrailCard } from "./flow";
 
 export const metadata: Metadata = { title: "Payroll report" };
@@ -145,7 +145,15 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
       {!view ? (
         <Notice>No shop has a pay period with those dates.</Notice>
       ) : (
-        <Report view={view} canRun={canRun} canFiles={canRun || can(ctx, "payroll.export")} approval={approval} status={status} trail={trail} />
+        <Report
+          view={view}
+          canRun={canRun}
+          canFiles={canRun || can(ctx, "payroll.export")}
+          approval={approval}
+          status={status}
+          trail={trail}
+          earlier={choices.filter((c) => c.start < view.start && c.lockedGroups > 0).slice(0, 6)}
+        />
       )}
     </div>
   );
@@ -168,6 +176,7 @@ function Report({
   approval,
   status,
   trail,
+  earlier,
 }: {
   view: PayrollView;
   canRun: boolean;
@@ -175,6 +184,7 @@ function Report({
   approval: ApprovalView | null;
   status: ApprovalStatus;
   trail: Awaited<ReturnType<typeof payrollTrail>>;
+  earlier: readonly PeriodChoice[];
 }) {
   const filesReady = status === "approved" || status === "locked";
   return (
@@ -247,7 +257,14 @@ function Report({
       </Notice>
 
       {view.blocks.map((b) => (
-        <ShopBlockCard key={b.shopId} b={b} view={view} canRun={canRun} downloadable={canFiles && filesReady} />
+        <ShopBlockCard
+          key={b.shopId}
+          b={b}
+          view={view}
+          canRun={canRun}
+          downloadable={canFiles && filesReady}
+          earlier={earlier.filter((c) => c.groups.some((g) => g.id === b.payGroupId)).map((c) => ({ start: c.start, label: `${formatDate(c.start, "MMM d")} – ${formatDate(c.end, "MMM d, yyyy")}` }))}
+        />
       ))}
 
       <PayrollTrailCard trail={trail} names={new Map(view.blocks.flatMap((b) => b.lines.map((l) => [l.staffId, l.name] as const)))} />
@@ -454,7 +471,7 @@ function EntityStates({ view }: { view: PayrollView }) {
   );
 }
 
-function ShopBlockCard({ b, view, canRun, downloadable }: { b: BlockView; view: PayrollView; canRun: boolean; downloadable: boolean }) {
+function ShopBlockCard({ b, view, canRun, downloadable, earlier }: { b: BlockView; view: PayrollView; canRun: boolean; downloadable: boolean; earlier: { start: string; label: string }[] }) {
   const s = view.settings;
   return (
     <Card>
@@ -604,6 +621,20 @@ function ShopBlockCard({ b, view, canRun, downloadable }: { b: BlockView; view: 
                           ])}
                         </tbody>
                       </table>
+                    )}
+                    {(l.otPremiumOwed ?? 0) > 0 && (
+                      <p>
+                        <span className="font-medium">O.T. premium (regular rate, C1)</span>: {fmtMoney(l.otPremiumOwed ?? 0)} owed on commission
+                        {view.settings.otRegularRate === "adjust" ? " · in the iSolved file" : " · not in the iSolved file: enter it in iSolved by hand (Needs Charles)"}
+                      </p>
+                    )}
+                    {(l.commissionWrittenOff ?? 0) > 0 && (
+                      <p>
+                        <span className="font-medium">Refunds written off</span>: {fmtMoney(l.commissionWrittenOff ?? 0)} (commission can&apos;t go below $0.00; the shop absorbs it)
+                      </p>
+                    )}
+                    {canRun && !b.locked && (earlier.length > 0 || (l.input.lateCommissions?.length ?? 0) > 0) && (
+                      <LateCommissionForm shopId={b.shopId} periodStart={view.start} staffId={l.staffId} current={l.input.lateCommissions ?? []} earlier={earlier} />
                     )}
                     {canRun && !b.locked ? (
                       <OverrideForm shopId={b.shopId} periodStart={view.start} staffId={l.staffId} current={l.input.overrides ?? {}} />

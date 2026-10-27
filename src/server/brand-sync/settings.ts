@@ -17,7 +17,7 @@ import { morningSettings, parseMorningSettings } from "@/domain/morning-dashboar
 import { BrandNetworkSchema, brandNetworkSettings } from "@/domain/network-access";
 import { OpeningsSettingsSchema, openingsSettings, openingsTemplatesProblem } from "@/domain/openings";
 import { cleanOutreachRules, outreachRules, outreachRulesProblem } from "@/domain/outreach";
-import { EXPORT_FORMAT_LABEL, FT_BASIS_LABEL, HOURS_SOURCE_LABEL, cardTipsSplit, earningHeaders, payrollSettings } from "@/domain/payroll/calc";
+import { CARD_FEE_BASE_LABEL, EXPORT_FORMAT_LABEL, FT_BASIS_LABEL, HOURS_SOURCE_LABEL, LOYALTY_BASE_LABEL, OT_REGULAR_RATE_LABEL, cardTipsSplit, earningHeaders, payrollSettings } from "@/domain/payroll/calc";
 import { calendarProblem, sameCalendar, sameDates, type PayCalendar } from "@/domain/payroll/calendar";
 import { groupCalendar, resyncPeriodDates } from "../payroll/period-dates";
 import type { Permission } from "@/domain/permissions";
@@ -208,6 +208,9 @@ const PayrollInput = z.object({
     trainingHours: earning("training hours"),
   }),
   cardTipsHeader: earning("card tips"),
+  commissionBase: z.object({ cardFee: keysOf(CARD_FEE_BASE_LABEL), loyalty: keysOf(LOYALTY_BASE_LABEL) }),
+  otRegularRate: keysOf(OT_REGULAR_RATE_LABEL),
+  otPremiumHeader: earning("the overtime premium adjustment"),
   ptoSource: keysOf(HOURS_SOURCE_LABEL),
   trainingSource: keysOf(HOURS_SOURCE_LABEL),
   reportOrder: z.array(z.string().trim().min(1).max(60)).max(100),
@@ -511,7 +514,7 @@ export const SETTINGS: readonly SettingDef[] = [
     read: payrollSettings,
     parse: async (raw, before, _who, tx) => {
       const r = obj(raw);
-      const merged = { ...before, ...r, earningCodes: { ...before.earningCodes, ...obj(r.earningCodes) }, calendar: { ...before.calendar, ...obj(r.calendar) }, declarations: { ...before.declarations, ...obj(r.declarations) }, tipTax: { ...before.tipTax, ...obj(r.tipTax) } };
+      const merged = { ...before, ...r, commissionBase: { ...before.commissionBase, ...obj(r.commissionBase) }, earningCodes: { ...before.earningCodes, ...obj(r.earningCodes) }, calendar: { ...before.calendar, ...obj(r.calendar) }, declarations: { ...before.declarations, ...obj(r.declarations) }, tipTax: { ...before.tipTax, ...obj(r.tipTax) } };
       const parsed = zparse(PayrollInput, merged, "Check the payroll rules");
       const calProblem = await brandCalendarProblem(tx, before.calendar, parsed.calendar);
       if (calProblem) bad(calProblem);
@@ -528,6 +531,7 @@ export const SETTINGS: readonly SettingDef[] = [
       if (v.markPaidTips) own(v.tipsPaidOutHeader, "tips already paid out");
       if (v.markPaidTips) own(v.stripeTipsPaidHeader, "tips paid by Stripe");
       own(v.cashTipsDeclaredHeader, "declared cash tips");
+      if (v.otRegularRate === "adjust") own(v.otPremiumHeader, "the overtime premium adjustment");
       if (!v.markPaidTips && stripePayoutsOn())
         bad("Tips are paid straight to employees through Stripe, so the iSolved file has to mark the tips already paid out; that column can't be turned off while Stripe payouts are on.");
       if (v.declarations.remindUntilDay > v.declarations.lockDay) bad("Reminders stop by the day declarations close.");

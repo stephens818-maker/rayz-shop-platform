@@ -63,7 +63,8 @@ export const sameDates = (a: Pick<PayCalendar, "anchorStart" | "periodDays">, b:
 export function calendarProblem(c: PayCalendar): string | null {
   if (!isValidLocalDate(c.anchorStart)) return "Pick the first day of a known pay period.";
   if (c.periodDays !== 7 && c.periodDays !== 14) return "Pay periods are weekly or bi-weekly.";
-  if (c.periodDays === 14 && weekdayOf(c.anchorStart) !== 0) return "Bi-weekly periods run Sunday to Saturday; the first day must be a Sunday.";
+  // I2: a period that starts mid-workweek would split a week's overtime (and its regular rate) across two runs.
+  if (weekdayOf(c.anchorStart) !== 0) return "Pay periods run Sunday to Saturday, the workweek overtime is counted on; the first day must be a Sunday.";
   if (!Number.isInteger(c.anchorNumber) || c.anchorNumber < 1) return "The period number is a whole number from 1.";
   if (!Number.isInteger(c.checkOffsetDays) || c.checkOffsetDays < 0 || c.checkOffsetDays > 31) return "The check date is 0 to 31 days after the period ends.";
   if (!Number.isInteger(c.submitOffsetDays) || c.submitOffsetDays < 0 || c.submitOffsetDays > c.checkOffsetDays) return "Hours are due in iSolved on or after the period's last day, and no later than the check date.";

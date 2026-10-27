@@ -152,4 +152,34 @@ describe("payroll period", () => {
     const v = (await run.buildPayroll("2026-12-27", "2027-01-09"))!;
     expect(await run.lockedExport(v.blocks[0].payGroupId, "2026-12-27", "2027-01-09")).toBeNull();
   });
+
+  it("I2: commission owed for the locked period is paid in the next one, with half-time on the locked period's OT, and the locked file is untouched", async () => {
+    const jamie = await staffBy("Jamie");
+    const moline = (await shop("moline"))!;
+    const NEXT = "2026-12-27";
+    const lockedBefore = (await run.buildPayroll(START, END))!.blocks.find((b) => b.shopId === moline.id)!;
+    const add = (o: Partial<Parameters<typeof run.addLateCommission>[0]>) =>
+      run.addLateCommission({ shopId: moline.id, periodStart: NEXT, staffId: jamie.id, earnedStart: START, amount: 50, reason: "Missed service credit", ...o }, actor);
+    expect(await add({ periodStart: START })).toBe("This pay period is locked.");
+    expect(await add({ earnedStart: NEXT })).toBe("Pick an earlier pay period the commission was earned in.");
+    expect(await add({ earnedStart: "2026-11-29" })).toMatch(/isn't locked yet/);
+    expect(await add({ amount: -5 })).toMatch(/more than \$0/);
+    expect(await add({ reason: " " })).toMatch(/what the commission is for/);
+    expect(await add({})).toBeNull();
+
+    const v = (await run.buildPayroll(NEXT, "2027-01-09"))!;
+    const l = v.blocks.find((b) => b.shopId === moline.id)!.lines.find((x) => x.staffId === jamie.id)!;
+    // Locked: 25h worked with 2.78 OT at Moline. 0.5 × 2.78 × $50 ÷ 25h = $2.78.
+    expect(l.input.lateCommissions?.map((c) => [c.earnedStart, c.earnedEnd, c.amount, Number(c.retroOtPremium.toFixed(6))])).toEqual([[START, END, 50, 2.78]]);
+    expect([l.lateCommission, l.netComm, Number((l.otPremiumOwed ?? 0).toFixed(6)), l.otPremiumAdj]).toEqual([50, 50, 2.78, 0]);
+    expect(v.anomalies.filter((a) => a.staffId === jamie.id).map((a) => a.kind)).toEqual(expect.arrayContaining(["late_commission", "ot_regular_rate"]));
+    expect(v.mismatches).toEqual([]);
+    expect((await run.buildPayroll(START, END))!.blocks.find((b) => b.shopId === moline.id)!.exportRows).toEqual(lockedBefore.exportRows);
+
+    const [row] = await m.db.db.select().from(m.schema.payrollCommissionAdjustments);
+    expect(await run.removeLateCommission(row.id, actor)).toBeNull();
+    expect((await run.buildPayroll(NEXT, "2027-01-09"))!.blocks.find((b) => b.shopId === moline.id)!.lines.find((x) => x.staffId === jamie.id)?.lateCommission ?? 0).toBe(0);
+    const logged = await m.db.db.select().from(m.schema.auditLog).where(m.drizzle.inArray(m.schema.auditLog.action, ["payroll.late_commission", "payroll.late_commission_remove"]));
+    expect(logged.map((a) => a.action).sort()).toEqual(["payroll.late_commission", "payroll.late_commission_remove"]);
+  });
 });

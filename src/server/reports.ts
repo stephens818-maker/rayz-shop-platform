@@ -479,7 +479,16 @@ export interface PayrollRow {
 export type PayrollSalesRow = Omit<PayrollRow, "periodStart" | "periodEnd" | "totalTipsCents" | "declaredCashTipsCents"> & {
   /** Sales tax on the tickets, less tax refunded in the period. Reference only: never in pay. */
   salesTaxCents: number;
+  /** The card surcharge on the tickets, less surcharge refunded in the period, shared between services and products by their net (I10). */
+  cardFeeServiceCents: number;
+  cardFeeProductCents: number;
+  /** Loyalty rewards redeemed on the tickets, shared between services and products by their gross (I10). Already out of the net sales. */
+  loyaltyServiceCents: number;
+  loyaltyProductCents: number;
 };
+
+/** A ticket's card surcharge (or loyalty reward) on its services, by their share; the rest is on its products. */
+const serviceShare = (amount: SQL, service: SQL, product: SQL) => sql`case when ${service} + ${product} > 0 then round(${amount}::numeric * ${service} / (${service} + ${product})) else 0 end`;
 
 const NOT_SQUIRE = notSquireEra();
 
@@ -514,8 +523,12 @@ export async function payrollSalesBetween(s: Pick<ReportScope, "shopIds" | "staf
   return rows<PayrollSalesRow>(sql`
         with v as (
           select s.staff_id, s.shop_id, count(*)::int tickets, sum(s.service_net_cents)::int sn, sum(s.product_net_cents)::int pn,
-            sum(s.service_tax_cents + s.product_tax_cents)::int tax
-          from sales s where s.shop_id in ${uuids(s.shopIds)} and s.business_date between ${start} and ${end} and s.status in ${PAID}
+            sum(s.service_tax_cents + s.product_tax_cents)::int tax,
+            sum(s.card_fee_cents)::int fee, sum(${serviceShare(sql`s.card_fee_cents`, sql`s.service_net_cents`, sql`s.product_net_cents`)})::int fee_s,
+            coalesce(sum(ll.r), 0)::int loy, coalesce(sum(${serviceShare(sql`ll.r`, sql`s.service_gross_cents`, sql`s.product_gross_cents`)}), 0)::int loy_s
+          from sales s
+          left join (select sale_id, -sum(reward_cents)::int r from loyalty_ledger where kind = 'reward_redeemed' and sale_id is not null group by 1) ll on ll.sale_id = s.id
+          where s.shop_id in ${uuids(s.shopIds)} and s.business_date between ${start} and ${end} and s.status in ${PAID}
             and ${NOT_SQUIRE}
             and s.staff_id is not null ${staffFilter(sql`s.staff_id`, s)}
           group by 1, 2
@@ -531,6 +544,7 @@ export async function payrollSalesBetween(s: Pick<ReportScope, "shopIds" | "staf
           group by 1, 2
         ), rf as (
           select s.staff_id, r.shop_id, sum(r.service_net_cents)::int sn, sum(r.product_net_cents)::int pn, sum(r.tax_cents)::int tax,
+            sum(r.card_fee_cents)::int fee, sum(${serviceShare(sql`r.card_fee_cents`, sql`s.service_net_cents`, sql`s.product_net_cents`)})::int fee_s,
             sum(case when r.method='card' and s.business_date >= ${start} then r.tip_cents else 0 end)::int card,
             sum(case when r.method='cash' and s.business_date >= ${start} then r.tip_cents else 0 end)::int cash,
             sum(case when r.method='gift_card' and s.business_date >= ${start} then r.tip_cents else 0 end)::int gc,
@@ -563,7 +577,10 @@ export async function payrollSalesBetween(s: Pick<ReportScope, "shopIds" | "staf
           (coalesce(t.gc,0) + coalesce(mv.pgc,0) - coalesce(rf.gc,0) - coalesce(mv.rgc,0)) "giftCardTipsCents",
           (coalesce(rf.card,0) + coalesce(rf.cash,0) + coalesce(rf.gc,0) + coalesce(mv.rcard,0) + coalesce(mv.rcash,0) + coalesce(mv.rgc,0)) "tipRefundsCents",
           (coalesce(rf.late,0) + coalesce(mv.rlate,0)) "lateTipRefundsCents",
-          (coalesce(v.tax,0) - coalesce(rf.tax,0)) "salesTaxCents"
+          (coalesce(v.tax,0) - coalesce(rf.tax,0)) "salesTaxCents",
+          (coalesce(v.fee_s,0) - coalesce(rf.fee_s,0)) "cardFeeServiceCents",
+          (coalesce(v.fee,0) - coalesce(v.fee_s,0) - coalesce(rf.fee,0) + coalesce(rf.fee_s,0)) "cardFeeProductCents",
+          coalesce(v.loy_s,0) "loyaltyServiceCents", (coalesce(v.loy,0) - coalesce(v.loy_s,0)) "loyaltyProductCents"
         from k join staff st on st.id = k.staff_id join shops sh on sh.id = k.shop_id
         left join v on v.staff_id = k.staff_id and v.shop_id = k.shop_id
         left join t on t.staff_id = k.staff_id and t.shop_id = k.shop_id

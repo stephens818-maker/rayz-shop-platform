@@ -4,7 +4,22 @@ import { useState } from "react";
 import { Button, Input, Select } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { SyncMsg, useSettingSync } from "@/components/brand-sync";
-import { EXPORT_COLUMNS, EXPORT_FORMAT_LABEL, FT_BASIS_LABEL, HOURS_SOURCE_LABEL, type ExportFormat, type HoursSource, type PayrollSettings, type TipDeclarationSettings, type TipTaxSettings } from "@/domain/payroll/calc";
+import {
+  CARD_FEE_BASE_LABEL,
+  EXPORT_COLUMNS,
+  EXPORT_FORMAT_LABEL,
+  FT_BASIS_LABEL,
+  HOURS_SOURCE_LABEL,
+  LOYALTY_BASE_LABEL,
+  OT_REGULAR_RATE_LABEL,
+  type CommissionBase,
+  type ExportFormat,
+  type HoursSource,
+  type OtRegularRate,
+  type PayrollSettings,
+  type TipDeclarationSettings,
+  type TipTaxSettings,
+} from "@/domain/payroll/calc";
 import { calendarProblem, periodsAround, type PayCalendar } from "@/domain/payroll/calendar";
 import { formatDate, todayLocal } from "@/lib/time";
 import { removeEmployerStateAction, saveEmployerAction, saveEmployerStateAction, savePayGroupAction, savePeriodDatesAction, saveProfileAction } from "../actions";
@@ -194,6 +209,42 @@ function IsolvedFileFields({ v, onChange }: { v: PayrollSettings; onChange: (x: 
           <span className="block text-xs text-zinc-500">Card tips paid outside payroll go under</span>
           <Input aria-label="iSolved earning code for card tips" value={v.cardTipsHeader} onChange={(e) => onChange({ cardTipsHeader: e.target.value })} className="h-9 w-56" />
         </label>
+        <label>
+          <span className="block text-xs text-zinc-500">Card surcharge, for commission (I10)</span>
+          <Select value={v.commissionBase.cardFee} onChange={(e) => onChange({ commissionBase: { ...v.commissionBase, cardFee: e.target.value as CommissionBase["cardFee"] } })} className="h-9 w-80">
+            {Object.entries(CARD_FEE_BASE_LABEL).map(([x, l]) => (
+              <option key={x} value={x}>
+                {l}
+              </option>
+            ))}
+          </Select>
+        </label>
+        <label>
+          <span className="block text-xs text-zinc-500">A loyalty reward, for commission (I10, Q15)</span>
+          <Select value={v.commissionBase.loyalty} onChange={(e) => onChange({ commissionBase: { ...v.commissionBase, loyalty: e.target.value as CommissionBase["loyalty"] } })} className="h-9 w-80">
+            {Object.entries(LOYALTY_BASE_LABEL).map(([x, l]) => (
+              <option key={x} value={x}>
+                {l}
+              </option>
+            ))}
+          </Select>
+        </label>
+        <label>
+          <span className="block text-xs text-zinc-500">Overtime on commission (FLSA regular rate, C1: Needs Charles)</span>
+          <Select value={v.otRegularRate} onChange={(e) => onChange({ otRegularRate: e.target.value as OtRegularRate })} className="h-9 w-[28rem]">
+            {Object.entries(OT_REGULAR_RATE_LABEL).map(([x, l]) => (
+              <option key={x} value={x}>
+                {l}
+              </option>
+            ))}
+          </Select>
+        </label>
+        {v.otRegularRate === "adjust" && (
+          <label>
+            <span className="block text-xs text-zinc-500">OT premium adjustment column</span>
+            <Input aria-label="iSolved earning code for the OT premium adjustment" value={v.otPremiumHeader} onChange={(e) => onChange({ otPremiumHeader: e.target.value })} className="h-9 w-56" />
+          </label>
+        )}
         {(["ptoSource", "trainingSource"] as const).map((k) => (
           <label key={k}>
             <span className="block text-xs text-zinc-500">{k === "ptoSource" ? "PTO (Ray'z Paid Time) hours" : "Training hours"} come from</span>

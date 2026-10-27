@@ -63,10 +63,12 @@ describe("pay calendars are per pay group", () => {
     expect(periodByIndex(MAIN, 5)).toMatchObject({ number: 2 });
   });
 
-  it("only real period starts open a run; bi-weekly calendars start on Sundays", () => {
+  it("only real period starts open a run; weekly and bi-weekly calendars start on Sundays (I2)", () => {
     expect(periodStarting(MAIN, "2026-10-18")?.number).toBe(23);
     expect(periodStarting(MAIN, "2026-10-19")).toBeNull();
     expect(calendarProblem({ ...MAIN, anchorStart: "2026-10-19" })).toMatch(/Sunday/);
+    expect(calendarProblem({ ...MAIN, periodDays: 7, anchorStart: "2026-10-21" })).toMatch(/workweek overtime is counted on/);
+    expect(calendarProblem({ ...MAIN, periodDays: 7, anchorStart: "2026-10-25" })).toBeNull();
     expect(calendarProblem({ ...MAIN, periodDays: 7, anchorStart: "2026-02-30" })).toMatch(/first day/);
     expect(periodDatesProblem({ end: "2026-10-17", submitBy: "2026-10-21", checkDate: "2026-10-32" })).toMatch(/both dates/);
     expect(calendarProblem(MAIN)).toBeNull();
@@ -169,7 +171,7 @@ describe("cross-shop overtime (C4)", () => {
   });
 
   it("a workweek that spans two pay periods: OT is on the whole week, shared by each period's hours", () => {
-    // A weekly calendar starting Wednesdays puts Sun–Tue and Wed–Sat of one workweek in different periods.
+    // A weekly calendar starting Wednesdays (refused since I2, but the engine still handles one) puts Sun–Tue and Wed–Sat of one workweek in different periods.
     const wed: PayCalendar = { anchorStart: "2026-10-21", anchorNumber: 1, periodDays: 7, checkOffsetDays: 2, submitOffsetDays: 2, numberResetsYearly: false };
     const e = [...days("A", "2026-10-18", 3, 10), ...days("A", "2026-10-21", 2, 10)];
     const o = opts({ periodOf: (_s, d) => periodOf(wed, d).start });

@@ -77,11 +77,41 @@ export interface PayrollSettings {
   ptoSource: HoursSource;
   /** Where training hours come from (Q10). */
   trainingSource: HoursSource;
+  /** I10: what Service$ and Product$ count. The defaults are how it's always worked: the card surcharge left out, a loyalty reward taken off the sale (Q15). */
+  commissionBase: CommissionBase;
+  /**
+   * C1, the FLSA regular rate: iSolved pays OT hours at 1.5 × the base wage, but commission is part of
+   * the regular rate, so half-time is owed on it too. "base": the file is unchanged and the report
+   * shows what's owed for someone to enter in iSolved by hand. "adjust": the file gets an OT premium
+   * adjustment column (a format change: Needs Charles, Q16).
+   */
+  otRegularRate: OtRegularRate;
+  /** That column's header, Charles's to confirm in iSolved. Added only when someone in the file has an adjustment. */
+  otPremiumHeader: string;
   /** The Payroll Report's shop order, by name (the workbook's Locations tab); shops not listed follow, by name. */
   reportOrder: string[];
   /** The all-shops workbook's sheet order, by name (the workbook's tabs); shops not listed follow, by name. */
   sheetOrder: string[];
 }
+
+export interface CommissionBase {
+  cardFee: "exclude" | "include";
+  loyalty: "reduces" | "shop_absorbs";
+}
+export const CARD_FEE_BASE_LABEL: Record<CommissionBase["cardFee"], string> = {
+  exclude: "Left out of commission (the surcharge is the shop's)",
+  include: "Part of the sale commission is paid on",
+};
+export const LOYALTY_BASE_LABEL: Record<CommissionBase["loyalty"], string> = {
+  reduces: "Comes off the sale commission is paid on",
+  shop_absorbs: "The shop's cost: commission is paid on the price before the reward",
+};
+
+export type OtRegularRate = "base" | "adjust";
+export const OT_REGULAR_RATE_LABEL: Record<OtRegularRate, string> = {
+  base: "iSolved pays OT at 1.5 × base; the report shows what commission adds, to enter by hand",
+  adjust: "Add an OT premium adjustment column to the iSolved file (format change)",
+};
 
 /**
  * uniform: `0.00` on columns C to H of every sheet, Arial 8, bold grey headers (the reference file).
@@ -174,6 +204,9 @@ export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
     trainingHours: "E_Training_Hours",
   },
   cardTipsHeader: "E_Cash Tips Recd_Dollars",
+  commissionBase: { cardFee: "exclude", loyalty: "reduces" },
+  otRegularRate: "base",
+  otPremiumHeader: "E_OT Premium Adj_Dollars",
   ptoSource: "both",
   trainingSource: "both",
   reportOrder: ["Utica", "Moline", "Kimberly", "Rock Island", "Silvis", "Coralville", "LeClaire"],
@@ -247,6 +280,12 @@ export function payrollSettings(raw: unknown): PayrollSettings {
     exportWorkbookName: pattern(r.exportWorkbookName, d.exportWorkbookName),
     earningCodes: Object.fromEntries(EXPORT_COLUMNS.map((c) => [c.from, header((r.earningCodes as Partial<Record<EarningFrom, string>> | undefined)?.[c.from], d.earningCodes[c.from])])) as Record<EarningFrom, string>,
     cardTipsHeader: header(r.cardTipsHeader, d.cardTipsHeader),
+    commissionBase: {
+      cardFee: (r.commissionBase as Partial<CommissionBase> | undefined)?.cardFee === "include" ? "include" : "exclude",
+      loyalty: (r.commissionBase as Partial<CommissionBase> | undefined)?.loyalty === "shop_absorbs" ? "shop_absorbs" : "reduces",
+    },
+    otRegularRate: r.otRegularRate === "adjust" ? "adjust" : "base",
+    otPremiumHeader: header(r.otPremiumHeader, d.otPremiumHeader),
     ptoSource: r.ptoSource && r.ptoSource in HOURS_SOURCE_LABEL ? r.ptoSource : d.ptoSource,
     trainingSource: r.trainingSource && r.trainingSource in HOURS_SOURCE_LABEL ? r.trainingSource : d.trainingSource,
     reportOrder: names(r.reportOrder, d.reportOrder),
@@ -337,7 +376,21 @@ export interface LineInput {
   zeroHourlyPay?: boolean;
   /** Rates blended from more than one effective-dated version in the period. */
   mixedRates?: MixedRate[];
+  /** C1: the half-time commission adds to this line's overtime (the FLSA regular rate), from regularRateAdjustments. */
+  otRegularRateAdj?: number;
+  /** I2: commission owed for earlier, locked periods, paid in this one, each with the half-time it adds to that period's overtime. */
+  lateCommissions?: LateCommission[];
   overrides?: Overrides;
+}
+
+export interface LateCommission {
+  id?: string;
+  earnedStart: LocalDate;
+  earnedEnd: LocalDate;
+  amount: number;
+  reason: string;
+  /** 0.5 × that period's OT hours here × amount ÷ its hours worked, from its locked figures. */
+  retroOtPremium: number;
 }
 
 export interface Line {
@@ -413,8 +466,16 @@ export interface Line {
   trainingPay: number;
   /** The guaranteed minimum's top-up: 0 unless compensation plans are on and set one. */
   guaranteeTopUp: number;
-  /** V = N + T + U (+ the guarantee top-up) */
+  /** Of M and N, commission owed for earlier, locked periods (I2). */
+  lateCommission?: number;
+  /** C1 and I2: the half-time commission adds to overtime, this period's and locked periods' (retro). Owed whatever the file does. */
+  otPremiumOwed?: number;
+  /** Of that, what the iSolved file carries: all of it with the OT premium adjustment column on, else none (entered by hand). */
+  otPremiumAdj: number;
+  /** V = N + T + U (+ the guarantee top-up and the OT premium owed) */
   laborCost: number;
+  /** Commission refunds took below zero this period (I4): the shop absorbs it. Absent in periods locked before. */
+  commissionWrittenOff?: number;
   overridden: Overridable[];
 }
 
@@ -434,13 +495,19 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
   const payWage = i.zeroHourlyPay ? 0 : wage;
   const hourlyTotal = i.zeroHourlyPay ? 0 : ov(i, "hourlyTotal", hours * wage);
   const service = ov(i, "serviceSales", i.serviceSales);
-  const commission = service * i.servicePct;
+  // I4: refunds in the period come off its commission before the greater-of; what would take H or L below zero is written off (shop absorbs), never carried forward.
+  const commissionRaw = service * i.servicePct;
+  const commission = Math.max(0, commissionRaw);
   const serviceTotal = commission - hourlyTotal;
   const product = ov(i, "productSales", i.productSales);
-  const productTotal = product * i.productPct;
-  const netCommComputed = serviceTotal > 0 ? serviceTotal + productTotal : productTotal;
+  const productRaw = product * i.productPct;
+  const productTotal = Math.max(0, productRaw);
+  const lateCommission = (i.lateCommissions ?? []).reduce((a, c) => a + c.amount, 0);
+  const netCommComputed = (serviceTotal > 0 ? serviceTotal + productTotal : productTotal) + lateCommission;
   const netComm = ov(i, "netComm", netCommComputed);
-  const totalWages = (serviceTotal > 0 ? hourlyTotal + serviceTotal : hourlyTotal) + productTotal;
+  const totalWages = (serviceTotal > 0 ? hourlyTotal + serviceTotal : hourlyTotal) + productTotal + lateCommission;
+  const otPremiumOwed = (i.otRegularRateAdj ?? 0) + (i.lateCommissions ?? []).reduce((a, c) => a + c.retroOtPremium, 0);
+  const otPremiumAdj = s.otRegularRate === "adjust" ? otPremiumOwed : 0;
   const trainingHours = ov(i, "trainingHours", i.trainingHours);
   const otPay = s.otMultiplier * payWage * otHours;
   const tips = ov(i, "tips", i.tips);
@@ -493,10 +560,43 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
     otPay,
     trainingPay,
     guaranteeTopUp,
-    laborCost: totalWages + otPay + trainingPay + guaranteeTopUp,
+    lateCommission,
+    otPremiumOwed,
+    otPremiumAdj,
+    laborCost: totalWages + otPay + trainingPay + guaranteeTopUp + otPremiumOwed,
+    commissionWrittenOff: commission - commissionRaw + (productTotal - productRaw),
     overridden: OVERRIDABLE.filter((k) => i.overrides?.[k] !== undefined),
   };
 }
+
+/**
+ * C1: the FLSA regular rate includes commission (29 CFR 778.117), so overtime owes half-time on it
+ * as well as on the wage iSolved pays it at. Per employee across every shop of the period: the
+ * commission above hourly pay (I when positive, L and any guarantee top-up) over all hours worked,
+ * the equal-per-hour allocation 778.120 allows, times (OT multiplier − 1) × each line's OT hours.
+ * Equal per hour, a week's share of the commission follows its hours, so the period's figure is the
+ * sum of its weeks'. By `${staffId}|${shopId}`.
+ */
+export function regularRateAdjustments(lines: readonly Line[], s: Pick<PayrollSettings, "otMultiplier">): Map<string, number> {
+  const by = new Map<string, { extra: number; hours: number; lines: Line[] }>();
+  for (const l of lines) {
+    const p = by.get(l.staffId) ?? { extra: 0, hours: 0, lines: [] };
+    p.extra += Math.max(0, l.serviceTotal) + l.productTotal + (l.guaranteeTopUp ?? 0);
+    p.hours += l.hours + l.otHours;
+    p.lines.push(l);
+    by.set(l.staffId, p);
+  }
+  const out = new Map<string, number>();
+  for (const p of by.values()) {
+    if (p.hours <= 0 || p.extra <= 0) continue;
+    for (const l of p.lines) if (l.otHours > 0) out.set(`${l.staffId}|${l.shopId}`, (s.otMultiplier - 1) * l.otHours * (p.extra / p.hours));
+  }
+  return out;
+}
+
+/** I2: the half-time a late commission adds to a locked period's overtime at a shop, from that period's figures there. */
+export const retroOtPremiumFor = (amount: number, locked: Pick<Line, "hours" | "otHours"> | null, s: Pick<PayrollSettings, "otMultiplier">) =>
+  locked && locked.otHours > 0 && locked.hours + locked.otHours > 0 ? (s.otMultiplier - 1) * locked.otHours * (amount / (locked.hours + locked.otHours)) : 0;
 
 /** The columns that add up. Rates and percentages (C, G, K) don't; F and O are ratios of totals. */
 export const SUMMED = [
@@ -524,6 +624,7 @@ export const SUMMED = [
   "otPay",
   "trainingPay",
   "guaranteeTopUp",
+  "otPremiumAdj",
   "laborCost",
   "salesTax",
 ] as const;
@@ -561,6 +662,7 @@ export const COLUMN_LABEL: Record<Summed | "wage" | "grossPerHour" | "servicePct
   otPay: "O.T. Pay",
   trainingPay: "Training Pay",
   guaranteeTopUp: "Guarantee top-up",
+  otPremiumAdj: "O.T. premium adj.",
   laborCost: "Labor Cost",
 };
 
@@ -669,6 +771,7 @@ export type ExtraFrom =
   | "tipsPaidOutStripe"
   | "declaredCashTips"
   | "guaranteeTopUp"
+  | "otPremiumAdj"
   | "commission"
   | "productTotal"
   | "wage";
@@ -730,6 +833,7 @@ export function exportExtraColumns(lines: readonly Line[], s: PayrollSettings, o
     ...tipColumns(lines, s),
     ...(hasDeclaredTips(lines) ? [{ header: s.cashTipsDeclaredHeader, from: "declaredCashTips" as const }] : []),
     ...(hasGuarantee(lines) ? [{ header: o.guaranteeHeader ?? COLUMN_LABEL.guaranteeTopUp, from: "guaranteeTopUp" as const }] : []),
+    ...(s.otRegularRate === "adjust" && lines.some((l) => (l.otPremiumAdj ?? 0) !== 0) ? [{ header: s.otPremiumHeader, from: "otPremiumAdj" as const }] : []),
     ...(o.extras ?? []),
   ];
 }
@@ -867,7 +971,7 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
     const declared = exported("declaredCashTips");
     if (!sameToTheCent(b.totals.declaredCashTips ?? 0, declared))
       out.push({ shopId: b.shopId, column: COLUMN_LABEL.declaredCashTips, check: "export", report: b.totals.declaredCashTips ?? 0, other: declared, detail: `${b.shop}: the export's declared cash tips add up to a different total than the report's` });
-    for (const k of ["tipsPaidOut", "commission", "productTotal", "cardTipsOutside"] as const) {
+    for (const k of ["tipsPaidOut", "commission", "productTotal", "cardTipsOutside", "otPremiumAdj"] as const) {
       if (!from.includes(k)) continue;
       const sum = exported(k);
       if (!sameToTheCent(b.totals[k], sum)) out.push({ shopId: b.shopId, column: COLUMN_LABEL[k], check: "export", report: b.totals[k], other: sum, detail: `${b.shop}: the export's ${COLUMN_LABEL[k]} column adds up to a different total than the report's` });
@@ -946,6 +1050,9 @@ export type AnomalyKind =
   | "training_in_hours"
   | "no_rate"
   | "late_tip_refund"
+  | "refund_written_off"
+  | "late_commission"
+  | "ot_regular_rate"
   | "changed_since_lock"
   | "late_import"
   | "below_minimum_wage"
@@ -1010,6 +1117,29 @@ export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Ano
           shopId: b.shopId,
           kind: "mixed_rates",
           message: `${who}: the ${mixed.map((k) => MIXED_RATE_NAME[k]).join(" and ")} changed during the period, so each sale is paid at the rate in effect on its checkout date and each day's hours at that day's wage. The report shows "mixed".`,
+        });
+      for (const c of l.input.lateCommissions ?? [])
+        out.push({
+          staffId: l.staffId,
+          shopId: b.shopId,
+          kind: "late_commission",
+          message: `${who}: ${fmtMoney(c.amount)} of commission earned ${c.earnedStart} to ${c.earnedEnd}, already locked, is paid in this period's Comm Sales (${c.reason}).${c.retroOtPremium > 0 ? ` It adds ${fmtMoney(c.retroOtPremium)} of half-time to that period's overtime.` : ""}`,
+        });
+      const owed = l.otPremiumOwed ?? 0;
+      if (owed >= 0.005 && s.otRegularRate !== "adjust")
+        out.push({
+          staffId: l.staffId,
+          shopId: b.shopId,
+          kind: "ot_regular_rate",
+          message: `${who}: commission raises their regular rate for overtime, and iSolved pays OT at 1.5 × the base wage only, so ${fmtMoney(owed)} more is owed. Enter it in iSolved by hand until the file carries it (C1, Needs Charles).`,
+        });
+      const off = l.commissionWrittenOff ?? 0;
+      if (off > 0.000001)
+        out.push({
+          staffId: l.staffId,
+          shopId: b.shopId,
+          kind: "refund_written_off",
+          message: `${who}: refunds this period came to more than the commission they'd earned, by ${fmtMoney(off)}. Commission is $0.00 (never negative) and the ${fmtMoney(off)} is written off: the shop absorbs it and it's never taken from a later check.`,
         });
       const late = l.lateTipRefunds ?? 0;
       if (late > 0) {

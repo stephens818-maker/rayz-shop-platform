@@ -16,11 +16,13 @@ import { safe } from "@/server/action";
 import { authorize } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
 import {
+  addLateCommission,
   addTimeEntries,
   approveAndLock,
   approvePayroll,
   deleteTimeEntry,
   lockPayroll,
+  removeLateCommission,
   revokeApproval,
   ensurePayGroups,
   savePayGroup,
@@ -103,6 +105,25 @@ export async function setOverrideAction(input: { shopId: string; periodStart: st
       .object({ shopId: z.string().uuid(), periodStart: date, staffId: z.string().uuid(), field: z.enum(OVERRIDABLE as unknown as [Overridable, ...Overridable[]]), value: z.number().nullable(), reason: z.string().max(300) })
       .parse(input);
     fail(await setOverride(v.shopId, v.periodStart, v.staffId, v.field, v.value, v.reason, ctx.actor));
+    refresh();
+    return null;
+  });
+}
+
+export async function addLateCommissionAction(input: { shopId: string; periodStart: string; staffId: string; earnedStart: string; amount: number; reason: string }) {
+  return safe(async () => {
+    const ctx = await authorize("payroll.run");
+    const v = z.object({ shopId: z.string().uuid(), periodStart: date, staffId: z.string().uuid(), earnedStart: date, amount: z.number(), reason: z.string().max(300) }).parse(input);
+    fail(await addLateCommission(v, ctx.actor));
+    refresh();
+    return null;
+  });
+}
+
+export async function removeLateCommissionAction(id: string) {
+  return safe(async () => {
+    const ctx = await authorize("payroll.run");
+    fail(await removeLateCommission(z.string().uuid().parse(id), ctx.actor));
     refresh();
     return null;
   });

@@ -7,7 +7,19 @@ import { describe, expect, it } from "vitest";
 import { DateTime } from "luxon";
 import { periodOf, type PayCalendar } from "@/domain/payroll/calendar";
 import { dailyHours, overtimeSlices, type OtOptions, type TimeEntry } from "@/domain/payroll/overtime";
-import { DEFAULT_PAYROLL_SETTINGS, anomalies, assemble, computeLine, payrollSettings, type LineInput } from "@/domain/payroll/calc";
+import {
+  DEFAULT_PAYROLL_SETTINGS,
+  EXPORT_COLUMNS,
+  anomalies,
+  assemble,
+  computeLine,
+  exportHeaders,
+  exportRows,
+  payrollSettings,
+  regularRateAdjustments,
+  retroOtPremiumFor,
+  type LineInput,
+} from "@/domain/payroll/calc";
 
 const at = (local: string) => DateTime.fromISO(local, { zone: "America/Chicago" }).toJSDate();
 const shift = (shopId: string, date: string, from: string, to: string, kind: TimeEntry["kind"] = "worked", staffId = "e1"): TimeEntry => ({
@@ -104,5 +116,91 @@ describe("C6: overtime comes from the punches; an adjustment can't lower it", ()
     ]);
     const higher = computeLine(line({ workedHours: 45, otHours: 5, overrides: { otHours: { value: 6, reason: "missed punch" } } }), DEFAULT_PAYROLL_SETTINGS);
     expect([higher.otHours, higher.hours]).toEqual([6, 39]);
+  });
+});
+
+describe("I4: refunds come off the period's commission before the greater-of; below zero is written off", () => {
+  // $12/h × 40h = $480 hourly. Service commission 50%, product 10%.
+  it("a refund in a top-up period lowers the top-up: $1,000 of service is a $20 top-up, $800 after a $200 refund is none", () => {
+    const before = computeLine(line({ serviceSales: 1000 }), DEFAULT_PAYROLL_SETTINGS);
+    expect([before.commission, before.serviceTotal, before.netComm, before.totalWages]).toEqual([500, 20, 20, 500]);
+    const after = computeLine(line({ serviceSales: 800 }), DEFAULT_PAYROLL_SETTINGS);
+    expect([after.commission, after.serviceTotal, after.netComm, after.totalWages, after.commissionWrittenOff]).toEqual([400, -80, 0, 480, 0]);
+  });
+
+  it("a refund in an hourly period changes nothing they're paid: $300 or $200 of service is $480 either way", () => {
+    for (const service of [300, 200]) expect(computeLine(line({ serviceSales: service }), DEFAULT_PAYROLL_SETTINGS)).toMatchObject({ netComm: 0, totalWages: 480 });
+  });
+
+  it("refunds bigger than the period's sales leave commission at $0.00, never negative, and the rest is written off and flagged", () => {
+    const l = computeLine(line({ serviceSales: -100, productSales: -20 }), DEFAULT_PAYROLL_SETTINGS);
+    expect([l.commission, l.productTotal, l.netComm, l.totalWages, l.commissionWrittenOff]).toEqual([0, 0, 0, 480, 52]);
+    const blocks = assemble([{ shopId: "A", shop: "Alpha", inputs: [l.input] }], DEFAULT_PAYROLL_SETTINGS).blocks;
+    expect(anomalies(blocks, DEFAULT_PAYROLL_SETTINGS).find((a) => a.kind === "refund_written_off")?.message).toBe(
+      "Alex (Alpha): refunds this period came to more than the commission they'd earned, by $52.00. Commission is $0.00 (never negative) and the $52.00 is written off: the shop absorbs it and it's never taken from a later check.",
+    );
+  });
+
+  it("a product refund bigger than product sales doesn't eat into a service top-up", () => {
+    const l = computeLine(line({ serviceSales: 1200, productSales: -50 }), DEFAULT_PAYROLL_SETTINGS);
+    expect([l.serviceTotal, l.productTotal, l.netComm, l.totalWages, l.commissionWrittenOff]).toEqual([120, 0, 120, 600, 5]);
+  });
+});
+
+describe("C1: overtime on commission (the FLSA regular rate)", () => {
+  // Alex: 45h at two shops, 5h OT (3 at A, 2 at B), $12/h. At A: $1,200 service (top-up $120 over A's hourly) and $100 product ($10).
+  const a = computeLine(line({ workedHours: 27, otHours: 3, serviceSales: 1200, productSales: 100 }), DEFAULT_PAYROLL_SETTINGS);
+  const b = computeLine(line({ shopId: "B", workedHours: 18, otHours: 2 }), DEFAULT_PAYROLL_SETTINGS);
+
+  it("is 0.5 × each shop's OT hours × the commission over all hours worked, across shops", () => {
+    // A's hourly = 24h × $12 = $288; top-up = $600 − $288 = $312; product $10. ($312 + $10) / 45h = $7.1555…/h.
+    expect([a.serviceTotal, a.productTotal]).toEqual([312, 10]);
+    const adj = regularRateAdjustments([a, b], DEFAULT_PAYROLL_SETTINGS);
+    expect(adj.get("e1|A")).toBeCloseTo(0.5 * 3 * (322 / 45), 10);
+    expect(adj.get("e1|B")).toBeCloseTo(0.5 * 2 * (322 / 45), 10);
+    expect((adj.get("e1|A") ?? 0) + (adj.get("e1|B") ?? 0)).toBeCloseTo(17.89, 2);
+  });
+
+  it("is nothing with no OT or no commission", () => {
+    expect(regularRateAdjustments([computeLine(line({ serviceSales: 2000 }), DEFAULT_PAYROLL_SETTINGS)], DEFAULT_PAYROLL_SETTINGS).size).toBe(0);
+    expect(regularRateAdjustments([computeLine(line({ workedHours: 45, otHours: 5 }), DEFAULT_PAYROLL_SETTINGS)], DEFAULT_PAYROLL_SETTINGS).size).toBe(0);
+  });
+
+  it("the switch is off by default: the iSolved file keeps its six columns, the amount is labor cost and flagged to enter by hand", () => {
+    const i = { ...a.input, otRegularRateAdj: 10.73 };
+    const l = computeLine(i, DEFAULT_PAYROLL_SETTINGS);
+    expect([l.otPremiumOwed, l.otPremiumAdj]).toEqual([10.73, 0]);
+    expect(l.laborCost).toBeCloseTo(l.totalWages + l.otPay + l.trainingPay + 10.73, 10);
+    expect(exportHeaders([l], DEFAULT_PAYROLL_SETTINGS)).toEqual(EXPORT_COLUMNS.map((c) => c.header));
+    const blocks = assemble([{ shopId: "A", shop: "Alpha", inputs: [i] }], DEFAULT_PAYROLL_SETTINGS).blocks;
+    expect(anomalies(blocks, DEFAULT_PAYROLL_SETTINGS).find((x) => x.kind === "ot_regular_rate")?.message).toMatch(/\$10\.73 more is owed\. Enter it in iSolved by hand/);
+  });
+
+  it("switched on, the file gets the adjustment column (a format change, Needs Charles)", () => {
+    const s = payrollSettings({ otRegularRate: "adjust" });
+    const l = computeLine({ ...a.input, otRegularRateAdj: 10.73 }, s);
+    expect(exportHeaders([l], s)).toEqual([...EXPORT_COLUMNS.map((c) => c.header), "E_OT Premium Adj_Dollars"]);
+    expect(exportRows([l], s)[0].values.at(-1)).toBe(10.73);
+    const r = assemble([{ shopId: "A", shop: "Alpha", inputs: [l.input] }], s);
+    expect(r.mismatches).toEqual([]);
+    expect(anomalies(r.blocks, s).filter((x) => x.kind === "ot_regular_rate")).toEqual([]);
+  });
+});
+
+describe("I2: commission owed for a locked period", () => {
+  it("adds half-time on that period's overtime: 0.5 × 4 OT hours × $90 ÷ 44 hours worked = $4.09", () => {
+    expect(retroOtPremiumFor(90, { hours: 40, otHours: 4 }, DEFAULT_PAYROLL_SETTINGS)).toBeCloseTo(4.0909, 4);
+    expect(retroOtPremiumFor(90, { hours: 38, otHours: 0 }, DEFAULT_PAYROLL_SETTINGS)).toBe(0);
+    expect(retroOtPremiumFor(90, null, DEFAULT_PAYROLL_SETTINGS)).toBe(0);
+  });
+
+  it("is paid in this period's Comm Sales and Total Wages; the retro OT premium is owed and flagged", () => {
+    const l = computeLine(line({ lateCommissions: [{ earnedStart: "2026-10-04", earnedEnd: "2026-10-17", amount: 90, reason: "missed credit", retroOtPremium: 4.09 }] }), DEFAULT_PAYROLL_SETTINGS);
+    expect([l.netComm, l.totalWages, l.lateCommission, l.otPremiumOwed]).toEqual([90, 570, 90, 4.09]);
+    expect(exportRows([l], DEFAULT_PAYROLL_SETTINGS)[0].values[3]).toBe(90);
+    const blocks = assemble([{ shopId: "A", shop: "Alpha", inputs: [l.input] }], DEFAULT_PAYROLL_SETTINGS).blocks;
+    expect(anomalies(blocks, DEFAULT_PAYROLL_SETTINGS).find((x) => x.kind === "late_commission")?.message).toBe(
+      "Alex (Alpha): $90.00 of commission earned 2026-10-04 to 2026-10-17, already locked, is paid in this period's Comm Sales (missed credit). It adds $4.09 of half-time to that period's overtime.",
+    );
   });
 });

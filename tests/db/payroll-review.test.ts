@@ -5,6 +5,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { Mods, actor, loadModules, lockHours } from "./setup";
+import { brandSettings } from "./brand";
 import { signInAs } from "./session";
 
 vi.mock("server-only", () => ({}));
@@ -300,6 +301,47 @@ describe("SB-C3: cash tip declarations", () => {
     const [row] = await m.db.db.select().from(s().tipDeclarations).where(eq(s().tipDeclarations.id, (fixed as { data: { id: string } }).data.id));
     expect(row).toMatchObject({ source: "manager", createdBy: mgr.id, amountCents: 1700, attestation: expect.stringMatching(/^Entered by a manager: Recounted/) });
     expect((await dec.declaredTipsBetween([sh.id], day, day)).get(`${b.id}|${sh.id}`)).toBe(1700);
+  });
+});
+
+describe("I4 and I10: refunds and the commission base", () => {
+  const serviceOf = async (shopId: string, staffId: string, start: string, end: string) => lineOf(await run.buildPayroll(start, end), shopId, staffId)?.service ?? 0;
+
+  it("a refund comes off the period it's issued in, before the greater-of; one on a Squire-era ticket never does", async () => {
+    const { shop: sh, b } = await barberAt("moline", 1);
+    const { cur, prev } = await periods();
+    const sale = await tipSale(sh.id, b.id, 0, noon(m.time.addDays(prev.start, 2)));
+    const [item] = await m.db.db.select().from(s().saleItems).where(eq(s().saleItems.saleId, sale));
+    const prevBefore = await serviceOf(sh.id, b.id, prev.start, prev.end);
+    const curBefore = await serviceOf(sh.id, b.id, cur.start, cur.end);
+    await m.checkout.refundSale({ saleId: sale, items: [{ saleItemId: item.id, qty: 1 }], tipCents: 0, refundCardFee: false, reason: "Redo", restock: false, actor });
+    expect(await serviceOf(sh.id, b.id, prev.start, prev.end)).toBe(prevBefore);
+    const [refund] = await m.db.db.select().from(s().refunds).where(eq(s().refunds.saleId, sale));
+    expect(await serviceOf(sh.id, b.id, cur.start, cur.end)).toBeCloseTo(curBefore - refund.serviceNetCents / 100, 6);
+
+    await asImported(sale, "ticket");
+    expect(await serviceOf(sh.id, b.id, cur.start, cur.end)).toBeCloseTo(curBefore, 6);
+    expect(await serviceOf(sh.id, b.id, prev.start, prev.end)).toBeCloseTo(prevBefore - item.netCents / 100, 6);
+  });
+
+  it("by default the card surcharge is left out and a loyalty reward comes off; set otherwise, each is in the base", async () => {
+    const { shop: sh, b } = await barberAt("moline", 1);
+    const { cur } = await periods();
+    const base = await serviceOf(sh.id, b.id, cur.start, cur.end);
+    const sale = await tipSale(sh.id, b.id, 0);
+    const [row] = await m.db.db.select().from(s().sales).where(eq(s().sales.id, sale));
+    await m.db.db.update(s().sales).set({ cardFeeCents: 90 }).where(eq(s().sales.id, sale));
+    const [c] = await m.db.db.select({ id: s().customers.id }).from(s().customers).limit(1);
+    await m.db.db.insert(s().loyaltyLedger).values({ customerId: c.id, saleId: sale, kind: "reward_redeemed", rewardCents: -1500 });
+    const withSale = base + row.serviceNetCents / 100;
+    expect(await serviceOf(sh.id, b.id, cur.start, cur.end)).toBeCloseTo(withSale, 6);
+
+    const was = await run.loadSettings();
+    onTestFinished(async () => void (await brandSettings({ payroll: was })));
+    await brandSettings({ payroll: { ...was, commissionBase: { cardFee: "include", loyalty: "reduces" } } });
+    expect(await serviceOf(sh.id, b.id, cur.start, cur.end)).toBeCloseTo(withSale + 0.9, 6);
+    await brandSettings({ payroll: { ...was, commissionBase: { cardFee: "include", loyalty: "shop_absorbs" } } });
+    expect(await serviceOf(sh.id, b.id, cur.start, cur.end)).toBeCloseTo(withSale + 0.9 + 15, 6);
   });
 });
 

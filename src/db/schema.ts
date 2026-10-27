@@ -3517,6 +3517,36 @@ export const payrollOverrides = pgTable(
 );
 
 /**
+ * Commission owed for an already-locked pay period, paid in the open one starting periodStart (I2).
+ * The earned dates find the locked period, whose overtime then owes half-time on it too.
+ */
+export const payrollCommissionAdjustments = pgTable(
+  "payroll_commission_adjustments",
+  {
+    id: id(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    earnedStart: date("earned_start", { mode: "string" }).notNull(),
+    earnedEnd: date("earned_end", { mode: "string" }).notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    reason: text("reason").notNull(),
+    createdBy: uuid("created_by").references(() => staff.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("payroll_commission_adjustments_period_idx").on(t.periodStart, t.shopId),
+    check("payroll_commission_adjustments_amount", sql`${t.amountCents} > 0`),
+    check("payroll_commission_adjustments_earned", sql`${t.earnedEnd} >= ${t.earnedStart} and ${t.earnedEnd} < ${t.periodStart}`),
+    check("payroll_commission_adjustments_reason", sql`char_length(btrim(${t.reason})) > 0 and char_length(${t.reason}) <= 300`),
+  ],
+);
+
+/**
  * An approved and locked pay period for one pay group: the report rows, totals and export rows as
  * they were approved, which is what the download serves from then on.
  */
