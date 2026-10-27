@@ -127,6 +127,7 @@ Spec: [`docs/payroll-report-spec.md`](docs/payroll-report-spec.md). Workbook pro
 - **Employee Numbers are sensitive.** `payroll_profiles.employee_number` lives in the database only. Please never return it from `/api/v1` or put it in logs, push payloads or fixtures.
 - **Schema** (`drizzle/core_0022_payroll.sql`): `pay_groups` (one per shop, each with its own calendar and legal entity), `payroll_profiles`, `payroll_rates`, `time_entries`, `payroll_overrides`, `payroll_runs` (locked snapshots), `payroll_locked_ot`, and `brand_settings.payroll` (jsonb). New permissions `payroll.run` and `payroll.approve` (brand-only, added to Brand Admin).
 - **Sales and tips** come from `payrollSalesBetween` in `src/server/reports.ts`, so a ticket counts at the shop it was rung up at, same as the reports.
+- **Payroll reports** (`src/server/payroll/reports.ts`) read `buildPayroll` per pay period, so they tie to the file. `payroll_export_sends` (core_0106) records each period marked sent to iSolved; its status is draft, approved (locked) or sent. Admin only.
 - Service times (`drizzle/core_0021_service_times.sql`): `appointment_times` records arrival, start, finish and checkout, each with who recorded it. The mobile side doesn't need to write it; check-in through the API can set arrival later if you'd like it.
 
 ### Staff time (core)
@@ -521,6 +522,11 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
 
 ## Log
+
+### 2026-10-27: core, payroll reports and the iSolved export status, FYI for mobile
+- **Reports → Payroll** (eight reports, `report.payroll_*`), brand-only by default and in `SHOP_LOGIN_NEVER`. Admin only; nothing in `/api/v1` or `/api/staff/v1`.
+- **Migration `core_0106_payroll_export_sends`:** the `payroll_export_sends` table and the new report permissions for Brand Admin and Bookkeeper. The next free one is `core_0107`.
+- `pnpm typecheck` now runs tsc with a 4 GB heap; the full project passes Node's default 2.2 GB.
 
 ### 2026-10-27: core, direct Stripe tip payouts on (ST-I9) with W-2 safeguards, FYI for mobile
 - **Charles decided card tips go straight to employees' banks through Stripe.** `FEATURE_STAFF_STRIPE_PAYOUTS` now defaults on; `GET /config` `payouts` is `{ defaultMethod: "stripe", stripe: true }`, `GET /me` `features.banking` is true, and `GET /me/payout-setup` `defaultMethod` is `stripe`. Same shapes as before; only the values change. The banking routes, onboarding links (return to `/staff-app/stripe`) and payout webhooks are unchanged.

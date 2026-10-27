@@ -324,6 +324,10 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - **The iSolved memo for tips already paid out is now required** while Stripe payouts are on, and approve-and-lock is refused while any employee's tips in the file don't match their tips and payouts to the cent. Check the first period on **Payroll → Payroll tip report** and send its CSV to payroll with the iSolved files. Confirm the memo code (`M_Tips Paid Out_Dollars`) and `E_Cash Tips Recd_Dollars` with Charles and iSolved before the first live period.
    - **No 1099s for employees.** In the Stripe Dashboard (Settings → Connect → Tax forms / Tax reporting), confirm the platform handles 1099s for its connected accounts and turn off e-delivery of 1099s to employee accounts. Every employee account is made with Ray'z paying its Stripe fees, so Stripe files no 1099-K; **Payout onboarding** shows any account Stripe reports otherwise (its payouts are held). Each January before Stripe files, and after new employees onboard, download **Payout onboarding → Download 1099 exclusions** and import it under Tax reporting → Import → each 1099 form type Stripe prepared → Update. Stripe and the CPA confirm the setup first (see the PR's list).
 
+41. Payroll reports (migration `core_0106_payroll_export_sends`): it adds the `payroll_export_sends` table (one row per pay period marked sent to iSolved) and gives Brand Admin and Bookkeeper view and export of the eight payroll reports. Brand Owner has them already. No location role or shop login gets them.
+   - Nothing to configure. Pay periods come from **Payroll → Setup** (bi-weekly by default).
+   - After each period's Timecard Import upload, mark it sent on **Reports → Payroll → iSolved export preview**.
+
 ## Running the production build locally
 
 ```bash

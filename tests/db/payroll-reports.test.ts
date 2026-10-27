@@ -9,6 +9,7 @@
 import ExcelJS from "exceljs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ReportTable } from "@/domain/report-views";
+import type { IsolvedPeriod } from "@/server/payroll/reports";
 import { Mods, actor, loadModules } from "./setup";
 import { open } from "./render";
 import { signInAs } from "./session";
@@ -22,7 +23,6 @@ let run: typeof import("@/server/payroll/run");
 let L: typeof import("@/server/report-data");
 let S: typeof import("@/app/admin/reports/scope");
 let P: typeof import("@/domain/permissions");
-let R: typeof import("@/server/payroll/reports");
 let tc: typeof import("@/server/time-clock");
 let isolved: typeof import("@/app/admin/reports/payroll/isolved/actions");
 let fileRoute: typeof import("@/app/admin/reports/payroll/isolved/file/route");
@@ -84,7 +84,6 @@ beforeAll(async () => {
   L = await import("@/server/report-data");
   S = await import("@/app/admin/reports/scope");
   P = await import("@/domain/permissions");
-  R = await import("@/server/payroll/reports");
   tc = await import("@/server/time-clock");
   isolved = await import("@/app/admin/reports/payroll/isolved/actions");
   fileRoute = await import("@/app/admin/reports/payroll/isolved/file/route");
@@ -259,7 +258,7 @@ describe("tips", () => {
 });
 
 describe("the iSolved export", () => {
-  const periodOf = async () => ((await report("payroll_isolved")).data as Awaited<ReturnType<typeof R.payrollIsolvedData>>).periods.find((p) => p.start === fx.start)!;
+  const periodOf = async () => ((await report("payroll_isolved")).data as { periods: IsolvedPeriod[] }).periods.find((p) => p.start === fx.start)!;
   const download = async (start = fx.start, end = fx.end) => fileRoute.GET(new Request(`http://localhost/admin/reports/payroll/isolved/file?start=${start}&end=${end}&shop=${fx.moline}`));
   const sends = () => m.db.db.select().from(m.schema.payrollExportSends).where(eq(m.schema.payrollExportSends.periodStart, fx.start));
   const audits = (action: string) => m.db.db.select().from(m.schema.auditLog).where(m.drizzle.and(eq(m.schema.auditLog.action, action), eq(m.schema.auditLog.entityId, `${fx.start}_${fx.end}`)));

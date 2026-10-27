@@ -893,6 +893,27 @@ Charles's requirement with the Stripe decision: the tips stay W-2 wages, so payr
 - [ ] Charles and iSolved: the memo code (`M_Tips Paid Out_Dollars`) and using `E_Cash Tips Recd_Dollars` for tips paid by Stripe.
 - [ ] Live money movement (`MONEY_MOVEMENT_LIVE`) only after all of the above.
 
+## 39. Payroll reports (iSolved stays the system of record)
+
+Confirmed with Charles: iSolved is the payroll company and keeps computing paychecks, taxes and blended overtime. Reports → Payroll shows what the platform sends it, from the same Payroll Report each period is approved and locked on. README "Payroll reports" has the details.
+
+- [x] Brand-only by default: Brand Owner, Brand Admin and Bookkeeper hold view and export for all eight; no location role does, and a shop login never can (migration `core_0106_payroll_export_sends`). Each is its own permission under **Reports: payroll (iSolved)**.
+- [x] Every report filters by pay period (chips for each pay group's recent periods, from Payroll setup, bi-weekly by default), shop, employee and date range.
+- [x] Payroll summary per employee: regular and OT hours from the time clock, hourly rate, gross hourly pay, service and product commission, card and cash tips, tips already paid via Stripe, and the total to iSolved (rates and totals need `payroll.rates`).
+- [x] Timesheet detail: punches, breaks, every manager edit with its reason, and each timesheet's sign-offs, approvals and lock.
+- [x] Tips: card vs cash, Stripe payouts made (Stripe ids only), sent and pending, waiting on Stripe setup, and family and shared ticket splits.
+- [x] Commission by service and product, tying to the payroll commission to the cent (refunds and overrides on their own row).
+- [x] Full-time status: averaging more than 32 hours a week over the Payroll setup window, week by week, with the line on the chart.
+- [x] Labor cost vs sales per shop, as a percent of revenue, per pay period, with a trend.
+- [x] Overtime watch: in overtime, projected over from this week's schedule, or within 4 hours, across every shop of the company.
+- [x] iSolved export preview: the file row by row and each employee's tips against their Stripe payouts to the cent.
+- [x] CSV and PDF export of every report; one-click iSolved export per pay period (one workbook, a tab per shop) with status draft, approved or sent. Marking sent needs `payroll.approve` with every shop, is refused until locked and reconciled, can be undone with a reason, and is audited.
+- [x] Charts: stacked pay and tip bars, threshold lines for 32 and 40 hours, labor % trend. Tests: `tests/db/payroll-reports.test.ts`.
+
+**Needs Charles to confirm:**
+- [ ] Whether franchisee owners should get the payroll reports (they have the older tip reports today). Off until he says.
+- [ ] That "sent" is marked by hand after the Timecard Import upload; there's no iSolved API to confirm it.
+
 ## Deferred by decision
 
 - I10 stays on destination charges for customers; `payment_transfers` isn't built, and tips aren't transferred to shops separately. Tip payouts to employees (sections 15 and 35) use separate charges and transfers from the shop's own Stripe account to the employee's.

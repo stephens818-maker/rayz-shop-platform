@@ -741,6 +741,16 @@ Replaces Charles's payroll workbook. The full rules are in [docs/payroll-report-
   - Training, a PTO day and a typed NetComm override. Sign in as `owner@rayz.test` and open **Payroll → Payroll report**.
 - Against the real workbook (kept outside the repo): `npx tsx scripts/payroll-golden.ts <workbook.xlsx> [--totals] [--write <dir outside the repo>]`. It prints only cell addresses and counts unless `--totals` is given.
 
+### Payroll reports
+
+iSolved is the payroll company and stays the system of record: it computes paychecks, taxes and overtime at the blended rate. **Reports → Payroll** shows what the platform sends it, built from the same Payroll Report each period is approved and locked on, so every figure ties to the iSolved file to the cent (`src/server/payroll/reports.ts`).
+
+- **Who:** brand-only by default. Brand Owner, Brand Admin and Bookkeeper have view and export for each report (**Reports: payroll (iSolved)** in Roles); no location role does, and shop logins never can. Rates, hourly pay, labor cost and the total to iSolved also need `payroll.rates`.
+- **Filters:** pay period chips (each pay group's calendar from **Payroll → Setup**, bi-weekly by default; this period, recent periods, last quarter, year to date), shop, employee, and any date range (the pay periods ending in it).
+- **Reports:** payroll summary per employee (regular and OT hours from the time clock, hourly rate and pay, service and product commission, card and cash tips, tips already paid via Stripe, total to iSolved); timesheet detail (punches, breaks, edits with reasons, sign-offs and approvals); tips (card vs cash, Stripe payouts with their ids, pending, family and shared ticket splits); commission by service and product; full-time status (averaging more than 32 h a week); labor cost vs sales per shop as a percent of revenue; overtime watch (over, projected from this week's schedule, or within 4 h); and the iSolved export preview, reconciled to the cent against the Stripe payouts.
+- **Export:** CSV per table and a PDF of the whole report. **iSolved export** on each pay period downloads one workbook with a tab per shop (`payroll.export`), marked DRAFT until every shop is approved and locked. Status is **Draft**, **Approved** (locked) or **Sent**. Marking sent (`payroll.approve`, every shop) is refused until the period is locked and the tips reconcile; it can be undone with a reason. Every download and status change is audited (`payroll_export_sends`, migration `core_0106`).
+- **Charts:** pay and tips stacked by period and employee, card vs cash, paid vs pending, the 32 h and 40 h lines, and labor % over time.
+
 ### Compensation fields
 
 Optional pay plans for each employee, for when the brand wants them. Everything is off by default (**Payroll → Compensation**). While it's off, no tab, report rows or My pay appear, and payroll, tips and the iSolved files are exactly as before. No bank, card, SSN or tax ID data is kept: that stays with Stripe and iSolved.
