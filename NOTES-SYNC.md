@@ -65,6 +65,8 @@ computeCardFee(
 
 `flags.reviewLogin()` (C18, app store review login) and `flags.walletFee()` read `FEATURE_REVIEW_LOGIN` and `FEATURE_WALLET_FEE`. Both are off unless the variable is exactly `"true"`. Both decisions are still open with Charles, so leave them off.
 
+`flags.tipToBarber()` (I10) reads `FEATURE_TIP_TO_BARBER`, off unless exactly `"true"`. A destination charge can't pay a barber's Express account, so it waits on Charles choosing separate charges and transfers. Please read this flag instead of a second `process.env` check (`tipToBarberEnabled()` in PR #2 can call it). `tests/charge-path-guard.test.ts` keeps `paymentIntents.create` inside `chargeCard`, `on_behalf_of` / `transfer_data` in `processor.ts`, and any `transfers.create` or `payouts.create` in `money-movement.ts`.
+
 ### Permissions and roles
 
 - Catalog: `src/domain/permissions.ts`. It has `FEATURE_PERMISSIONS`, `REPORTS` (each report gets `report.<key>.view` and `report.<key>.export`), `ROLE_TEMPLATES`, `OWNER_ONLY`, `BRAND_ONLY`, `effectiveAccess`, and the grant rules (`roleChangeDenied`, `userAccessChangeDenied`).
@@ -537,10 +539,23 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 - (core → mobile, optional) If the customer app gets an "I'm running late" button, please call `queueStaffAlert("late", appointmentId, { detail: "about N min late" })` from `src/server/staff-alerts.ts`, so the barber gets the same alert as when the desk marks it from the staff app. Nothing goes back to the client.
 
+- (core → mobile) **PR #2 against core's branch (2026-10-27, see the log entry).** PR #2 is still based on cdb165a, and a trial merge into core conflicts in 24 files. When you rebase onto `cursor/rayz-barbershop-v1-8f0b`:
+  - **Migrations.** `mobile_customer_app` takes journal idx 21, which core already uses (core is at `core_0129`; the next free number is `core_0130`). It also adds 22 things core's migrations already add, so it fails after them:
+    - `customers`: `email_verified_at`, `stripe_customer_id`, `push_transactional`, `push_marketing`, `sms_marketing_opt_in`, `email_marketing_opt_in`, `deleted_at`, `birth_year`, `age_confirmed_at`;
+    - `shops`: `booking_mode`, `external_booking_url`, and `shops_booking_mode_chk`;
+    - `brand_settings.time_format` and `brand_settings_time_format_chk` (core's `core_0127_time_format`);
+    - `otp_codes.purpose`, `appointments.group_id`, and the `customer_devices` and `consent_events` tables with their indexes.
+    Please drop those (or guard them with `IF NOT EXISTS`), and give the rest a new journal entry after core's. Also check `customer_dependents`, `customer_payment_methods`, `mobile_checkouts`, `connect_transfers` and `staff.stripe_account_id` against what core has under other names before adding them.
+  - **Times.** Keep core's `src/lib/time.ts` and `src/server/brand-time.ts` (an add/add conflict). They export the same `formatTime`, `formatDateTime`, `brandTimeFormat`, `formatForHumans` and `formatClock` with the same output. API times stay ISO UTC.
+  - **Barber tips and transfers (I10, waiting on Charles).** Core pays barbers' tips through `staff_payout_accounts`, the tip ledger and tip payouts, and every transfer to an employee's account goes through `registerMoneyMovement` in `money-movement.ts`. `charge-plan.ts` and `barber-connect.ts` add a second path: `transfers.create` outside money-movement, a `connect_transfers` table and `staff.stripe_account_id`. Please keep the tip off that path. If Charles picks separate charges and transfers, register it as the money-movement implementation and read `flags.tipToBarber()`. The guard test fails on a `transfers.create` anywhere else.
+  - **Live keys.** `assertStripeTestMode()` in `chargeCard` refuses live keys outright. Core's go-live path is `MONEY_MOVEMENT_LIVE` for transfers and payouts, and card charges need live keys at launch. Please limit the refusal to demo mode, or leave it out of `chargeCard`.
+  - **Squire-era tickets.** Use `notSquireEra()` / `squireEra()` from `src/server/squire-era.ts` (`is_imported`, or any `squire_import` payment) wherever the app counts tips, earnings or commission, so a Squire-paid tip is never paid twice.
+
 ## Open questions
 
 - C18 review login and the wallet fee: flags are off until Charles decides.
 - I10 fee model: the platform keeps an application fee equal to the processing estimate, and doesn't return it on refunds, so each shop's P&L carries its own card cost. Charles to confirm, or name a platform margin on top.
+- I10 charge model, pending Charles: destination charges (today, `on_behalf_of` + `transfer_data.destination` to the shop) can't pay a barber's Express account. Separate charges and transfers would. `FEATURE_TIP_TO_BARBER` stays off until he decides; the switch is inside `chargeCard`.
 - Payroll, pending Charles: Q11 (do clocked hours already include training? The C2 flag stays off), Q17 (the owner row and the Coralville NetComm gap, flagged and not fixed), the full-time hours basis and window (default: clocked worked hours over a rolling 4 weeks), and 2-decimal half-up rounding of the export (off).
 - Time clock, pending the owner or the accountant:
   - Iowa and Illinois overtime rules. It's federal weekly-over-40 for now, with optional daily OT as a setting.
@@ -551,6 +566,13 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
 
 ## Log
+
+### 2026-10-27: core, cross-check of PR #2, Squire-era exclusion, `FEATURE_TIP_TO_BARBER` (requests for mobile)
+- **PR #2 conflicts:** listed in the request above (24 conflicting files, a duplicate journal idx 21, 22 schema items core already adds, a second transfer path, and the live-key refusal).
+- **Squire-era tickets** (`is_imported`, or any `squire_import` payment) are now left out by one helper, `notSquireEra()` in `src/server/squire-era.ts`. It covers the tip ledger, payroll sales, service days, commission lines, the commission report's tip sources and the payout cutover's owner check. Commission and the cutover used to check only `is_imported`.
+- **`flags.tipToBarber()`** (`FEATURE_TIP_TO_BARBER`, off) and `tests/charge-path-guard.test.ts`, which keeps charge creation in `chargeCard`. No migration (the next free one is still `core_0130`).
+- **Web booking text consent** was already unchecked by default (`initialBookingForm`). New tests pin the wizard to it, and check that a new client who didn't tick the box isn't opted in.
+- Nothing under `/api/v1`, `api.ts`, `api-schemas.ts`, the customer openapi, `connect.ts`, `processor.ts` or `push.ts` changed.
 
 ### 2026-10-27: core, iSolved pay calendar (FYI, nothing to do)
 - **Migration `core_0129_pay_calendar`:** `pay_groups.isolved_code` (iSolved's letter code per shop: B Rock Island, C Moline; unique), `pay_groups.submit_offset_days` (default 4, the Wednesday after), and `pay_period_dates` (each pay group's check and submit-by date per period, with a reason when moved by hand). The next free migration is `core_0130`.
