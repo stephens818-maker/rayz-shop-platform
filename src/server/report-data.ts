@@ -79,6 +79,7 @@ import {
   payrollCommissionData,
   payrollFullTimeData,
   payrollIsolvedData,
+  payrollTipsPaidData,
   payrollLaborData,
   payrollOvertimeData,
   payrollSummaryData,
@@ -836,6 +837,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async payroll_overtime({ scope, loc, viewer, params }) {
     return payrollOvertimeData({ scope, loc, perms: viewer.permissions, params });
+  },
+
+  async payroll_tips_paid({ scope, loc, viewer }) {
+    return payrollTipsPaidData({ scope, loc, perms: viewer.permissions });
   },
 
   async payroll_isolved({ scope, loc, viewer }) {

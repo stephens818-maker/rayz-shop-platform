@@ -405,6 +405,24 @@ export const FEATURE_PERMISSIONS = [
     brandOnly: true,
   },
   {
+    key: "payouts.view",
+    group: "Tip payouts",
+    label: "See the payout tracker at their shops",
+    hint: "Each barber's Stripe payout account by status, payouts and owed tips, and the yearly tax form check. Never an account or card number.",
+  },
+  {
+    key: "payouts.manage",
+    group: "Tip payouts",
+    label: "Work the payout tracker",
+    hint: "Check an account's status with Stripe, invite or remind a barber to set up, and record the yearly tax form check.",
+  },
+  {
+    key: "payouts.chain",
+    group: "Tip payouts",
+    label: "Payout tracker for every shop",
+    hint: "The tracker across the whole chain, not just their shops.",
+  },
+  {
     key: "report_builder.view",
     group: "Custom reports",
     label: "Custom reports: open saved reports",
@@ -753,6 +771,12 @@ export const REPORTS = [
     hint: "Hours toward the weekly overtime threshold per employee and workweek, across every shop they work, with who's over, who's close, and this week's projection from their schedule.",
   },
   {
+    key: "payroll_tips_paid",
+    label: "Tips paid (iSolved)",
+    href: "/admin/reports/payroll/tips-paid",
+    hint: "Per pay period, employer (FEIN) and employee: tips earned, paid via Stripe, in cash and through payroll, owed, reversed and absorbed by the shop, final only when it adds up to the cent. The CSV for iSolved.",
+  },
+  {
     key: "payroll_isolved",
     label: "iSolved export preview",
     href: "/admin/reports/payroll/isolved",
@@ -1000,6 +1024,7 @@ export const PAYROLL_REPORTS = [
   "payroll_labor",
   "payroll_overtime",
   "payroll_isolved",
+  "payroll_tips_paid",
 ] as const satisfies readonly ReportKey[];
 export const BRAND_PAY_REPORTS: readonly ReportKey[] = ["tips_payroll", "tip_payouts", "commission_payout", ...PAYROLL_REPORTS];
 const LOCATION_REPORTS = ALL_REPORTS.filter((k) => !BRAND_CAMPAIGN_CENTER.has(reportView(k)) && !BRAND_PAY_REPORTS.includes(k));
@@ -1073,6 +1098,8 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "timesheet.approve",
   "tips.own",
   "tips.approve",
+  "payouts.view",
+  "payouts.manage",
   "devices.approve",
   "report_builder.view",
   "report_builder.build",
@@ -1281,6 +1308,8 @@ const TEMPLATES: RoleTemplate[] = [
       "payroll.rates",
       "payroll.export",
       "exports.accounting",
+      "payouts.view",
+      "payouts.chain",
       ...reports([
         "sales_summary",
         "end_of_day",
@@ -1464,6 +1493,8 @@ export const SHOP_LOGIN_NEVER: ReadonlySet<Permission> = new Set<Permission>([
   "timesheet.edit",
   "timesheet.approve",
   "tips.approve",
+  "payouts.manage",
+  "payouts.chain",
   "notes.private",
   "notes.edit_any",
   "exports.accounting",

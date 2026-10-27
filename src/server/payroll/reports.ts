@@ -1,11 +1,12 @@
 import { and, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { db } from "@/db";
-import { payrollExportSends, staff, timeEntries, tipLedger, tipPayouts, type PayrollSendShop } from "@/db/schema";
+import { payrollEmployers, payrollExportSends, payrollProfiles, staff, timeEntries, tipAbsorptions, tipLedger, tipPayouts, type PayrollSendShop } from "@/db/schema";
 import { EXPORT_COLUMNS, extraFromOf, toCents, type ExtraFrom, type Line } from "@/domain/payroll/calc";
-import { FLAG_LABEL, FT_LABEL, PUNCH_LABEL, type PunchType } from "@/domain/time-clock";
+import { FLAG_LABEL, FT_LABEL, PUNCH_LABEL, csv, type PunchType } from "@/domain/time-clock";
 import type { Permission } from "@/domain/permissions";
 import type { BarChart } from "@/domain/report-charts";
+import { ABSORPTION_LABEL, TIPS_PAID_STATUS_LABEL, employerTaxIdLabel, tipsPaidStatus, type TipsPaidBuckets, type TipsPaidStatus } from "@/domain/staff-payouts";
 import { Cell, Column, ListRow, ViewCtx, listTable } from "@/domain/report-views";
 import { formatCents } from "@/lib/money";
 import { addDays, endOfLocalDay, formatDate, formatDateTime, formatTime, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
@@ -565,6 +566,265 @@ export async function payrollTipsData(i: PayrollReportInput): Promise<ReportData
       "Family and shared tickets cover the dates picked.",
     ],
   };
+}
+
+// ───────────────────────────── Tips paid (ST-C13) ─────────────────────────────
+
+export interface TipsPaidRow extends TipsPaidBuckets {
+  periodStart: LocalDate;
+  periodEnd: LocalDate;
+  employerId: string | null;
+  employer: string;
+  companyCode: string | null;
+  taxId: string;
+  staffId: string;
+  name: string;
+  employeeNumber: string | null;
+  shopIds: string[];
+  reversedCents: number;
+  absorbedCents: number;
+  status: TipsPaidStatus;
+  problems: string[];
+}
+
+export interface TipsPaidPeriod {
+  start: LocalDate;
+  end: LocalDate;
+  label: string;
+  status: TipsPaidStatus;
+  rows: TipsPaidRow[];
+}
+
+const NO_EMPLOYER = "No employer set";
+
+/** Where a ledger entry's tip stands, by the payout it's in (none: not paid yet). */
+function bucketOf(method: string | null, status: string | null): keyof Omit<TipsPaidBuckets, "earnedCents"> {
+  if (status === "paid") return method === "stripe" ? "transferredCents" : method === "payroll" ? "payrollCents" : "cashCents";
+  if (status === "approved" || status === "processing") return "inFlightCents";
+  return "owedCents";
+}
+
+/**
+ * A pay period's tips paid, per employer (one FEIN) and employee: every tip the period earned, and
+ * where it went (paid via Stripe, in cash, through payroll, owed, or sent and not paid yet), with the
+ * tip reversals and what the shop absorbed. A row is final once its shops are approved and locked
+ * and the buckets add up to what was earned (tipsPaidStatus); the period is final when every row is.
+ */
+async function tipsPaidPeriod(r: Pick<PeriodRun, "ref" | "label" | "blocks">, sel: string[] | null): Promise<TipsPaidPeriod> {
+  const shopIds = r.blocks.map((b) => b.shopId);
+  const lockedShop = new Set(r.blocks.filter((b) => b.locked).map((b) => b.shopId));
+  const none: TipsPaidPeriod = { start: r.ref.start, end: r.ref.end, label: r.label, status: "final", rows: [] };
+  if (!shopIds.length || (sel && !sel.length)) return none;
+  const inPeriod = (t: typeof tipLedger | typeof tipAbsorptions) =>
+    and(inArray(t.shopId, shopIds), gte(t.businessDate, r.ref.start), lte(t.businessDate, r.ref.end), sel ? inArray(t.staffId, sel) : undefined);
+  const [entries, absorbed] = await Promise.all([
+    db
+      .select({
+        shopId: tipLedger.shopId,
+        staffId: tipLedger.staffId,
+        employerId: tipLedger.employerId,
+        kind: tipLedger.kind,
+        method: tipPayouts.method,
+        status: tipPayouts.status,
+        cents: sql<number>`sum(${tipLedger.amountCents})::int`,
+      })
+      .from(tipLedger)
+      .leftJoin(tipPayouts, eq(tipPayouts.id, tipLedger.payoutId))
+      .where(inPeriod(tipLedger))
+      .groupBy(tipLedger.shopId, tipLedger.staffId, tipLedger.employerId, tipLedger.kind, tipPayouts.method, tipPayouts.status),
+    db
+      .select({ shopId: tipAbsorptions.shopId, staffId: tipAbsorptions.staffId, employerId: tipAbsorptions.employerId, cents: sql<number>`sum(${tipAbsorptions.amountCents})::int` })
+      .from(tipAbsorptions)
+      .where(inPeriod(tipAbsorptions))
+      .groupBy(tipAbsorptions.shopId, tipAbsorptions.staffId, tipAbsorptions.employerId),
+  ]);
+  const rows = new Map<string, TipsPaidRow>();
+  const rowOf = (staffId: string, employerId: string | null, shopId: string) => {
+    const k = `${employerId ?? ""}|${staffId}`;
+    let row = rows.get(k);
+    if (!row) {
+      row = {
+        periodStart: r.ref.start,
+        periodEnd: r.ref.end,
+        employerId,
+        employer: NO_EMPLOYER,
+        companyCode: null,
+        taxId: "",
+        staffId,
+        name: "",
+        employeeNumber: null,
+        shopIds: [],
+        earnedCents: 0,
+        transferredCents: 0,
+        cashCents: 0,
+        payrollCents: 0,
+        owedCents: 0,
+        inFlightCents: 0,
+        reversedCents: 0,
+        absorbedCents: 0,
+        status: "draft",
+        problems: [],
+      };
+      rows.set(k, row);
+    }
+    if (!row.shopIds.includes(shopId)) row.shopIds.push(shopId);
+    return row;
+  };
+  for (const e of entries) {
+    const row = rowOf(e.staffId, e.employerId, e.shopId);
+    row.earnedCents += e.cents;
+    row[bucketOf(e.method, e.status)] += e.cents;
+    if (e.kind === "refund") row.reversedCents -= e.cents;
+  }
+  for (const a of absorbed) rowOf(a.staffId, a.employerId, a.shopId).absorbedCents += a.cents;
+  if (!rows.size) return none;
+  const list = [...rows.values()];
+  const employerIds = [...new Set(list.map((x) => x.employerId).filter((x): x is string => !!x))];
+  const people = [...new Set(list.map((x) => x.staffId))];
+  const [employers, profiles] = await Promise.all([
+    employerIds.length ? db.select().from(payrollEmployers).where(inArray(payrollEmployers.id, employerIds)) : [],
+    db.select({ id: staff.id, label: staff.displayLabel, number: payrollProfiles.employeeNumber, isolvedName: payrollProfiles.isolvedName }).from(staff).leftJoin(payrollProfiles, eq(payrollProfiles.staffId, staff.id)).where(inArray(staff.id, people)),
+  ]);
+  const employerOf = new Map(employers.map((x) => [x.id, x]));
+  const personOf = new Map(profiles.map((x) => [x.id, x]));
+  for (const row of list) {
+    const emp = row.employerId ? employerOf.get(row.employerId) : undefined;
+    const who = personOf.get(row.staffId);
+    Object.assign(row, { employer: emp?.legalName ?? NO_EMPLOYER, companyCode: emp?.isolvedCompanyCode ?? null, taxId: employerTaxIdLabel(emp?.taxIdLast4 ?? null), name: who?.isolvedName || who?.label || "Unknown", employeeNumber: who?.number ?? null });
+    const { status, problems } = tipsPaidStatus(row, row.shopIds.every((id) => lockedShop.has(id)));
+    if (!emp) problems.push("the shop has no employer: set its legal entity in Payroll setup");
+    else if (!emp.isolvedCompanyCode) problems.push(`${emp.legalName} has no iSolved company code`);
+    if (!row.employeeNumber) problems.push("no iSolved employee number");
+    row.problems = problems;
+    row.status = status === "final" && !problems.length ? "final" : "draft";
+  }
+  list.sort((a, b) => a.employer.localeCompare(b.employer) || a.name.localeCompare(b.name));
+  return { ...none, status: list.every((x) => x.status === "final") ? "final" : "draft", rows: list };
+}
+
+export async function payrollTipsPaidData(i: PayrollReportInput): Promise<ReportData & { periods: Omit<TipsPaidPeriod, "rows">[]; shopParam: string | null }> {
+  const { scope, loc } = i;
+  const sel = staffSelection(scope);
+  const [{ runs, capped }, presets] = await Promise.all([runsIn(scope), payPeriodPresets(undefined, scope.shopIds)]);
+  const done = await Promise.all(runs.map((r) => tipsPaidPeriod(r, sel)));
+  const people: ListRow[] = [];
+  const byEmployer = new Map<string, ListRow>();
+  for (const p of done)
+    for (const x of p.rows) {
+      const buckets = [x.earnedCents, x.transferredCents, x.cashCents, x.payrollCents, x.owedCents, x.inFlightCents, x.reversedCents, x.absorbedCents];
+      people.push({
+        shopId: x.shopIds[0],
+        staffId: x.staffId,
+        cells: [p.label, x.employer, x.companyCode ?? "", x.taxId, x.name, x.employeeNumber ?? "", ...buckets, TIPS_PAID_STATUS_LABEL[x.status], x.problems.join("; ")],
+      });
+      const k = `${p.start}|${x.employer}`;
+      const e = byEmployer.get(k) ?? { shopId: x.shopIds[0], key: k, cells: [p.label, x.employer, x.companyCode ?? "", x.taxId, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "Final"] };
+      e.cells[4] = Number(e.cells[4]) + 1;
+      buckets.forEach((v, j) => (e.cells[5 + j] = Number(e.cells[5 + j]) + v));
+      if (x.status === "draft") e.cells[13] = Number(e.cells[13]) + 1;
+      e.cells[14] = Number(e.cells[13]) ? "Draft" : "Final";
+      byEmployer.set(k, e);
+    }
+  const periods = done.map(({ rows, ...p }) => ({ ...p, rows: rows.length }));
+  const periodRows: ListRow[] = done.map((p) => ({
+    shopId: scope.shopIds[0],
+    key: `${p.start}_${p.end}`,
+    cells: [p.label, new Set(p.rows.map((x) => x.employer)).size, p.rows.length, sumOf(p.rows, (x) => x.earnedCents), sumOf(p.rows, (x) => x.payrollCents), sumOf(p.rows, (x) => x.owedCents), TIPS_PAID_STATUS_LABEL[p.status]],
+  }));
+  const absorbedList = await absorptionsIn(scope, sel);
+  const col = (j: number) => sumOf(people, (r) => Number(r.cells[j]));
+  const amounts = [money("Tips earned"), money("Paid via Stripe"), money("Paid in cash"), money("Paid through payroll"), money("Owed"), money("Sent, not paid yet"), money("Reversed (refunds)"), money("Absorbed by the shop")];
+  const drafts = people.filter((r) => r.cells[14] === "Draft").length;
+  return {
+    presets,
+    periods: periods.reverse().map(({ start, end, label, status }) => ({ start, end, label, status })),
+    shopParam: scope.shopIds.length ? scope.shopIds.join(",") : null,
+    bars: [],
+    stats: [
+      { label: "Tips earned", value: formatCents(col(6)), hint: `${formatCents(col(12))} reversed · ${formatCents(col(13))} absorbed by the shop` },
+      { label: "Paid through payroll", value: formatCents(col(9)), hint: `${formatCents(col(7))} via Stripe · ${formatCents(col(8))} in cash` },
+      { label: "Owed", value: formatCents(col(10)), hint: col(11) ? `${formatCents(col(11))} sent, not paid yet` : "Owed tips go on payroll at the cutoff" },
+      { label: "Final", value: `${people.length - drafts} of ${people.length}`, tone: drafts ? "down" : "up", hint: drafts ? `${drafts} draft: see Why` : "Every row adds up to the cent" },
+    ],
+    tables: [
+      listTable(combined(loc), {
+        id: "periods",
+        title: "By pay period",
+        subtitle: "Final once every row is: its shops approved and locked, nothing sent and unpaid, and earned = paid via Stripe + in cash + through payroll + owed.",
+        columns: [text("Pay period"), int("Employers"), int("Employees"), money("Tips earned"), money("Paid through payroll"), money("Owed"), text("Status")],
+        rows: periodRows.reverse(),
+        totals: false,
+      }),
+      listTable(combined(loc), {
+        id: "employers",
+        title: "By employer",
+        subtitle: "Each employer is one FEIN (the pay groups' legal entity). Only the last 4 of the EIN is kept.",
+        columns: [text("Pay period"), text("Employer"), text("iSolved company"), text("EIN"), int("Employees"), ...amounts, int("Draft rows"), text("Status")],
+        rows: [...byEmployer.values()].reverse(),
+        totals: false,
+      }),
+      listTable(combined(loc), {
+        id: "employees",
+        title: "By employee",
+        columns: [text("Pay period"), text("Employer"), text("iSolved company"), text("EIN"), text("Employee"), text("Employee number"), ...amounts, text("Status"), text("Why draft")],
+        rows: people,
+        totals: false,
+      }),
+      listTable(loc, {
+        id: "absorbed",
+        title: "Absorbed by the shop",
+        subtitle: "Refunded or disputed tips the barber keeps: partial refunds, refunds after the reversal window, and card disputes. The shop pays them.",
+        columns: [text("Date"), text("Employee"), text("Why"), money("Tip")],
+        rows: absorbedList.map((a) => ({ shopId: a.shopId, staffId: a.staffId, cells: [a.businessDate, loc.staffNames?.[a.staffId] ?? "Unknown", ABSORPTION_LABEL[a.kind], a.amountCents] })),
+        keepShop: loc.shops.length > 1,
+        sort: (a, b) => String(b[0]).localeCompare(String(a[0])),
+      }),
+    ],
+    notes: [
+      ...periodNotes(runs, capped),
+      "Tips are dated by the brand's tip date rule (the sale date by default) and tagged with the shop's employer when written. A full refund within the reversal window takes the tip back; anything else the shop absorbs.",
+      "Owed tips are Stripe tips of barbers who can't be paid directly yet. Where the brand sends owed tips to payroll, they're paid with the paycheck at the period's cutoff, once.",
+    ],
+  };
+}
+
+async function absorptionsIn(scope: ReportScope, sel: string[] | null) {
+  if (!scope.shopIds.length || (sel && !sel.length)) return [];
+  return db
+    .select()
+    .from(tipAbsorptions)
+    .where(and(inArray(tipAbsorptions.shopId, scope.shopIds), gte(tipAbsorptions.businessDate, scope.from), lte(tipAbsorptions.businessDate, scope.to), sel ? inArray(tipAbsorptions.staffId, sel) : undefined))
+    .limit(2000);
+}
+
+const dollars = (cents: number) => (cents / 100).toFixed(2);
+
+/**
+ * A pay period's tips-paid file for iSolved: one row per employer and employee. Marked DRAFT until
+ * every row is final. Dollar amounts, the iSolved company code and employee number; never an EIN
+ * beyond its last 4, or any account number.
+ */
+export async function tipsPaidFile(start: LocalDate, end: LocalDate, shopIds: readonly string[]): Promise<{ fileName: string; body: string; status: TipsPaidStatus; rows: number } | null> {
+  const view = await buildPayroll(start, end);
+  if (!view) return null;
+  const blocks = view.blocks.filter((b) => shopIds.includes(b.shopId));
+  if (!blocks.length) return null;
+  const ref = { start, end };
+  const p = await tipsPaidPeriod({ ref: { ...ref, groups: [] }, label: yearLabel(ref), blocks }, null);
+  const header = ["Company Code", "Employer", "EIN", "Employee Number", "Employee", "Period Start", "Period End", "Tips Earned", "Paid via Stripe", "Paid in Cash", "Paid Through Payroll", "Owed", "Sent Not Paid", "Reversed", "Absorbed by Shop", "Status"];
+  const lines = p.rows.map((x) => [
+    x.companyCode ?? "",
+    x.employer,
+    x.taxId,
+    x.employeeNumber ?? "",
+    x.name,
+    start,
+    end,
+    ...[x.earnedCents, x.transferredCents, x.cashCents, x.payrollCents, x.owedCents, x.inFlightCents, x.reversedCents, x.absorbedCents].map(dollars),
+    TIPS_PAID_STATUS_LABEL[x.status],
+  ]);
+  const fileName = `${p.status === "draft" ? "DRAFT - " : ""}Tips paid (${start} to ${end}).csv`;
+  return { fileName, body: csv([header, ...lines]), status: p.status, rows: p.rows.length };
 }
 
 // ───────────────────────────── Commission ─────────────────────────────

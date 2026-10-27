@@ -75,7 +75,7 @@ export const REPORT_TYPES = {
   payroll: { label: "Reports: payroll and labor", keys: ["tips_payroll", "labor", "commission_payout", "attendance"] },
   payroll_pay: {
     label: "Reports: payroll (iSolved)",
-    keys: ["payroll_summary", "payroll_timesheets", "payroll_tips", "payroll_commission", "payroll_full_time", "payroll_labor", "payroll_overtime", "payroll_isolved"],
+    keys: ["payroll_summary", "payroll_timesheets", "payroll_tips", "payroll_commission", "payroll_full_time", "payroll_labor", "payroll_overtime", "payroll_isolved", "payroll_tips_paid"],
   },
   card_fee: { label: "Reports: card fees", keys: ["card_fees"] },
   rebook: { label: "Reports: rebook and retention", keys: ["rebook_rate", "retention", "kpis", "checkout_prompts"] },
@@ -187,7 +187,12 @@ export const AREAS: readonly Area[] = [
   {
     key: "tips",
     label: "Tip payouts",
-    rows: [row("tips", "Tip payouts", [lv("none"), lv("own", ["tips.own"]), lv("approve", ["tips.approve"])]), on("tips.settings", "Tip payout settings")],
+    rows: [
+      row("tips", "Tip payouts", [lv("none"), lv("own", ["tips.own"]), lv("approve", ["tips.approve"])]),
+      on("tips.settings", "Tip payout settings"),
+      row("payouts", "Payout tracker", [lv("none"), lv("view", ["payouts.view"]), lv("edit", ["payouts.manage"], "Manage")]),
+      on("payouts.chain", "Payout tracker for every shop"),
+    ],
   },
   {
     key: "inventory",

@@ -7,13 +7,15 @@ import { guardPage } from "@/server/auth/staff";
 import { TEMPLATE_TABS } from "@/server/payroll/export";
 import { ensurePayGroups, loadSettings } from "@/server/payroll/run";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
-import { PayGroupRow, ProfileRowForm, SettingsForm } from "./client";
+import { payrollEmployerList } from "@/server/payroll/groups";
+import { EmployerRow, PayGroupRow, ProfileRowForm, SettingsForm } from "./client";
 
 export const metadata: Metadata = { title: "Payroll setup" };
 
 export default async function PayrollSetupPage() {
   await guardPage("/admin/payroll/setup");
   const [settings, groups] = await Promise.all([loadSettings(), ensurePayGroups()]);
+  const employers = await payrollEmployerList();
   const people = await db
     .select({ id: staff.id, label: staff.displayLabel, p: payrollProfiles })
     .from(staff)
@@ -59,6 +61,30 @@ export default async function PayrollSetupPage() {
             <tbody>
               {groups.map((g) => (
                 <PayGroupRow key={g.id} tabs={TEMPLATE_TABS} g={{ id: g.id, shop: g.shop, label: g.label, legalEntity: g.legalEntity, exportTab: g.exportTab, ...g.calendar }} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+      <Card>
+        <CardHeader
+          title="Employers"
+          subtitle="One per legal entity (FEIN) in the pay groups. Every tip is tagged with its shop's employer, and the tips-paid export goes per employer with its iSolved company code. Only the last 4 of the EIN is kept; the full number stays in iSolved."
+        />
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-50 text-left text-[11px] text-zinc-500">
+              <tr>
+                <th className="px-2 py-2">Legal entity</th>
+                <th className="px-2 py-2">Shops</th>
+                <th className="px-2 py-2">iSolved company code</th>
+                <th className="px-2 py-2">EIN last 4</th>
+                <th className="px-2 py-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {employers.map((e) => (
+                <EmployerRow key={e.id} e={{ id: e.id, legalName: e.legalName, shops: e.shops, isolvedCompanyCode: e.isolvedCompanyCode ?? "", taxIdLast4: e.taxIdLast4 ?? "" }} />
               ))}
             </tbody>
           </table>

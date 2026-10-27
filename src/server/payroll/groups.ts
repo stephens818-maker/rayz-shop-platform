@@ -1,11 +1,12 @@
 import { and, eq, gte, lte } from "drizzle-orm";
 import { db } from "@/db";
-import { payGroups, payrollRuns, shops, timesheetLocks } from "@/db/schema";
+import { payGroups, payrollEmployers, payrollRuns, shops, timesheetLocks } from "@/db/schema";
 import { periodOf, type PayCalendar } from "@/domain/payroll/calendar";
 import type { PayrollSettings } from "@/domain/payroll/calc";
 import { settingAt } from "../brand-sync/settings";
 import { stripePayoutsOn } from "../tips/payout-model";
 import type { LocalDate } from "@/lib/time";
+import { audit, type Actor } from "../audit";
 import { TEMPLATE_TABS } from "./export";
 
 /** The brand's calendar (period 23 = 10/18–10/31/2026). A shop on its own calendar gets a pay group when it's set up, or one is edited in Payroll setup. */
@@ -83,4 +84,33 @@ export async function hoursLockedOn(shopId: string, date: LocalDate): Promise<bo
     .from(timesheetLocks)
     .where(and(eq(timesheetLocks.shopId, shopId), lte(timesheetLocks.periodStart, date), gte(timesheetLocks.periodEnd, date)));
   return !!t || isLockedOn(shopId, date);
+}
+
+/** The employers (one FEIN each) the pay groups belong to, with how many shops each has. Made from the pay groups' legal entity. */
+export async function payrollEmployerList() {
+  const [list, groups] = await Promise.all([db.select().from(payrollEmployers).orderBy(payrollEmployers.legalName), db.select({ employerId: payGroups.employerId }).from(payGroups)]);
+  return list.map((e) => ({ ...e, shops: groups.filter((g) => g.employerId === e.id).length }));
+}
+
+/**
+ * An employer's iSolved company code and the last 4 of its EIN, for the tips-paid export. Only four
+ * digits are ever taken: anything longer is refused, so a full EIN never reaches the database.
+ */
+export async function saveEmployer(id: string, v: { isolvedCompanyCode: string; taxIdLast4: string }, actor: Actor): Promise<string | null> {
+  const code = v.isolvedCompanyCode.trim();
+  const last4 = v.taxIdLast4.trim();
+  if (code && !/^[A-Za-z0-9][A-Za-z0-9 _.-]{0,39}$/.test(code)) return "The iSolved company code is letters, digits, spaces, dots, dashes or underscores, up to 40.";
+  if (last4 && !/^\d{4}$/.test(last4)) return "Enter only the last 4 digits of the EIN, never the whole number.";
+  const [before] = await db.select().from(payrollEmployers).where(eq(payrollEmployers.id, id));
+  if (!before) return "That employer is gone.";
+  await db
+    .update(payrollEmployers)
+    .set({ isolvedCompanyCode: code || null, taxIdLast4: last4 || null, updatedAt: new Date() })
+    .where(eq(payrollEmployers.id, id));
+  await audit(actor, "payroll.employer", "payroll_employer", id, {
+    legalName: before.legalName,
+    from: { isolvedCompanyCode: before.isolvedCompanyCode, taxIdLast4: before.taxIdLast4 },
+    to: { isolvedCompanyCode: code || null, taxIdLast4: last4 || null },
+  });
+  return null;
 }

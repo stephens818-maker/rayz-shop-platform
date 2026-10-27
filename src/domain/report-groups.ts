@@ -40,6 +40,7 @@ export const REPORT_GROUP: Record<ReportKey, ReportGroupId> = {
   payroll_labor: "payroll",
   payroll_overtime: "payroll",
   payroll_isolved: "payroll",
+  payroll_tips_paid: "payroll",
   tips_payroll: "payroll",
   tip_payouts: "payroll",
   commission_payout: "payroll",

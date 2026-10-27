@@ -5,7 +5,7 @@ import { Button, Input, Select } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import { FT_BASIS_LABEL, type PayrollSettings } from "@/domain/payroll/calc";
-import { savePayGroupAction, saveProfileAction } from "../actions";
+import { saveEmployerAction, savePayGroupAction, saveProfileAction } from "../actions";
 
 const Check = ({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) => (
   <label className="flex items-start gap-2 text-sm">
@@ -261,6 +261,38 @@ export function ProfileRowForm({ p }: { p: ProfileRow }) {
           Save
         </Button>
         {p.shopRates > 0 && <p className="mt-1 text-[11px] text-zinc-500">+{p.shopRates} shop-specific rate{p.shopRates === 1 ? "" : "s"}</p>}
+        {error && <p className="mt-1 max-w-48 text-xs text-red-700">{error}</p>}
+      </td>
+    </tr>
+  );
+}
+
+export function EmployerRow({ e }: { e: { id: string; legalName: string; shops: number; isolvedCompanyCode: string; taxIdLast4: string } }) {
+  const { pending, error, run } = useAction();
+  const [v, setV] = useState(e);
+  return (
+    <tr className="border-t border-zinc-100 align-top">
+      <td className="px-2 py-1.5 font-medium">{e.legalName}</td>
+      <td className="px-2 py-1.5 text-zinc-600">{e.shops}</td>
+      <td className="px-2 py-1.5">
+        <Input aria-label="iSolved company code" value={v.isolvedCompanyCode} onChange={(x) => setV({ ...v, isolvedCompanyCode: x.target.value })} className="h-8 w-36 text-xs" />
+      </td>
+      <td className="px-2 py-1.5">
+        <Input
+          aria-label="Last 4 of the EIN"
+          inputMode="numeric"
+          maxLength={4}
+          autoComplete="off"
+          placeholder="1234"
+          value={v.taxIdLast4}
+          onChange={(x) => setV({ ...v, taxIdLast4: x.target.value.replace(/\D/g, "").slice(0, 4) })}
+          className="h-8 w-20 text-xs"
+        />
+      </td>
+      <td className="px-2 py-1.5">
+        <Button size="sm" variant="secondary" disabled={pending} onClick={() => run(() => saveEmployerAction(v))}>
+          Save
+        </Button>
         {error && <p className="mt-1 max-w-48 text-xs text-red-700">{error}</p>}
       </td>
     </tr>

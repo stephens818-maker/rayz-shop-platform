@@ -27,6 +27,7 @@ import {
   type TimeEntryInput,
 } from "@/server/payroll/run";
 import { parseTimeCsv } from "@/domain/payroll/time-csv";
+import { saveEmployer } from "@/server/payroll/groups";
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -110,6 +111,16 @@ export async function savePayGroupAction(input: {
         ctx.actor,
       ),
     );
+    refresh();
+    return null;
+  });
+}
+
+export async function saveEmployerAction(input: { id: string; isolvedCompanyCode: string; taxIdLast4: string }) {
+  return safe(async () => {
+    const ctx = await authorize("payroll.run");
+    const v = z.object({ id: z.string().uuid(), isolvedCompanyCode: z.string().max(40), taxIdLast4: z.string().max(4, "Enter only the last 4 digits of the EIN") }).parse(input);
+    fail(await saveEmployer(v.id, v, ctx.actor));
     refresh();
     return null;
   });
