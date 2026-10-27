@@ -7,6 +7,7 @@ import type { Anomaly } from "@/domain/payroll/calc";
 import { formatDate, isValidLocalDate, todayLocal, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
 import { loadStaffAccess } from "@/server/auth/access";
+import { lockPayrollTips } from "@/server/tips/payouts";
 import { isolvedTimecardExporter, type PayrollExporter } from "./export";
 import { ensurePayGroups, loadSettings } from "./groups";
 import { buildPayroll, preparersOf, SELF_APPROVAL, type FinalPayShop } from "./run";
@@ -89,11 +90,16 @@ export async function approveFinalPay(staffId: string, lastDay: LocalDate, note:
   const selfApproved = actor.staffId ? (await preparersOf(pre.start, pre.end)).some((p) => p.staffId === actor.staffId) : false;
   if (selfApproved && !(await loadStaffAccess(actor.staffId!))?.isOwner) return { error: SELF_APPROVAL };
   const text = note?.trim().slice(0, 300) || null;
-  const [row] = await db
-    .insert(payrollFinalPays)
-    .values({ staffId, periodStart: pre.start, periodEnd: pre.end, lastDay, snapshot: { shops: pre.shops as unknown as Record<string, unknown>[] }, figuresHash: pre.hash, note: text, approvedBy: actor.staffId ?? null })
-    .onConflictDoNothing()
-    .returning({ id: payrollFinalPays.id });
+  // Their tips paid through payroll are claimed now, so no batch or later lock pays them again.
+  const row = await db.transaction(async (tx) => {
+    const [r] = await tx
+      .insert(payrollFinalPays)
+      .values({ staffId, periodStart: pre.start, periodEnd: pre.end, lastDay, snapshot: { shops: pre.shops as unknown as Record<string, unknown>[] }, figuresHash: pre.hash, note: text, approvedBy: actor.staffId ?? null })
+      .onConflictDoNothing()
+      .returning({ id: payrollFinalPays.id });
+    if (r) await lockPayrollTips(tx, pre.shops.map((x) => ({ shopId: x.shopId, lines: [x.line] })), pre.start, pre.end, actor, { only: staffId });
+    return r;
+  });
   if (!row) return { error: "Their final pay was approved by someone else just now." };
   await audit(
     actor,

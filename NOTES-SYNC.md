@@ -571,7 +571,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
   - The exact iSolved import template: column names and earning codes. The layout is configurable.
   - Meal break rules: 30 minutes or more is unpaid by default, and the auto-deduction is off.
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
-- Staff payout onboarding, pending Charles: someone who leaves before finishing Stripe setup has tips held for them with no other way out. A manager can take the payout out of the batch, but the next batch holds it again while their method is Stripe. To pay them another way, change their method to cash or payroll, then take the payout out. Should leavers be paid in their final paycheck as a rule?
+- Staff payout onboarding, for Charles to confirm: someone who leaves before finishing Stripe setup is now paid with their last paycheck for open pay periods, and in cash for locked ones (L34, built on offboarding and on making someone inactive). Say if he wants another rule.
 - Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
 
 ## Log
@@ -582,6 +582,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - **Late tips (N7):** a tip paid on a locked period's ticket is paid in the next open period, on the day it came in, in payroll and the tip ledger (`tipPostingDate`). If the app reads payroll tips, use `payrollSalesBetween` and don't group tips by the ticket's date.
 - **Final pay (N9):** Payroll → Final pay, a one-row iSolved file per shop for someone's last check. The regular run leaves them out.
 - **ACA hours (N6):** Reports → Payroll → ACA hours, hours of service per calendar month and full-time equivalents. Nothing for the app.
+- **Leavers before Stripe setup (L34):** offboarding or making someone inactive lets go of their held Stripe payouts. Open periods' tips go with their last paycheck and their final pay claims them; locked periods' are paid in cash. If the staff app shows "waiting for setup", it empties for someone who's left.
 - **Links to file routes don't prefetch.** Next.js prefetches a `<Link>` as it scrolls into view, which runs a route handler. On Client data access that ran the CSV export and wrote an export to the audit log on every visit. `tests/file-link-prefetch.test.ts` now requires `prefetch={false}` on any `Link` to a `route.ts`; use a plain `<a>` for downloads.
 
 ### 2026-10-27: core, the lasting sandbox is up; Charles's launch rule (everything tested before any shop goes live)

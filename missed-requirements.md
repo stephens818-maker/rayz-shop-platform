@@ -854,7 +854,7 @@ Charles decided that all staff re-register: no Squire staff Stripe account is mi
 - [x] Migration `core_0101_staff_onboarding`. Tests: `tests/staff-onboarding.test.ts`, `tests/db/staff-onboarding.test.ts`, `tests/db/cutover.test.ts`, `tests/tips.test.ts`.
 
 **Still open:**
-- [ ] Charles: how to pay someone who leaves before finishing Stripe setup. Today a manager changes their payout method to cash or payroll, then takes the payout out of the batch so the next one pays it that way.
+- [x] L34: someone who leaves before finishing Stripe setup. Offboarding or making them inactive lets go of their held payouts: open periods' tips go with their last paycheck (claimed by their final pay), locked periods' in cash from the next batch. Charles can still choose another rule.
 - [ ] A real invite and onboarding run against a Stripe test account with Connect turned on.
 
 ## 37. Staff app API gaps from the Rayz App builder (ST-C1 to C10, ST-I1 to I8, ST-I10)

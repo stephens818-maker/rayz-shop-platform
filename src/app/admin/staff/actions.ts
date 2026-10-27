@@ -20,6 +20,7 @@ import { timeBlockChangeDenied } from "@/server/auth/policy";
 import { StaffContext, authorize, caller, staffGrantor } from "@/server/auth/staff";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { offboardStaff } from "@/server/offboarding";
+import { releaseLeaverPayouts } from "@/server/tips/payouts";
 import { commonOwner, roleFitProblem } from "@/server/owner-entities";
 import { commonRegion } from "@/server/regions";
 import { addBlock, removeBlock } from "@/server/staff-time";
@@ -156,6 +157,7 @@ export async function saveProfileAction(raw: z.input<typeof ProfileSchema>) {
       );
       return id;
     });
+    if (p.id && !p.active) await releaseLeaverPayouts(p.id, ctx.actor);
     revalidatePath("/admin/staff");
     revalidatePath("/admin/permissions");
     return { id };

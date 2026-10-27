@@ -4,6 +4,7 @@ import { staff, staffAppTokens, staffDevices, staffSchedules, staffShops, timeBl
 import { Actor, audit } from "./audit";
 import { AppError, notFound } from "./errors";
 import { AffectedAppointment, affectedByRequests, endSeries } from "./staff-time";
+import { releaseLeaverPayouts } from "./tips/payouts";
 
 const FAR = 3 * 365 * 86_400_000;
 
@@ -16,8 +17,9 @@ export async function futureBookings(staffId: string, now: Date = new Date()): P
 /**
  * Takes someone off the team in one step. Their sign-in stops working on the next request, they
  * leave online booking and every schedule, recurring blocks end, and pending time-off requests are
- * cancelled. Past sales, tips, punches and payroll stay. Booked appointments are left booked and
- * returned so the shop can move them.
+ * cancelled. Past sales, tips, punches and payroll stay. Tips held for their Stripe setup are let go:
+ * open pay periods' go with their last paycheck, earlier ones in cash. Booked appointments are left
+ * booked and returned so the shop can move them.
  */
 export async function offboardStaff(staffId: string, actor: Actor & { staffId: string }, reason: string | null, now: Date = new Date()) {
   const person = await db.query.staff.findFirst({ where: eq(staff.id, staffId) });
@@ -43,7 +45,8 @@ export async function offboardStaff(staffId: string, actor: Actor & { staffId: s
     .from(timeBlockSeries)
     .where(and(eq(timeBlockSeries.staffId, staffId), isNull(timeBlockSeries.endedAt)));
   for (const s of series) await endSeries(s.id, actor, now);
+  const tips = await releaseLeaverPayouts(staffId, actor);
   const bookings = await futureBookings(staffId, now);
-  await audit(actor, "staff.offboard", "staff", staffId, { ...counts, recurringBlocks: series.length, bookedAhead: bookings.length, reason: reason || null }, null);
-  return { ...counts, recurringBlocks: series.length, bookings };
+  await audit(actor, "staff.offboard", "staff", staffId, { ...counts, recurringBlocks: series.length, heldTipPayouts: tips.payouts, bookedAhead: bookings.length, reason: reason || null }, null);
+  return { ...counts, recurringBlocks: series.length, heldTipPayouts: tips.payouts, bookings };
 }

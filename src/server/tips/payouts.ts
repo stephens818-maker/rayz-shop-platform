@@ -129,14 +129,18 @@ export async function buildBatch(o: { shopId: string; kind: Exclude<TipBatchKind
     const locked = await lastLockedEnd(o.shopId, tx);
     const { instantFeeAck } = await staffPayoutConfig(tx);
     const methodOf = (staffId: string) => effectiveMethod(settings, policy, choices.get(staffId)?.method ?? null, planned.get(staffId)?.method);
-    const eligible = entries.filter((e) => !heldStaff.has(e.staffId) && (methodOf(e.staffId) !== "payroll" || (locked !== null && e.businessDate <= locked)));
+    const left = await leftOf(staffIds, tx);
+    // Someone who left with Stripe tips they can't receive: tips of open periods go with their last paycheck; tips of locked periods were reported as paid outside payroll, so they're paid in cash.
+    const leftOwed = (staffId: string) => left.has(staffId) && owedStripe(methodOf(staffId), choices.get(staffId));
+    const inLocked = (date: LocalDate) => locked !== null && date <= locked;
+    const eligible = entries.filter((e) => !heldStaff.has(e.staffId) && ((methodOf(e.staffId) !== "payroll" && !leftOwed(e.staffId)) || inLocked(e.businessDate)));
     const { payouts, carried } = draftPayouts(eligible, settings, cutoff, asOf);
 
     for (const d of payouts) {
       let p = mine.find((x) => x.staffId === d.staffId);
       if (!p) {
         const acct = choices.get(d.staffId) ?? null;
-        let method: TipMethod = methodOf(d.staffId);
+        let method: TipMethod = leftOwed(d.staffId) ? "cash" : methodOf(d.staffId);
         if (method === "payroll") method = policy.methods.includes("stripe") && !policy.methods.includes("cash") ? "stripe" : "cash";
         const holdKind: TipHoldKind | null = method !== "stripe" ? null : !canReceive(acct) ? "stripe_setup" : !directPayoutsAvailable() ? "transfers_pending" : null;
         const holdReason = holdKind === "stripe_setup" ? setupHoldReason(acct) : holdKind ? transfersPendingReason() : null;
@@ -303,6 +307,34 @@ export async function removePayout(payoutId: string, reason: string, actor: Acto
     return p.batchId;
   });
   await maybeComplete(batchId);
+}
+
+export const LEFT_REASON = "Left the team before they could be paid by Stripe";
+
+/**
+ * When someone leaves (L34), their payouts held for Stripe setup or a transfer path come out of their
+ * batches: the tips of open pay periods go with their last paycheck, and the rest are paid in cash
+ * from the next batch. A Stripe account that can still receive keeps its payouts.
+ */
+export async function releaseLeaverPayouts(staffId: string, actor: Actor) {
+  const r = await db.transaction(async (tx) => {
+    const held = await tx
+      .select()
+      .from(tipPayouts)
+      .where(and(eq(tipPayouts.staffId, staffId), eq(tipPayouts.status, "held"), inArray(tipPayouts.holdKind, [...OWED_HOLDS])))
+      .for("update");
+    let entries = 0;
+    for (const p of held) {
+      await tx.update(tipPayouts).set({ status: "cancelled", holdReason: LEFT_REASON, updatedAt: new Date() }).where(eq(tipPayouts.id, p.id));
+      const n = await release(tx, p.id);
+      entries += n;
+      await recordPayoutPeriods(tx, [p.id]);
+      await audit(actor, "tips.remove", "tip_payout", p.id, { reason: LEFT_REASON, staffId, netCents: p.netCents, entries: n, holdKind: p.holdKind }, p.shopId, tx);
+    }
+    return { batches: [...new Set(held.map((p) => p.batchId))], payouts: held.length, entries };
+  });
+  for (const b of r.batches) await maybeComplete(b);
+  return { payouts: r.payouts, entries: r.entries };
 }
 
 /** A manager's adjustment to a payout that hasn't gone out: a ledger entry with a reason, never an edit. */
@@ -761,15 +793,26 @@ export const OWED_HOLDS: readonly TipHoldKind[] = ["stripe_setup", "transfers_pe
 
 /**
  * Whether an employee's owed Stripe tips go through payroll at the cutoff (ST-C14): the brand sends
- * owed tips to payroll, and the employee can't be paid directly (their account isn't active, or
+ * owed tips to payroll, or the employee has left (L34: nothing to wait for, so they're paid with
+ * their last paycheck), and the employee can't be paid directly (their account isn't active, or
  * there's no transfer path yet).
  */
-function owedRule(owedVia: "payroll" | "hold") {
+function owedRule(owedVia: "payroll" | "hold", left: ReadonlySet<string> = new Set()) {
   const direct = directPayoutsAvailable();
+  const toPayroll = (staffId: string) => owedVia === "payroll" || left.has(staffId);
   return {
-    unclaimed: (method: TipMethod, acct: StaffPayoutAccount | null | undefined) => owedVia === "payroll" && method === "stripe" && (!direct || !canReceive(acct ?? null)),
-    held: (status: TipPayoutStatus | null, holdKind: TipHoldKind | null) => owedVia === "payroll" && status === "held" && !!holdKind && OWED_HOLDS.includes(holdKind),
+    unclaimed: (method: TipMethod, acct: StaffPayoutAccount | null | undefined, staffId: string) => toPayroll(staffId) && owedStripe(method, acct, direct),
+    held: (status: TipPayoutStatus | null, holdKind: TipHoldKind | null, staffId: string) => toPayroll(staffId) && status === "held" && !!holdKind && OWED_HOLDS.includes(holdKind),
   };
+}
+
+const owedStripe = (method: TipMethod, acct: StaffPayoutAccount | null | undefined, direct = directPayoutsAvailable()) => method === "stripe" && (!direct || !canReceive(acct ?? null));
+
+/** Of these employees, the ones who've left (offboarded or made inactive). */
+async function leftOf(staffIds: readonly string[], tx: DBorTx): Promise<Set<string>> {
+  if (!staffIds.length) return new Set();
+  const rows = await tx.select({ id: staff.id }).from(staff).where(and(inArray(staff.id, [...staffIds]), eq(staff.active, false)));
+  return new Set(rows.map((r) => r.id));
 }
 
 /**
@@ -797,8 +840,8 @@ export async function payrollTipSplit(shopIds: readonly string[], start: LocalDa
     .where(and(inArray(tipLedger.shopId, [...shopIds]), gte(tipLedger.businessDate, start), lte(tipLedger.businessDate, end)));
   const { policyOf, byShop } = await shopTipConfigs(shopIds, tx);
   const people = [...new Set(rows.map((r) => r.staffId))];
-  const [choices, planned, cfg] = await Promise.all([payoutChoices(people, tx), tipOverrides(people, tx), staffPayoutConfig(tx)]);
-  const owed = owedRule(cfg.owedVia);
+  const [choices, planned, cfg, left] = await Promise.all([payoutChoices(people, tx), tipOverrides(people, tx), staffPayoutConfig(tx), leftOf(people, tx)]);
+  const owed = owedRule(cfg.owedVia, left);
   const out = new Map<string, PayrollTipSplit>();
   const empty = (): PayrollTipSplit => ({ adjustCents: 0, absorbedCents: 0, lateAbsorbedCents: 0, inPayrollCents: 0, owedInPayrollCents: 0, paidOutCents: 0, paidByStripeCents: 0 });
   const absorbed = await tx
@@ -818,7 +861,7 @@ export async function payrollTipSplit(shopIds: readonly string[], start: LocalDa
     const v = out.get(k) ?? empty();
     if (r.kind === "adjust") v.adjustCents += r.amountCents;
     const method = effectiveMethod(byShop.get(r.shopId)!, policyOf(r.shopId), choices.get(r.staffId)?.method ?? null, planned.get(r.staffId)?.method);
-    const owedHere = r.payoutId ? r.method !== "payroll" && owed.held(r.status, r.holdKind) : method !== "payroll" && owed.unclaimed(method, choices.get(r.staffId));
+    const owedHere = r.payoutId ? r.method !== "payroll" && owed.held(r.status, r.holdKind, r.staffId) : method !== "payroll" && owed.unclaimed(method, choices.get(r.staffId), r.staffId);
     const viaPayroll = owedHere || (r.payoutId ? r.method === "payroll" : method === "payroll");
     if (viaPayroll) {
       v.inPayrollCents += r.amountCents;
@@ -837,30 +880,43 @@ export async function payrollTipSplit(shopIds: readonly string[], start: LocalDa
  * payout, marked paid, so no batch can pay them again. So do owed tips (ST-C14): unpaid Stripe tips
  * of employees who can't be paid directly, and the period's tips in payouts held for their setup or
  * for a transfer path, which come off the held payout first. Each entry is claimed once, so a tip is
- * never paid twice. Refused if that isn't what the report showed.
+ * never paid twice. Refused if that isn't what the report showed. `only` does it for one employee (their
+ * final pay); `skip` leaves out employees whose final pay already did.
  */
-export async function lockPayrollTips(tx: Tx, blocks: readonly { shopId: string; lines: readonly { staffId: string; tipsInPayroll?: number }[] }[], start: LocalDate, end: LocalDate, actor: Actor) {
+export async function lockPayrollTips(
+  tx: Tx,
+  blocks: readonly { shopId: string; lines: readonly { staffId: string; tipsInPayroll?: number }[] }[],
+  start: LocalDate,
+  end: LocalDate,
+  actor: Actor,
+  o: { only?: string; skip?: ReadonlySet<string> } = {},
+) {
   const shopIds = blocks.map((b) => b.shopId);
   if (!shopIds.length) return;
+  const counts = (staffId: string) => (o.only ? staffId === o.only : !o.skip?.has(staffId));
   const { policyOf, byShop } = await shopTipConfigs(shopIds, tx);
-  const owed = owedRule((await staffPayoutConfig(tx)).owedVia);
+  const { owedVia } = await staffPayoutConfig(tx);
   const now = new Date();
   for (const b of blocks) {
     const settings: ShopTipSettings = byShop.get(b.shopId)!;
     const policy = policyOf(b.shopId);
     const inPeriod = and(eq(tipLedger.shopId, b.shopId), gte(tipLedger.businessDate, start), lte(tipLedger.businessDate, end));
-    const entries = await tx
-      .select()
-      .from(tipLedger)
-      .where(and(inPeriod, isNull(tipLedger.payoutId)))
-      .for("update");
-    const held = (
+    const entries = (
+      await tx
+        .select()
+        .from(tipLedger)
+        .where(and(inPeriod, isNull(tipLedger.payoutId)))
+        .for("update")
+    ).filter((e) => counts(e.staffId));
+    const heldAll = (
       await tx
         .select()
         .from(tipPayouts)
         .where(and(eq(tipPayouts.shopId, b.shopId), eq(tipPayouts.status, "held"), inArray(tipPayouts.holdKind, [...OWED_HOLDS])))
         .for("update")
-    ).filter((p) => owed.held(p.status, p.holdKind));
+    ).filter((p) => counts(p.staffId));
+    const owed = owedRule(owedVia, await leftOf([...new Set([...entries.map((e) => e.staffId), ...heldAll.map((p) => p.staffId)])], tx));
+    const held = heldAll.filter((p) => owed.held(p.status, p.holdKind, p.staffId));
     const heldEntries = held.length
       ? await tx
           .select()
@@ -871,7 +927,7 @@ export async function lockPayrollTips(tx: Tx, blocks: readonly { shopId: string;
     const people = [...new Set([...entries, ...heldEntries].map((e) => e.staffId))];
     const [choices, planned] = await Promise.all([payoutChoices(people, tx), tipOverrides(people, tx, now)]);
     const methodOf = (staffId: string) => effectiveMethod(settings, policy, choices.get(staffId)?.method ?? null, planned.get(staffId)?.method);
-    const mine = [...entries.filter((e) => methodOf(e.staffId) === "payroll" || owed.unclaimed(methodOf(e.staffId), choices.get(e.staffId))), ...heldEntries];
+    const mine = [...entries.filter((e) => methodOf(e.staffId) === "payroll" || owed.unclaimed(methodOf(e.staffId), choices.get(e.staffId), e.staffId)), ...heldEntries];
     const fromHeld = new Set(heldEntries.map((e) => e.id));
     if (heldEntries.length) await tx.update(tipLedger).set({ payoutId: null }).where(inArray(tipLedger.id, [...fromHeld]));
     const byStaff = new Map<string, string[]>();
@@ -902,8 +958,8 @@ export async function lockPayrollTips(tx: Tx, blocks: readonly { shopId: string;
       .innerJoin(tipPayouts, eq(tipPayouts.id, tipLedger.payoutId))
       .where(and(inPeriod, eq(tipPayouts.method, "payroll")))
       .groupBy(tipLedger.staffId);
-    const got = new Map(paid.map((r) => [r.staffId, r.c]));
-    const want = new Map(b.lines.map((l) => [l.staffId, Math.round((l.tipsInPayroll ?? 0) * 100)]));
+    const got = new Map(paid.filter((r) => counts(r.staffId)).map((r) => [r.staffId, r.c]));
+    const want = new Map(b.lines.filter((l) => counts(l.staffId)).map((l) => [l.staffId, Math.round((l.tipsInPayroll ?? 0) * 100)]));
     for (const id of new Set([...got.keys(), ...want.keys()]))
       if ((got.get(id) ?? 0) !== (want.get(id) ?? 0)) throw new AppError("conflict", "Tips changed while the period was being locked. Reload the report and approve again.");
     if (byStaff.size) await audit(actor, "tips.payroll_lock", "shop", b.shopId, { periodStart: start, periodEnd: end, employees: byStaff.size, entries: mine.length, owed: mine.filter((e) => fromHeld.has(e.id) || methodOf(e.staffId) !== "payroll").length }, b.shopId, tx);

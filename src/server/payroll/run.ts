@@ -1102,7 +1102,7 @@ export async function lockPayroll(start: LocalDate, end: LocalDate, actor: Actor
       );
       n++;
     }
-    await lockPayrollTips(tx, view.blocks, start, end, actor);
+    await lockPayrollTips(tx, view.blocks, start, end, actor, { skip: new Set(view.finalPays.map((f) => f.staffId)) });
     return { locked: n };
   });
 }
