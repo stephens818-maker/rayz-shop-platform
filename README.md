@@ -1426,7 +1426,7 @@ Squire's single-shop (kiosk) login does the day's work at one shop. Ours covers 
 
 | Squire shop login | Here |
 | --- | --- |
-| Appointments: side by side, week, block time, add | Calendar day and week views, blocks with reasons, quick walk-in |
+| Appointments: side by side, week, list, block time, add | Calendar day, week and **List** views (a day or a week by barber and status), blocks with reasons, quick walk-in |
 | Waiting list | **Walk-ins & waitlist** (`/admin/walk-ins`) |
 | Clients, locate duplicates | Clients with masked contact details; duplicates and merge stay brand-only |
 | Retention report, acquisition channels | **Client retention** and **Acquisition channels** reports |
@@ -1436,7 +1436,7 @@ Squire's single-shop (kiosk) login does the day's work at one shop. Ours covers 
 | Saved End of Day, TIPS, Iowa monthly tax, quarterly taxes, gross/net, employee summary, total collected | **Saved reports** on the reports hub, with a sales tax shortcut for each state the brand has shops in |
 | Register, cash drawer with a $300 default and balance history | Checkout; the drawer opens with a counted balance (each shop's default, $300 to start), records cash paid in and out, and shows the **balance history** through the day |
 | Daily summary with reassign, receipt, refund | Sales for the day; tickets can be **reassigned**, receipts resent, refunded or voided (refunds, voids and reassigning need a manager's PIN) |
-| Custom charge, gift cards | Gift cards; price override on a line (no open-amount custom charge yet) |
+| Custom charge, gift cards | **Custom charge** on the register (a named, open-amount service line up to $1,000, needs **Custom charges**, audited), gift cards, and a price override on a line |
 | Shop details and per-barber booking settings | Shop settings, **gated part by part**; per-barber booking intervals under Booking times |
 | AI phone agent ("Operator") with dollars booked, calls answered, book rate, minutes saved | The **phone operator** on the Twilio line and its report (a keypad menu, not a conversational AI) |
 | Customer handoff toggle | The customer screen at checkout, per shop |

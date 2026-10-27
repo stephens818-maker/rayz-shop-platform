@@ -691,7 +691,7 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [x] Saved reports: End of day, Tips, Iowa monthly and quarterly sales tax (one per state, on its schedule), gross and net, employee summary, total collected.
 - [x] Register; cash drawer open and close with a $300 default and balance history.
 - [x] Daily summary with reassign, receipt and refund.
-- [ ] **Custom charge** (an open-amount line): not built; a price override on a line covers some of it.
+- [x] **Custom charge** (an open-amount line): **Custom charge** on the register rings up a named service line from $0.01 to $1,000 for the ticket's barber; it needs `pos.custom_charge` (managers by default, not the front desk), the server checks it, and each one is audited as `sale.custom_charge` (`tests/db/register-permissions.test.ts`).
 - [x] Gift cards.
 - [x] Shop details, per-barber booking settings, waiting list.
 - [x] Phone operator per shop with dollars booked, calls answered, book rate and minutes saved.
