@@ -2,6 +2,7 @@ import "server-only";
 import { and, asc, eq, gt, inArray, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { sales, shopCutovers, shops, staff, staffPayoutConfirmations, staffShops, staffYtdImports } from "@/db/schema";
+import { same } from "@/domain/brand-sync";
 import { periodOf } from "@/domain/payroll/calendar";
 import Papa from "papaparse";
 import { addDays, isValidLocalDate, type LocalDate } from "@/lib/time";
@@ -114,7 +115,7 @@ export async function payoutCutoverReport(shopId: string): Promise<PayoutCutover
     ready: !!endOn && !!c?.squireLastPayoutOn,
     signedOff: null,
   };
-  if (c?.payoutReportSignedAt) report.signedOff = { at: c.payoutReportSignedAt.toISOString(), by: signedBy, current: JSON.stringify(c.payoutReport) === JSON.stringify(signable(report)) };
+  if (c?.payoutReportSignedAt) report.signedOff = { at: c.payoutReportSignedAt.toISOString(), by: signedBy, current: same(c.payoutReport, signable(report)) };
   return report;
 }
 

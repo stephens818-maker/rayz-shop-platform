@@ -722,6 +722,13 @@
       "when": 1796414400000,
       "tag": "core_0102_staff_app_gaps",
       "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1796500800000,
+      "tag": "core_0103_staff_app_invite_jobs",
+      "breakpoints": true
     }
   ]
 }
