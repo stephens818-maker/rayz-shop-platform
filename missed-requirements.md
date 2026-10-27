@@ -809,14 +809,16 @@ Charles's scope: a staff namespace at `/api/staff/v1`, apart from the customer `
 - [x] Push to the barber's phones for their own new, changed and cancelled bookings (staff phones, their own APNs topic).
 - [x] OpenAPI document at `/api/staff/v1/openapi.json`. Migration `core_0099_staff_app`. Tests: `tests/db/staff-api.test.ts`.
 
+- [x] The Rayz App builder's gap list and the app version gate: see section 37.
+
 **Still open:**
-- [ ] The Rayz App builder's Squire Commander gap list: checkout and send to checkout, booking and moving appointments, client profiles and search, time off requests, timesheet sign-off and reports are likely candidates.
 - [ ] Approved-device sign-in rules for the app (the app sends no device evidence yet, so a location needing an approved device or its Wi-Fi blocks the app off that network).
-- [ ] An app version gate for `/api/staff/v1`, like `/api/v1`'s 426.
 
 ## 35. Staff app Stripe tip payouts (matches Squire Commander)
 
 Charles's scope: each employee gets their own Stripe Connect Express account, separate from the shops' accounts, set up on Stripe's hosted onboarding from the staff app. Stripe test mode only. README "Tip payouts" and "Staff app API", and NOTES-SYNC "Tip payouts", have the details.
+
+**On hold (2026-10-27), with section 36:** this is built but switched off behind `FEATURE_STAFF_STRIPE_PAYOUTS` until Charles decides how W-2 tips are withheld. Tips are paid through payroll meanwhile (section 37).
 
 - [x] Staff API: start or resume onboarding (`POST /banking/onboarding-link`, with the step: start, resume, update or done), account status and requirements (`GET /banking`), the external accounts with last 4 only (`GET /banking/external-accounts`), and the Express dashboard link (`POST /banking/dashboard-link`).
 - [x] Onboarding covers identity, the bank account and a debit card for instant payouts, all on Stripe's pages.
@@ -848,6 +850,31 @@ Charles decided that all staff re-register: no Squire staff Stripe account is mi
 **Still open:**
 - [ ] Charles: how to pay someone who leaves before finishing Stripe setup. Today a manager changes their payout method to cash or payroll, then takes the payout out of the batch so the next one pays it that way.
 - [ ] A real invite and onboarding run against a Stripe test account with Connect turned on.
+
+## 37. Staff app API gaps from the Rayz App builder (ST-C1 to C10, ST-I1 to I8, ST-I10)
+
+From the builder's `staff-api-gaps.md` and `staff-app-plan.md`. Every route goes through `staffRoute`: the version gate, the token, `X-Shop-Id` through `assertShopAccess`, then `authorize`. README "Staff app API", NOTES-SYNC "Staff app API" and [docs/staff-payout-cutover.md](docs/staff-payout-cutover.md) have the details.
+
+- [x] ST-C1 sign-in by a texted or emailed code, and refresh tokens bound to the install.
+- [x] ST-C2 permissions on every route, with `X-Shop-Id` checked against the caller's shops and path ids against the tenant guard.
+- [x] ST-C3 the day calendar (their column or everyone's), booking, moving, status changes, running late, openings and blocks.
+- [x] ST-C4 client search and the client card as Client data protection shows it, reveal with a reason, no contact details and no export.
+- [x] ST-C5 their timecard and sign-off; managers' list, approval, punch fixes with reasons, and the iSolved CSV.
+- [x] ST-C6 earnings by pay period from the payroll run (to the cent), and year to date with the Squire import.
+- [x] ST-C7 a configurable payout model, **through payroll (iSolved) by default**. Direct Stripe payouts to employees sit behind `FEATURE_STAFF_STRIPE_PAYOUTS` (off) in `src/server/tips/payout-model.ts`, and no employee bank onboarding UI shows while it's off.
+- [x] ST-C8 push for confirm, reschedule, cancel, arrived, running late, waitlist, clock-out reminders and schedule changes.
+- [x] ST-C9 the payout cutover report, each barber's confirmation or dispute, the manager's sign-off, the YTD import, and the runbook (SR1 to SR8).
+- [x] ST-C10 app invites by text or email from **Users**, the invite page that opens the app, sessions, and signing someone out of every phone.
+- [x] ST-I1 to I8 and I10: time off requests and decisions (I1), milestones (I2), walk-ins (I3), checkout with the shop's card fee (I4, Tap to Pay behind its flag), calls and texts through the shop line (I5), the front-desk kiosk (I6), the manager board (I7), `/config` with the version and switches (I8), and the staff privacy, terms and support pages (I10).
+- [x] OpenAPI for every path, with its permission and the 426 response. Migrations `core_0102_staff_app_gaps` and `core_0103_staff_app_invite_jobs`. Tests: `tests/db/staff-app-api.test.ts`, `tests/db/staff-api.test.ts`, and the staff app section of `tests/db/tenant.test.ts` (outsiders, Coralville ids and canaries).
+
+**On hold, pending Charles's decision on W-2 tip withholding:**
+- [ ] ST-I9 (per-employee Stripe recipient accounts with Stripe-hosted onboarding, if Charles chooses them).
+- [ ] The employee Stripe Express payout work (sections 35 and 36): per-employee onboarding, instant payouts, the onboarding tracker and bulk invites. It's built, behind `FEATURE_STAFF_STRIPE_PAYOUTS`, which stays off.
+
+**Still open:**
+- [ ] Shop goals (ST-I2): the platform has no shop goals, so the app shows personal milestones only.
+- [ ] Tap to Pay (`FEATURE_STAFF_TAP_TO_PAY`) needs Apple's entitlement and a Terminal location per shop, when Charles says go.
 
 ## Deferred by decision
 

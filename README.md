@@ -871,6 +871,8 @@ Everyone is paid hourly. This reverses the earlier "no clock-in" decision.
 
 Tips are paid to employees nightly, a few days later, weekly, with payroll, or on demand, in cash from the drawer or by Stripe to their own debit card or bank. A manager approves every batch, and every tip still reaches payroll and iSolved for tax reporting.
 
+> **On hold: direct Stripe payouts to employees.** Ray'z staff are hourly W-2 employees, and Charles hasn't decided whether their tips must go through payroll withholding. Until he does, `FEATURE_STAFF_STRIPE_PAYOUTS` is off and tips go through payroll (the iSolved export) or cash. With the flag off, the tip policy reads every Stripe choice as payroll (`src/server/tips/payout-model.ts`, which keeps the stored choice for later). **My banking**, **Payout onboarding** and their pages, invites and reminders are hidden or refused. A batch with a Stripe payout can't be approved, the release cron does nothing, and the cutover skips the Stripe sign-off check. Everything below about Stripe applies once the flag is on.
+
 - **The tip ledger** (`tip_ledger`) has one entry per tip on a payment, per employee, shop and ticket: card, cash and gift card tips. A tip split between barbers (see [Customer screen at checkout](#customer-screen-at-checkout)) is one entry per barber for their share, and a tip refund on it is split the same way.
   - A refund or void that gives tip back adds a negative entry against the same ticket, with its share of the card fee.
   - A manager's adjustment is its own entry with a reason. Entries are never edited: the database refuses changes to amounts, people or dates.
@@ -2871,7 +2873,7 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
 
 ## Staff app API
 
-Ray'z is replacing Squire Commander with its own staff app, where staff see their appointments and calendar, clock in and out, see tips and earnings, and add their own bank account or debit card for tip deposits. Its API is **`/api/staff/v1`**, kept apart from the customer `/api/v1`. The spec is at `/api/staff/v1/openapi.json`, with each path's permission. The Rayz App builder is auditing Squire Commander and will send the gaps; NOTES-SYNC.md ("Staff app API") has the full contract.
+Ray'z is replacing Squire Commander with its own staff app, where staff see their appointments and calendar, clock in and out, run the front desk, and see tips and earnings. Its API is **`/api/staff/v1`**, kept apart from the customer `/api/v1`. The spec is at `/api/staff/v1/openapi.json`, with each path's permission. NOTES-SYNC.md ("Staff app API") has the full contract.
 
 - **Sign-in is staff email and password, never the customer code.**
   - `POST /auth/login` returns tokens, or a ticket for `POST /auth/login/code` when the person has two-step sign-in.
@@ -2889,7 +2891,8 @@ Ray'z is replacing Squire Commander with its own staff app, where staff see thei
 - **Tips, earnings and payouts (S3):**
   - `GET /tips` shows their tips by status and shop, and `GET /payouts` their payout history after fees.
   - `GET /earnings` shows each part only with its permission: sales need **See dollar amounts in reports** and the **My sales and tips** report, tips need **See their own tips and payouts**, and commission needs **See their own pay**.
-- **Bank account or debit card (each employee's own Stripe Express account, separate from the shops'):**
+- **How tips are paid (ST-C7): through payroll by default.** Ray'z staff are hourly W-2 employees, and whether tips must go through payroll withholding is still Charles's decision. Until he decides, tips are paid on the iSolved export, and `GET /me/payout-setup` says so (`defaultMethod: "payroll"`, with each shop's method). The direct-to-employee Stripe path sits behind `FEATURE_STAFF_STRIPE_PAYOUTS` (off) in `src/server/tips/payout-model.ts`. Turning it on brings back the Stripe payout method, the banking routes, the payout onboarding invites and reminders, and the cutover's Stripe sign-off check, with no other code change. The web has no employee bank onboarding while it's off.
+- **Bank account or debit card (on hold, `FEATURE_STAFF_STRIPE_PAYOUTS`):** every `/banking` route answers 403 with `details: { feature: "staff_stripe_payouts", enabled: false }` and `GET /me` has `features.banking: false` while the flag is off. With it on, each employee gets their own Stripe Express account, separate from the shops':
   - `POST /banking/onboarding-link` starts or resumes Stripe's hosted onboarding (identity, bank account, and a debit card for instant payouts) and comes back through `/staff-app/stripe` into the app (`STAFF_APP_SCHEME`, default `rayzstaff`). It says whether this is a first start, a resume, an update Stripe asked for, or already done.
   - `GET /banking` gives the status, the onboarding step, what Stripe still needs (in plain words, with the deadline), and the instant payout terms: whether it's allowed, where it goes, the fee and who pays it.
   - `GET /banking/external-accounts` lists each bank account and card: type, bank or brand, last 4, the default, and which takes instant payouts. `?refresh=1` reads Stripe first.
@@ -2897,11 +2900,20 @@ Ray'z is replacing Squire Commander with its own staff app, where staff see thei
   - Only the Stripe ids, statuses and the card or bank's type, name and last 4 are kept. Stripe test mode only until `MONEY_MOVEMENT_LIVE=true` (see [Tip payouts](#tip-payouts)).
 - **Pop-ups:** `GET /popups` returns unseen congratulations, a reminder to clock in when their first client or shift starts within 30 minutes, and an old shift that was never clocked out.
 - **Push:** `POST /devices` registers the phone. They get pushes for their own clients' new, changed and cancelled bookings (a first phone turns these on if they never picked), never for changes they made themselves. iOS staff phones use `STAFF_APNS_BUNDLE_ID`.
-- **Migration `core_0099_staff_app`** (`staff_app_tokens`, `staff_devices`). Tests: `tests/db/staff-api.test.ts`.
-- **Not in it yet:**
-  - checkout, booking and moving appointments, client profiles, time off requests, timesheet approval and reports, until the builder's gap list;
-  - approved-device sign-in rules, which the app can't meet away from the shop's network;
-  - the app version gate, which covers `/api/v1` only.
+- **The builder's gap list (ST-C1 to ST-C10, ST-I1 to ST-I8, ST-I10).** Every route goes through `staffRoute` (`src/server/staff-api/http.ts`): the version gate, then the staff app token, then `X-Shop-Id` through `assertShopAccess` (`all` needs a combined view), then `authorize` for the route's permissions. Ids from the path go through `assertShopAccess` or the tenant guard, and anything outside the caller's shops is 404 (or 403 for a shop they can't pick).
+  - **Sign-in (C1):** a 6-digit code by text or email (`/auth/code/start`, `/auth/code/verify`), with the same answer whether or not it matches anyone. A sign-in that sends `deviceId` gets a refresh token that only that install can use.
+  - **Version gate:** `STAFF_APP_{IOS,ANDROID}_MIN_VERSION` answer 426 on every route but `/config`. `/config` gives the store links, support contact, maintenance message and legal pages (`/staff-app/privacy`, `/terms`, `/support`).
+  - **Calendar (C3):** `GET /me/calendar` for one day (every barber's column with **See every barber's calendar**). Book, move, change status, mark running late (the barber gets an alert, the client gets nothing), openings, and blocks, all with the web calendar's rules and audit.
+  - **Clients (C4, contact in I5):** search (only clients they've served without **See every client**), the card as Client data protection shows it, reveal with a reason, and calls or texts through the shop line. Phone, email and address never come back, and there's no export.
+  - **Timecards (C5):** their own timecard and sign-off; managers list, approve, add, change and void punches with a reason (the edit log keeps before and after), and download the iSolved CSV (`X-Payroll-Draft` until the period is locked).
+  - **Earnings (C6):** `GET /me/earnings` for a pay period comes from the payroll run itself, so it matches the iSolved export to the cent. `/me/earnings/ytd` adds the year's Squire import.
+  - **Push (C8):** confirm, reschedule, cancel, arrived, running late, waitlist, clock-out reminder and schedule changes, each on the channels they picked.
+  - **Payout cutover (C9):** what Squire still owed each person at the switch, which they confirm or dispute (`/me/payout-cutover`). The manager can't sign off while anything is disputed. The year-to-date import from Squire keeps W-2 totals whole.
+  - **Invites and sessions (C10):** **Users** has a **Ray'z Staff app** row to text or email the sign-in link (`/staff-app/invite/{token}` opens the app) and to sign someone out of every phone. `/me/sessions` lists their phones and ends one or all the others.
+  - **Time off (I1), milestones (I2), walk-ins (I3), checkout (I4), the front desk (I6), the manager board (I7), switches (I8), legal pages (I10):** requests and decisions; trophies and personal bests; the waitlist (seat, status, "your chair is ready" text); a ticket priced by the server with the card fee from the shop's policy; the kiosk home and queue; one call for a manager's day. `/config` lists the switches. Tap to Pay's Terminal token waits on `FEATURE_STAFF_TAP_TO_PAY`, and `STAFF_APP_CLOCK_OFF` switches off phone punches (409 with `details.feature: "clock"`).
+  - **On hold:** ST-I9 and the employee Stripe Express work (per-employee onboarding, instant payouts, the onboarding tracker, bulk invites) until Charles decides on tips and payroll withholding.
+- **Migrations** `core_0099_staff_app` (tokens, devices), `core_0102_staff_app_gaps` (install-bound tokens, app invites, the payout cutover report and confirmations, YTD imports) and `core_0103_staff_app_invite_jobs`. Tests: `tests/db/staff-api.test.ts`, `tests/db/staff-app-api.test.ts`, and the staff app section of `tests/db/tenant.test.ts`.
+- **Not in it yet:** approved-device sign-in rules, which the app can't meet away from the shop's network; shop goals (ST-I2 shows personal milestones, since shops have no goals to show).
 
 ---
 
@@ -3065,7 +3077,8 @@ samples/squire/      example Squire CSV exports for the importer
 - Enter real barber schedules.
 - Import Squire clients, appointments, transactions, loyalty balances, and gift card balances, in that order, dry-running each file first. Check the reconciliation summary against Squire's own client and appointment counts, and fix and re-import rows from the error file.
 - Train Coralville staff, which takes about 30 minutes. The flows mirror Squire.
-- **Staff payout onboarding.** Every employee re-registers for Stripe tip payouts under Ray'z, since no Squire staff Stripe account is moved over. On each shop's **Cutover** page, set **Last day Squire pays tips**, then send invites from **Payout onboarding**. The Cutover page shows that day and who isn't set up, Payout onboarding shows it with how many still have to finish, and the cutover list shows how many are onboarded at each shop. **Sign off and switch** is refused until everyone working at the shop is done, unless an owner types a reason; the `cutover.switch` audit records the reason, who hadn't finished and Squire's last tips day. Tips for anyone still setting up wait for them (see [Tip payouts](#tip-payouts)).
+- **Staff tip payouts at cutover:** follow [docs/staff-payout-cutover.md](docs/staff-payout-cutover.md) (SR1 to SR8): the Squire-to-Ray'z payout report, each barber's confirmation in the staff app, the manager's sign-off, and the year-to-date import.
+- **Staff payout onboarding (on hold with `FEATURE_STAFF_STRIPE_PAYOUTS`).** Every employee re-registers for Stripe tip payouts under Ray'z, since no Squire staff Stripe account is moved over. On each shop's **Cutover** page, set **Last day Squire pays tips**, then send invites from **Payout onboarding**. The Cutover page shows that day and who isn't set up, Payout onboarding shows it with how many still have to finish, and the cutover list shows how many are onboarded at each shop. **Sign off and switch** is refused until everyone working at the shop is done, unless an owner types a reason; the `cutover.switch` audit records the reason, who hadn't finished and Squire's last tips day. Tips for anyone still setting up wait for them (see [Tip payouts](#tip-payouts)).
 
 **Weeks 1–4: parallel run at Coralville**
 
