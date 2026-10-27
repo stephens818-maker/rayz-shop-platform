@@ -2,7 +2,8 @@ import "server-only";
 import { isValidLocalDate } from "@/lib/time";
 import { barberLabel } from "@/domain/barbers";
 import { LocationGroup, LocationSelection, locationLabel } from "@/domain/locations";
-import type { ReportKey } from "@/domain/permissions";
+import { PAYROLL_REPORTS, type ReportKey } from "@/domain/permissions";
+import { PAY_PERIOD_PRESET, payPeriodRange } from "@/server/payroll/periods";
 import { PRESETS, presetRange } from "@/domain/report-range";
 import { ReportView, ViewCtx, parseReportView, parseView, totalLabel } from "@/domain/report-views";
 import type { StaffContext } from "@/server/auth/staff";
@@ -86,6 +87,7 @@ export const BARBER_REPORTS: ReadonlySet<ReportKey> = new Set([
   "tip_payouts",
   "gift_cards",
   "cash_drawer",
+  ...PAYROLL_REPORTS,
 ]);
 
 /**
@@ -97,7 +99,18 @@ export const NO_BARBER_REPORTS: ReadonlySet<ReportKey> = new Set(["inventory", "
 export const defaultView = (report?: ReportKey): ReportView => (report === "sales_by_barber" || report === "service_times" ? "barbers" : "combined");
 
 /** The range a report opens on without one in the URL. */
-const DEFAULT_PRESET: Partial<Record<ReportKey, string>> = { end_of_day: "lastday", analytics: "4w", sales_tax: "lastmonth", retention: "lastquarter", rebook_rate: "lastquarter", leaderboard: "month", phone_operator: "30d", acquisition: "30d" };
+const DEFAULT_PRESET: Partial<Record<ReportKey, string>> = {
+  end_of_day: "lastday",
+  analytics: "4w",
+  sales_tax: "lastmonth",
+  retention: "lastquarter",
+  rebook_rate: "lastquarter",
+  leaderboard: "month",
+  phone_operator: "30d",
+  acquisition: "30d",
+  ...Object.fromEntries(PAYROLL_REPORTS.map((k) => [k, "pp:last"])),
+  payroll_overtime: "pp:current",
+};
 
 /** Without "See every barber's numbers", reports that break down by barber show only the viewer's own. "My sales" always does. */
 export const selfOnly = (ctx: Pick<StaffContext, "permissions">, report: ReportKey) => report === "my_sales" || !ctx.permissions.has("reports.all_staff");
@@ -169,8 +182,10 @@ export type ResolvedScope = ReportScope & ReportLocations & ReportViewState & { 
  */
 export async function resolveScope(ctx: StaffContext, p: ReportParams, report: ReportKey): Promise<ResolvedScope> {
   const custom = p.from && p.to && isValidLocalDate(p.from) && isValidLocalDate(p.to);
-  const preset = custom ? null : (p.preset ?? DEFAULT_PRESET[report] ?? "7d");
-  let { from, to } = custom ? { from: p.from!, to: p.to! } : presetRange(preset!);
+  let preset = custom ? null : (p.preset ?? DEFAULT_PRESET[report] ?? "7d");
+  const period = preset?.startsWith(PAY_PERIOD_PRESET) ? ((await payPeriodRange(preset)) ?? (await payPeriodRange("pp:last"))) : null;
+  if (period) preset = period.id;
+  let { from, to } = custom ? { from: p.from!, to: p.to! } : (period ?? presetRange(preset!));
   if (from > to) [from, to] = [to, from];
   const v = await resolveBarberView(ctx, p, report, await resolveLocations(ctx, p));
   return { shopIds: v.selection.shopIds, from, to, preset, ...v };

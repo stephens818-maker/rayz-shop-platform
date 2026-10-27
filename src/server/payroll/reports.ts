@@ -1,0 +1,1222 @@
+import { and, eq, gte, inArray, lt, lte, sql } from "drizzle-orm";
+import ExcelJS from "exceljs";
+import { db } from "@/db";
+import { payrollExportSends, staff, timeEntries, tipLedger, tipPayouts, type PayrollSendShop } from "@/db/schema";
+import { EXPORT_COLUMNS, extraFromOf, toCents, type ExtraFrom, type Line } from "@/domain/payroll/calc";
+import { FLAG_LABEL, FT_LABEL, PUNCH_LABEL, type PunchType } from "@/domain/time-clock";
+import type { Permission } from "@/domain/permissions";
+import type { BarChart } from "@/domain/report-charts";
+import { Cell, Column, ListRow, ViewCtx, listTable } from "@/domain/report-views";
+import { formatCents } from "@/lib/money";
+import { addDays, endOfLocalDay, formatDate, formatDateTime, formatTime, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
+import { audit, type Actor } from "@/server/audit";
+import { AppError } from "@/server/errors";
+import type { ReportChart, ReportData, ReportOption } from "@/server/report-data";
+import { PAID, rows as sqlRows, uuids } from "@/server/report-sql";
+import { itemMix, staffSelection, type ReportScope } from "@/server/reports";
+import { ftOverview, hoursSlices, periodFor, punchEditsBetween, scheduledMinutesLeft, shiftsBetween, timesheetList } from "@/server/time-clock";
+import { weekStartOf } from "@/domain/payroll/overtime";
+import { addIsolvedSheet } from "./export";
+import { loadSettings } from "./groups";
+import { MAX_REPORT_PERIODS, payPeriodPresets, periodLabel, periodsEnding, type PayPeriodRef } from "./periods";
+import { buildPayroll, type BlockView, type PayrollView } from "./run";
+
+/**
+ * The payroll reports (Reports → Payroll). iSolved is the payroll company and stays the system of
+ * record: it computes paychecks, taxes and blended overtime. These reports show what the platform
+ * sends it, pay period by pay period, from the same Payroll Report the period is approved and locked
+ * on (a locked shop comes back exactly as approved), so every figure ties to the iSolved file to the
+ * cent. Pay periods follow each pay group's calendar (bi-weekly unless Payroll setup says weekly).
+ * Brand-only by default; rate and labor cost columns need "See pay rates and labor cost".
+ */
+
+export interface PayrollReportInput {
+  scope: ReportScope;
+  loc: ViewCtx;
+  perms?: ReadonlySet<Permission>;
+  params?: Record<string, string | undefined>;
+  now?: Date;
+}
+
+export type ExportStatus = "draft" | "approved" | "sent";
+export const EXPORT_STATUS_LABEL: Record<ExportStatus, string> = { draft: "Draft", approved: "Approved", sent: "Sent to iSolved" };
+
+interface PeriodRun {
+  ref: PayPeriodRef;
+  key: string;
+  label: string;
+  view: PayrollView;
+  /** The viewer's shops in the period. */
+  blocks: BlockView[];
+  /** Their rows, for the employees picked. */
+  lines: Line[];
+}
+
+const text = (label: string): Column => ({ label });
+const int = (label: string): Column => ({ label, kind: "int" });
+const money = (label: string): Column => ({ label, kind: "money" });
+const rate = (label: string): Column => ({ label, kind: "money", sum: false });
+const pct = (label: string): Column => ({ label, kind: "pct", sum: false });
+/** Hours to the hundredth, as iSolved takes them. */
+const hrs = (label: string, sum = true): Column => ({ label, kind: "decimal", sum });
+const bool = (label: string): Column => ({ label, kind: "bool", sum: false });
+
+const h2 = (x: number) => Math.round(x * 100) / 100;
+const chartMin = (hours: number) => Math.round(hours * 60);
+const byText = (i: number) => (a: Cell[], b: Cell[]) => String(a[i] ?? "").localeCompare(String(b[i] ?? ""));
+const sumOf = <T>(xs: readonly T[], f: (x: T) => number) => xs.reduce((a, x) => a + f(x), 0);
+const yearLabel = (ref: Pick<PayPeriodRef, "start" | "end">) => `${periodLabel(ref)}, ${ref.end.slice(0, 4)}`;
+const noBarber = (loc: ViewCtx): ViewCtx => ({ ...loc, byBarber: false });
+const combined = (loc: ViewCtx): ViewCtx => ({ ...loc, view: "combined", byBarber: false });
+
+async function labels(ids: Iterable<string>) {
+  const list = [...new Set(ids)];
+  return new Map((list.length ? await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, list)) : []).map((s) => [s.id, s.label]));
+}
+
+/** The pay periods that end in the range, each built as on the Payroll Report and cut down to the viewer's shops and the employees picked. */
+async function runsIn(scope: ReportScope): Promise<{ runs: PeriodRun[]; capped: boolean }> {
+  const { periods, capped } = await periodsEnding(scope.from, scope.to, scope.shopIds);
+  const sel = staffSelection(scope);
+  const runs: PeriodRun[] = [];
+  for (const ref of periods) {
+    const view = await buildPayroll(ref.start, ref.end);
+    if (!view) continue;
+    const blocks = view.blocks.filter((b) => scope.shopIds.includes(b.shopId));
+    if (!blocks.length) continue;
+    runs.push({ ref, key: `${ref.start}_${ref.end}`, label: yearLabel(ref), view, blocks, lines: blocks.flatMap((b) => b.lines.filter((l) => !sel || sel.includes(l.staffId))) });
+  }
+  return { runs, capped };
+}
+
+function periodNotes(runs: PeriodRun[], capped: boolean): string[] {
+  return [
+    runs.length
+      ? `Covers the ${runs.length === 1 ? "pay period" : `${runs.length} pay periods`} ending in the dates picked: ${runs.map((r) => r.label).join("; ")}. Pay periods follow each shop's pay calendar in Payroll setup (bi-weekly by default).`
+      : "No pay period ends in the dates picked. Pick a pay period above, or widen the dates.",
+    ...(capped ? [`Only the last ${MAX_REPORT_PERIODS} pay periods are shown; narrow the dates for earlier ones.`] : []),
+  ];
+}
+
+async function sendsOf(runs: readonly PeriodRun[]) {
+  if (!runs.length) return new Map<string, typeof payrollExportSends.$inferSelect & { by: string | null }>();
+  const list = await db
+    .select({ s: payrollExportSends, by: staff.displayLabel })
+    .from(payrollExportSends)
+    .leftJoin(staff, eq(staff.id, payrollExportSends.sentBy))
+    .where(inArray(payrollExportSends.periodStart, runs.map((r) => r.ref.start)));
+  return new Map(list.map((x) => [`${x.s.periodStart}_${x.s.periodEnd}`, { ...x.s, by: x.by }]));
+}
+
+const statusOf = (view: Pick<PayrollView, "locked">, sent: boolean): ExportStatus => (sent ? "sent" : view.locked === "all" ? "approved" : "draft");
+
+/** Tips in the tip ledger for a period, per employee and shop, by how they were paid. Gift card tips count with cash. */
+async function tipsByMethod(shopIds: string[], start: LocalDate, end: LocalDate, sel: string[] | null) {
+  if (!shopIds.length || (sel && !sel.length)) return new Map<string, { card: number; cash: number; adjust: number }>();
+  const list = await db
+    .select({ shopId: tipLedger.shopId, staffId: tipLedger.staffId, method: tipLedger.method, cents: sql<number>`sum(${tipLedger.amountCents})::int` })
+    .from(tipLedger)
+    .where(and(inArray(tipLedger.shopId, shopIds), gte(tipLedger.businessDate, start), lte(tipLedger.businessDate, end), sel ? inArray(tipLedger.staffId, sel) : undefined))
+    .groupBy(tipLedger.shopId, tipLedger.staffId, tipLedger.method);
+  const out = new Map<string, { card: number; cash: number; adjust: number }>();
+  for (const r of list) {
+    const k = `${r.staffId}|${r.shopId}`;
+    const v = out.get(k) ?? { card: 0, cash: 0, adjust: 0 };
+    if (r.method === "card") v.card += r.cents;
+    else if (r.method === "adjust") v.adjust += r.cents;
+    else v.cash += r.cents;
+    out.set(k, v);
+  }
+  return out;
+}
+
+/** Direct payouts of a period that are paid, per employee and shop, by method. */
+function paidDirect(view: PayrollView) {
+  const out = new Map<string, { stripe: number; cash: number; stripeCount: number }>();
+  for (const r of view.tips.rows) {
+    const v = { stripe: 0, cash: 0, stripeCount: 0 };
+    for (const p of r.payouts.filter((x) => x.status === "paid")) {
+      if (p.method === "stripe") {
+        v.stripe += p.tipsCents + p.adjustCents;
+        v.stripeCount++;
+      } else v.cash += p.tipsCents + p.adjustCents;
+    }
+    out.set(`${r.staffId}|${r.shopId}`, v);
+  }
+  return out;
+}
+
+const hourlyPay = (l: Line) => toCents(l.hourlyTotal) + toCents(l.otPay) + toCents(l.trainingPay);
+/** Gross wages the iSolved file stands for: labor cost (hourly, OT, training, commission, top-ups) and every tip. */
+const toIsolved = (l: Line) => toCents(l.laborCost) + toCents(l.tips);
+
+// ───────────────────────────── Payroll summary ─────────────────────────────
+
+export async function payrollSummaryData(i: PayrollReportInput): Promise<ReportData> {
+  const { scope, loc } = i;
+  const rates = !!i.perms?.has("payroll.rates");
+  const sel = staffSelection(scope);
+  const [{ runs, capped }, presets] = await Promise.all([runsIn(scope), payPeriodPresets(undefined, scope.shopIds)]);
+  const sends = await sendsOf(runs);
+  const rowsOut: ListRow[] = [];
+  const periodRows: ListRow[] = [];
+  const perPeriod: { label: string; hourly: number; comm: number; tips: number }[] = [];
+  const perPerson = new Map<string, { name: string; hourly: number; comm: number; tips: number }>();
+  for (const r of runs) {
+    const [methods, paid] = [await tipsByMethod(r.blocks.map((b) => b.shopId), r.ref.start, r.ref.end, sel), paidDirect(r.view)];
+    const status = EXPORT_STATUS_LABEL[statusOf(r.view, sends.has(r.key))];
+    for (const l of r.lines) {
+      const k = `${l.staffId}|${l.shopId}`;
+      const m = methods.get(k) ?? { card: 0, cash: 0, adjust: 0 };
+      const tips = toCents(l.tips);
+      const stripe = paid.get(k)?.stripe ?? 0;
+      rowsOut.push({
+        shopId: l.shopId,
+        staffId: l.staffId,
+        key: l.staffId,
+        cells: [
+          l.name,
+          h2(l.hours),
+          h2(l.otHours),
+          h2(l.ptoHours),
+          h2(l.trainingHours),
+          ...(rates ? [toCents(l.wage), hourlyPay(l)] : []),
+          toCents(l.commission),
+          toCents(l.productTotal),
+          toCents(l.netComm),
+          m.card,
+          m.cash,
+          tips - m.card - m.cash,
+          tips,
+          toCents(l.tipsInPayroll),
+          stripe,
+          ...(rates ? [toIsolved(l)] : []),
+        ],
+      });
+      const p = perPerson.get(l.staffId) ?? { name: l.name, hourly: 0, comm: 0, tips: 0 };
+      p.hourly += hourlyPay(l) + toCents(l.guaranteeTopUp);
+      p.comm += toCents(l.netComm);
+      p.tips += tips;
+      perPerson.set(l.staffId, p);
+    }
+    for (const b of r.blocks) {
+      const mine = r.lines.filter((l) => l.shopId === b.shopId);
+      periodRows.push({
+        shopId: b.shopId,
+        key: r.key,
+        cells: [
+          r.label,
+          status,
+          mine.length,
+          h2(sumOf(mine, (l) => l.hours)),
+          h2(sumOf(mine, (l) => l.otHours)),
+          sumOf(mine, (l) => toCents(l.netComm)),
+          sumOf(mine, (l) => toCents(l.tips)),
+          sumOf(mine, (l) => paid.get(`${l.staffId}|${l.shopId}`)?.stripe ?? 0),
+          ...(rates ? [sumOf(mine, toIsolved)] : []),
+        ],
+      });
+    }
+    perPeriod.push({
+      label: r.ref.end,
+      hourly: sumOf(r.lines, (l) => hourlyPay(l) + toCents(l.guaranteeTopUp)),
+      comm: sumOf(r.lines, (l) => toCents(l.netComm)),
+      tips: sumOf(r.lines, (l) => toCents(l.tips)),
+    });
+  }
+  const lines = runs.flatMap((r) => r.lines);
+  const at = (j: number) => sumOf(rowsOut, (r) => Number(r.cells[rates ? j + 2 : j]));
+  const [card, cash, stripe] = [at(8), at(9), at(13)];
+  const columns = [
+    text("Employee"),
+    hrs("Regular hours"),
+    hrs("OT hours"),
+    hrs("Paid time off hours"),
+    hrs("Training hours"),
+    ...(rates ? [rate("Hourly rate"), money("Gross hourly pay")] : []),
+    money("Service commission"),
+    money("Product commission"),
+    money("Commission to iSolved (E_Comm Sales)"),
+    money("Card tips"),
+    money("Cash tips"),
+    money("Tip adjustments"),
+    money("Tips"),
+    money("Tips in payroll"),
+    money("Tips already paid via Stripe"),
+    ...(rates ? [money("Total to iSolved")] : []),
+  ];
+  const parts = rates ? ["Hourly, OT and training pay", "Commission", "Tips"] : ["Commission", "Tips"];
+  const stack = (x: { hourly: number; comm: number; tips: number }) => (rates ? [x.hourly, x.comm, x.tips] : [x.comm, x.tips]);
+  const bars: BarChart[] = [];
+  if (perPeriod.length > 1)
+    bars.push({ id: "periods", title: "Pay by pay period", kind: "money", shape: "time", legend: parts, bars: perPeriod.map((p) => ({ label: p.label, value: stack(p).reduce((a, b) => a + b, 0), parts: stack(p) })) });
+  if (perPerson.size > 1)
+    bars.push({
+      id: "people",
+      title: "Pay by employee",
+      subtitle: perPerson.size > 12 ? `Top 12 of ${perPerson.size}` : undefined,
+      kind: "money",
+      shape: "rank",
+      legend: parts,
+      bars: [...perPerson.values()]
+        .map((p) => ({ label: p.name, value: stack(p).reduce((a, b) => a + b, 0), parts: stack(p) }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 12),
+    });
+  return {
+    presets,
+    bars,
+    stats: [
+      { label: "Pay periods", value: String(runs.length), hint: runs.length === 1 ? EXPORT_STATUS_LABEL[statusOf(runs[0].view, sends.has(runs[0].key))] : undefined },
+      { label: "Regular hours", value: h2(sumOf(lines, (l) => l.hours)).toFixed(2), hint: `${h2(sumOf(lines, (l) => l.otHours)).toFixed(2)} h overtime` },
+      { label: "Commission to iSolved", value: formatCents(sumOf(lines, (l) => toCents(l.netComm))), hint: "E_Comm Sales: commission over hourly, plus product commission" },
+      { label: "Tips", value: formatCents(sumOf(lines, (l) => toCents(l.tips))), hint: `card ${formatCents(card)} · cash ${formatCents(cash)}` },
+      { label: "Already paid via Stripe", value: formatCents(stripe), hint: "reported to iSolved, not paid again" },
+      ...(rates ? [{ label: "Total to iSolved", value: formatCents(sumOf(lines, toIsolved)), hint: "gross wages in the file, tips included" }] : []),
+    ],
+    tables: [
+      listTable(loc, { id: "employees", title: "By employee", columns, rows: rowsOut, merge: true, sort: byText(0) }),
+      listTable(noBarber(loc), {
+        id: "periods",
+        title: "By pay period",
+        columns: [
+          text("Pay period"),
+          text("iSolved file"),
+          int("Rows"),
+          hrs("Regular hours"),
+          hrs("OT hours"),
+          money("Commission to iSolved"),
+          money("Tips"),
+          money("Tips already paid via Stripe"),
+          ...(rates ? [money("Total to iSolved")] : []),
+        ],
+        rows: periodRows.reverse(),
+        merge: true,
+      }),
+    ],
+    notes: [
+      ...periodNotes(runs, capped),
+      "iSolved is the payroll company and the system of record: it computes the paychecks, taxes and overtime at the blended rate. Hours come from the time clock (worked time, unpaid breaks out); regular hours are worked hours less overtime past 40 in a workweek across shops.",
+      "Cash tips include gift card tips. Tip adjustments are manager adjustments and overrides on the Payroll Report. Tips already paid (cash, or direct to their bank via Stripe) are reported to iSolved as tips received, so they're taxed but not paid again.",
+      ...(rates
+        ? ["Total to iSolved is the gross wages the file stands for: hourly pay, overtime at 1.5× the base rate, training pay, commission, any guaranteed-minimum top-up, and every tip. Paid time off goes to iSolved as hours."]
+        : ['Hourly rates, hourly pay and the total show only with "See pay rates and labor cost".']),
+    ],
+  };
+}
+
+// ───────────────────────────── Timesheet detail ─────────────────────────────
+
+const punchText = (x: unknown) => {
+  if (!x || typeof x !== "object") return "—";
+  const o = x as { type?: PunchType; at?: string; voided?: boolean };
+  return [o.type ? PUNCH_LABEL[o.type] : null, o.at ? formatDateTime(o.at) : null, o.voided ? "(voided)" : null].filter(Boolean).join(" ");
+};
+const EDIT_LABEL = { edit: "Edited", add: "Added", void: "Voided" } as const;
+
+export async function payrollTimesheetsData(i: PayrollReportInput): Promise<ReportData> {
+  const { scope, loc } = i;
+  const sel = staffSelection(scope);
+  const multi = loc.shops.length > 1;
+  const [shifts, edits, presets] = await Promise.all([
+    shiftsBetween(scope.shopIds, scope.from, scope.to, sel),
+    punchEditsBetween(scope.shopIds, scope.from, scope.to, sel),
+    payPeriodPresets(undefined, scope.shopIds),
+  ]);
+  const periods = [];
+  for (let p = periodFor(scope.from); p.start <= scope.to && periods.length < MAX_REPORT_PERIODS; p = periodFor(addDays(p.end, 1))) periods.push(p);
+  const sheets = await Promise.all(periods.map(async (p) => ({ p, list: await timesheetList(p.start, scope.shopIds, sel) })));
+  const name = await labels([...shifts.map((s) => s.staffId), ...edits.map((e) => e.staffId), ...sheets.flatMap((s) => s.list.rows.map((r) => r.staffId))]);
+  const who = (id: string) => name.get(id) ?? "Unknown";
+  const shopName = new Map(loc.shops.map((s) => [s.id, s.name]));
+  const approvals = sheets.flatMap(({ p, list }) => list.rows.filter((r) => r.workedCenti > 0 || r.problems > 0).map((r) => ({ p, r, locked: list.locks[r.shopId] ?? null })));
+  const waiting = approvals.filter((a) => !a.r.managerApprovedAt).length;
+  const perDay = new Map<string, number>();
+  for (const s of shifts) perDay.set(s.date, (perDay.get(s.date) ?? 0) + s.workedMin);
+  return {
+    presets,
+    bars:
+      perDay.size > 1
+        ? [{ id: "days", title: "Hours worked by day", kind: "hours", shape: "time", bars: [...perDay.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([d, m]) => ({ label: d, value: m })) }]
+        : [],
+    stats: [
+      { label: "Shifts", value: String(shifts.length), hint: `${shifts.filter((s) => !s.end).length} still open` },
+      { label: "Hours worked", value: (sumOf(shifts, (s) => s.workedMin) / 60).toFixed(2), hint: `${sumOf(shifts, (s) => s.breaks.length)} breaks, ${(sumOf(shifts, (s) => s.unpaidBreakMin) / 60).toFixed(2)} h unpaid` },
+      { label: "Edited shifts", value: String(shifts.filter((s) => s.edited).length), hint: `${edits.length} punch changes by a manager` },
+      { label: "Waiting on a manager", value: String(waiting), hint: `of ${approvals.length} timesheets with hours` },
+    ],
+    tables: [
+      listTable(loc, {
+        id: "shifts",
+        title: "Punches and breaks",
+        columns: [text("Date"), text("Employee"), text("Clock in"), text("Clock out"), text("Breaks"), int("Break minutes"), int("Unpaid break minutes"), hrs("Hours worked"), hrs("Scheduled hours"), text("Flags"), bool("Edited"), text("How")],
+        rows: shifts.map((s) => ({
+          shopId: s.shopId,
+          staffId: s.staffId,
+          cells: [
+            s.date,
+            who(s.staffId),
+            formatTime(s.start),
+            s.end ? formatTime(s.end) : "Still open",
+            s.breaks.map((b) => `${formatTime(b.start)}–${b.end ? formatTime(b.end) : "open"}${b.paid ? "" : " unpaid"}`).join("; "),
+            s.breakMin,
+            s.unpaidBreakMin,
+            h2(s.workedMin / 60),
+            h2(s.scheduledMin / 60),
+            s.flags.map((f) => FLAG_LABEL[f]).join(", "),
+            s.edited,
+            s.methods.join(", "),
+          ],
+        })),
+        keepShop: multi,
+        sort: (a, b) => String(b[0]).localeCompare(String(a[0])) || String(a[1]).localeCompare(String(b[1])),
+      }),
+      listTable(loc, {
+        id: "edits",
+        title: "Edits",
+        subtitle: "Every punch a manager added, moved or voided, with the reason.",
+        columns: [text("Changed"), text("Employee"), text("Change"), text("Before"), text("After"), text("Reason"), text("By")],
+        rows: edits.map((e) => ({
+          shopId: e.shopId,
+          staffId: e.staffId,
+          cells: [formatDateTime(e.at), who(e.staffId), EDIT_LABEL[e.action], punchText(e.before), punchText(e.after), e.reason, e.by ?? "—"],
+        })),
+        keepShop: multi,
+        totals: false,
+        sort: (a, b) => String(b[0]).localeCompare(String(a[0])),
+      }),
+      listTable(loc, {
+        id: "approvals",
+        title: "Approvals",
+        subtitle: "Each timesheet: the employee signs off, then a manager approves; the shop's period then locks.",
+        columns: [text("Timesheet period"), text("Employee"), hrs("Hours worked"), hrs("OT hours"), int("Missed punches"), text("Employee signed off"), text("Manager approved"), text("Period locked")],
+        rows: approvals.map(({ p, r, locked }) => ({
+          shopId: r.shopId,
+          staffId: r.staffId,
+          cells: [
+            yearLabel(p),
+            who(r.staffId),
+            h2(r.workedCenti / 100),
+            h2(r.otCenti / 100),
+            r.problems,
+            r.employeeApprovedAt ? formatDateTime(r.employeeApprovedAt) : "Not yet",
+            r.managerApprovedAt ? formatDateTime(r.managerApprovedAt) : "Waiting",
+            locked ? formatDateTime(locked) : "Open",
+          ],
+        })),
+        keepShop: multi,
+        sort: (a, b) => String(a[0]).localeCompare(String(b[0])) || String(a[1]).localeCompare(String(b[1])),
+      }),
+    ],
+    notes: [
+      "Shifts are listed on the day they start. Breaks of the shop's unpaid length or longer come out of paid time.",
+      `Timesheets run on the time clock's bi-weekly periods; ${shopName.size > 1 ? "each shop" : "the shop"} locks its period once every timesheet with hours is approved.`,
+    ],
+  };
+}
+
+// ───────────────────────────── Tips ─────────────────────────────
+
+const METHOD_LABEL: Record<string, string> = { stripe: "Stripe", cash: "Cash", payroll: "Payroll", prior: "Paid before tip payouts" };
+
+/** Tickets whose tip is split between barbers (a family on one ticket, or a shared service): each barber's share. Never a client's name. */
+async function tipSplits(scope: ReportScope) {
+  const sel = staffSelection(scope);
+  return sqlRows<{ saleId: string; number: number; shopId: string; date: string; staffId: string; weight: number; totalWeight: number; appts: number; card: number; cash: number; total: number }>(sql`
+    select s.id "saleId", s.number, s.shop_id "shopId", s.business_date::text date, sh.staff_id "staffId", sh.weight,
+      (select sum(x.weight)::int from sale_tip_shares x where x.sale_id = s.id) "totalWeight",
+      (select count(distinct i.appointment_id)::int from sale_items i where i.sale_id = s.id) appts,
+      coalesce(sum(l.amount_cents) filter (where l.method = 'card'), 0)::int card,
+      coalesce(sum(l.amount_cents) filter (where l.method in ('cash', 'gift_card')), 0)::int cash,
+      coalesce(sum(l.amount_cents) filter (where l.method <> 'adjust'), 0)::int total
+    from sale_tip_shares sh
+    join sales s on s.id = sh.sale_id
+    left join tip_ledger l on l.sale_id = s.id and l.staff_id = sh.staff_id
+    where s.shop_id in ${uuids(scope.shopIds)} and s.business_date between ${scope.from} and ${scope.to} and s.status in ${PAID}
+      ${sel ? sql`and sh.staff_id in ${uuids(sel)}` : sql``}
+    group by s.id, s.number, s.shop_id, s.business_date, sh.staff_id, sh.weight
+    order by s.business_date desc, s.number desc`);
+}
+
+/** Direct payouts held because the employee hasn't finished their Stripe setup, per employee and shop, for a period's tips. */
+async function heldForSetup(shopIds: string[], start: LocalDate, end: LocalDate) {
+  if (!shopIds.length) return new Map<string, number>();
+  const list = await db
+    .select({ shopId: tipLedger.shopId, staffId: tipLedger.staffId, cents: sql<number>`sum(${tipLedger.amountCents})::int` })
+    .from(tipLedger)
+    .innerJoin(tipPayouts, eq(tipPayouts.id, tipLedger.payoutId))
+    .where(and(inArray(tipLedger.shopId, shopIds), gte(tipLedger.businessDate, start), lte(tipLedger.businessDate, end), eq(tipPayouts.status, "held"), eq(tipPayouts.holdKind, "stripe_setup")))
+    .groupBy(tipLedger.shopId, tipLedger.staffId);
+  return new Map(list.map((r) => [`${r.staffId}|${r.shopId}`, r.cents]));
+}
+
+export async function payrollTipsData(i: PayrollReportInput): Promise<ReportData> {
+  const { scope, loc } = i;
+  const sel = staffSelection(scope);
+  const multi = loc.shops.length > 1;
+  const [{ runs, capped }, presets, splits] = await Promise.all([runsIn(scope), payPeriodPresets(undefined, scope.shopIds), tipSplits(scope)]);
+  const people: ListRow[] = [];
+  const payouts: ListRow[] = [];
+  const periods: ListRow[] = [];
+  const chart: { label: string; card: number; cash: number; stripe: number; cashPaid: number; flight: number; owed: number }[] = [];
+  for (const r of runs) {
+    const shopIds = r.blocks.map((b) => b.shopId);
+    const [methods, held] = await Promise.all([tipsByMethod(shopIds, r.ref.start, r.ref.end, sel), heldForSetup(shopIds, r.ref.start, r.ref.end)]);
+    const checks = r.view.tips.rows.filter((x) => shopIds.includes(x.shopId) && (!sel || sel.includes(x.staffId)));
+    const keys = new Set([...checks.map((c) => `${c.staffId}|${c.shopId}`), ...methods.keys()]);
+    const point = { label: r.ref.end, card: 0, cash: 0, stripe: 0, cashPaid: 0, flight: 0, owed: 0 };
+    const perShop = new Map<string, Cell[]>();
+    for (const k of keys) {
+      const [staffId, shopId] = k.split("|");
+      const c = checks.find((x) => x.staffId === staffId && x.shopId === shopId);
+      const m = methods.get(k) ?? { card: 0, cash: 0, adjust: 0 };
+      const paid = (c?.payouts ?? []).filter((p) => p.status === "paid");
+      const stripe = sumOf(
+        paid.filter((p) => p.method === "stripe"),
+        (p) => p.tipsCents + p.adjustCents,
+      );
+      const cashPaid = sumOf(
+        paid.filter((p) => p.method !== "stripe"),
+        (p) => p.tipsCents + p.adjustCents,
+      );
+      const cells: Cell[] = [
+        c?.name ?? loc.staffNames?.[staffId] ?? "Unknown",
+        m.card,
+        m.cash,
+        m.adjust,
+        m.card + m.cash + m.adjust,
+        c?.inPayrollCents ?? 0,
+        stripe,
+        cashPaid,
+        c?.inFlightCents ?? 0,
+        c?.owedCents ?? 0,
+        held.get(k) ?? 0,
+      ];
+      people.push({ shopId, staffId, key: staffId, cells });
+      const s = perShop.get(shopId) ?? [r.label, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+      [m.card, m.cash, m.adjust, m.card + m.cash + m.adjust, c?.inPayrollCents ?? 0, stripe, cashPaid, c?.inFlightCents ?? 0, c?.owedCents ?? 0].forEach((v, j) => (s[j + 1] = Number(s[j + 1]) + v));
+      perShop.set(shopId, s);
+      Object.assign(point, { card: point.card + m.card, cash: point.cash + m.cash + m.adjust, stripe: point.stripe + stripe, cashPaid: point.cashPaid + cashPaid, flight: point.flight + (c?.inFlightCents ?? 0), owed: point.owed + (c?.owedCents ?? 0) });
+      for (const p of c?.payouts ?? [])
+        payouts.push({
+          shopId,
+          staffId,
+          cells: [p.paidAt ? formatDate(p.paidAt, "yyyy-MM-dd") : p.sentAt ? formatDate(p.sentAt, "yyyy-MM-dd") : "", c!.name, r.label, METHOD_LABEL[p.method] ?? p.method, p.status, p.tipsCents + p.adjustCents, p.instant, p.stripeTransferId ?? "", p.stripePayoutId ?? ""],
+        });
+    }
+    for (const [shopId, cells] of perShop) periods.push({ shopId, key: r.key, cells });
+    chart.push(point);
+  }
+  const col = (j: number) => sumOf(people, (r) => Number(r.cells[j]));
+  const familyTickets = new Set(splits.filter((s) => s.appts > 1).map((s) => s.saleId)).size;
+  const shared = new Set(splits.map((s) => s.saleId)).size;
+  const tipColumns = [money("Card tips"), money("Cash tips"), money("Adjustments"), money("Tips earned"), money("Paid in payroll"), money("Paid via Stripe"), money("Paid in cash"), money("Sent, not paid yet"), money("Pending")];
+  return {
+    presets,
+    bars: [
+      ...(chart.length
+        ? [
+            { id: "card_cash", title: "Card vs cash tips by pay period", kind: "money", shape: "time", legend: ["Card", "Cash and adjustments"], bars: chart.map((p) => ({ label: p.label, value: p.card + p.cash, parts: [p.card, p.cash] })) } satisfies BarChart,
+            {
+              id: "paid",
+              title: "Direct tips: paid and pending",
+              kind: "money",
+              shape: "time",
+              legend: ["Paid via Stripe", "Paid in cash", "Sent, not paid yet", "Pending"],
+              bars: chart.map((p) => ({ label: p.label, value: p.stripe + p.cashPaid + p.flight + Math.max(0, p.owed), parts: [p.stripe, p.cashPaid, p.flight, Math.max(0, p.owed)] })),
+            } satisfies BarChart,
+          ]
+        : []),
+    ],
+    stats: [
+      { label: "Tips earned", value: formatCents(col(4)), hint: `card ${formatCents(col(1))} · cash ${formatCents(col(2))}` },
+      { label: "Paid via Stripe", value: formatCents(col(6)), hint: `${payouts.filter((p) => p.cells[3] === "Stripe" && p.cells[4] === "paid").length} payouts paid` },
+      { label: "Pending", value: formatCents(col(9)), hint: col(10) ? `${formatCents(col(10))} waiting on their Stripe setup` : `${formatCents(col(8))} sent, not paid yet` },
+      { label: "Split tickets", value: String(shared), hint: `${familyTickets} family tickets` },
+    ],
+    tables: [
+      listTable(loc, { id: "employees", title: "By employee", columns: [text("Employee"), ...tipColumns, money("Waiting on Stripe setup")], rows: people, merge: true, sort: byText(0) }),
+      listTable(noBarber(loc), { id: "periods", title: "By pay period", columns: [text("Pay period"), ...tipColumns], rows: periods.reverse(), merge: true }),
+      listTable(loc, {
+        id: "payouts",
+        title: "Payouts",
+        subtitle: "Each direct payout of these pay periods' tips, with its Stripe ids. Never an account or card number.",
+        columns: [text("Paid"), text("Employee"), text("Pay period"), text("Method"), text("Status"), money("Amount"), bool("Instant"), text("Stripe transfer"), text("Stripe payout")],
+        rows: payouts,
+        keepShop: multi,
+        sort: (a, b) => String(b[0]).localeCompare(String(a[0])),
+      }),
+      listTable(loc, {
+        id: "splits",
+        title: "Family and shared tickets",
+        subtitle: "Tickets with more than one barber: how each tip was split. A family ticket has more than one person's appointment on it.",
+        columns: [text("Date"), int("Ticket"), text("Kind"), text("Employee"), pct("Share"), money("Card tip"), money("Cash tip"), money("Tip")],
+        rows: splits.map((s) => ({
+          shopId: s.shopId,
+          staffId: s.staffId,
+          cells: [s.date, s.number, s.appts > 1 ? "Family" : "Shared", loc.staffNames?.[s.staffId] ?? "Unknown", s.totalWeight ? s.weight / s.totalWeight : null, s.card, s.cash, s.total],
+        })),
+        keepShop: multi,
+      }),
+    ],
+    notes: [
+      ...periodNotes(runs, capped),
+      "Tips earned are the tip ledger: card, cash and gift card tips less tip refunds, plus manager adjustments. Pending is what isn't paid yet: waiting for approval, held, or not in a payout batch. Every tip goes to iSolved as income; tips already paid are reported as received.",
+      "Family and shared tickets cover the dates picked.",
+    ],
+  };
+}
+
+// ───────────────────────────── Commission ─────────────────────────────
+
+const OTHER_LINE = "Refunds, moved lines and overrides";
+
+export async function payrollCommissionData(i: PayrollReportInput): Promise<ReportData> {
+  const { scope, loc } = i;
+  const rates = !!i.perms?.has("payroll.rates");
+  const sel = staffSelection(scope);
+  const [{ runs, capped }, presets] = await Promise.all([runsIn(scope), payPeriodPresets(undefined, scope.shopIds)]);
+  const items: ListRow[] = [];
+  const employees: ListRow[] = [];
+  const byService = new Map<string, { label: string; cents: number }>();
+  for (const r of runs) {
+    const mix = await itemMix({ shopIds: r.blocks.map((b) => b.shopId), from: r.ref.start, to: r.ref.end, staffIds: sel }, { byShop: true, byStaff: true });
+    for (const l of r.lines) {
+      const mine = mix.filter((x) => x.shopId === l.shopId && x.staffId === l.staffId);
+      for (const [type, kinds, pctOf, total, sales] of [
+        ["Service", ["service", "addon"], l.servicePct, toCents(l.commission), toCents(l.service)],
+        ["Product", ["product"], l.productPct, toCents(l.productTotal), toCents(l.product)],
+      ] as const) {
+        const list = mine.filter((x) => (kinds as readonly string[]).includes(x.kind));
+        let comm = 0;
+        let net = 0;
+        for (const x of list) {
+          const c = Math.round(x.netCents * pctOf);
+          comm += c;
+          net += x.netCents;
+          items.push({ shopId: l.shopId, staffId: l.staffId, key: `${l.staffId}|${type}|${x.name}`, cells: [l.name, x.name, type, x.qty, x.netCents, pctOf, c] });
+          const s = byService.get(`${type}|${x.name}`) ?? { label: x.name, cents: 0 };
+          s.cents += c;
+          byService.set(`${type}|${x.name}`, s);
+        }
+        if (total !== comm || sales !== net) items.push({ shopId: l.shopId, staffId: l.staffId, key: `${l.staffId}|${type}|${OTHER_LINE}`, cells: [l.name, OTHER_LINE, type, null, sales - net, null, total - comm] });
+      }
+      employees.push({
+        shopId: l.shopId,
+        staffId: l.staffId,
+        key: l.staffId,
+        cells: [
+          l.name,
+          toCents(l.service),
+          toCents(l.commission),
+          ...(rates ? [toCents(l.hourlyTotal)] : []),
+          toCents(l.serviceTotal),
+          toCents(l.product),
+          toCents(l.productTotal),
+          toCents(l.netComm),
+        ],
+      });
+    }
+  }
+  const lines = runs.flatMap((r) => r.lines);
+  const deriveRate = (c: Cell[]) => {
+    const out = [...c];
+    out[5] = typeof c[4] === "number" && c[4] && typeof c[6] === "number" && c[1] !== OTHER_LINE ? c[6] / c[4] : null;
+    return out;
+  };
+  const top = [...byService.values()].sort((a, b) => b.cents - a.cents);
+  const servicesRows: ListRow[] = items.map((r) => ({ shopId: r.shopId, key: `${r.cells[2]}|${r.cells[1]}`, cells: [r.cells[1], r.cells[2], r.cells[3], r.cells[4], r.cells[6]] }));
+  const perPerson = new Map<string, { name: string; service: number; product: number }>();
+  for (const l of lines) {
+    const p = perPerson.get(l.staffId) ?? { name: l.name, service: 0, product: 0 };
+    p.service += toCents(l.commission);
+    p.product += toCents(l.productTotal);
+    perPerson.set(l.staffId, p);
+  }
+  return {
+    presets,
+    bars: [
+      ...(top.length > 1
+        ? [{ id: "services", title: "Commission by service and product", subtitle: top.length > 12 ? `Top 12 of ${top.length}` : undefined, kind: "money", shape: "rank", bars: top.slice(0, 12).map((s) => ({ label: s.label, value: s.cents })) } satisfies BarChart]
+        : []),
+      ...(perPerson.size > 1
+        ? [
+            {
+              id: "people",
+              title: "Commission by employee",
+              kind: "money",
+              shape: "rank",
+              legend: ["Service", "Product"],
+              bars: [...perPerson.values()]
+                .map((p) => ({ label: p.name, value: p.service + p.product, parts: [Math.max(0, p.service), Math.max(0, p.product)] }))
+                .sort((a, b) => b.value - a.value)
+                .slice(0, 12),
+            } satisfies BarChart,
+          ]
+        : []),
+    ],
+    stats: [
+      { label: "Service commission", value: formatCents(sumOf(lines, (l) => toCents(l.commission))), hint: `on ${formatCents(sumOf(lines, (l) => toCents(l.service)))} of service sales` },
+      { label: "Product commission", value: formatCents(sumOf(lines, (l) => toCents(l.productTotal))), hint: `on ${formatCents(sumOf(lines, (l) => toCents(l.product)))} of product sales` },
+      { label: "Commission to iSolved", value: formatCents(sumOf(lines, (l) => toCents(l.netComm))), hint: "E_Comm Sales" },
+      { label: "Top earner", value: top[0]?.label ?? "—", hint: top[0] ? formatCents(top[0].cents) : undefined },
+    ],
+    tables: [
+      listTable(loc, {
+        id: "items",
+        title: "By employee, service and product",
+        columns: [text("Employee"), text("Service or product"), text("Type"), int("Qty"), money("Net sales"), pct("Rate"), money("Commission")],
+        rows: items,
+        merge: true,
+        derive: deriveRate,
+        sort: (a, b) => String(a[0]).localeCompare(String(b[0])) || String(a[2]).localeCompare(String(b[2])) || Number(b[6] ?? 0) - Number(a[6] ?? 0),
+      }),
+      listTable(noBarber(loc), {
+        id: "services",
+        title: "By service and product",
+        columns: [text("Service or product"), text("Type"), int("Qty"), money("Net sales"), money("Commission")],
+        rows: servicesRows,
+        merge: true,
+        sort: (a, b) => String(a[1]).localeCompare(String(b[1])) || Number(b[4] ?? 0) - Number(a[4] ?? 0),
+      }),
+      listTable(loc, {
+        id: "employees",
+        title: "By employee",
+        subtitle: "Service commission over hourly pay, plus product commission, is the Comm Sales column in the iSolved file.",
+        columns: [
+          text("Employee"),
+          money("Service sales"),
+          money("Service commission"),
+          ...(rates ? [money("Hourly pay")] : []),
+          money("Service commission over hourly"),
+          money("Product sales"),
+          money("Product commission"),
+          money("Commission to iSolved (E_Comm Sales)"),
+        ],
+        rows: employees,
+        merge: true,
+        sort: byText(0),
+      }),
+    ],
+    notes: [
+      ...periodNotes(runs, capped),
+      `Each line's commission is its net sales × the employee's rate in that pay period. Refunds, lines moved between barbers, imported tickets and manager overrides are on a "${OTHER_LINE}" row, so each employee's service and product commission ties to the payroll report to the cent.`,
+    ],
+  };
+}
+
+// ───────────────────────────── Full time ─────────────────────────────
+
+export async function payrollFullTimeData(i: PayrollReportInput): Promise<ReportData> {
+  const { scope, loc } = i;
+  const sel = staffSelection(scope);
+  const settings = await loadSettings();
+  const window = settings.ftWindowWeeks;
+  const asOf = addDays(scope.to, 1);
+  const lastWeek = addDays(weekStartOf(asOf), -7);
+  const firstWeek = addDays(lastWeek, -7 * (window - 1));
+  const [here, presets] = await Promise.all([
+    sel && !sel.length
+      ? []
+      : db
+          .select({ staffId: timeEntries.staffId, shopId: timeEntries.shopId, sec: sql<number>`sum(extract(epoch from ${timeEntries.endsAt} - ${timeEntries.startsAt}))::float` })
+          .from(timeEntries)
+          .where(and(inArray(timeEntries.shopId, scope.shopIds.length ? scope.shopIds : ["00000000-0000-0000-0000-000000000000"]), lt(timeEntries.startsAt, endOfLocalDay(addDays(lastWeek, 6))), gte(timeEntries.endsAt, startOfLocalDay(firstWeek)), sel ? inArray(timeEntries.staffId, sel) : undefined))
+          .groupBy(timeEntries.staffId, timeEntries.shopId),
+    payPeriodPresets(undefined, scope.shopIds),
+  ]);
+  const mainShop = new Map<string, { shopId: string; sec: number }>();
+  for (const r of here) if ((mainShop.get(r.staffId)?.sec ?? -1) < r.sec) mainShop.set(r.staffId, { shopId: r.shopId, sec: r.sec });
+  const ids = [...mainShop.keys()];
+  const ft = ids.length ? await ftOverview(ids, asOf, window, settings) : { rows: [], lastWeek, window, threshold: settings.ftHoursPerWeek };
+  const name = await labels(ids);
+  const threshold = ft.threshold;
+  const weeks = Array.from({ length: window }, (_, k) => addDays(firstWeek, 7 * k));
+  const close = ft.rows.filter((r) => Math.abs(r.average - threshold) <= 2);
+  return {
+    presets,
+    bars: ft.rows.length
+      ? [
+          {
+            id: "average",
+            title: "Average hours a week",
+            subtitle: ft.rows.length > 12 ? `Top 12 of ${ft.rows.length}` : undefined,
+            kind: "hours",
+            shape: "rank",
+            reference: { value: chartMin(threshold), label: `Full time: more than ${threshold} h a week` },
+            bars: [...ft.rows]
+              .sort((a, b) => b.average - a.average)
+              .slice(0, 12)
+              .map((r) => ({ label: name.get(r.staffId) ?? "Unknown", value: chartMin(r.average), warn: r.status === "full_time" })),
+          },
+        ]
+      : [],
+    stats: [
+      { label: "Full time", value: String(ft.rows.filter((r) => r.status === "full_time").length), hint: `averaging more than ${threshold} h a week` },
+      { label: "Part time", value: String(ft.rows.filter((r) => r.status === "part_time").length), hint: `${threshold} h or less` },
+      { label: "Within 2 hours of the line", value: String(close.length), hint: close.length ? close.map((r) => name.get(r.staffId) ?? "Unknown").slice(0, 3).join(", ") : undefined },
+      { label: "Window", value: `${window} weeks`, hint: `${formatDate(firstWeek, "MMM d")} – ${formatDate(addDays(lastWeek, 6), "MMM d, yyyy")}` },
+    ],
+    tables: [
+      listTable(noBarber(loc), {
+        id: "employees",
+        title: "Full time and part time",
+        columns: [text("Employee"), ...weeks.map((w) => hrs(`Week of ${formatDate(w, "MMM d")}`)), hrs("Average a week", false), text("Status"), hrs(`Over or under ${threshold} h`, false)],
+        rows: ft.rows.map((r) => ({
+          shopId: mainShop.get(r.staffId)!.shopId,
+          staffId: r.staffId,
+          key: r.staffId,
+          cells: [name.get(r.staffId) ?? "Unknown", ...r.weeks.map((w) => h2(w.hours)), r.average, FT_LABEL[r.status], h2(r.average - threshold)],
+        })),
+        totals: false,
+        sort: (a, b) => Number(b[window + 1] ?? 0) - Number(a[window + 1] ?? 0),
+      }),
+    ],
+    notes: [
+      `Full time is an average of more than ${threshold} hours a week over the ${window} full workweeks (Sunday to Saturday) ending by ${formatDate(scope.to, "MMM d, yyyy")}, counting ${settings.ftBasis === "worked" ? "worked hours" : settings.ftBasis === "paid" ? "worked, training and paid time off hours" : "worked and training hours"} at every shop. Exactly ${threshold} is part time. The threshold, window and basis are in Payroll setup.`,
+      "Each person is listed under the shop where they worked the most hours in the window.",
+    ],
+  };
+}
+
+// ───────────────────────────── Labor cost vs sales ─────────────────────────────
+
+export async function payrollLaborData(i: PayrollReportInput): Promise<ReportData> {
+  const { scope, loc } = i;
+  const rates = !!i.perms?.has("payroll.rates");
+  const [{ runs, capped }, presets] = await Promise.all([runsIn(scope), payPeriodPresets(undefined, scope.shopIds)]);
+  const shopName = new Map(loc.shops.map((s) => [s.id, s.name]));
+  type Agg = { hours: number; service: number; product: number; labor: number };
+  const agg = (ls: readonly Line[]): Agg => ({ hours: h2(sumOf(ls, (l) => l.hours + l.otHours)), service: sumOf(ls, (l) => toCents(l.service)), product: sumOf(ls, (l) => toCents(l.product)), labor: sumOf(ls, (l) => toCents(l.laborCost)) });
+  const cells = (label: string, a: Agg): Cell[] => {
+    const revenue = a.service + a.product;
+    return [label, a.hours, a.service, a.product, revenue, ...(rates ? [a.labor, revenue ? a.labor / revenue : null] : []), a.hours ? Math.round(revenue / a.hours) : null];
+  };
+  const derive = (c: Cell[]) => {
+    const out = [...c];
+    const revenue = Number(c[4] ?? 0);
+    const hours = Number(c[1] ?? 0);
+    if (rates) out[6] = revenue ? Number(c[5] ?? 0) / revenue : null;
+    out[rates ? 7 : 5] = hours ? Math.round(revenue / hours) : null;
+    return out;
+  };
+  const periodRows: ListRow[] = [];
+  const shopRows: ListRow[] = [];
+  const trend = new Map<string, (number | null)[]>();
+  for (const [n, r] of runs.entries()) {
+    for (const b of r.blocks) {
+      const a = agg(r.lines.filter((l) => l.shopId === b.shopId));
+      periodRows.push({ shopId: b.shopId, key: r.key, cells: cells(r.label, a) });
+      shopRows.push({ shopId: b.shopId, key: b.shopId, cells: cells(shopName.get(b.shopId) ?? b.shop, a) });
+      const t = trend.get(b.shopId) ?? runs.map(() => null);
+      t[n] = a.service + a.product ? a.labor / (a.service + a.product) : null;
+      trend.set(b.shopId, t);
+    }
+  }
+  const all = agg(runs.flatMap((r) => r.lines));
+  const revenue = all.service + all.product;
+  const perShop = [...new Set(shopRows.map((r) => r.shopId))].map((id) => {
+    const a = agg(runs.flatMap((r) => r.lines.filter((l) => l.shopId === id)));
+    return { id, label: shopName.get(id) ?? "", a, share: a.service + a.product ? a.labor / (a.service + a.product) : 0 };
+  });
+  const brand = runs.map((r) => {
+    const a = agg(r.lines);
+    return a.service + a.product ? a.labor / (a.service + a.product) : null;
+  });
+  const columns = [text("Shop"), hrs("Hours"), money("Service sales"), money("Product sales"), money("Revenue"), ...(rates ? [money("Labor cost"), pct("Labor % of revenue")] : []), rate("Revenue per labor hour")];
+  const charts: ReportChart[] =
+    rates && runs.length > 1
+      ? [
+          {
+            id: "labor_trend",
+            title: "Labor % of revenue by pay period",
+            labels: runs.map((r) => periodLabel(r.ref)),
+            series: [...[...trend.entries()].map(([id, values]) => ({ label: shopName.get(id) ?? "", values })), ...(trend.size > 1 ? [{ label: "All selected shops", values: brand, dashed: true }] : [])],
+          },
+        ]
+      : [];
+  return {
+    presets,
+    charts,
+    bars:
+      perShop.length > 1
+        ? [
+            rates
+              ? { id: "labor_pct", title: "Labor % of revenue by shop", kind: "pct", shape: "rank", bars: perShop.sort((a, b) => b.share - a.share).map((s) => ({ label: s.label, value: s.share })) }
+              : { id: "per_hour", title: "Revenue per labor hour by shop", kind: "money", shape: "rank", bars: perShop.map((s) => ({ label: s.label, value: s.a.hours ? Math.round((s.a.service + s.a.product) / s.a.hours) : 0 })).sort((a, b) => b.value - a.value) },
+          ]
+        : [],
+    stats: [
+      { label: "Revenue", value: formatCents(revenue), hint: `services ${formatCents(all.service)} · products ${formatCents(all.product)}` },
+      ...(rates
+        ? [
+            { label: "Labor cost", value: formatCents(all.labor), hint: "hourly, OT, training, commission and top-ups" },
+            { label: "Labor % of revenue", value: revenue ? `${((all.labor / revenue) * 100).toFixed(1)}%` : "—" },
+          ]
+        : []),
+      { label: "Revenue per labor hour", value: all.hours ? formatCents(Math.round(revenue / all.hours)) : "—", hint: `${all.hours.toFixed(2)} labor hours` },
+    ],
+    tables: [
+      listTable(combined(loc), { id: "shops", title: "By shop", columns, rows: shopRows, merge: true, derive, sort: byText(0) }),
+      listTable(noBarber(loc), { id: "periods", title: "By pay period", columns: [text("Pay period"), ...columns.slice(1)], rows: periodRows.reverse(), merge: true, derive }),
+    ],
+    notes: [
+      ...periodNotes(runs, capped),
+      "Revenue is net service and product sales credited to barbers on the payroll report, after refunds. Labor cost is the payroll report's Labor Cost: hourly pay, overtime at 1.5×, training pay, commission and guaranteed-minimum top-ups. Employer taxes and benefits are in iSolved, not here.",
+      ...(rates ? [] : ['Labor cost and labor % show only with "See pay rates and labor cost".']),
+    ],
+  };
+}
+
+// ───────────────────────────── Overtime watch ─────────────────────────────
+
+/** Hours from 40 that count as close. */
+export const OT_NEAR_HOURS = 4;
+type OtStatus = "over" | "projected" | "near" | "under";
+const OT_STATUS_LABEL: Record<OtStatus, string> = { over: "In overtime", projected: "Projected over", near: "Close to overtime", under: "Under" };
+
+export async function payrollOvertimeData(i: PayrollReportInput): Promise<ReportData> {
+  const { scope, loc } = i;
+  const sel = staffSelection(scope);
+  const now = i.now ?? new Date();
+  const today = todayLocal(now);
+  const show = i.params?.show === "all" ? "all" : "watch";
+  const [{ slices, settings }, presets] = await Promise.all([hoursSlices(scope.from, scope.to, sel), payPeriodPresets(undefined, scope.shopIds)]);
+  const threshold = settings.otThresholdHours;
+  const firstWeek = weekStartOf(scope.from);
+  const lastWeek = weekStartOf(scope.to);
+  const inScope = slices.filter((s) => s.weekStart >= firstWeek && s.weekStart <= lastWeek);
+  const keys = new Set(inScope.filter((s) => scope.shopIds.includes(s.shopId) && (s.worked || s.training || s.pto)).map((s) => `${s.staffId}|${s.weekStart}`));
+  const thisWeek = weekStartOf(today);
+  const ids = [...new Set([...keys].map((k) => k.split("|")[0]))];
+  const left = thisWeek >= firstWeek && thisWeek <= lastWeek && ids.length ? await scheduledMinutesLeft(ids, now, addDays(thisWeek, 6)) : new Map<string, number>();
+  const name = await labels(ids);
+  const list = [...keys].map((k) => {
+    const [staffId, week] = k.split("|");
+    const mine = inScope.filter((s) => s.staffId === staffId && s.weekStart === week);
+    const basis = h2(sumOf(mine, (s) => s.basis) / 100);
+    const ot = h2(sumOf(mine, (s) => s.ot) / 100);
+    const atShop = new Map<string, number>();
+    for (const s of mine.filter((x) => scope.shopIds.includes(x.shopId))) atShop.set(s.shopId, (atShop.get(s.shopId) ?? 0) + s.worked + s.training + s.pto);
+    const shopId = [...atShop.entries()].sort((a, b) => b[1] - a[1])[0][0];
+    const rest = week === thisWeek ? h2((left.get(staffId) ?? 0) / 60) : null;
+    const projected = h2(basis + (rest ?? 0));
+    const status: OtStatus = ot > 0 || basis > threshold ? "over" : rest !== null && projected > threshold ? "projected" : basis >= threshold - OT_NEAR_HOURS ? "near" : "under";
+    return { staffId, week, shopId, basis, ot, rest, projected, status };
+  });
+  const shown = show === "all" ? list : list.filter((r) => r.status !== "under");
+  const latest = list.filter((r) => r.week === (list.some((x) => x.week === thisWeek) ? thisWeek : lastWeek));
+  return {
+    presets,
+    options: [
+      {
+        param: "show",
+        label: "Show",
+        value: show === "all" ? "all" : "",
+        choices: [
+          { value: "", label: "Over, projected or close" },
+          { value: "all", label: "Everyone with hours" },
+        ],
+      } satisfies ReportOption,
+    ],
+    bars: latest.length
+      ? [
+          {
+            id: "week",
+            title: latest[0].week === thisWeek ? "This week: hours toward overtime" : `Week of ${formatDate(latest[0].week, "MMM d")}: hours toward overtime`,
+            subtitle: latest.length > 12 ? `Top 12 of ${latest.length}` : undefined,
+            kind: "hours",
+            shape: "rank",
+            reference: { value: chartMin(threshold), label: `Overtime after ${threshold} h a week` },
+            legend: latest.some((r) => r.rest) ? ["Worked", "Still scheduled"] : undefined,
+            bars: [...latest]
+              .sort((a, b) => b.projected - a.projected)
+              .slice(0, 12)
+              .map((r) => ({
+                label: name.get(r.staffId) ?? "Unknown",
+                value: chartMin(r.projected),
+                warn: r.status !== "under",
+                ...(latest.some((x) => x.rest) ? { parts: [chartMin(r.basis), chartMin(r.rest ?? 0)] } : {}),
+              })),
+          },
+        ]
+      : [],
+    stats: [
+      { label: "In overtime", value: String(new Set(list.filter((r) => r.status === "over").map((r) => r.staffId)).size), hint: `${h2(sumOf(list, (r) => r.ot)).toFixed(2)} OT hours` },
+      { label: "Projected over this week", value: String(list.filter((r) => r.status === "projected").length), hint: "hours so far plus what they're still scheduled" },
+      { label: `Within ${OT_NEAR_HOURS} h of ${threshold}`, value: String(list.filter((r) => r.status === "near").length) },
+      { label: "Weeks", value: String(new Set(list.map((r) => r.week)).size), hint: `${formatDate(firstWeek, "MMM d")} – ${formatDate(addDays(lastWeek, 6), "MMM d")}` },
+    ],
+    tables: [
+      listTable(noBarber(loc), {
+        id: "weeks",
+        title: "By employee and workweek",
+        columns: [text("Week of"), text("Employee"), hrs(`Hours toward ${threshold}`), hrs("OT hours"), hrs("Still scheduled this week", false), hrs("Projected", false), hrs("Left before OT", false), text("Status")],
+        rows: shown.map((r) => ({
+          shopId: r.shopId,
+          staffId: r.staffId,
+          cells: [r.week, name.get(r.staffId) ?? "Unknown", r.basis, r.ot, r.rest, r.rest === null ? null : r.projected, h2(Math.max(0, threshold - r.projected)), OT_STATUS_LABEL[r.status]],
+        })),
+        totals: false,
+        sort: (a, b) => String(b[0]).localeCompare(String(a[0])) || Number(b[5] ?? b[2] ?? 0) - Number(a[5] ?? a[2] ?? 0),
+      }),
+    ],
+    notes: [
+      `Overtime is hours past ${threshold} in a Sunday-to-Saturday workweek, added up across every shop of the same company${settings.dailyOtHours ? ` (and past ${settings.dailyOtHours} in a day)` : ""}. Hours at shops outside your access count toward it but aren't named. Close is within ${OT_NEAR_HOURS} hours.`,
+      "This week's projection adds what each person is still scheduled for to the hours they've clocked; an open shift counts once they clock out.",
+    ],
+  };
+}
+
+// ───────────────────────────── iSolved export preview ─────────────────────────────
+
+export interface IsolvedPeriod {
+  start: LocalDate;
+  end: LocalDate;
+  label: string;
+  status: ExportStatus;
+  /** Why it can't be marked sent yet, or null. */
+  blocked: string | null;
+  sentAt: string | null;
+  sentBy: string | null;
+}
+
+const fileAt = (from: readonly ExtraFrom[], k: ExtraFrom, values: readonly number[]) => {
+  const j = from.indexOf(k);
+  return j >= 0 ? (values[EXPORT_COLUMNS.length + j] ?? 0) : 0;
+};
+
+function blockedReason(view: PayrollView): string | null {
+  if (view.locked !== "all") return view.locked === "some" ? "Some shops in this period aren't approved and locked yet." : "Approve and lock this period on the Payroll Report first.";
+  if (view.tips.mismatches.length) return `${view.tips.mismatches.length} tip difference${view.tips.mismatches.length === 1 ? "" : "s"} against the Stripe payouts: fix them first.`;
+  return null;
+}
+
+export async function payrollIsolvedData(i: PayrollReportInput): Promise<ReportData & { periods: IsolvedPeriod[]; shopParam: string | null }> {
+  const { scope, loc } = i;
+  const sel = staffSelection(scope);
+  const multi = loc.shops.length > 1;
+  const [{ runs, capped }, presets] = await Promise.all([runsIn(scope), payPeriodPresets(undefined, scope.shopIds)]);
+  const sends = await sendsOf(runs);
+  const fileRows: ListRow[] = [];
+  const tipRows: ListRow[] = [];
+  const periods: IsolvedPeriod[] = [];
+  let differences = 0;
+  for (const r of runs) {
+    const sent = sends.get(r.key);
+    const status = statusOf(r.view, !!sent);
+    const checks = r.view.tips.rows.filter((x) => r.blocks.some((b) => b.shopId === x.shopId) && (!sel || sel.includes(x.staffId)));
+    for (const b of r.blocks) {
+      const from = extraFromOf(b);
+      for (const row of b.exportRows.filter((x) => !sel || sel.includes(x.staffId))) {
+        const c = checks.find((x) => x.staffId === row.staffId && x.shopId === b.shopId);
+        const stripe = sumOf(
+          (c?.payouts ?? []).filter((p) => p.method === "stripe" && p.status === "paid"),
+          (p) => p.tipsCents + p.adjustCents,
+        );
+        const v = row.values;
+        fileRows.push({
+          shopId: b.shopId,
+          staffId: row.staffId,
+          cells: [
+            r.label,
+            row.isolvedName,
+            row.key === null || row.key === "" ? "Missing" : "On file",
+            h2(v[0] ?? 0),
+            h2(v[1] ?? 0),
+            toCents(v[2] ?? 0),
+            toCents(v[3] ?? 0),
+            h2(v[4] ?? 0),
+            h2(v[5] ?? 0),
+            toCents(fileAt(from, "tipsInPayroll", v)),
+            toCents(fileAt(from, "tipsPaidOut", v)),
+            stripe,
+            c ? (c.problems.length ? "Difference" : "Matches") : "No tips",
+          ],
+        });
+      }
+    }
+    for (const c of checks) {
+      differences += c.problems.length;
+      tipRows.push({
+        shopId: c.shopId,
+        staffId: c.staffId,
+        cells: [
+          r.label,
+          c.name,
+          c.directCents,
+          c.exportCashTipsCents ?? 0,
+          (c.exportCashTipsCents ?? 0) - c.directCents,
+          c.paidAtLockCents,
+          c.exportPaidMemoCents,
+          c.exportPaidMemoCents - c.paidAtLockCents,
+          c.payouts.filter((p) => p.method === "stripe").length,
+          c.payouts
+            .filter((p) => p.method === "stripe")
+            .map((p) => p.stripeTransferId ?? p.stripePayoutId ?? "")
+            .filter(Boolean)
+            .join(", "),
+          c.problems.length ? c.problems.join("; ") : "Matches to the cent",
+        ],
+      });
+    }
+    periods.push({
+      start: r.ref.start,
+      end: r.ref.end,
+      label: r.label,
+      status,
+      blocked: status === "sent" ? null : blockedReason(r.view),
+      sentAt: sent ? sent.sentAt.toISOString() : null,
+      sentBy: sent?.by ?? null,
+    });
+  }
+  periods.reverse();
+  const latest = periods[0];
+  const periodRows: ListRow[] = periods.map((p) => {
+    const r = runs.find((x) => x.ref.start === p.start && x.ref.end === p.end)!;
+    const locked = r.blocks.filter((b) => b.locked);
+    return {
+      shopId: r.blocks[0].shopId,
+      key: `${p.start}_${p.end}`,
+      cells: [
+        p.label,
+        formatDate(r.blocks[0].period.checkDate, "MMM d, yyyy"),
+        r.blocks.length,
+        sumOf(r.blocks, (b) => b.exportRows.length),
+        EXPORT_STATUS_LABEL[p.status],
+        locked.length === r.blocks.length && locked[0]?.locked ? `${formatDateTime(locked[0].locked.at)}${locked[0].locked.by ? ` · ${locked[0].locked.by}` : ""}` : `${locked.length} of ${r.blocks.length} shops`,
+        p.sentAt ? `${formatDateTime(p.sentAt)}${p.sentBy ? ` · ${p.sentBy}` : ""}` : "—",
+        r.view.tips.mismatches.length,
+      ],
+    };
+  });
+  const sumCol = (j: number) => sumOf(fileRows, (r) => Number(r.cells[j] ?? 0));
+  const memo = sumCol(10);
+  const stripe = sumCol(11);
+  return {
+    presets,
+    periods,
+    shopParam: scope.shopIds.length ? scope.shopIds.join(",") : null,
+    bars: [],
+    stats: [
+      { label: "iSolved file", value: latest ? EXPORT_STATUS_LABEL[latest.status] : "—", hint: latest ? `${latest.label}${latest.blocked && latest.status !== "sent" ? ` · ${latest.blocked}` : ""}` : undefined },
+      { label: "Rows", value: String(fileRows.length), hint: `${sumCol(3).toFixed(2)} regular h · ${sumCol(4).toFixed(2)} OT h` },
+      { label: "Comm Sales", value: formatCents(sumCol(6)), hint: `cash tips received ${formatCents(sumCol(5))}` },
+      { label: "Tips vs Stripe payouts", value: differences ? `${differences} difference${differences === 1 ? "" : "s"}` : "Reconciles to the cent", tone: differences ? "down" : "up", hint: `paid via Stripe ${formatCents(stripe)} · tips-paid memo ${formatCents(memo)}` },
+    ],
+    tables: [
+      listTable(combined(loc), {
+        id: "periods",
+        title: "iSolved file by pay period",
+        subtitle: "Draft until every shop in the period is approved and locked; approved after; sent once it's marked uploaded to iSolved.",
+        columns: [text("Pay period"), text("Check date"), int("Shops"), int("Rows"), text("Status"), text("Approved and locked"), text("Sent to iSolved"), int("Tip differences")],
+        rows: periodRows,
+        totals: false,
+      }),
+      listTable(loc, {
+        id: "file",
+        title: "What the file carries",
+        subtitle: "Each shop's tab, row by row, in the iSolved Timecard Import layout. Employee keys go out in the file only.",
+        columns: [
+          text("Pay period"),
+          text("iSolved name"),
+          text("Employee key"),
+          hrs("E_Regular_Hours"),
+          hrs("E_Overtime 1.5_Hours"),
+          money("E_Cash Tips Recd_Dollars"),
+          money("E_Comm Sales_Dollars"),
+          hrs("E_Ray'z Paid Time_Hours"),
+          hrs("E_Training_Hours"),
+          money("Tips in payroll"),
+          money("Tips already paid (memo)"),
+          money("Paid via Stripe"),
+          text("Tips check"),
+        ],
+        rows: fileRows,
+        keepShop: multi,
+      }),
+      listTable(loc, {
+        id: "reconcile",
+        title: "Tips against Stripe payouts",
+        subtitle: "To the cent, per employee: tips paid outside payroll against the file's tips received, and payouts paid (by the lock) against its tips-paid memo.",
+        columns: [
+          text("Pay period"),
+          text("Employee"),
+          money("Tips paid outside payroll"),
+          money("In the file (E_Cash Tips Recd)"),
+          money("Difference"),
+          money("Payouts paid by the lock"),
+          money("In the file (memo)"),
+          money("Difference "),
+          int("Stripe payouts"),
+          text("Stripe ids"),
+          text("Result"),
+        ],
+        rows: tipRows,
+        keepShop: multi,
+      }),
+    ],
+    notes: [
+      ...periodNotes(runs, capped),
+      "The iSolved export downloads one workbook per pay period with a tab for each shop, exactly as each shop's file would download from the Payroll Report. A file from a period that isn't approved and locked yet is marked DRAFT and can change.",
+      "Marking a period sent needs \"Approve and lock a pay period\". It's refused until every shop is locked and every employee's tips match their Stripe payouts to the cent.",
+    ],
+  };
+}
+
+// ───────────────────────────── The iSolved file ─────────────────────────────
+
+/** One workbook for a pay period: a tab per shop (in the viewer's shops) in the iSolved layout, from the approved snapshot once locked. */
+export async function isolvedWorkbook(start: LocalDate, end: LocalDate, shopIds: readonly string[]): Promise<{ fileName: string; body: Buffer; status: ExportStatus; rows: number; shops: string[] } | null> {
+  const view = await buildPayroll(start, end);
+  if (!view) return null;
+  const blocks = view.blocks.filter((b) => shopIds.includes(b.shopId));
+  if (!blocks.length) return null;
+  const [sent] = await db.select({ id: payrollExportSends.id }).from(payrollExportSends).where(and(eq(payrollExportSends.periodStart, start), eq(payrollExportSends.periodEnd, end)));
+  const status = statusOf(view, !!sent);
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "Ray'z";
+  const used = new Set<string>();
+  for (const b of blocks) {
+    let tab = b.exportTab.slice(0, 31);
+    for (let n = 2; used.has(tab); n++) tab = `${b.exportTab.slice(0, 27)} (${n})`;
+    used.add(tab);
+    addIsolvedSheet(wb, { tab, payGroup: b.payGroup, periodNumber: b.period.number, periodStart: start, periodEnd: end, rows: b.exportRows, headers: b.exportHeaders });
+  }
+  const number = blocks[0].period.number;
+  const fileName = `${status === "draft" ? "DRAFT - " : ""}iSolved - period ${String(number).padStart(2, "0")} (${start} to ${end}).xlsx`;
+  return { fileName, body: Buffer.from(await wb.xlsx.writeBuffer()), status, rows: sumOf(blocks, (b) => b.exportRows.length), shops: blocks.map((b) => b.shopId) };
+}
+
+const bad = (msg: string) => new AppError("bad_request", msg);
+
+/** Marks a pay period's iSolved file uploaded. Only once every shop is approved and locked and the tips reconcile to the cent. */
+export async function markIsolvedSent(start: LocalDate, end: LocalDate, actor: Actor, note: string | null): Promise<void> {
+  const view = await buildPayroll(start, end);
+  if (!view) throw bad("No shop has a pay period with those dates.");
+  const why = blockedReason(view);
+  if (why) throw bad(why);
+  const shops: PayrollSendShop[] = view.blocks.map((b) => {
+    const headers = b.exportHeaders ?? EXPORT_COLUMNS.map((c) => c.header);
+    return { shopId: b.shopId, payGroup: b.payGroup, tab: b.exportTab, rows: b.exportRows.length, headers, totals: headers.map((_, j) => h2(sumOf(b.exportRows, (r) => r.values[j] ?? 0))) };
+  });
+  const [row] = await db
+    .insert(payrollExportSends)
+    .values({ periodStart: start, periodEnd: end, shops, note: note?.trim().slice(0, 300) || null, sentBy: actor.staffId ?? null })
+    .onConflictDoNothing()
+    .returning({ id: payrollExportSends.id });
+  if (!row) throw new AppError("conflict", "This pay period is already marked sent.");
+  await audit(actor, "payroll.isolved_sent", "payroll_period", `${start}_${end}`, { periodStart: start, periodEnd: end, shops: shops.map((s) => ({ payGroup: s.payGroup, rows: s.rows })), note: note?.trim() || null });
+}
+
+/** Takes the sent mark off (say, the upload failed in iSolved). The period goes back to approved. */
+export async function undoIsolvedSent(start: LocalDate, end: LocalDate, actor: Actor, reason: string): Promise<void> {
+  const why = reason.trim();
+  if (why.length < 3) throw bad("Say why the file wasn't sent after all.");
+  const gone = await db
+    .delete(payrollExportSends)
+    .where(and(eq(payrollExportSends.periodStart, start), eq(payrollExportSends.periodEnd, end)))
+    .returning({ id: payrollExportSends.id, sentAt: payrollExportSends.sentAt });
+  if (!gone.length) throw bad("This pay period isn't marked sent.");
+  await audit(actor, "payroll.isolved_unsent", "payroll_period", `${start}_${end}`, { periodStart: start, periodEnd: end, sentAt: gone[0].sentAt.toISOString(), reason: why.slice(0, 300) });
+}

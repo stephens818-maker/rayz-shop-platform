@@ -711,6 +711,54 @@ export const REPORTS = [
     hint: "Tips earned, refunded and adjusted per shop and employee, and how they were paid: cash, Stripe or payroll, with what's still pending.",
   },
   {
+    key: "payroll_summary",
+    label: "Payroll summary",
+    href: "/admin/reports/payroll/summary",
+    hint: "Per employee and pay period: regular and overtime hours from the time clock, hourly rate and pay, service and product commission, card and cash tips, tips already paid by Stripe, and the total sent to iSolved.",
+  },
+  {
+    key: "payroll_timesheets",
+    label: "Timesheet detail",
+    href: "/admin/reports/payroll/timesheets",
+    hint: "Every shift's clock-in and clock-out, its breaks, every manager edit with its reason, and each timesheet's sign-offs and approvals.",
+  },
+  {
+    key: "payroll_tips",
+    label: "Tips by pay period",
+    href: "/admin/reports/payroll/tips",
+    hint: "Card and cash tips per employee and pay period, the Stripe payouts made, tips still pending, and how tips on family and shared tickets were split between barbers.",
+  },
+  {
+    key: "payroll_commission",
+    label: "Commission by service and product",
+    href: "/admin/reports/payroll/commission",
+    hint: "Each employee's commission per service and product at their pay rates, tied to the cent to the commission in the iSolved file.",
+  },
+  {
+    key: "payroll_full_time",
+    label: "Full-time status",
+    href: "/admin/reports/payroll/full-time",
+    hint: "Each employee's average weekly hours over the payroll full-time window, flagged full time above the threshold (32 hours by default), week by week.",
+  },
+  {
+    key: "payroll_labor",
+    label: "Labor cost vs sales",
+    href: "/admin/reports/payroll/labor-cost",
+    hint: "Each shop's payroll labor cost against its service and product sales, as a percent of revenue, per pay period.",
+  },
+  {
+    key: "payroll_overtime",
+    label: "Overtime watch",
+    href: "/admin/reports/payroll/overtime",
+    hint: "Hours toward the weekly overtime threshold per employee and workweek, across every shop they work, with who's over, who's close, and this week's projection from their schedule.",
+  },
+  {
+    key: "payroll_isolved",
+    label: "iSolved export preview",
+    href: "/admin/reports/payroll/isolved",
+    hint: "The iSolved file per pay period, row by row, reconciled to the cent with the Stripe tip payouts, and the one-click export with its status: draft, approved or sent.",
+  },
+  {
     key: "morning_dashboard",
     label: "Morning Dashboard",
     href: "/admin/morning",
@@ -943,7 +991,17 @@ const ALL_REPORTS = REPORTS.map((r) => r.key);
  * payroll export, payouts and commission). The brand can still give any of them to a role or a
  * person under Roles and permissions.
  */
-export const BRAND_PAY_REPORTS: readonly ReportKey[] = ["tips_payroll", "tip_payouts", "commission_payout"];
+export const PAYROLL_REPORTS = [
+  "payroll_summary",
+  "payroll_timesheets",
+  "payroll_tips",
+  "payroll_commission",
+  "payroll_full_time",
+  "payroll_labor",
+  "payroll_overtime",
+  "payroll_isolved",
+] as const satisfies readonly ReportKey[];
+export const BRAND_PAY_REPORTS: readonly ReportKey[] = ["tips_payroll", "tip_payouts", "commission_payout", ...PAYROLL_REPORTS];
 const LOCATION_REPORTS = ALL_REPORTS.filter((k) => !BRAND_CAMPAIGN_CENTER.has(reportView(k)) && !BRAND_PAY_REPORTS.includes(k));
 const MANAGER_FEATURES: FeaturePermission[] = [
   "calendar.view_all",
@@ -1242,6 +1300,7 @@ const TEMPLATES: RoleTemplate[] = [
         "commission_payout",
         "cash_drawer",
         "tip_payouts",
+        ...PAYROLL_REPORTS,
       ]),
     ],
     maxDiscountPct: 0,
@@ -1400,6 +1459,7 @@ export const SHOP_LOGIN_NEVER: ReadonlySet<Permission> = new Set<Permission>([
   "report.tips_payroll.export",
   "report.tip_payouts.view",
   "report.tip_payouts.export",
+  ...PAYROLL_REPORTS.flatMap((k) => [reportView(k), reportExport(k)]),
   "payments.banking",
   "timesheet.edit",
   "timesheet.approve",

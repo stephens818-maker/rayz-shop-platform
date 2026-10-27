@@ -75,6 +75,17 @@ import { openingsReportData } from "./marketing/openings-report";
 import { milestonesReportData } from "./milestones/views";
 import { attendanceData, laborData } from "./labor-report";
 import { tipPayoutsData } from "./tips/report";
+import {
+  payrollCommissionData,
+  payrollFullTimeData,
+  payrollIsolvedData,
+  payrollLaborData,
+  payrollOvertimeData,
+  payrollSummaryData,
+  payrollTimesheetsData,
+  payrollTipsData,
+} from "./payroll/reports";
+import type { BarChart } from "@/domain/report-charts";
 import { WATERFALL, waterfallGap } from "@/domain/sales-waterfall";
 import { appointmentsReportData } from "./appointments-report";
 import { commissionPayoutData } from "./commission-report";
@@ -136,6 +147,8 @@ export interface ReportData {
   options?: ReportOption[];
   /** Date presets to offer instead of the usual list, like Analytics' 1W / 4W / MTD / QTD / YTD. */
   presets?: { id: string; label: string }[];
+  /** Bar charts drawn above the tables instead of the one picked from the first table; empty for none. */
+  bars?: BarChart[];
 }
 
 export interface ReportInput {
@@ -795,6 +808,38 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async tip_payouts({ scope, loc }) {
     return tipPayoutsData(scope, loc);
+  },
+
+  async payroll_summary({ scope, loc, viewer }) {
+    return payrollSummaryData({ scope, loc, perms: viewer.permissions });
+  },
+
+  async payroll_timesheets({ scope, loc, viewer }) {
+    return payrollTimesheetsData({ scope, loc, perms: viewer.permissions });
+  },
+
+  async payroll_tips({ scope, loc, viewer }) {
+    return payrollTipsData({ scope, loc, perms: viewer.permissions });
+  },
+
+  async payroll_commission({ scope, loc, viewer }) {
+    return payrollCommissionData({ scope, loc, perms: viewer.permissions });
+  },
+
+  async payroll_full_time({ scope, loc, viewer }) {
+    return payrollFullTimeData({ scope, loc, perms: viewer.permissions });
+  },
+
+  async payroll_labor({ scope, loc, viewer }) {
+    return payrollLaborData({ scope, loc, perms: viewer.permissions });
+  },
+
+  async payroll_overtime({ scope, loc, viewer, params }) {
+    return payrollOvertimeData({ scope, loc, perms: viewer.permissions, params });
+  },
+
+  async payroll_isolved({ scope, loc, viewer }) {
+    return payrollIsolvedData({ scope, loc, perms: viewer.permissions });
   },
 
   async appointments({ scope, loc, params }) {

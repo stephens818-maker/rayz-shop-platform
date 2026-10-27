@@ -73,6 +73,10 @@ export const REPORT_TYPES = {
   },
   pnl: { label: "Reports: P&L and payouts", keys: ["shop_accounts", "rollup", "tip_payouts"] },
   payroll: { label: "Reports: payroll and labor", keys: ["tips_payroll", "labor", "commission_payout", "attendance"] },
+  payroll_pay: {
+    label: "Reports: payroll (iSolved)",
+    keys: ["payroll_summary", "payroll_timesheets", "payroll_tips", "payroll_commission", "payroll_full_time", "payroll_labor", "payroll_overtime", "payroll_isolved"],
+  },
   card_fee: { label: "Reports: card fees", keys: ["card_fees"] },
   rebook: { label: "Reports: rebook and retention", keys: ["rebook_rate", "retention", "kpis", "checkout_prompts"] },
   clients: { label: "Reports: clients and marketing", keys: ["client_ratings", "loyalty", "acquisition", "google_reviews", "campaign_center", "openings", "lapsed_clients"] },

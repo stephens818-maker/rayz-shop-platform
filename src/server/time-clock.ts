@@ -879,6 +879,76 @@ export async function timesheetView(staffId: string, periodStart: LocalDate, sho
 
 const hoursLockedOnPayroll = (shopId: string, date: LocalDate) => isLockedOn(shopId, date);
 
+/** Every shift that starts in [from, to] at these shops, with its breaks, flags and whether a manager changed it. */
+export async function shiftsBetween(shopIds: readonly string[], from: LocalDate, to: LocalDate, staffIds: readonly string[] | null): Promise<(ShiftView & { staffId: string })[]> {
+  if (!shopIds.length) return [];
+  const punches = await punchesBetween(staffIds, new Date(startOfLocalDay(from).getTime() - DAY), new Date(endOfLocalDay(to).getTime() + DAY), db, shopIds);
+  const byId = new Map(punches.map((p) => [p.id, p]));
+  const shifts = pairPunches(punches.map(asLike)).shifts.filter((s) => {
+    const d = localDateOf(s.start);
+    return d >= from && d <= to;
+  });
+  const views = shiftViews(shifts, byId, await clockRulesAt([...new Set(shifts.map((s) => s.shopId))]), await schedulesOf([...new Set(shifts.map((s) => s.staffId))]));
+  return views.map((v, i) => ({ ...v, staffId: shifts[i].staffId }));
+}
+
+export interface PunchEditRow {
+  at: Date;
+  staffId: string;
+  shopId: string;
+  punchType: PunchType;
+  punchAt: Date;
+  action: "edit" | "add" | "void";
+  reason: string;
+  before: unknown;
+  after: unknown;
+  by: string | null;
+}
+
+/** Manager changes to punches at these shops dated in [from, to], oldest first. */
+export async function punchEditsBetween(shopIds: readonly string[], from: LocalDate, to: LocalDate, staffIds: readonly string[] | null): Promise<PunchEditRow[]> {
+  if (!shopIds.length || (staffIds && !staffIds.length)) return [];
+  return db
+    .select({
+      at: timePunchEdits.createdAt,
+      staffId: timePunches.staffId,
+      shopId: timePunches.shopId,
+      punchType: timePunches.type,
+      punchAt: timePunches.at,
+      action: timePunchEdits.action,
+      reason: timePunchEdits.reason,
+      before: timePunchEdits.before,
+      after: timePunchEdits.after,
+      by: staff.displayLabel,
+    })
+    .from(timePunchEdits)
+    .innerJoin(timePunches, eq(timePunches.id, timePunchEdits.punchId))
+    .leftJoin(staff, eq(staff.id, timePunchEdits.editedBy))
+    .where(
+      and(
+        inArray(timePunches.shopId, [...shopIds]),
+        staffIds ? inArray(timePunches.staffId, [...staffIds]) : undefined,
+        gte(timePunches.at, startOfLocalDay(from)),
+        lt(timePunches.at, endOfLocalDay(to)),
+      ),
+    )
+    .orderBy(asc(timePunchEdits.createdAt));
+}
+
+/** Minutes each person is scheduled from `after` to the end of `through`, at any shop: what's left of their week. */
+export async function scheduledMinutesLeft(staffIds: readonly string[], after: Date, through: LocalDate): Promise<Map<string, number>> {
+  const sched = await schedulesOf(staffIds);
+  const out = new Map<string, number>();
+  for (const [k] of sched) {
+    const [staffId, shopId] = k.split("|");
+    let min = 0;
+    for (let d = localDateOf(after); d <= through; d = addDays(d, 1))
+      for (const i of scheduleFor(sched, staffId, shopId, d)) min += Math.max(0, (i.end.getTime() - Math.max(i.start.getTime(), after.getTime())) / 60_000);
+    out.set(staffId, (out.get(staffId) ?? 0) + Math.round(min));
+  }
+  return out;
+}
+
 const problemsIn = (problems: PairProblem[], shopId: string, inPeriod: (d: LocalDate) => boolean) =>
   problems
     .filter((p) => p.shopId === shopId && inPeriod(localDateOf(p.at)))

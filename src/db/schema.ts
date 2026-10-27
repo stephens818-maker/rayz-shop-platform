@@ -3255,6 +3255,36 @@ export const payrollLockedOt = pgTable(
   (t) => [primaryKey({ columns: [t.staffId, t.shopId, t.periodStart, t.weekStart] })],
 );
 
+/** What went into a shop's tab when the pay period's iSolved file was marked sent. */
+export interface PayrollSendShop {
+  shopId: string;
+  payGroup: string;
+  tab: string;
+  rows: number;
+  /** The file's column totals, in its order (hours to the hundredth, dollars to the cent). */
+  totals: number[];
+  headers: string[];
+}
+
+/**
+ * A pay period's iSolved file, marked sent to iSolved (uploaded by hand) once every shop in it is
+ * approved and locked and its tips reconcile to the cent. One per period; undoing it deletes the row
+ * (audited). iSolved stays the system of record; nothing here talks to it.
+ */
+export const payrollExportSends = pgTable(
+  "payroll_export_sends",
+  {
+    id: id(),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    periodEnd: date("period_end", { mode: "string" }).notNull(),
+    shops: jsonb("shops").$type<PayrollSendShop[]>().notNull(),
+    note: text("note"),
+    sentAt: ts("sent_at").notNull().defaultNow(),
+    sentBy: uuid("sent_by").references(() => staff.id),
+  },
+  (t) => [unique("payroll_export_sends_uq").on(t.periodStart, t.periodEnd), check("payroll_export_sends_dates", sql`${t.periodEnd} >= ${t.periodStart}`)],
+);
+
 // ───────────────────────────── Time clock ─────────────────────────────
 
 export type PunchType = "in" | "out" | "break_start" | "break_end";
