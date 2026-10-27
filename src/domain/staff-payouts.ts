@@ -30,6 +30,14 @@ export type OwedVia = (typeof OWED_VIA)[number];
 /** When a refund takes the tip back from the barber: only a full refund inside the window, any refund that gives tip back, or never. */
 export const REVERSAL_RULES = ["full_refund_in_window", "any_refund", "never"] as const;
 export type ReversalRule = (typeof REVERSAL_RULES)[number];
+/**
+ * A tip refunded after it was paid (its payout went out, or its pay period is past): the shop's
+ * cost, or taken back under the reversal rule from a later payout or paycheck. Taking back wages
+ * already paid is a deduction (IL 820 ILCS 115/9, Iowa 91A.5: written consent), so it's the shop's
+ * cost unless counsel signs off.
+ */
+export const AFTER_PAYOUT_RULES = ["shop_cost", "deduct"] as const;
+export type AfterPayoutRule = (typeof AFTER_PAYOUT_RULES)[number];
 /** Which day a tip belongs to: the sale's business date, or the payment's (a tip added after the sale). */
 export const TIP_DATE_RULES = ["sale_date", "payment_date"] as const;
 export type TipDateRule = (typeof TIP_DATE_RULES)[number];
@@ -47,6 +55,7 @@ export interface StaffPayoutSettings {
   reversalRule: ReversalRule;
   /** A full refund within this many days of the sale takes the tip back; later, the shop absorbs it. */
   reversalWindowDays: number;
+  afterPayoutRefunds: AfterPayoutRule;
   tipDate: TipDateRule;
   taxForms: TaxFormFiling;
   /** The month (1 to 12) the yearly tax form check comes due, before Stripe files for the year just ended. */
@@ -62,6 +71,7 @@ export const DEFAULT_STAFF_PAYOUT_SETTINGS: StaffPayoutSettings = {
   owedVia: "payroll",
   reversalRule: "full_refund_in_window",
   reversalWindowDays: 7,
+  afterPayoutRefunds: "shop_cost",
   tipDate: "sale_date",
   taxForms: "will_not_file",
   taxCheckMonth: 1,
@@ -81,6 +91,7 @@ export function staffPayoutSettings(raw: unknown): StaffPayoutSettings {
     owedVia: pick(OWED_VIA, r.owedVia, d.owedVia),
     reversalRule: pick(REVERSAL_RULES, r.reversalRule, d.reversalRule),
     reversalWindowDays: int(r.reversalWindowDays, REVERSAL_WINDOW_DAYS.min, REVERSAL_WINDOW_DAYS.max, d.reversalWindowDays),
+    afterPayoutRefunds: pick(AFTER_PAYOUT_RULES, r.afterPayoutRefunds, d.afterPayoutRefunds),
     tipDate: pick(TIP_DATE_RULES, r.tipDate, d.tipDate),
     taxForms: pick(TAX_FORM_FILING, r.taxForms, d.taxForms),
     taxCheckMonth: int(r.taxCheckMonth, 1, 12, d.taxCheckMonth),
@@ -99,6 +110,10 @@ export const REVERSAL_RULE_LABEL: Record<ReversalRule, string> = {
   full_refund_in_window: "Only a full refund within the window",
   any_refund: "Any refund that gives tip back",
   never: "Never: the shop absorbs every refunded tip",
+};
+export const AFTER_PAYOUT_LABEL: Record<AfterPayoutRule, string> = {
+  shop_cost: "The shop's cost: never taken back from a later payout or paycheck",
+  deduct: "Taken back by the reversal rule (needs the employee's written consent in IL and IA)",
 };
 export const TIP_DATE_LABEL: Record<TipDateRule, string> = { sale_date: "The sale's date", payment_date: "The payment's date" };
 export const TAX_FORMS_LABEL: Record<TaxFormFiling, string> = { will_not_file: "Will not file (tips are W-2 wages through payroll)" };
@@ -196,27 +211,34 @@ export const expectedTransition = (from: AccountState, to: AccountState) => from
 
 // ───────────────────────────── Refunds and disputes ─────────────────────────────
 
-export type ReversalOutcome = "reverse" | "absorb_partial" | "absorb_window" | "absorb_rule";
-export const ABSORB_KIND: Record<Exclude<ReversalOutcome, "reverse">, "partial_refund" | "outside_window" | "rule"> = {
+export type ReversalOutcome = "reverse" | "absorb_partial" | "absorb_window" | "absorb_rule" | "absorb_after_payout";
+export const ABSORB_KIND: Record<Exclude<ReversalOutcome, "reverse">, "partial_refund" | "outside_window" | "rule" | "after_payout"> = {
   absorb_partial: "partial_refund",
   absorb_window: "outside_window",
   absorb_rule: "rule",
+  absorb_after_payout: "after_payout",
 };
-export const ABSORPTION_KINDS = ["partial_refund", "outside_window", "rule", "dispute"] as const;
+export const ABSORPTION_KINDS = ["partial_refund", "outside_window", "rule", "after_payout", "dispute"] as const;
 export type AbsorptionKind = (typeof ABSORPTION_KINDS)[number];
 export const ABSORPTION_LABEL: Record<AbsorptionKind, string> = {
   partial_refund: "Partial refund",
   outside_window: "Refund after the window",
   rule: "Refund (brand never reverses tips)",
+  after_payout: "Refund after the tip was paid",
   dispute: "Card dispute",
 };
 
 /**
- * Whether a refund that gave tip back takes it from the barber, or the shop absorbs it. Full: the
- * payment is fully refunded once this refund is counted with the earlier ones. The window counts
- * calendar days from the sale's business date to the refund's.
+ * Whether a refund that gave tip back takes it from the barber, or the shop absorbs it. A tip already
+ * paid (its payout went out, or it's from an earlier pay period) is the shop's unless the brand
+ * deducts after payout. Otherwise, full: the payment is fully refunded once this refund is counted
+ * with the earlier ones; the window counts calendar days from the sale's business date to the refund's.
  */
-export function reversalOutcome(s: Pick<StaffPayoutSettings, "reversalRule" | "reversalWindowDays">, r: { saleDate: LocalDate; refundDate: LocalDate; fullyRefunded: boolean }): ReversalOutcome {
+export function reversalOutcome(
+  s: Pick<StaffPayoutSettings, "reversalRule" | "reversalWindowDays"> & Partial<Pick<StaffPayoutSettings, "afterPayoutRefunds">>,
+  r: { saleDate: LocalDate; refundDate: LocalDate; fullyRefunded: boolean; afterPayout?: boolean },
+): ReversalOutcome {
+  if (r.afterPayout && (s.afterPayoutRefunds ?? "shop_cost") === "shop_cost") return "absorb_after_payout";
   if (s.reversalRule === "never") return "absorb_rule";
   if (s.reversalRule === "any_refund") return "reverse";
   if (!r.fullyRefunded) return "absorb_partial";

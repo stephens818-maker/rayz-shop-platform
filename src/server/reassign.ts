@@ -7,6 +7,7 @@ import { Actor, audit } from "./audit";
 import { assertStaffAtShop } from "./checkout";
 import { AppError, notFound } from "./errors";
 import { syncTipLedger } from "./tips/ledger";
+import { isLockedOn } from "./payroll/groups";
 
 export function reassignProblem(sale: { status: string; isImported: boolean; staffId: string | null }, toStaffId: string, reason: string, onTicket: readonly string[]): string | null {
   if (sale.isImported) return "This ticket was imported from Squire. Change it in Squire.";
@@ -40,6 +41,7 @@ export async function reassignSale(input: { saleId: string; toStaffId: string; r
       .where(and(eq(timesheetLocks.shopId, sale.shopId), lte(timesheetLocks.periodStart, sale.businessDate), gte(timesheetLocks.periodEnd, sale.businessDate)))
       .limit(1);
     if (locked.length) throw new AppError("conflict", "That pay period is locked at this shop, so its tickets can't change barbers");
+    if (await isLockedOn(sale.shopId, sale.businessDate, tx)) throw new AppError("conflict", "That pay period's payroll is approved and locked at this shop, so its tickets can't change barbers");
 
     const from = sale.staffId;
     await tx.update(sales).set({ staffId: input.toStaffId }).where(eq(sales.id, sale.id));

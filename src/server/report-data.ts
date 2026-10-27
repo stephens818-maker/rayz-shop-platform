@@ -934,7 +934,9 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
       money("Cash tips"),
       money("Gift card tips"),
       money("Tip refunds (already subtracted)"),
+      money(r.lateRefunds === "deduct" ? "Post-payout tip refunds (deducted)" : "Post-payout tip refunds (shop cost, not subtracted)"),
       money("Total tips"),
+      money("Cash tips declared"),
     ];
     const rows: ListRow[] = r.rows.map((x) => ({
       shopId: x.shopId,
@@ -952,7 +954,9 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
         x.cashTipsCents,
         x.giftCardTipsCents,
         x.tipRefundsCents,
+        x.lateTipRefundsCents,
         x.totalTipsCents,
+        x.declaredCashTipsCents,
       ],
     }));
     const who = named ? 3 : 2;
@@ -981,6 +985,32 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           sort: order,
         }),
         ...(split ? [split] : []),
+        ...(r.squire.length
+          ? [
+              listTable(loc, {
+                id: "squire",
+                title: "Squire-era tips (reference only)",
+                subtitle: "Tips on tickets imported from Squire. Squire's payroll already paid them, so they're never in the totals above or in the iSolved file.",
+                columns: [text("Period start"), text("Period end"), text("Staff ID"), ...(named ? [text("Barber")] : []), int("Tickets"), money("Squire tips")],
+                rows: r.squire.map((x) => ({
+                  shopId: x.shopId,
+                  staffId: x.staffId,
+                  key: `squire|${x.periodStart}|${x.staffId}`,
+                  cells: [x.periodStart, x.periodEnd, x.staffCode, ...(named ? [x.label] : []), x.tickets, x.tipsCents],
+                })),
+                merge: true,
+                shopsColumnAt: loc.shops.length > 1 ? at : undefined,
+                labelAt: named ? 3 : 0,
+                sort: order,
+              }),
+            ]
+          : []),
+      ],
+      notes: [
+        r.lateRefunds === "deduct"
+          ? "Post-payout tip refunds (a refund in a later pay period of tips already paid) are deducted from that period's tips, never below zero. Check your state's wage deduction rules (Illinois and Iowa need written consent)."
+          : "Post-payout tip refunds (a refund in a later pay period of tips already paid) are the shop's cost: shown for review, never taken from the barber.",
+        ...(r.rows.some((x) => x.lateTipRefundsCents) ? ["Some barbers have post-payout tip refunds this range: review them before payroll."] : []),
       ],
     };
   },

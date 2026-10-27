@@ -6,6 +6,7 @@ import { payPeriodByIndex, payPeriodFor } from "@/domain/payroll";
 import { REPORT_VIEWS, viewOf } from "@/domain/report-views";
 import { formatDate, todayLocal } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
+import { brandCalendar } from "@/server/payroll/groups";
 import { REPORT_LOADERS } from "@/server/report-data";
 import { BarberField, LocationField, LocationNotice, ViewInput, ViewToggle, locationProps, reportQuery, withView } from "../reports/filters";
 import { ReportTableCard, ReportTabs } from "../reports/report-view";
@@ -16,9 +17,10 @@ export const metadata: Metadata = { title: "Payroll tips" };
 export default async function PayrollPage({ searchParams }: { searchParams: Promise<{ p?: string; shop?: string | string[]; staff?: string | string[]; view?: string }> }) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin/payroll");
-  const current = payPeriodFor(todayLocal());
+  const cal = await brandCalendar();
+  const current = payPeriodFor(todayLocal(), cal);
   const index = sp.p !== undefined && /^-?\d+$/.test(sp.p) ? Number(sp.p) : current.index - 1;
-  const period = payPeriodByIndex(index);
+  const period = payPeriodByIndex(index, cal);
   const l = await resolveBarberView(ctx, sp, "tips_payroll", await resolveLocations(ctx, sp));
   const t0 = performance.now();
   const data = await REPORT_LOADERS.tips_payroll({
@@ -28,7 +30,7 @@ export default async function PayrollPage({ searchParams }: { searchParams: Prom
     params: {},
   });
   const ms = Math.round(performance.now() - t0);
-  const choices = Array.from({ length: 6 }, (_, i) => payPeriodByIndex(current.index - i));
+  const choices = Array.from({ length: 6 }, (_, i) => payPeriodByIndex(current.index - i, cal));
   const canExport = can(ctx, "report.tips_payroll.export");
   const csv = (table: string) => (canExport ? `/admin/reports/export?${reportQuery(l, { type: "tips_payroll", table, from: period.start, to: period.end })}` : null);
   const here = (extra: Record<string, string | null>, state = l) => `/admin/payroll?${reportQuery(state, { p: String(period.index), ...extra })}`;
@@ -42,7 +44,7 @@ export default async function PayrollPage({ searchParams }: { searchParams: Prom
         subtitle={
           <>
             {l.label}
-            {l.barbers?.pickable && l.barbers.selection.staffIds && ` · ${l.barbers.label}`} · Bi-weekly, Sunday to Saturday. {formatDate(period.start, "MMM d")} –{" "}
+            {l.barbers?.pickable && l.barbers.selection.staffIds && ` · ${l.barbers.label}`} · {cal.periodDays === 14 ? "Bi-weekly" : cal.periodDays === 7 ? "Weekly" : `Every ${cal.periodDays} days`}, on the brand&apos;s pay calendar. {formatDate(period.start, "MMM d")} –{" "}
             {formatDate(period.end, "MMM d, yyyy")}
             {period.index === current.index && " (in progress)"}
             {view !== "combined" && ` · ${REPORT_VIEWS[view].toLowerCase()}`}
@@ -94,6 +96,11 @@ export default async function PayrollPage({ searchParams }: { searchParams: Prom
       </div>
       {data.tables.map((t) => (
         <ReportTableCard key={t.id} t={t} csv={csv(t.id)} />
+      ))}
+      {data.notes?.map((n) => (
+        <p key={n} className="mt-2 text-xs text-zinc-500">
+          {n}
+        </p>
       ))}
     </div>
   );

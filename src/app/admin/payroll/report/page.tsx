@@ -5,7 +5,7 @@ import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, fmtMoney, t
 import { formatDate, formatDateTime } from "@/lib/time";
 import { reportView } from "@/domain/permissions";
 import { can, guardPage } from "@/server/auth/staff";
-import { buildPayroll, periodChoices, periodKey, type BlockView, type PayrollView } from "@/server/payroll/run";
+import { buildPayroll, periodChoices, periodKey, RECORD_LABEL, type BlockView, type PayrollView } from "@/server/payroll/run";
 import { LockButton, OverrideForm } from "./client";
 
 export const metadata: Metadata = { title: "Payroll report" };
@@ -49,6 +49,30 @@ const COLS: Col[] = [
   { key: "tipsOutside", label: COLUMN_LABEL.tipsOutside, fmt: (l) => fmtMoney(l.tipsOutside), total: (t) => fmtMoney(t.tipsOutside), extra: true },
   { key: "tipsInPayroll", label: COLUMN_LABEL.tipsInPayroll, fmt: (l) => fmtMoney(l.tipsInPayroll), total: (t) => fmtMoney(t.tipsInPayroll), extra: true },
   { key: "tipsPaidOut", label: COLUMN_LABEL.tipsPaidOut, fmt: (l) => fmtMoney(l.tipsPaidOut), total: (t) => fmtMoney(t.tipsPaidOut), extra: true },
+  {
+    key: "declaredCashTips",
+    label: COLUMN_LABEL.declaredCashTips,
+    fmt: (l) => fmtMoney(l.declaredCashTips),
+    total: (t) => fmtMoney(t.declaredCashTips),
+    extra: true,
+    onlyIf: (b) => b.lines.some((l) => l.declaredCashTips),
+  },
+  {
+    key: "lateTipRefunds",
+    label: COLUMN_LABEL.lateTipRefunds,
+    fmt: (l) => fmtMoney(l.lateTipRefunds),
+    total: (t) => fmtMoney(t.lateTipRefunds),
+    extra: true,
+    onlyIf: (b) => b.lines.some((l) => l.lateTipRefunds),
+  },
+  {
+    key: "tipRefundsShopCost",
+    label: COLUMN_LABEL.tipRefundsShopCost,
+    fmt: (l) => fmtMoney(l.tipRefundsShopCost),
+    total: (t) => fmtMoney(t.tipRefundsShopCost),
+    extra: true,
+    onlyIf: (b) => b.lines.some((l) => l.tipRefundsShopCost),
+  },
 ];
 const colsFor = (b: BlockView) => COLS.filter((c) => !c.onlyIf || c.onlyIf(b));
 
@@ -167,6 +191,8 @@ function Report({ view, canRun }: { view: PayrollView; canRun: boolean }) {
         </Notice>
       )}
 
+      <LockCheck view={view} />
+
       <TipCheckNotice view={view} />
 
       <Locations view={view} />
@@ -196,6 +222,75 @@ function Report({ view, canRun }: { view: PayrollView; canRun: boolean }) {
         <ShopBlockCard key={b.shopId} b={b} view={view} canRun={canRun} />
       ))}
     </div>
+  );
+}
+
+function LockCheck({ view }: { view: PayrollView }) {
+  const locked = view.blocks.filter((b) => b.lockCheck);
+  if (!locked.length) return null;
+  const changed = locked.filter((b) => b.lockCheck!.drift.length || b.lockCheck!.importedAfterLock);
+  if (!changed.length)
+    return (
+      <p className="text-xs text-zinc-500">
+        Locked inputs unchanged since approval:{" "}
+        {locked.map((b) => (
+          <span key={b.shopId} className="mr-2 whitespace-nowrap">
+            {b.shop} <code className="text-[11px]">{b.lockCheck!.hash.slice(0, 12)}</code>
+          </span>
+        ))}
+      </p>
+    );
+  return (
+    <Card>
+      <CardHeader
+        title="Changed since the lock"
+        subtitle="The files stay exactly as approved. These are changes in the live data since: fix them in the next period in iSolved, or unlock and approve again."
+      />
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-amber-50 text-left text-xs text-amber-900">
+            <tr>
+              <th className="px-3 py-2">Shop</th>
+              <th className="px-3 py-2">Employee</th>
+              <th className="px-3 py-2">Figure</th>
+              <th className="px-3 py-2 text-right">As locked</th>
+              <th className="px-3 py-2 text-right">Now</th>
+            </tr>
+          </thead>
+          <tbody>
+            {changed.flatMap((b) => [
+              ...b.lockCheck!.drift.map((d) => (
+                <tr key={`${b.shopId}|${d.staffId}|${d.field}`} className="border-t border-zinc-100">
+                  <td className="px-3 py-1.5">{b.shop}</td>
+                  <td className="px-3 py-1.5">{d.name}</td>
+                  <td className="px-3 py-1.5">{RECORD_LABEL[d.field]}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">{cell(d.field.endsWith("Hours") ? "hours" : "tips", d.locked)}</td>
+                  <td className="px-3 py-1.5 text-right tabular-nums">{cell(d.field.endsWith("Hours") ? "hours" : "tips", d.now)}</td>
+                </tr>
+              )),
+              ...(b.lockCheck!.importedAfterLock
+                ? [
+                    <tr key={`${b.shopId}|import`} className="border-t border-zinc-100">
+                      <td className="px-3 py-1.5">{b.shop}</td>
+                      <td className="px-3 py-1.5" colSpan={4}>
+                        {b.lockCheck!.importedAfterLock} Squire ticket{b.lockCheck!.importedAfterLock === 1 ? "" : "s"} imported after the lock (reference only, never paid here)
+                      </td>
+                    </tr>,
+                  ]
+                : []),
+            ])}
+          </tbody>
+        </table>
+      </div>
+      <p className="px-4 py-2 text-xs text-zinc-500">
+        Hash as locked:{" "}
+        {changed.map((b) => (
+          <span key={b.shopId} className="mr-2 whitespace-nowrap">
+            {b.shop} <code className="text-[11px]">{b.lockCheck!.hash.slice(0, 12)}</code> → now <code className="text-[11px]">{b.lockCheck!.liveHash.slice(0, 12)}</code>
+          </span>
+        ))}
+      </p>
+    </Card>
   );
 }
 

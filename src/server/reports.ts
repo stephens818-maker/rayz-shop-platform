@@ -458,20 +458,29 @@ export interface PayrollRow {
   /** Net of refunds issued in the period. */
   serviceSalesCents: number;
   productSalesCents: number;
-  /** Tips by the tender that took them, less tip refunds issued from that tender in the period. */
+  /** Tips by the tender that took them, less tip refunds issued from that tender in the period on tickets of the period. */
   cardTipsCents: number;
   cashTipsCents: number;
   giftCardTipsCents: number;
-  /** Already subtracted from the tender columns; shown so payroll can see the adjustment. */
+  /** Already subtracted from the tender columns (a same-period correction); shown so payroll can see the adjustment. */
   tipRefundsCents: number;
+  /**
+   * Tip refunds issued in the period on tickets of an earlier one, whose tips were already paid. Never
+   * subtracted here: they're the shop's cost unless the brand deducts them, and flagged for review.
+   */
+  lateTipRefundsCents: number;
+  /** Cash tips the barber declared (handed over, never rung up). Reported for tax; not in the total, since the barber already has them. */
+  declaredCashTipsCents: number;
+  /** Card, cash and gift card tips; never below zero. */
   totalTipsCents: number;
 }
 
-export type PayrollSalesRow = Omit<PayrollRow, "periodStart" | "periodEnd" | "totalTipsCents">;
+export type PayrollSalesRow = Omit<PayrollRow, "periodStart" | "periodEnd" | "totalTipsCents" | "declaredCashTipsCents">;
 
 /**
- * Service and product sales and tips per barber per shop, paid in [start, end], less refunds issued in it.
- * Tickets imported from Squire are left out: Squire already paid those tips through its own payroll.
+ * Service and product sales and tips per barber per shop, paid in [start, end], less refunds issued in
+ * it (for tips, only refunds of the period's own tickets). Tickets and payments imported from Squire
+ * are left out: Squire already paid those tips (squireTipsBetween has them, for reference).
  */
 export async function payrollSalesBetween(s: Pick<ReportScope, "shopIds" | "staffId" | "staffIds">, start: LocalDate, end: LocalDate): Promise<PayrollSalesRow[]> {
   return rows<PayrollSalesRow>(sql`
@@ -488,14 +497,15 @@ export async function payrollSalesBetween(s: Pick<ReportScope, "shopIds" | "staf
             sum(case when p.method='gift_card' then p.tip_cents else 0 end)::int gc
           from payments p join sales s on s.id = p.sale_id
           where s.shop_id in ${uuids(s.shopIds)} and s.business_date between ${start} and ${end} and s.status in ${PAID}
-            and not s.is_imported
+            and not s.is_imported and p.processor is distinct from 'squire_import'
             and s.staff_id is not null ${staffFilter(sql`s.staff_id`, s)}
           group by 1, 2
         ), rf as (
           select s.staff_id, r.shop_id, sum(r.service_net_cents)::int sn, sum(r.product_net_cents)::int pn,
-            sum(case when r.method='card' then r.tip_cents else 0 end)::int card,
-            sum(case when r.method='cash' then r.tip_cents else 0 end)::int cash,
-            sum(case when r.method='gift_card' then r.tip_cents else 0 end)::int gc
+            sum(case when r.method='card' and s.business_date >= ${start} then r.tip_cents else 0 end)::int card,
+            sum(case when r.method='cash' and s.business_date >= ${start} then r.tip_cents else 0 end)::int cash,
+            sum(case when r.method='gift_card' and s.business_date >= ${start} then r.tip_cents else 0 end)::int gc,
+            sum(case when s.business_date < ${start} then r.tip_cents else 0 end)::int late
           from refunds r join sales s on s.id = r.sale_id
           where r.shop_id in ${uuids(s.shopIds)} and r.business_date between ${start} and ${end} and r.kind = 'refund'
             and not s.is_imported and s.staff_id is not null ${staffFilter(sql`s.staff_id`, s)}
@@ -505,9 +515,10 @@ export async function payrollSalesBetween(s: Pick<ReportScope, "shopIds" | "staf
             sum(case when m.source='payment' and m.method='card' then m.delta_cents else 0 end)::int pcard,
             sum(case when m.source='payment' and m.method='cash' then m.delta_cents else 0 end)::int pcash,
             sum(case when m.source='payment' and m.method='gift_card' then m.delta_cents else 0 end)::int pgc,
-            sum(case when m.source='refund' and m.method='card' then m.delta_cents else 0 end)::int rcard,
-            sum(case when m.source='refund' and m.method='cash' then m.delta_cents else 0 end)::int rcash,
-            sum(case when m.source='refund' and m.method='gift_card' then m.delta_cents else 0 end)::int rgc
+            sum(case when m.source='refund' and m.method='card' and s.business_date >= ${start} then m.delta_cents else 0 end)::int rcard,
+            sum(case when m.source='refund' and m.method='cash' and s.business_date >= ${start} then m.delta_cents else 0 end)::int rcash,
+            sum(case when m.source='refund' and m.method='gift_card' and s.business_date >= ${start} then m.delta_cents else 0 end)::int rgc,
+            sum(case when m.source='refund' and s.business_date < ${start} then m.delta_cents else 0 end)::int rlate
           ${tipMoves(s, start, end, sql`and m.staff_id is not null and not s.is_imported`)}
           group by 1, 2
         ), lm as (
@@ -521,7 +532,8 @@ export async function payrollSalesBetween(s: Pick<ReportScope, "shopIds" | "staf
           (coalesce(t.card,0) + coalesce(mv.pcard,0) - coalesce(rf.card,0) - coalesce(mv.rcard,0)) "cardTipsCents",
           (coalesce(t.cash,0) + coalesce(mv.pcash,0) - coalesce(rf.cash,0) - coalesce(mv.rcash,0)) "cashTipsCents",
           (coalesce(t.gc,0) + coalesce(mv.pgc,0) - coalesce(rf.gc,0) - coalesce(mv.rgc,0)) "giftCardTipsCents",
-          (coalesce(rf.card,0) + coalesce(rf.cash,0) + coalesce(rf.gc,0) + coalesce(mv.rcard,0) + coalesce(mv.rcash,0) + coalesce(mv.rgc,0)) "tipRefundsCents"
+          (coalesce(rf.card,0) + coalesce(rf.cash,0) + coalesce(rf.gc,0) + coalesce(mv.rcard,0) + coalesce(mv.rcash,0) + coalesce(mv.rgc,0)) "tipRefundsCents",
+          (coalesce(rf.late,0) + coalesce(mv.rlate,0)) "lateTipRefundsCents"
         from k join staff st on st.id = k.staff_id join shops sh on sh.id = k.shop_id
         left join v on v.staff_id = k.staff_id and v.shop_id = k.shop_id
         left join t on t.staff_id = k.staff_id and t.shop_id = k.shop_id
@@ -531,24 +543,74 @@ export async function payrollSalesBetween(s: Pick<ReportScope, "shopIds" | "staf
         order by st.display_label, sh.name`);
 }
 
+export interface SquireTipRow {
+  periodStart: string;
+  periodEnd: string;
+  staffId: string;
+  staffCode: string;
+  label: string;
+  shopId: string;
+  shop: string;
+  tickets: number;
+  tipsCents: number;
+}
+
+/** Tips on tickets imported from Squire, per barber per shop: reference only (the YTD reconciliation), never payroll. */
+export async function squireTipsBetween(s: Pick<ReportScope, "shopIds" | "staffId" | "staffIds">, start: LocalDate, end: LocalDate): Promise<Omit<SquireTipRow, "periodStart" | "periodEnd">[]> {
+  return rows(sql`
+    select st.id "staffId", st.staff_code "staffCode", st.display_label label, sh.id "shopId", sh.name shop, count(distinct s.id)::int tickets, coalesce(sum(p.tip_cents), 0)::int "tipsCents"
+    from sales s join payments p on p.sale_id = s.id join staff st on st.id = s.staff_id join shops sh on sh.id = s.shop_id
+    where s.shop_id in ${uuids(s.shopIds)} and s.business_date between ${start} and ${end} and s.status in ${PAID}
+      and (s.is_imported or p.processor = 'squire_import') and p.tip_cents <> 0 ${staffFilter(sql`s.staff_id`, s)}
+    group by st.id, sh.id
+    order by st.display_label, sh.name`);
+}
+
+type DeclaredRow = Pick<PayrollRow, "staffId" | "staffCode" | "label" | "shopId" | "shop" | "declaredCashTipsCents">;
+
+/** Current cash tip declarations in [start, end], per barber per shop. */
+export async function declaredTipRowsBetween(s: Pick<ReportScope, "shopIds" | "staffId" | "staffIds">, start: LocalDate, end: LocalDate): Promise<DeclaredRow[]> {
+  return rows<DeclaredRow>(sql`
+    select st.id "staffId", st.staff_code "staffCode", st.display_label label, sh.id "shopId", sh.name shop, sum(d.amount_cents)::int "declaredCashTipsCents"
+    from tip_declarations d join staff st on st.id = d.staff_id join shops sh on sh.id = d.shop_id
+    where d.shop_id in ${uuids(s.shopIds)} and d.business_date between ${start} and ${end} ${staffFilter(sql`d.staff_id`, s)}
+      and not exists (select 1 from tip_declarations r where r.replaces_id = d.id)
+    group by st.id, sh.id
+    having sum(d.amount_cents) <> 0`);
+}
+
 /**
- * Tips per barber per shop per bi-weekly pay period (hours stay in iSolved). A barber who works at
- * several shops gets a row per shop, from the shop each ticket was rung up at. Sales land in the
- * period they were paid; refunds in the period they were issued, which can be a later one.
+ * Tips per barber per shop per pay period on the brand's calendar (hours stay in iSolved). A barber who
+ * works at several shops gets a row per shop, from the shop each ticket was rung up at. Sales land in
+ * the period they were paid. A refund in the same period corrects it; one in a later period, of tips
+ * already paid, is shown and flagged but never taken from the barber unless the brand deducts those,
+ * and a total never goes below zero. Declared cash tips are their own column. Squire's imported tickets
+ * come back separately, for reference.
  */
-export async function payrollTips(s: ReportScope): Promise<{ periods: PayPeriod[]; rows: PayrollRow[] }> {
-  const periods = payPeriodsBetween(s.from, s.to);
+export async function payrollTips(s: ReportScope): Promise<{ periods: PayPeriod[]; rows: PayrollRow[]; squire: SquireTipRow[]; lateRefunds: "shop_cost" | "deduct" }> {
+  const { brandCalendar } = await import("./payroll/groups");
+  const { staffPayoutConfig } = await import("./tips/ledger");
+  const [cal, cfg] = await Promise.all([brandCalendar(), staffPayoutConfig()]);
+  const periods = payPeriodsBetween(s.from, s.to, cal);
   const out: PayrollRow[] = [];
+  const squire: SquireTipRow[] = [];
   await Promise.all(
     periods.map(async (p) => {
-      const r = await payrollSalesBetween(s, p.start, p.end);
+      const [r, sq, dec] = await Promise.all([payrollSalesBetween(s, p.start, p.end), squireTipsBetween(s, p.start, p.end), declaredTipRowsBetween(s, p.start, p.end)]);
+      const declared = new Map(dec.map((d) => [`${d.staffId}|${d.shopId}`, d]));
       for (const row of r) {
-        out.push({ ...row, periodStart: p.start, periodEnd: p.end, totalTipsCents: row.cardTipsCents + row.cashTipsCents + row.giftCardTipsCents });
+        const gross = row.cardTipsCents + row.cashTipsCents + row.giftCardTipsCents - (cfg.afterPayoutRefunds === "deduct" ? row.lateTipRefundsCents : 0);
+        const key = `${row.staffId}|${row.shopId}`;
+        out.push({ ...row, periodStart: p.start, periodEnd: p.end, declaredCashTipsCents: declared.get(key)?.declaredCashTipsCents ?? 0, totalTipsCents: Math.max(0, gross) });
+        declared.delete(key);
       }
+      for (const d of declared.values())
+        out.push({ ...d, periodStart: p.start, periodEnd: p.end, tickets: 0, serviceSalesCents: 0, productSalesCents: 0, cardTipsCents: 0, cashTipsCents: 0, giftCardTipsCents: 0, tipRefundsCents: 0, lateTipRefundsCents: 0, totalTipsCents: 0 });
+      for (const row of sq) squire.push({ ...row, periodStart: p.start, periodEnd: p.end });
     }),
   );
-  out.sort((a, b) => a.periodStart.localeCompare(b.periodStart) || a.label.localeCompare(b.label) || a.shop.localeCompare(b.shop));
-  return { periods, rows: out };
+  const order = (a: { periodStart: string; label: string; shop: string }, b: typeof a) => a.periodStart.localeCompare(b.periodStart) || a.label.localeCompare(b.label) || a.shop.localeCompare(b.shop);
+  return { periods, rows: out.sort(order), squire: squire.sort(order), lateRefunds: cfg.afterPayoutRefunds };
 }
 
 // ───────────────────────────── KPIs (not available in Squire) ─────────────────────────────

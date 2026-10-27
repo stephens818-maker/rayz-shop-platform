@@ -1,17 +1,22 @@
-import { and, eq, gt, inArray, lt, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, eq, gt, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { payGroups, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, staff, timeEntries } from "@/db/schema";
+import { payGroups, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, sales as salesTable, staff, timeEntries } from "@/db/schema";
 import { calendarProblem, periodOf, periodStarting, periodsAround, workweeksOf, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
 import {
   OVERRIDABLE,
   anomalies,
   assemble,
   computeLine,
+  fmtHours,
+  fmtMoney,
   ftStatus,
+  toCents,
   reconcile,
   totalsOf,
   type Anomaly,
   type FtStatus,
+  type Line,
   type LineInput,
   type Mismatch,
   type Overridable,
@@ -26,6 +31,8 @@ import { audit, type Actor } from "@/server/audit";
 import { guaranteeTopUps, exportExtras } from "@/domain/compensation";
 import { loadCompensationSettings, payrollPlans, setupRates } from "@/server/compensation";
 import { payrollSalesBetween } from "@/server/reports";
+import { declaredTipsBetween } from "@/server/tips/declarations";
+import { staffPayoutConfig } from "@/server/tips/ledger";
 import { lockPayrollTips, payrollTipSplit } from "@/server/tips/payouts";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { isolvedTimecardExporter, type PayrollExporter } from "./export";
@@ -76,12 +83,23 @@ export interface WeekBreakdown {
   slices: { shop: string; periodStart: LocalDate; basis: number; ot: number; locked: boolean; inThisRun: boolean }[];
 }
 
+/** A figure of record on a locked shop that the live data no longer has: the file stays as approved, and this is flagged. */
+export interface LockDrift {
+  staffId: string;
+  name: string;
+  field: RecordField;
+  locked: number;
+  now: number;
+}
+
 export interface BlockView extends ShopBlock {
   payGroupId: string;
   payGroup: string;
   exportTab: string;
   period: CalendarPeriod;
   locked: { at: string; by: string | null } | null;
+  /** Locked shops: the hash of the inputs of record as approved, and what's changed in the live data since. */
+  lockCheck: { hash: string; liveHash: string; drift: LockDrift[]; importedAfterLock: number } | null;
 }
 
 export interface PayrollView {
@@ -102,18 +120,66 @@ export interface PayrollView {
 
 interface Snapshot {
   block: ShopBlock;
+  /** The hash of the inputs of record at the lock; absent on periods locked before it was kept. */
+  inputsHash?: string;
 }
 
-/** Periods locked before tips were split by how they're paid had every tip paid separately; before guaranteed minimums, nobody had a top-up. */
+/**
+ * Periods locked before tips were split by how they're paid had every tip paid separately; before
+ * guaranteed minimums, nobody had a top-up; before declarations and post-payout refunds, none of either.
+ */
 function upgradeBlock(b: ShopBlock): ShopBlock {
-  const tipCols = <T extends { tips: number; tipsInPayroll?: number; tipsOutside?: number; tipsPaidOut?: number; guaranteeTopUp?: number }>(x: T): T => ({
+  type Cols = { tips: number; tipsInPayroll?: number; tipsOutside?: number; tipsPaidOut?: number; guaranteeTopUp?: number; declaredCashTips?: number; chargedTips?: number; lateTipRefunds?: number; tipRefundsShopCost?: number };
+  const tipCols = <T extends Cols>(x: T): T => ({
     ...x,
     tipsInPayroll: x.tipsInPayroll ?? 0,
     tipsOutside: x.tipsOutside ?? x.tips,
     tipsPaidOut: x.tipsPaidOut ?? 0,
     guaranteeTopUp: x.guaranteeTopUp ?? 0,
+    declaredCashTips: x.declaredCashTips ?? 0,
+    chargedTips: x.chargedTips ?? 0,
+    lateTipRefunds: x.lateTipRefunds ?? 0,
+    tipRefundsShopCost: x.tipRefundsShopCost ?? 0,
   });
   return { ...b, lines: b.lines.map(tipCols), totals: tipCols(b.totals) };
+}
+
+/** What a period is approved on, per employee: hours, sales and tips. Rates, and tips paid out since, aren't: they change after a lock without changing the period. */
+const RECORD_FIELDS = ["workedHours", "otHours", "ptoHours", "trainingHours", "serviceSales", "productSales", "tips", "declaredCashTips"] as const;
+type RecordField = (typeof RECORD_FIELDS)[number];
+export const RECORD_LABEL: Record<RecordField, string> = {
+  workedHours: "Hours worked",
+  otHours: "O.T. hours",
+  ptoHours: "PTO hours",
+  trainingHours: "Training hours",
+  serviceSales: "Service $",
+  productSales: "Product $",
+  tips: "Tips",
+  declaredCashTips: "Cash tips declared",
+};
+
+const recordOf = (l: Pick<Line, "input">) => RECORD_FIELDS.map((k) => toCents(l.input[k] ?? 0));
+
+/** A hash of a shop's inputs of record, by employee: the same data hashes the same. */
+export function inputsHash(lines: readonly Pick<Line, "staffId" | "input">[]): string {
+  const rows = lines.map((l) => [l.staffId, ...recordOf(l)] as const).sort((a, b) => a[0].localeCompare(b[0]));
+  return createHash("sha256").update(JSON.stringify(rows)).digest("hex");
+}
+
+export function driftOf(locked: readonly Line[], live: readonly Line[]): LockDrift[] {
+  const out: LockDrift[] = [];
+  const liveOf = new Map(live.map((l) => [l.staffId, l]));
+  const lockedOf = new Map(locked.map((l) => [l.staffId, l]));
+  for (const id of new Set([...lockedOf.keys(), ...liveOf.keys()])) {
+    const a = lockedOf.get(id);
+    const b = liveOf.get(id);
+    RECORD_FIELDS.forEach((k) => {
+      const was = toCents(a?.input[k] ?? 0);
+      const now = toCents(b?.input[k] ?? 0);
+      if (was !== now) out.push({ staffId: id, name: (a ?? b)!.name, field: k, locked: was / 100, now: now / 100 });
+    });
+  }
+  return out;
 }
 
 const centi = (x: number) => x / 100;
@@ -129,7 +195,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
   if (!inRun.length) return null;
   const settings = await loadSettings();
   const groupOf = new Map(groups.map((g) => [g.shopId, g]));
-  const calOf = (shopId: string) => groupOf.get(shopId)?.calendar ?? DEFAULT_CALENDAR;
+  const calOf = (shopId: string) => groupOf.get(shopId)?.calendar ?? settings.calendar;
   const runShops = new Set(inRun.map((x) => x.g.shopId));
 
   const weeks = workweeksOf({ start, end });
@@ -173,8 +239,14 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
   const sales = await payrollSalesBetween({ shopIds: [...runShops] }, start, end);
   const salesOf = new Map(sales.map((r) => [`${r.staffId}|${r.shopId}`, r]));
   const overrides = await db.select().from(payrollOverrides).where(and(eq(payrollOverrides.periodStart, start), inArray(payrollOverrides.shopId, [...runShops])));
-  const tipSplit = await payrollTipSplit([...runShops], start, end);
-  const keys = new Set([...hours.keys(), ...salesOf.keys(), ...overrides.map((o) => `${o.staffId}|${o.shopId}`), ...[...tipSplit.entries()].filter(([, v]) => v.adjustCents || v.absorbedCents || v.inPayrollCents).map(([k]) => k)]);
+  const [tipSplit, declared, payoutCfg] = await Promise.all([payrollTipSplit([...runShops], start, end), declaredTipsBetween([...runShops], start, end), staffPayoutConfig()]);
+  const keys = new Set([
+    ...hours.keys(),
+    ...salesOf.keys(),
+    ...declared.keys(),
+    ...overrides.map((o) => `${o.staffId}|${o.shopId}`),
+    ...[...tipSplit.entries()].filter(([, v]) => v.adjustCents || v.absorbedCents || v.inPayrollCents).map(([k]) => k),
+  ]);
   const staffIds = [...new Set([...keys].map((k) => k.split("|")[0]))];
 
   const [people, profiles, rates] = staffIds.length
@@ -203,6 +275,13 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
     const ov: Overrides = {};
     for (const o of overrides) if (o.staffId === staffId && o.shopId === shopId && (OVERRIDABLE as readonly string[]).includes(o.field)) ov[o.field as Overridable] = { value: o.value, reason: o.reason };
     const name = p?.label ?? "Unknown";
+    const split = tipSplit.get(k);
+    const charged = (s?.cardTipsCents ?? 0) + (s?.giftCardTipsCents ?? 0);
+    const raw = charged + (s?.cashTipsCents ?? 0) + (split?.adjustCents ?? 0) + (split?.absorbedCents ?? 0);
+    const late = s?.lateTipRefundsCents ?? 0;
+    // Refunds of tips already paid are never netted unless the brand deducts them, and the tips never go below zero (SB-C2).
+    const deductible = payoutCfg.afterPayoutRefunds === "deduct" ? Math.max(0, late - (split?.lateAbsorbedCents ?? 0)) : 0;
+    const tipsCents = Math.max(0, raw - deductible);
     const input: LineInput = {
       staffId,
       name,
@@ -220,9 +299,13 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
       trainingHours: centi(h.training),
       serviceSales: (s?.serviceSalesCents ?? 0) / 100,
       productSales: (s?.productSalesCents ?? 0) / 100,
-      tips: ((s?.cardTipsCents ?? 0) + (s?.cashTipsCents ?? 0) + (s?.giftCardTipsCents ?? 0) + (tipSplit.get(k)?.adjustCents ?? 0) + (tipSplit.get(k)?.absorbedCents ?? 0)) / 100,
-      tipsInPayroll: (tipSplit.get(k)?.inPayrollCents ?? 0) / 100,
-      tipsPaidOut: (tipSplit.get(k)?.paidOutCents ?? 0) / 100,
+      tips: tipsCents / 100,
+      tipsInPayroll: (split?.inPayrollCents ?? 0) / 100,
+      tipsPaidOut: (split?.paidOutCents ?? 0) / 100,
+      declaredCashTips: (declared.get(k) ?? 0) / 100,
+      chargedTips: Math.min(tipsCents, Math.max(0, charged)) / 100,
+      lateTipRefunds: late / 100,
+      lateTipRefundsDeducted: Math.max(0, Math.min(deductible, raw)) / 100,
       overrides: Object.keys(ov).length ? ov : undefined,
     };
     inputsByShop.set(shopId, [...(inputsByShop.get(shopId) ?? []), input]);
@@ -244,9 +327,14 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
     { extras: exportExtras(comp), guaranteeHeader: comp.guaranteeHeader },
   );
   const lockedBy = new Map((runs.length ? await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, runs.map((r) => r.lockedBy).filter((x): x is string => !!x))) : []).map((s) => [s.id, s.label]));
+  const imported = runs.length ? await importedAfterLock(runs, start, end, groups) : new Map<string, number>();
   const blocks: BlockView[] = inRun.map(({ g, p }, i) => {
     const run = runOf.get(g.id);
-    const block = run ? upgradeBlock((run.snapshot as Snapshot).block) : live.blocks[i];
+    const snap = run ? (run.snapshot as Snapshot) : null;
+    const block = snap ? upgradeBlock(snap.block) : live.blocks[i];
+    const lockCheck = snap
+      ? { hash: snap.inputsHash ?? inputsHash(block.lines), liveHash: inputsHash(live.blocks[i].lines), drift: driftOf(block.lines, live.blocks[i].lines), importedAfterLock: imported.get(g.id) ?? 0 }
+      : null;
     return {
       ...block,
       shop: g.shop,
@@ -255,6 +343,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
       exportTab: g.exportTab,
       period: p,
       locked: run ? { at: run.lockedAt.toISOString(), by: run.lockedBy ? (lockedBy.get(run.lockedBy) ?? null) : null } : null,
+      lockCheck,
     };
   });
   const grandAndCheck = runs.length ? assembleFromBlocks(blocks) : { grand: live.grand, mismatches: live.mismatches };
@@ -287,11 +376,51 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
     grand: grandAndCheck.grand,
     mismatches: [...grandAndCheck.mismatches, ...tipGate],
     tips,
-    anomalies: anomalies(blocks, settings),
+    anomalies: [...anomalies(blocks, settings), ...lockAnomalies(blocks)],
     ft,
     weeks: weekBreakdowns(slices, staffIds, weeks, start, runShops, (id) => groupOf.get(id)?.shop ?? "Other shop"),
     locked: runs.length === 0 ? "none" : runs.length === inRun.length ? "all" : "some",
   };
+}
+
+/** Tickets imported from Squire into a locked period after its lock. They never reach payroll, but a re-export should know. */
+async function importedAfterLock(runs: readonly (typeof payrollRuns.$inferSelect)[], start: LocalDate, end: LocalDate, groups: readonly PayGroup[]) {
+  const out = new Map<string, number>();
+  for (const r of runs) {
+    const shopId = groups.find((g) => g.id === r.payGroupId)?.shopId;
+    if (!shopId) continue;
+    const [{ n }] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(salesTable)
+      .where(and(eq(salesTable.shopId, shopId), eq(salesTable.isImported, true), gte(salesTable.businessDate, start), lte(salesTable.businessDate, end), gt(salesTable.createdAt, r.lockedAt)));
+    if (n) out.set(r.payGroupId, n);
+  }
+  return out;
+}
+
+/** Flags on locked shops: data changed since the lock (the file stays as approved), and Squire history imported after it. */
+function lockAnomalies(blocks: readonly BlockView[]): Anomaly[] {
+  const out: Anomaly[] = [];
+  for (const b of blocks) {
+    if (!b.lockCheck) continue;
+    for (const d of b.lockCheck.drift) {
+      const fmt = d.field.endsWith("Hours") ? fmtHours : fmtMoney;
+      out.push({
+        staffId: d.staffId,
+        shopId: b.shopId,
+        kind: "changed_since_lock",
+        message: `${d.name} (${b.shop}): ${RECORD_LABEL[d.field]} was ${fmt(d.locked)} when the period was locked and is ${fmt(d.now)} now. The iSolved file stays as approved; correct it in the current period or in iSolved.`,
+      });
+    }
+    if (b.lockCheck.importedAfterLock)
+      out.push({
+        staffId: null,
+        shopId: b.shopId,
+        kind: "late_import",
+        message: `${b.shop}: ${b.lockCheck.importedAfterLock} Squire ticket${b.lockCheck.importedAfterLock === 1 ? " was" : "s were"} imported into this period after it was locked. Squire-era tips are reference only and never in the iSolved file, so it's unchanged.`,
+      });
+  }
+  return out;
 }
 
 /** Locked shops come from their snapshots, so the Locations totals and the gate are rerun over those. */
@@ -340,14 +469,14 @@ export async function approveAndLock(start: LocalDate, end: LocalDate, actor: Ac
     trainingCountsTowardOt: settings.trainingCountsTowardOt,
     dailyThresholdCenti: settings.dailyOtHours ? Math.round(settings.dailyOtHours * 100) : null,
     entityOf: (shopId) => groupOf.get(shopId)?.legalEntity ?? "",
-    periodOf: (shopId, date) => periodOf(groupOf.get(shopId)?.calendar ?? DEFAULT_CALENDAR, date).start,
+    periodOf: (shopId, date) => periodOf(groupOf.get(shopId)?.calendar ?? settings.calendar, date).start,
     locked: new Map(lockedRows.map((l) => [sliceKey({ ...l }), l.otCenti])),
   }).filter((s) => s.periodStart === start && runShops.has(s.shopId));
 
   return db.transaction(async (tx) => {
     let n = 0;
     for (const b of view.blocks) {
-      const snapshot: Snapshot = { block: { shopId: b.shopId, shop: b.shop, lines: b.lines, totals: b.totals, exportRows: b.exportRows, exportHeaders: b.exportHeaders, exportFrom: b.exportFrom } };
+      const snapshot: Snapshot = { block: { shopId: b.shopId, shop: b.shop, lines: b.lines, totals: b.totals, exportRows: b.exportRows, exportHeaders: b.exportHeaders, exportFrom: b.exportFrom }, inputsHash: inputsHash(b.lines) };
       const [run] = await tx
         .insert(payrollRuns)
         .values({ payGroupId: b.payGroupId, periodStart: start, periodEnd: end, periodNumber: b.period.number, checkDate: b.period.checkDate, settings, snapshot, lockedBy: actor.staffId ?? null })
@@ -366,7 +495,7 @@ export async function approveAndLock(start: LocalDate, end: LocalDate, actor: Ac
         "payroll.lock",
         "payroll_run",
         run.id,
-        { payGroup: b.payGroup, periodStart: start, periodEnd: end, periodNumber: b.period.number, rows: b.lines.length, laborCost: b.totals.laborCost, service: b.totals.service },
+        { payGroup: b.payGroup, periodStart: start, periodEnd: end, periodNumber: b.period.number, rows: b.lines.length, laborCost: b.totals.laborCost, service: b.totals.service, inputsHash: snapshot.inputsHash },
         b.shopId,
         tx,
       );
@@ -426,18 +555,22 @@ export async function savePayGroup(id: string, v: { label: string; legalEntity: 
   return null;
 }
 
-export async function saveProfile(staffId: string, v: { employeeNumber: string | null; keyIsText: boolean; isolvedName: string | null; exportPosition: number | null }, actor: Actor): Promise<string | null> {
+export async function saveProfile(
+  staffId: string,
+  v: { employeeNumber: string | null; keyIsText: boolean; isolvedName: string | null; exportPosition: number | null; tippedOccupationCode?: string | null },
+  actor: Actor,
+): Promise<string | null> {
   const num = v.employeeNumber?.trim() || null;
   if (num && num.length > 32) return "That employee number is too long.";
+  const occ = v.tippedOccupationCode === undefined ? undefined : v.tippedOccupationCode?.trim().toUpperCase() || null;
+  if (occ && !/^[A-Z0-9]{1,8}$/.test(occ)) return "The tipped occupation code is 1 to 8 letters or digits, from Treasury's list.";
+  const set = { employeeNumber: num, keyIsText: v.keyIsText, isolvedName: v.isolvedName?.trim() || null, exportPosition: v.exportPosition, ...(occ === undefined ? {} : { tippedOccupationCode: occ }) };
   await db
     .insert(payrollProfiles)
-    .values({ staffId, employeeNumber: num, keyIsText: v.keyIsText, isolvedName: v.isolvedName?.trim() || null, exportPosition: v.exportPosition })
-    .onConflictDoUpdate({
-      target: payrollProfiles.staffId,
-      set: { employeeNumber: num, keyIsText: v.keyIsText, isolvedName: v.isolvedName?.trim() || null, exportPosition: v.exportPosition, updatedAt: new Date() },
-    });
+    .values({ staffId, ...set })
+    .onConflictDoUpdate({ target: payrollProfiles.staffId, set: { ...set, updatedAt: new Date() } });
   // The number itself stays out of the audit trail.
-  await audit(actor, "payroll.profile", "staff", staffId, { employeeNumberSet: !!num, keyIsText: v.keyIsText, exportPosition: v.exportPosition });
+  await audit(actor, "payroll.profile", "staff", staffId, { employeeNumberSet: !!num, keyIsText: v.keyIsText, exportPosition: v.exportPosition, ...(occ === undefined ? {} : { tippedOccupationCode: occ }) });
   return null;
 }
 

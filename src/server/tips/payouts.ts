@@ -1,7 +1,7 @@
 import type Stripe from "stripe";
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte, ne, notInArray, sql } from "drizzle-orm";
 import { db, DBorTx, Tx } from "@/db";
-import { cashDrawers, payGroups, payrollRuns, shops, staff, tipAbsorptions, tipLedger, tipPayoutBatches, tipPayouts, type TipBatchKind, type TipHoldKind, type TipPayoutStatus } from "@/db/schema";
+import { cashDrawers, payGroups, payrollRuns, sales, shops, staff, tipAbsorptions, tipLedger, tipPayoutBatches, tipPayouts, type TipBatchKind, type TipHoldKind, type TipPayoutStatus } from "@/db/schema";
 import { instantDestination, storedExternalAccounts } from "@/domain/banking";
 import {
   BrandTipPolicy,
@@ -714,8 +714,10 @@ async function notifyPayout(p: TipPayout, what: "sent" | "failed" | "waiting") {
 export interface PayrollTipSplit {
   /** Manager adjustments in the period; part of the period's tips. */
   adjustCents: number;
-  /** Tip given back on refunds that the shop absorbed (ST-C15): the barber kept it, so it stays in their tips. */
+  /** Tip given back on refunds of the period's own tickets that the shop absorbed (ST-C15): the barber kept it, so it stays in their tips. */
   absorbedCents: number;
+  /** The same for refunds in the period of earlier periods' tickets (already paid): payroll never subtracted those, so nothing to add back. */
+  lateAbsorbedCents: number;
   /** Tips paid (or to be paid) through payroll rather than separately. */
   inPayrollCents: number;
   /** Tips already paid out in cash or by Stripe, or before tip payouts. */
@@ -766,13 +768,19 @@ export async function payrollTipSplit(shopIds: readonly string[], start: LocalDa
   const [choices, planned, cfg] = await Promise.all([payoutChoices(people, tx), tipOverrides(people, tx), staffPayoutConfig(tx)]);
   const owed = owedRule(cfg.owedVia);
   const out = new Map<string, PayrollTipSplit>();
-  const empty = (): PayrollTipSplit => ({ adjustCents: 0, absorbedCents: 0, inPayrollCents: 0, paidOutCents: 0 });
+  const empty = (): PayrollTipSplit => ({ adjustCents: 0, absorbedCents: 0, lateAbsorbedCents: 0, inPayrollCents: 0, paidOutCents: 0 });
   const absorbed = await tx
-    .select({ shopId: tipAbsorptions.shopId, staffId: tipAbsorptions.staffId, cents: sql<number>`coalesce(sum(${tipAbsorptions.amountCents}), 0)::int` })
+    .select({
+      shopId: tipAbsorptions.shopId,
+      staffId: tipAbsorptions.staffId,
+      cents: sql<number>`coalesce(sum(${tipAbsorptions.amountCents}) filter (where ${sales.businessDate} >= ${start}), 0)::int`,
+      late: sql<number>`coalesce(sum(${tipAbsorptions.amountCents}) filter (where ${sales.businessDate} < ${start}), 0)::int`,
+    })
     .from(tipAbsorptions)
+    .innerJoin(sales, eq(sales.id, tipAbsorptions.saleId))
     .where(and(inArray(tipAbsorptions.shopId, [...shopIds]), isNotNull(tipAbsorptions.refundId), gte(tipAbsorptions.businessDate, start), lte(tipAbsorptions.businessDate, end)))
     .groupBy(tipAbsorptions.shopId, tipAbsorptions.staffId);
-  for (const a of absorbed) out.set(`${a.staffId}|${a.shopId}`, { ...empty(), absorbedCents: a.cents });
+  for (const a of absorbed) out.set(`${a.staffId}|${a.shopId}`, { ...empty(), absorbedCents: a.cents, lateAbsorbedCents: a.late });
   for (const r of rows) {
     const k = `${r.staffId}|${r.shopId}`;
     const v = out.get(k) ?? empty();

@@ -5,6 +5,8 @@ import { Button, Card, CardHeader, Field, Input, Notice, Select } from "@/compon
 import { useSettingSync } from "@/components/brand-sync";
 import {
   ACCOUNT_DASHBOARDS,
+  AFTER_PAYOUT_LABEL,
+  AFTER_PAYOUT_RULES,
   DASHBOARD_LABEL,
   ONBOARDING_LABEL,
   ONBOARDING_MODES,
@@ -70,6 +72,14 @@ export function StaffPayoutsForm({ settings, directPayouts }: { settings: StaffP
               />
             </Field>
           )}
+          <Choice
+            label="A tip refunded after it was paid"
+            hint="Its payout went out, or it's from an earlier pay period. Taking back wages already paid is a deduction: IL and IA need the employee's written consent. Ask counsel before deducting."
+            value={s.afterPayoutRefunds}
+            options={AFTER_PAYOUT_RULES}
+            labels={AFTER_PAYOUT_LABEL}
+            onChange={put("afterPayoutRefunds")}
+          />
           <Choice label="A tip belongs to" value={s.tipDate} options={TIP_DATE_RULES} labels={TIP_DATE_LABEL} onChange={put("tipDate")} />
           <Choice label="Stripe tax forms (1099)" value={s.taxForms} options={TAX_FORM_FILING} labels={TAX_FORMS_LABEL} onChange={put("taxForms")} />
           <Field label="Yearly tax form check due in" hint="Before Stripe files for the year just ended; the brand is emailed weekly until it's recorded.">

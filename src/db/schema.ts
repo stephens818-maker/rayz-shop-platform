@@ -2645,7 +2645,7 @@ export type StaffAccountDashboard = "none" | "express";
 export type StaffServiceAgreement = "recipient" | "full";
 export type StaffTaxForms = "will_not_file";
 
-export type TipAbsorptionKind = "partial_refund" | "outside_window" | "rule" | "dispute";
+export type TipAbsorptionKind = "partial_refund" | "outside_window" | "rule" | "after_payout" | "dispute";
 
 /**
  * A refunded or disputed tip the barber keeps because the shop absorbs it: a partial refund, a
@@ -2670,12 +2670,44 @@ export const tipAbsorptions = pgTable(
     createdAt: createdAt(),
   },
   (t) => [
-    check("tip_absorptions_kind", sql`${t.kind} in ('partial_refund', 'outside_window', 'rule', 'dispute')`),
+    check("tip_absorptions_kind", sql`${t.kind} in ('partial_refund', 'outside_window', 'rule', 'after_payout', 'dispute')`),
     check("tip_absorptions_source", sql`(${t.kind} = 'dispute' and ${t.stripeDisputeId} is not null) or (${t.kind} <> 'dispute' and ${t.refundId} is not null)`),
     check("tip_absorptions_dispute_id", sql`${t.stripeDisputeId} is null or ${t.stripeDisputeId} ~ '^(dp|du|sim)_[A-Za-z0-9_]{1,80}$'`),
     uniqueIndex("tip_absorptions_refund_uq").on(t.refundId, t.staffId).where(sql`${t.refundId} is not null`),
     uniqueIndex("tip_absorptions_dispute_uq").on(t.stripeDisputeId, t.staffId).where(sql`${t.stripeDisputeId} is not null`),
     index("tip_absorptions_shop_date_idx").on(t.shopId, t.businessDate),
+  ],
+);
+
+export type TipDeclarationSource = "staff_app" | "clock_out" | "web" | "manager";
+
+/**
+ * Cash tips an employee declares (handed to them, never rung up), with the attestation they checked.
+ * Append-only: a correction is a new row replacing the old one, with a reason; what counts is every
+ * row nothing replaces. Payroll exports them as their own earning, in the pay period of their date.
+ */
+export const tipDeclarations = pgTable(
+  "tip_declarations",
+  {
+    id: id(),
+    staffId: uuid("staff_id").notNull().references(() => staff.id),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    businessDate: date("business_date", { mode: "string" }).notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    source: text("source").$type<TipDeclarationSource>().notNull(),
+    attestation: text("attestation").notNull(),
+    replacesId: uuid("replaces_id").references((): AnyPgColumn => tipDeclarations.id),
+    reason: text("reason"),
+    createdBy: uuid("created_by").references(() => staff.id),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check("tip_declarations_amount", sql`${t.amountCents} >= 0 and ${t.amountCents} <= 1000000`),
+    check("tip_declarations_source", sql`${t.source} in ('staff_app', 'clock_out', 'web', 'manager')`),
+    check("tip_declarations_reason", sql`${t.replacesId} is null or ${t.reason} is not null`),
+    uniqueIndex("tip_declarations_replaces_uq").on(t.replacesId),
+    index("tip_declarations_shop_date_idx").on(t.shopId, t.businessDate),
+    index("tip_declarations_staff_date_idx").on(t.staffId, t.businessDate),
   ],
 );
 
@@ -3173,6 +3205,8 @@ export const payrollProfiles = pgTable("payroll_profiles", {
   isolvedName: text("isolved_name"),
   /** Row order in the shop export (the workbook's order); ties and blanks go by name. */
   exportPosition: integer("export_position"),
+  /** Treasury tipped occupation code for the 2026 W-2 (barber versus front desk). Null: not set, so their tips can't be reported as qualified. */
+  tippedOccupationCode: text("tipped_occupation_code"),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 

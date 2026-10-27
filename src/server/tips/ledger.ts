@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, sql, type SQL } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { sales, shops, staffPayoutAccounts, tipLedger, tipPayouts } from "@/db/schema";
 import {
@@ -12,6 +12,7 @@ import {
   summarize,
 } from "@/domain/tips";
 import type { StaffPayoutSettings } from "@/domain/staff-payouts";
+import type { PayrollSettings } from "@/domain/payroll/calc";
 import { addDays, todayLocal, type LocalDate } from "@/lib/time";
 import { settingAt, settingFor } from "../brand-sync/settings";
 import { noteShopSetting } from "../brand-sync/shop-settings";
@@ -58,12 +59,20 @@ export async function syncTipLedger(tx: DBorTx = db, o: { saleId?: string; shopI
   const full = sql`(r.kind = 'void' or (r.payment_id is null and s.status in ('refunded', 'voided')) or (pay.amount_cents > 0 and (select coalesce(sum(r2.amount_cents - r2.card_fee_cents), 0) from refunds r2
       where r2.payment_id = r.payment_id and (r2.created_at, r2.id) <= (r.created_at, r.id)) >= pay.amount_cents - pay.card_fee_cents))`;
   const inWindow = sql`r.business_date <= coalesce(t.business_date, s.business_date) + ${cfg.reversalWindowDays}::int`;
-  const reverses = cfg.reversalRule === "any_refund" ? sql`true` : cfg.reversalRule === "never" ? sql`false` : sql`(${full} and ${inWindow})`;
+  const byRule = cfg.reversalRule === "any_refund" ? sql`true` : cfg.reversalRule === "never" ? sql`false` : sql`(${full} and ${inWindow})`;
+  // Already paid: the tip's payout went out, or the ticket is from an earlier pay period than the refund (its shop's pay group, else the brand's calendar).
+  const cal = (await settingAt<PayrollSettings>("payroll", null, tx)).calendar;
+  const periodIx = (d: SQL) => sql`floor((${d} - coalesce(g.anchor_start, ${cal.anchorStart}::date))::numeric / coalesce(g.period_days, ${cal.periodDays}))`;
+  const afterPayout =
+    cfg.afterPayoutRefunds === "deduct" ? sql`false` : sql`(coalesce(tp.status in ('processing', 'paid'), false) or ${periodIx(sql`r.business_date`)} > ${periodIx(sql`s.business_date`)})`;
+  const reverses = sql`(not ${afterPayout} and ${byRule})`;
   const refunded = sql`
     from refunds r join sales s on s.id = r.sale_id
     left join payments pay on pay.id = r.payment_id
     left join tip_split_shares sh on sh.source = 'refund' and sh.source_id = r.id
     left join tip_ledger t on t.payment_id = r.payment_id and t.kind = 'tip' and t.staff_id = coalesce(sh.staff_id, s.staff_id)
+    left join tip_payouts tp on tp.id = t.payout_id
+    left join pay_groups g on g.shop_id = r.shop_id
     where r.tip_cents <> 0 and coalesce(sh.staff_id, s.staff_id) is not null and coalesce(sh.tip_cents, 1) <> 0 and not s.is_imported ${only}`;
   await tx.execute(sql`
     insert into tip_ledger (shop_id, staff_id, sale_id, payment_id, refund_id, kind, method, amount_cents, fee_cents, business_date)
@@ -76,7 +85,7 @@ export async function syncTipLedger(tx: DBorTx = db, o: { saleId?: string; shopI
   await tx.execute(sql`
     insert into tip_absorptions (shop_id, staff_id, sale_id, payment_id, refund_id, kind, amount_cents, business_date)
     select r.shop_id, coalesce(sh.staff_id, s.staff_id), s.id, r.payment_id, r.id,
-      ${cfg.reversalRule === "never" ? sql`'rule'` : sql`case when ${full} then 'outside_window' else 'partial_refund' end`},
+      case when ${afterPayout} then 'after_payout' else ${cfg.reversalRule === "never" ? sql`'rule'` : sql`case when ${full} then 'outside_window' else 'partial_refund' end`} end,
       coalesce(sh.tip_cents, r.tip_cents), r.business_date
     ${refunded} and not ${reverses}
       and not exists (select 1 from tip_ledger l where l.refund_id = r.id and l.kind = 'refund' and l.staff_id = coalesce(sh.staff_id, s.staff_id))
