@@ -276,6 +276,63 @@ describe("P1#8 partial refunds follow the chosen line", () => {
     expect(tip.components).toMatchObject({ tipCents: 800, cardFeeCents: r.totals.cardFeeCents, serviceNetCents: 0 });
     await expect(m.checkout.refundSale({ saleId: t.sale.id, items: [{ saleItemId: svcItem.id, qty: 1 }], tipCents: 0, refundCardFee: false, reason: "again", restock: false, actor })).rejects.toThrow(/already refunded/);
   });
+
+  it("the sale keeps service, product, tax and tip as they were sold; each refund is its own dated record", async () => {
+    const t = await ticket();
+    const product = (await m.checkout.loadCheckoutContext(t.sale.id)).retail.find((p) => p.stock > 0)!;
+    const soldAt = new Date("2027-02-02T18:00:00Z");
+    const r = await m.checkout.finalizeSale({
+      saleId: t.sale.id,
+      lines: [
+        { kind: "service", refId: t.svc.id, qty: 1 },
+        { kind: "product", refId: product.productId, qty: 1 },
+      ],
+      tipCents: 700,
+      tender: cash,
+      actor,
+      now: soldAt,
+    });
+    const sold = (await m.db.db.query.sales.findFirst({ where: eq(m.schema.sales.id, t.sale.id) }))!;
+    const amounts = (s: typeof sold) => ({
+      serviceNetCents: s.serviceNetCents,
+      productNetCents: s.productNetCents,
+      serviceTaxCents: s.serviceTaxCents,
+      productTaxCents: s.productTaxCents,
+      tipCents: s.tipCents,
+      totalCents: s.totalCents,
+    });
+    expect(amounts(sold)).toEqual({
+      serviceNetCents: r.totals.serviceNetCents,
+      productNetCents: r.totals.productNetCents,
+      serviceTaxCents: r.totals.serviceTaxCents,
+      productTaxCents: r.totals.productTaxCents,
+      tipCents: 700,
+      totalCents: r.totals.totalCents,
+    });
+    expect(sold.serviceNetCents).toBe(t.svc.priceCents);
+    expect(sold.productNetCents).toBeGreaterThan(0);
+    expect(sold.businessDate).toBe("2027-02-02");
+
+    const st = await m.checkout.refundableState(t.sale.id);
+    const line = st.items.find((i) => i.kind === "product")!;
+    const lineRow = (await m.db.db.query.saleItems.findFirst({ where: eq(m.schema.saleItems.id, line.id) }))!;
+    await m.checkout.refundSale({ saleId: t.sale.id, items: [{ saleItemId: line.id, qty: 1 }], tipCents: 0, refundCardFee: false, reason: "Returned", restock: true, actor, now: new Date("2027-02-05T18:00:00Z") });
+    await m.checkout.refundSale({ saleId: t.sale.id, items: [], tipCents: 300, refundCardFee: false, reason: "Tip typed wrong", restock: false, actor, now: new Date("2027-02-09T18:00:00Z") });
+
+    const after = (await m.db.db.query.sales.findFirst({ where: eq(m.schema.sales.id, t.sale.id) }))!;
+    expect(amounts(after)).toEqual(amounts(sold));
+    expect(after.businessDate).toBe("2027-02-02");
+    expect(after.status).toBe("partially_refunded");
+    const item = (await m.db.db.query.saleItems.findFirst({ where: eq(m.schema.saleItems.id, line.id) }))!;
+    expect({ net: item.netCents, tax: item.taxCents, refundedQty: item.refundedQty }).toEqual({ net: lineRow.netCents, tax: lineRow.taxCents, refundedQty: 1 });
+
+    const refs = (await m.db.db.select().from(m.schema.refunds).where(eq(m.schema.refunds.saleId, t.sale.id))).sort((a, b) => a.businessDate.localeCompare(b.businessDate));
+    expect(refs.map((x) => ({ date: x.businessDate, service: x.serviceNetCents, product: x.productNetCents, tax: x.taxCents, tip: x.tipCents, amount: x.amountCents }))).toEqual([
+      { date: "2027-02-05", service: 0, product: lineRow.netCents, tax: lineRow.taxCents, tip: 0, amount: lineRow.netCents + lineRow.taxCents },
+      { date: "2027-02-09", service: 0, product: 0, tax: 0, tip: 300, amount: 300 },
+    ]);
+    expect(refs.every((x) => x.createdAt instanceof Date)).toBe(true);
+  });
 });
 
 describe("P1#20 a refund issued in the Stripe dashboard reaches the books", () => {
