@@ -4,9 +4,22 @@
  * the defaults: no alerts to the barber, reminders 24 hours and 2 hours before.
  */
 
-export const STAFF_EVENTS = ["confirm", "reschedule", "cancel", "arrived"] as const;
+export const STAFF_EVENTS = ["confirm", "reschedule", "cancel", "arrived", "late", "waitlist", "clock_out", "schedule"] as const;
 export type StaffEvent = (typeof STAFF_EVENTS)[number];
-export const STAFF_EVENT_LABEL: Record<StaffEvent, string> = { confirm: "New booking", reschedule: "Rescheduled", cancel: "Cancelled", arrived: "Client arrived" };
+export const STAFF_EVENT_LABEL: Record<StaffEvent, string> = {
+  confirm: "New booking",
+  reschedule: "Rescheduled",
+  cancel: "Cancelled",
+  arrived: "Client arrived",
+  late: "Client running late",
+  waitlist: "You're up",
+  clock_out: "Clock-out reminder",
+  schedule: "Schedule change",
+};
+/** About one of their clients' appointments; the rest are about their own time. */
+export const APPOINTMENT_EVENTS = ["confirm", "reschedule", "cancel", "arrived", "late", "waitlist"] as const satisfies readonly StaffEvent[];
+/** Unset, these go to their staff app phones (push needs the app, so only people using it hear them); the rest stay off until chosen. */
+export const PUSH_BY_DEFAULT: readonly StaffEvent[] = ["late", "waitlist", "clock_out", "schedule"];
 
 export const STAFF_CHANNELS = ["sms", "email", "push"] as const;
 export type StaffChannel = (typeof STAFF_CHANNELS)[number];
@@ -45,10 +58,10 @@ export function reminderHours(p: StaffNotificationPrefs | null | undefined, loca
   return { firstHours: p?.firstHours ?? location.firstHours, secondHours: p?.secondHours ?? location.secondHours };
 }
 
-export const channelsFor = (p: StaffNotificationPrefs | null | undefined, e: StaffEvent): StaffChannel[] => p?.events[e] ?? [];
+export const channelsFor = (p: StaffNotificationPrefs | null | undefined, e: StaffEvent): StaffChannel[] => p?.events[e] ?? (PUSH_BY_DEFAULT.includes(e) ? ["push"] : []);
 
 /** The barber's own alert: short, with the client's first name only and no contact details. */
-export function staffAlertText(e: StaffEvent, a: { firstName: string | null; when: string; shopName: string; services?: string[] }): string {
+export function staffAlertText(e: (typeof APPOINTMENT_EVENTS)[number], a: { firstName: string | null; when: string; shopName: string; services?: string[]; detail?: string | null }): string {
   const who = a.firstName?.trim() || "A client";
   const what = a.services?.length ? ` (${a.services.join(", ")})` : "";
   switch (e) {
@@ -60,5 +73,9 @@ export function staffAlertText(e: StaffEvent, a: { firstName: string | null; whe
       return `Ray'z ${a.shopName}: ${who} cancelled ${a.when}.`;
     case "arrived":
       return `Ray'z ${a.shopName}: ${who} is here for ${a.when}${what}.`;
+    case "late":
+      return `Ray'z ${a.shopName}: ${who} is running ${a.detail ?? "late"} for ${a.when}.`;
+    case "waitlist":
+      return `Ray'z ${a.shopName}: ${who} is up next for you${what}.`;
   }
 }

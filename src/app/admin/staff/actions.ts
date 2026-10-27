@@ -12,6 +12,7 @@ import { seesStaffContact } from "@/domain/staff-contact";
 import { labelContainsSurname, staffPublicSlug } from "@/lib/ids";
 import { WEEKDAYS, addDays, isValidLocalDate, minutesToLabel, startOfLocalDay, todayLocal } from "@/lib/time";
 import { staffWallTime } from "@/server/booking";
+import { queueStaffNotice } from "@/server/staff-alerts";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { accessState, loadStaffAccess, workShopIds } from "@/server/auth/access";
@@ -212,6 +213,7 @@ export async function saveScheduleAction(staffId: string, rows: { shopId: string
       await tx.delete(staffSchedules).where(and(eq(staffSchedules.staffId, staffId), inArray(staffSchedules.shopId, editable.length ? editable : ["00000000-0000-0000-0000-000000000000"])));
       if (rows.length) await tx.insert(staffSchedules).values(rows.map((r) => ({ ...r, staffId })));
       await audit(ctx.actor, "staff.schedule", "staff", staffId, { rows }, null, tx);
+      if (staffId !== ctx.staff.id) await queueStaffNotice("schedule", staffId, { body: "Your working hours were changed. Open the app to see your schedule.", shopId: rows[0]?.shopId ?? editable[0] ?? null }, tx);
     });
     revalidatePath(`/admin/staff/${staffId}`);
     revalidatePath("/admin/calendar");

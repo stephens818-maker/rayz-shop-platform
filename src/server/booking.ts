@@ -892,6 +892,7 @@ export async function quickWalkIn(input: {
       now,
       silent: true,
     });
+    await queueStaffAlert("waitlist", appt.id, { actorStaffId: input.actor.staffId, now });
     return { seated: true as const, appointment: appt };
   }
 
@@ -968,6 +969,7 @@ export async function seatFromWaitlist(entryId: string, staffId: string, actor: 
   });
   await db.update(waitlistEntries).set({ status: "serving", appointmentId: appt.id, updatedAt: now }).where(eq(waitlistEntries.id, entryId));
   await audit(actor, "waitlist.seat", "waitlist", entryId, { appointmentId: appt.id, staffId }, entry.shopId);
+  await queueStaffAlert("waitlist", appt.id, { actorStaffId: actor.staffId, now });
   return appt;
 }
 

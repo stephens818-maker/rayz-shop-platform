@@ -5,7 +5,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
 import { clientPhotos, customerTags, customers, loyaltyLedger, loyaltyRewards, shops, staff } from "@/db/schema";
-import { FieldKey, ShownField, customFieldId, customFieldKey, isBuiltinField, isContactField, isRevealable } from "@/domain/client-privacy";
+import { FieldKey, ShownField, customFieldKey } from "@/domain/client-privacy";
 import { rewardExpiry } from "@/domain/loyalty";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { safe } from "@/server/action";
@@ -15,8 +15,9 @@ import { contactClient } from "@/server/client-contact";
 import { recordConsentChange, staffConsentContext } from "@/server/consent-events";
 import { searchClients } from "@/server/client-search";
 import { deleteSearch, saveSearch } from "@/server/saved-searches";
-import { ClientPolicy, clientPolicy, displayFull, entered, recordClientAccess, shownField } from "@/server/client-privacy";
+import { ClientPolicy, clientPolicy, entered, shownField } from "@/server/client-privacy";
 import { stampRecordNote } from "@/server/record-note";
+import { RevealInput, revealClientField } from "@/server/client-reveal";
 import { customerAccess, dismissDuplicate, findOrCreateCustomer, matchCustomer, mergeCustomers, mergeDuplicatePairs } from "@/server/customers";
 import { AppError, forbidden } from "@/server/errors";
 import { getLoyaltyConfig } from "@/server/loyalty";
@@ -251,42 +252,12 @@ export async function findClientsAction(q: string) {
   });
 }
 
-const RevealInput = z.object({
-  customerId: z.string().uuid(),
-  field: z.string().refine((f) => isBuiltinField(f) || /^custom:[0-9a-f-]{36}$/.test(f), "Unknown field"),
-  reason: z.string().trim().min(4, "Say why you need to see it").max(300),
-});
-
 /**
  * Show one masked detail in full, for someone allowed to reveal, with a reason. Logged with who,
  * when, which client, which field and why. Hidden details can't be revealed.
  */
 export async function revealClientFieldAction(raw: z.input<typeof RevealInput>) {
-  return safe(async () => {
-    const ctx = await authorize("clients.reveal", "You can't reveal client details");
-    const p = RevealInput.parse(raw);
-    const field = p.field as FieldKey;
-    const policy = await clientPolicy(ctx);
-    if (!isRevealable(field)) throw new AppError("bad_request", "That can't be revealed");
-    const level = policy.level(field);
-    if (level === "hidden") throw forbidden("That detail is hidden for you, so it can't be revealed");
-    if (isContactField(field) && !policy.fullContact)
-      throw forbidden("Phone numbers, emails and addresses are shown in full at shop level only with contact access from the brand. Call or text the client through the shop line.");
-    const access = await customerAccess({ staffId: ctx.staff.id, viewAll: can(ctx, "clients.view_all") }, p.customerId);
-    if (!access) throw new AppError("not_found", "Client not found");
-    const c = await db.query.customers.findFirst({ where: eq(customers.id, p.customerId) });
-    if (!c) throw new AppError("not_found", "Client not found");
-    let stored: string | null;
-    if (field === "preferred_barber")
-      stored = c.preferredStaffId ? ((await db.query.staff.findFirst({ where: eq(staff.id, c.preferredStaffId), columns: { displayLabel: true } }))?.displayLabel ?? null) : null;
-    else if (field === "last_name") stored = c.lastName;
-    else if (isBuiltinField(field)) stored = (c as Record<string, unknown>)[field] as string | null;
-    else stored = c.customFields[customFieldId(field)!] ?? null;
-    if (level === "full") return { value: displayFull(field, stored) };
-    await recordClientAccess(ctx, { kind: "reveal", customerId: c.id, field, reason: p.reason });
-    await audit(ctx.actor, "client.reveal", "customer", c.id, { field, reason: p.reason }, ctx.currentShopId);
-    return { value: displayFull(field, stored) };
-  });
+  return safe(async () => revealClientField(await authorize("clients.reveal", "You can't reveal client details"), raw));
 }
 
 /** Call or text a client through the shop line: the number never reaches the browser. */

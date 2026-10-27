@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { db, type DBorTx } from "@/db";
 import {
+  appointments,
   clockAlertLog,
   clockDevices,
   ftStatusChanges,
@@ -62,6 +63,7 @@ import { clockFallout } from "./clock-live";
 import { refreshClockBlocks, syncClockBlocks } from "./clock-blocks";
 import { usableReason } from "./block-reasons";
 import { enqueueShopEmail } from "./notifications/queue";
+import { queueStaffNotice } from "./staff-alerts";
 import { DEFAULT_CALENDAR, ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings } from "./payroll/groups";
 import { randomToken, sha256 } from "./auth/tokens";
 import { nfcValid, qrValid } from "./clock-codes";
@@ -1162,12 +1164,56 @@ export async function flagForgottenClockOuts(now = new Date()): Promise<number> 
 
 /** The cron's time clock pass: forgotten clock-outs and live clock alerts every run; the full-time check once a night (3:00–3:15), since weeks close on Saturday. */
 export async function timeClockCron(now = new Date()) {
+  const clockOutReminders = await remindClockOuts(now);
   const forgottenClockOuts = await flagForgottenClockOuts(now);
   const blocks = await refreshClockBlocks(now);
   const clockAlerts = await sendClockFallout(now);
   const m = localMinutesOf(now);
   const ftChanges = m >= 180 && m < 195 ? await checkFtCrossings(now) : 0;
-  return { forgottenClockOuts, clockBlocks: blocks.created + blocks.updated + blocks.removed, clockAlerts, ftChanges };
+  return { clockOutReminders, forgottenClockOuts, clockBlocks: blocks.created + blocks.updated + blocks.removed, clockAlerts, ftChanges };
+}
+
+/** Minutes after their scheduled end that someone still clocked in, with no client still to come, is reminded. */
+export const CLOCK_OUT_REMINDER_MIN = 10;
+
+/**
+ * Reminds someone still clocked in after their scheduled hours, once per shift (clock_alert_log), on
+ * their staff app phones: not while a client of theirs there is still in the chair or booked later
+ * that day, and not once the shift counts as a forgotten clock-out (their managers hear then).
+ */
+export async function remindClockOuts(now = new Date()): Promise<number> {
+  const punches = await punchesBetween(null, new Date(now.getTime() - DAY), new Date(now.getTime() + 60_000));
+  const open = pairPunches(punches.map(asLike)).shifts.filter((x) => x.end === null);
+  if (!open.length) return 0;
+  const sched = await schedulesOf([...new Set(open.map((x) => x.staffId))]);
+  const rules = await clockRulesAt([...new Set(open.map((x) => x.shopId))]);
+  let n = 0;
+  for (const x of open) {
+    const day = localDateOf(x.start);
+    const ends = scheduleFor(sched, x.staffId, x.shopId, day)
+      .map((i) => i.end)
+      .filter((e) => e > x.start);
+    if (!ends.length) continue;
+    const end = new Date(Math.max(...ends.map((e) => e.getTime())));
+    if (now.getTime() < end.getTime() + CLOCK_OUT_REMINDER_MIN * 60_000) continue;
+    if (forgottenAfter(x.start, scheduleFor(sched, x.staffId, x.shopId, day), rules(x.shopId)) <= now) continue;
+    const [busy] = await db
+      .select({ id: appointments.id })
+      .from(appointments)
+      .where(
+        and(
+          eq(appointments.staffId, x.staffId),
+          eq(appointments.shopId, x.shopId),
+          or(eq(appointments.status, "in_service"), and(inArray(appointments.status, ["booked", "confirmed", "checked_in"]), gt(appointments.endsAt, now), lt(appointments.startsAt, endOfLocalDay(day)))),
+        ),
+      )
+      .limit(1);
+    if (busy) continue;
+    const [first] = await db.insert(clockAlertLog).values({ key: `out_reminder:${x.inId}`, shopId: x.shopId, sentAt: now }).onConflictDoNothing().returning({ key: clockAlertLog.key });
+    if (!first) continue;
+    n += (await queueStaffNotice("clock_out", x.staffId, { body: `You're still clocked in. Your hours ended at ${formatTime(end)}. Clock out in the Ray'z Team app if you're done.`, shopId: x.shopId, now })) ? 1 : 0;
+  }
+  return n;
 }
 
 /**

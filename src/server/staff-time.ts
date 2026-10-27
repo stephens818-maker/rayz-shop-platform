@@ -41,7 +41,7 @@ export { rangeLabel };
 import { appBaseUrl } from "@/lib/deployment";
 import { noteShopEdit } from "./brand-sync/engine";
 import { brandColumnAt } from "./brand-sync/settings";
-import { LocalDate, addDays, endOfLocalDay, existingWallTime, localDateOf, minutesToLabel, startOfLocalDay, todayLocal, weekdayOf } from "@/lib/time";
+import { LocalDate, addDays, endOfLocalDay, existingWallTime, formatDate, formatTime, localDateOf, minutesToLabel, startOfLocalDay, todayLocal, weekdayOf } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { extendSeries, insertOccurrences } from "./block-series";
 import { reasonShower, usableReason } from "./block-reasons";
@@ -50,6 +50,7 @@ import { Caller, timeOffDecisionDenied } from "./auth/policy";
 import { ACTIVE_STATUSES, getAvailability, messageContext, rescheduleAppointment } from "./booking";
 import { AppError, forbidden, notFound } from "./errors";
 import { enqueueAppointmentMessage, enqueueShopEmail } from "./notifications/queue";
+import { queueStaffNotice } from "./staff-alerts";
 
 // ───────────────────────────── Booked appointments in the way ─────────────────────────────
 
@@ -231,6 +232,8 @@ export async function addBlock(b: NewBlock, o: { actor: Actor; confirm?: boolean
       o.auditShopId !== undefined ? o.auditShopId : await auditShop(b.staffId, b.shopId, tx),
       tx,
     );
+    if (o.actor.staffId !== b.staffId)
+      await queueStaffNotice("schedule", b.staffId, { body: `${actorName(o.actor)} blocked your time: ${spanText(b.startsAt, b.endsAt)} (${reason.label}).`, shopId: b.shopId ?? (await auditShop(b.staffId, b.shopId, tx)) }, tx);
     return row.id;
   });
   return { done: true, conflicts, blockId };
@@ -252,9 +255,13 @@ export async function removeBlock(id: string, actor: Actor, via: string, auditSh
       auditShopId !== undefined ? auditShopId : await auditShop(b.staffId, b.shopId, tx),
       tx,
     );
+    if (actor.staffId !== b.staffId) await queueStaffNotice("schedule", b.staffId, { body: `${actorName(actor)} took the block off your time: ${spanText(b.startsAt, b.endsAt)}.`, shopId: b.shopId ?? (await auditShop(b.staffId, b.shopId, tx)) }, tx);
   });
   return b;
 }
+
+const actorName = (a: Actor) => a.label.split(":").pop()?.replace(/ \(staff app\)$/, "") || "A manager";
+const spanText = (from: Date, to: Date) => `${formatDate(from, "EEE MMM d")} ${formatTime(from)}–${formatTime(to)}`;
 
 // ───────────────────────────── Recurring blocks ─────────────────────────────
 
@@ -379,11 +386,11 @@ async function writeApprovedBlock(req: RequestRow, tx: DBorTx) {
 
 async function notifyDecision(req: RequestRow, tx: DBorTx) {
   const s = await tx.query.staff.findFirst({ where: eq(staff.id, req.staffId) });
-  if (!s?.email) return;
   const shopId = await auditShop(req.staffId, req.shopId, tx);
-  if (!shopId) return;
   const verb = req.status === "approved" ? "approved" : "denied";
   const what = rangeLabel(req);
+  await queueStaffNotice("schedule", req.staffId, { body: `Your time off for ${what} was ${verb}${req.decidedVia === "auto" ? " automatically" : ""}.${req.decisionNote ? ` Note: ${req.decisionNote}` : ""}`, shopId }, tx);
+  if (!s?.email || !shopId) return;
   await enqueueShopEmail(
     {
       kind: "time_off_decision",
