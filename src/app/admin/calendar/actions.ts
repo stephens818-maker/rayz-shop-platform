@@ -4,56 +4,41 @@ import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { appointments, staffShops, timeBlocks } from "@/db/schema";
+import { appointments, timeBlocks } from "@/db/schema";
 import { safe } from "@/server/action";
-import { selfBlockProblem } from "@/domain/staff-time";
-import { blockChangeDenied, clockBlockChangeDenied } from "@/server/auth/policy";
+import { clockBlockChangeDenied } from "@/server/auth/policy";
 import { overrideClockBlock, releaseClockBlock, resetClockBlock } from "@/server/clock-blocks";
-import { StaffContext, assertShopAccess, authorize, blockCaller, can, requireStaff } from "@/server/auth/staff";
-import { addBlock, removeBlock, rulesFor } from "@/server/staff-time";
-import { createAppointment, getAvailability, rescheduleAppointment, setAppointmentStatus, staffWallTime } from "@/server/booking";
+import { StaffContext, authorize, blockCaller, requireStaff } from "@/server/auth/staff";
+import { staffWallTime } from "@/server/booking";
+import {
+  StaffBlockInput,
+  StaffBookingInput,
+  barberShops,
+  blockForStaff,
+  bookForStaff,
+  changeStatus,
+  changeableAppt,
+  finishFor,
+  moveForStaff,
+  staffOpenings,
+  unblockForStaff,
+} from "@/server/calendar-ops";
 import { openSaleForAppointment } from "@/server/checkout";
 import { clockPulse } from "@/server/clock-live";
 import { sendToCheckout } from "@/server/combined-checkout";
-import { clientPolicy } from "@/server/client-privacy";
-import { checkEntry, fillEntry, type EntryDetails } from "@/server/client-entry";
 import { searchClients } from "@/server/client-search";
-import { usableReason } from "@/server/block-reasons";
 import { AppError, forbidden, notFound } from "@/server/errors";
-import { correctServiceTimes, finishService, reviewServiceTime } from "@/server/service-times";
+import { correctServiceTimes, reviewServiceTime } from "@/server/service-times";
 import { messageHistory } from "@/server/notification-history";
-import { hasShop, requireInTenant } from "@/server/tenant";
-import { isValidLocalDate, localDateOf, localMinutesOf, zonedWallTime } from "@/lib/time";
-
-async function barberShops(staffId: string) {
-  return (await db.select({ shopId: staffShops.shopId }).from(staffShops).where(eq(staffShops.staffId, staffId))).map((l) => l.shopId);
-}
-
-/** Without "manage the calendar", people work only in their own column. */
-const ownColumnOnly = (ctx: StaffContext) => !can(ctx, "calendar.manage");
-
-function assertSqueeze(ctx: StaffContext, squeezeIn: boolean | undefined) {
-  if (squeezeIn && !can(ctx, "calendar.squeeze_in")) throw forbidden("You can't squeeze in bookings off the grid. Pick one of the open times.");
-}
+import { assertShop as assertShopAccess, hasShop, requireInTenant } from "@/server/tenant";
+import { isValidLocalDate, localDateOf, zonedWallTime } from "@/lib/time";
 
 /**
  * Open starts on this barber's grid for this service and these add-ons, as the front desk books
  * them (no lead time or booking window), with how long it takes them.
  */
 export async function staffOpeningsAction(input: { shopId: string; staffId: string; date: string; serviceId: string; addonIds: string[] }) {
-  return safe(async () => {
-    const ctx = await requireStaff();
-    assertShopAccess(ctx, input.shopId);
-    if (ownColumnOnly(ctx) && input.staffId !== ctx.staff.id) throw forbidden("You can only book into your own column");
-    if (!isValidLocalDate(input.date)) throw new AppError("bad_request", "Pick a date");
-    const a = await getAvailability({ shopRef: input.shopId, date: input.date, serviceId: input.serviceId, addonIds: input.addonIds, barberRef: input.staffId, staffOverride: true });
-    return {
-      durationMin: a.durationMin,
-      starts: a.slots.map((s) => localMinutesOf(s.startsAt)),
-      reason: a.reason,
-      canSqueeze: can(ctx, "calendar.squeeze_in"),
-    };
-  });
+  return safe(async () => staffOpenings(await requireStaff(), input));
 }
 
 /** A fingerprint of the day's punches and appointments here; the calendar polls it and refreshes when it changes. */
@@ -66,13 +51,7 @@ export async function calendarPulseAction(input: { shopId: string; date: string 
   });
 }
 
-async function loadAppt(ctx: StaffContext, id: string, othersNeed: "calendar.manage" | "checkout.any" = "calendar.manage") {
-  await requireInTenant(ctx, "appointment", id);
-  const a = await db.query.appointments.findFirst({ where: eq(appointments.id, id) });
-  if (!a) throw notFound("Appointment");
-  if (a.staffId !== ctx.staff.id && !can(ctx, othersNeed)) throw forbidden("You can only change your own appointments");
-  return a;
-}
+const loadAppt = changeableAppt;
 
 /** The messages about one appointment (confirmation, reminders, moves), with where each got to. */
 export async function appointmentMessagesAction(id: string) {
@@ -87,9 +66,7 @@ type Status = "confirmed" | "checked_in" | "in_service" | "completed" | "cancell
 
 export async function setStatusAction(id: string, status: Status) {
   return safe(async () => {
-    const ctx = await requireStaff();
-    await loadAppt(ctx, id);
-    await setAppointmentStatus(id, status, ctx.actor);
+    await changeStatus(await requireStaff(), id, status);
     revalidatePath("/admin/calendar");
     revalidatePath("/admin");
     return null;
@@ -99,9 +76,7 @@ export async function setStatusAction(id: string, status: Status) {
 /** Finish tapped: the end of the service. Start is "In chair" (`setStatusAction(id, "in_service")`). */
 export async function finishServiceAction(id: string) {
   return safe(async () => {
-    const ctx = await requireStaff();
-    await loadAppt(ctx, id, "checkout.any");
-    await finishService(id, ctx.actor);
+    await finishFor(await requireStaff(), id);
     revalidatePath("/admin/calendar");
     revalidatePath("/admin");
     return null;
@@ -185,44 +160,9 @@ export async function searchCustomersAction(q: string, via: "booking" | "pos" | 
   });
 }
 
-export async function createStaffAppointmentAction(input: {
-  shopId: string;
-  staffId: string;
-  date: string;
-  startMin: number;
-  serviceId: string;
-  addonIds: string[];
-  customerId?: string | null;
-  customer?: { firstName: string; lastName?: string; phone?: string; email?: string } | null;
-  /** A new client's details, each needing "add"; ones already on a matched client stay as they are. */
-  details?: EntryDetails | null;
-  notes?: string;
-  /** Off the barber's grid, into buffer time or outside hours. Needs "calendar.squeeze_in"; logged. */
-  squeezeIn?: boolean;
-}) {
+export async function createStaffAppointmentAction(input: StaffBookingInput) {
   return safe(async () => {
-    const ctx = await requireStaff();
-    assertShopAccess(ctx, input.shopId);
-    assertSqueeze(ctx, input.squeezeIn);
-    if (ownColumnOnly(ctx) && input.staffId !== ctx.staff.id) throw forbidden("You can only book into your own column");
-    if (!input.customerId && !input.customer?.firstName) throw new AppError("bad_request", "Pick a client or enter a name");
-    const typed = !input.customerId && input.customer ? checkEntry(await clientPolicy(ctx), { ...input.details, phone: input.details?.phone ?? input.customer.phone, email: input.details?.email ?? input.customer.email }) : null;
-    const startsAt = staffWallTime(input.date, input.startMin);
-    const appt = await createAppointment({
-      shopRef: input.shopId,
-      serviceId: input.serviceId,
-      addonIds: input.addonIds,
-      barberRef: input.staffId,
-      startsAt,
-      customerId: input.customerId ?? null,
-      customer: input.customerId || !input.customer ? null : { ...input.customer, phone: typed?.phone, email: typed?.email },
-      allowNoContact: true,
-      notes: input.notes || null,
-      source: "staff",
-      squeezeIn: input.squeezeIn,
-      actor: ctx.actor,
-    });
-    if (typed && appt.customer) await fillEntry(appt.customer.id, typed, { actor: ctx.actor, staffId: ctx.staff.id, shopId: input.shopId });
+    const appt = await bookForStaff(await requireStaff(), input);
     revalidatePath("/admin/calendar");
     return { code: appt.code };
   });
@@ -231,11 +171,7 @@ export async function createStaffAppointmentAction(input: {
 /** Moves land on the target barber's grid; with "calendar.squeeze_in" they can be squeezed in instead. */
 export async function moveAppointmentAction(id: string, staffId: string, date: string, startMin: number, opts: { squeezeIn?: boolean } = {}) {
   return safe(async () => {
-    const ctx = await requireStaff();
-    const a = await loadAppt(ctx, id);
-    if (ownColumnOnly(ctx) && staffId !== ctx.staff.id) throw forbidden("You can only move your own appointments within your own column");
-    assertSqueeze(ctx, opts.squeezeIn);
-    await rescheduleAppointment(a.code, { startsAt: staffWallTime(date, startMin), barberRef: staffId, actor: ctx.actor, byCustomer: false, squeezeIn: opts.squeezeIn });
+    await moveForStaff(await requireStaff(), id, staffId, date, startMin, opts);
     revalidatePath("/admin/calendar");
     return null;
   });
@@ -246,40 +182,9 @@ export async function moveAppointmentAction(id: string, staffId: string, date: s
  * needs "Block out time for anyone". With booked appointments in it, nothing is saved until the
  * caller confirms, and the appointments stay booked.
  */
-export async function createBlockAction(input: {
-  shopId: string;
-  staffId: string;
-  date: string;
-  startMin: number;
-  endMin: number;
-  reasonId: string;
-  note?: string | null;
-  allShops: boolean;
-  confirm?: boolean;
-}) {
+export async function createBlockAction(input: StaffBlockInput) {
   return safe(async () => {
-    const ctx = await requireStaff();
-    assertShopAccess(ctx, input.shopId);
-    if (input.endMin <= input.startMin) throw new AppError("bad_request", "End must be after start");
-    const shopId = input.allShops ? null : input.shopId;
-    const shopsOfBarber = await barberShops(input.staffId);
-    const denied = blockChangeDenied(blockCaller(ctx), { staffId: input.staffId, shopId }, shopsOfBarber);
-    if (denied) throw forbidden(denied);
-    if (input.allShops && !shopsOfBarber.includes(input.shopId)) throw forbidden("That barber doesn't work at this shop");
-    const reason = await usableReason(
-      input.reasonId,
-      "blocks",
-      undefined,
-      input.shopId,
-    );
-    if (input.staffId === ctx.staff.id && !can(ctx, "blocks.others")) {
-      const problem = selfBlockProblem(await rulesFor(input.staffId, shopId), reason.countsAsLunch, input.endMin - input.startMin);
-      if (problem) throw new AppError("bad_request", problem);
-    }
-    const r = await addBlock(
-      { staffId: input.staffId, shopId, startsAt: staffWallTime(input.date, input.startMin), endsAt: staffWallTime(input.date, input.endMin), reasonId: reason.id, note: input.note },
-      { actor: ctx.actor, confirm: input.confirm, via: "calendar", auditShopId: input.shopId },
-    );
+    const r = await blockForStaff(await requireStaff(), input);
     if (r.done) {
       revalidatePath("/admin/calendar");
       revalidatePath("/admin/my-time");
@@ -290,18 +195,7 @@ export async function createBlockAction(input: {
 
 export async function deleteBlockAction(id: string) {
   return safe(async () => {
-    const ctx = await requireStaff();
-    const b = await db.query.timeBlocks.findFirst({ where: eq(timeBlocks.id, id) });
-    if (!b || (b.shopId && !hasShop(ctx, b.shopId))) throw notFound("Block");
-    if (b.source === "clock") {
-      const denied = clockBlockChangeDenied(blockCaller(ctx), b, await barberShops(b.staffId));
-      if (denied) throw forbidden(denied);
-      await releaseClockBlock(id, ctx.actor, null);
-    } else {
-      const denied = blockChangeDenied(blockCaller(ctx), b, await barberShops(b.staffId));
-      if (denied) throw forbidden(denied);
-      await removeBlock(id, ctx.actor, "calendar", b.shopId);
-    }
+    await unblockForStaff(await requireStaff(), id);
     revalidateBlocks();
     return null;
   });

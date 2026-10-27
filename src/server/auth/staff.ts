@@ -175,10 +175,20 @@ export async function guardPage(page: AdminPage): Promise<StaffContext> {
 
 /** For server actions: signed in and holding at least one of these permissions, or a forbidden error. */
 export async function authorize(perms: Permission | readonly Permission[], message?: string): Promise<StaffContext> {
-  const ctx = await requireStaff();
+  return authorizeContext(await requireStaff(), perms, message);
+}
+
+/**
+ * authorize() for a context already in hand (the staff app's Bearer session): the same permission
+ * check, the same refusal of brand-wide records to someone without every shop, the same event actor.
+ * An empty list is anyone signed in.
+ */
+export function authorizeContext<C extends StaffContext>(ctx: C, perms: Permission | readonly Permission[], message?: string): C {
   const list = typeof perms === "string" ? [perms] : perms;
-  if (!canAny(ctx, list) && list.some((p) => ctx.access.needsAllShops.includes(p))) throw forbidden("That changes records every shop shares, so it needs access to all shops");
-  assertCan(ctx, perms, message);
+  if (list.length) {
+    if (!canAny(ctx, list) && list.some((p) => ctx.access.needsAllShops.includes(p))) throw forbidden("That changes records every shop shares, so it needs access to all shops");
+    assertCan(ctx, list, message);
+  }
   setEventActor(ctx.staff.id);
   return ctx;
 }
