@@ -36,9 +36,15 @@ beforeAll(async () => {
   // The seed's last few days of tips start unpaid; settle them so each test sees only its own.
   await tl.syncTipLedger();
   await tl.recordOpeningTips(m.time.addDays(today, 1));
+  // These tests cover reversals, so the window rule; the brand's default is that the shop absorbs every refunded tip.
+  const [b] = await m.db.db.select({ v: m.schema.brandSettings.staffPayouts }).from(m.schema.brandSettings);
+  savedPayouts = (b?.v as Record<string, unknown>) ?? {};
+  await m.db.db.update(m.schema.brandSettings).set({ staffPayouts: { ...savedPayouts, reversalRule: "full_refund_in_window", reversalWindowDays: 7 } });
 }, 180_000);
 
+let savedPayouts: Record<string, unknown> = {};
 afterAll(async () => {
+  if (m) await m.db.db.update(m.schema.brandSettings).set({ staffPayouts: savedPayouts });
   await m?.db.closeDb();
 });
 

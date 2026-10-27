@@ -4,6 +4,7 @@ import { payrollProfiles, payrollRates, shops, staff, timesheetLocks } from "@/d
 import type { PayPeriod } from "@/domain/payroll";
 import { splitByLocalDay } from "@/domain/payroll/overtime";
 import { exportLines, genericCsv, mappedCsv, pairPunches, shiftWork, type ExportLine } from "@/domain/time-clock";
+import { flooredTips } from "@/domain/tips";
 import { localDateOf, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "./audit";
 import { AppError } from "./errors";
@@ -70,7 +71,10 @@ export async function exportData(periodStart: LocalDate, shopIds: readonly strin
       const b = breaks.get(k) ?? { all: 0, unpaid: 0 };
       return { staffId, shopId, ...h, breakMin: b.all, unpaidBreakMin: b.unpaid };
     }),
-    sales.map((s) => ({ staffId: s.staffId, shopId: s.shopId, cardTipsCents: s.cardTipsCents + s.giftCardTipsCents, cashTipsCents: s.cashTipsCents, serviceSalesCents: s.serviceSalesCents, productSalesCents: s.productSalesCents })),
+    sales.map((s) => {
+      const tips = flooredTips(s.cardTipsCents + s.giftCardTipsCents, s.cashTipsCents);
+      return { staffId: s.staffId, shopId: s.shopId, cardTipsCents: tips.cardCents, cashTipsCents: tips.cashCents, serviceSalesCents: s.serviceSalesCents, productSalesCents: s.productSalesCents };
+    }),
     (id) => {
       const p = person.get(id);
       const pr = profile.get(id);

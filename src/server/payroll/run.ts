@@ -278,9 +278,8 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
     const charged = (s?.cardTipsCents ?? 0) + (s?.giftCardTipsCents ?? 0);
     const raw = charged + (s?.cashTipsCents ?? 0) + (split?.adjustCents ?? 0) + (split?.absorbedCents ?? 0);
     const late = s?.lateTipRefundsCents ?? 0;
-    // A refund of tips already paid comes off only when the ledger took it back (the brand deducts them); the shop absorbs the rest, and tips never go below zero (SB-C2).
-    const deductible = Math.max(0, late - (split?.lateAbsorbedCents ?? 0));
-    const tipsCents = Math.max(0, raw - deductible);
+    // A refund of tips already paid is always the shop's cost (ST-C15), and tips never go below zero (SB-C2).
+    const tipsCents = Math.max(0, raw);
     const input: LineInput = {
       staffId,
       name,
@@ -304,7 +303,6 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
       declaredCashTips: (declared.get(k) ?? 0) / 100,
       chargedTips: Math.min(tipsCents, Math.max(0, charged)) / 100,
       lateTipRefunds: late / 100,
-      lateTipRefundsDeducted: Math.max(0, Math.min(deductible, raw)) / 100,
       overrides: Object.keys(ov).length ? ov : undefined,
     };
     inputsByShop.set(shopId, [...(inputsByShop.get(shopId) ?? []), input]);

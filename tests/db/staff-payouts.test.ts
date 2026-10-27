@@ -253,8 +253,17 @@ describe("refunds and disputes (ST-C15)", () => {
   it("a full refund inside the window reverses the tip; after it, or a partial refund, the shop absorbs it; the brand's rule and window are settings", async () => {
     const { shop: sh, ids: [b] } = await barbers("kimberly", ["Beth"]);
     const absorbed = (saleId: string) => m.db.db.select().from(s().tipAbsorptions).where(eq(s().tipAbsorptions.saleId, saleId));
-    // Refunds 8 days on can land in the next pay period, which by default is the shop's cost whatever the window says.
-    await setStaffPayouts({ afterPayoutRefunds: "deduct" });
+    // The default: the shop absorbs every refunded tip.
+    const byDefault = await tipSale(sh.id, b, 300, card);
+    await m.refunds.refundEverything(byDefault.id, "Default rule", false, actor);
+    expect((await ledgerOf(byDefault.id)).map((e) => e.kind)).toEqual(["tip"]);
+    expect(await absorbed(byDefault.id)).toEqual([expect.objectContaining({ kind: "rule", amountCents: 300 })]);
+
+    // Today through 12 days on in one pay period, so the window decides, not the pay period (a later one is always the shop's cost).
+    await run.ensurePayGroups();
+    const [pg] = await m.db.db.select().from(s().payGroups).where(eq(s().payGroups.shopId, sh.id));
+    await m.db.db.update(s().payGroups).set({ anchorStart: m.time.addDays(today, -1), periodDays: 14 }).where(eq(s().payGroups.id, pg.id));
+    await setStaffPayouts({ reversalRule: "full_refund_in_window", reversalWindowDays: 7 });
 
     const late = await tipSale(sh.id, b, 600, card);
     await m.refunds.refundEverything(late.id, "Came back after a week", false, actor, new Date(Date.now() + 8 * 86_400_000));
@@ -280,12 +289,26 @@ describe("refunds and disputes (ST-C15)", () => {
     await m.refunds.refundEverything(kept.id, "Never reverses", false, actor);
     expect((await ledgerOf(kept.id)).map((e) => e.kind)).toEqual(["tip"]);
     expect(await absorbed(kept.id)).toEqual([expect.objectContaining({ kind: "rule", amountCents: 400 })]);
-    await setStaffPayouts({ reversalRule: "full_refund_in_window", reversalWindowDays: 7, afterPayoutRefunds: "shop_cost" });
+    await setStaffPayouts({ reversalRule: "never", reversalWindowDays: 7 });
+    await m.db.db.update(s().payGroups).set({ anchorStart: pg.anchorStart, periodDays: pg.periodDays }).where(eq(s().payGroups.id, pg.id));
 
     // Absorbed tips are never changed or removed.
     const [one] = await absorbed(kept.id);
     await expect(m.db.db.update(s().tipAbsorptions).set({ amountCents: 1 }).where(eq(s().tipAbsorptions.id, one.id))).rejects.toThrow();
     await expect(m.db.db.delete(s().tipAbsorptions).where(eq(s().tipAbsorptions.id, one.id))).rejects.toThrow();
+  });
+
+  it("a tip already in an approved payout is never taken back, whatever the rule (ST-C0b)", async () => {
+    const { shop: sh, ids: [b] } = await barbers("kimberly", ["Beth"]);
+    await setStaffPayouts({ reversalRule: "any_refund" });
+    const sale = await tipSale(sh.id, b, 700, cash);
+    const batch = await tp.buildBatch({ shopId: sh.id, kind: "manual", cutoff: today, actor });
+    await tp.approveBatch(batch.batchId, actor);
+    expect((await payoutsOf(batch.batchId)).find((p) => p.staffId === b)?.status).toBe("approved");
+    await m.refunds.refundEverything(sale.id, "After the payout was approved", false, actor);
+    expect((await ledgerOf(sale.id)).map((e) => e.kind)).toEqual(["tip"]);
+    expect(await m.db.db.select().from(s().tipAbsorptions).where(eq(s().tipAbsorptions.saleId, sale.id))).toEqual([expect.objectContaining({ kind: "after_payout", amountCents: 700 })]);
+    await setStaffPayouts({ reversalRule: "never" });
   });
 
   it("a card dispute leaves the barber their tip: the shop absorbs it, once per dispute", async () => {

@@ -393,13 +393,13 @@ describe("split tips", () => {
     const refund = await m.checkout.refundSale({ saleId, items: [], tipCents: 401, refundCardFee: false, reason: "Tip typo", restock: false, actor });
     expect(refund).toBeTruthy();
     await tl.syncTipLedger();
-    // A partial refund leaves the barbers their tips; the shop absorbs each one's share (ST-C15).
+    // A refund leaves the barbers their tips; the shop absorbs each one's share (ST-C15; by default every refunded tip).
     const reversals = (await m.db.db.select().from(s().tipLedger).where(eq(s().tipLedger.saleId, saleId))).filter((e) => e.amountCents < 0);
     expect(reversals).toEqual([]);
     const refundShares = splitCents(401, [...want].map(([id, weight]) => ({ id, weight })));
     const absorbed = await m.db.db.select().from(s().tipAbsorptions).where(eq(s().tipAbsorptions.saleId, saleId));
     expect(new Map(absorbed.map((a) => [a.staffId, a.amountCents]))).toEqual(refundShares);
-    expect(absorbed.every((a) => a.kind === "partial_refund")).toBe(true);
+    expect(absorbed.every((a) => a.kind === "rule")).toBe(true);
     const after = await m.reports.byBarber(scope);
     expect(tipsOf(before, fx.makenna) - tipsOf(after, fx.makenna)).toBe(refundShares.get(fx.makenna));
     expect(tipsOf(before, fx.michelle) - tipsOf(after, fx.michelle)).toBe(refundShares.get(fx.michelle));

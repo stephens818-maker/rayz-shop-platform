@@ -407,15 +407,12 @@ describe("payroll review (SB-C2, SB-C3, SB-I2)", () => {
     expect(assemble([{ shopId: "A", shop: "Shop A", inputs: [input()] }], DEFAULT_PAYROLL_SETTINGS).blocks[0].exportHeaders).not.toContain(DEFAULT_PAYROLL_SETTINGS.cashTipsDeclaredHeader);
   });
 
-  it("a refund of tips already paid is flagged; the shop's cost unless the brand deducted it", () => {
+  it("a refund of tips already paid is flagged and always the shop's cost (ST-C15)", () => {
     const shopCost = computeLine(input({ tips: 50, lateTipRefunds: 20 }), DEFAULT_PAYROLL_SETTINGS);
     expect(shopCost).toMatchObject({ tips: 50, lateTipRefunds: 20, tipRefundsShopCost: 20 });
-    const deducted = computeLine(input({ tips: 30, lateTipRefunds: 20, lateTipRefundsDeducted: 20 }), DEFAULT_PAYROLL_SETTINGS);
-    expect(deducted.tipRefundsShopCost).toBe(0);
-    const { blocks } = assemble([{ shopId: "A", shop: "Shop A", inputs: [shopCost.input, { ...deducted.input, staffId: "b2" }, input({ staffId: "b3" })] }], DEFAULT_PAYROLL_SETTINGS);
+    const { blocks } = assemble([{ shopId: "A", shop: "Shop A", inputs: [shopCost.input, input({ staffId: "b3" })] }], DEFAULT_PAYROLL_SETTINGS);
     const flags = anomalies(blocks, DEFAULT_PAYROLL_SETTINGS).filter((a) => a.kind === "late_tip_refund");
-    expect(flags.map((a) => a.staffId)).toEqual(["b1", "b2"]);
-    expect(flags[0].message).toMatch(/\$20\.00 is the shop's cost/);
-    expect(flags[1].message).toMatch(/comes off this period's tips .*written consent in IL and IA/);
+    expect(flags.map((a) => a.staffId)).toEqual(["b1"]);
+    expect(flags[0].message).toMatch(/\$20\.00 is the shop's cost, never taken from their pay/);
   });
 });

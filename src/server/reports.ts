@@ -469,15 +469,13 @@ export interface PayrollRow {
    * subtracted here: they're the shop's cost unless the brand deducts them, and flagged for review.
    */
   lateTipRefundsCents: number;
-  /** The part of those the tip ledger took back (the brand deducts them), up to the period's tips; the rest is the shop's cost. */
-  lateTipRefundsDeductedCents: number;
   /** Cash tips the barber declared (handed over, never rung up). Reported for tax; not in the total, since the barber already has them. */
   declaredCashTipsCents: number;
   /** Card, cash and gift card tips; never below zero. */
   totalTipsCents: number;
 }
 
-export type PayrollSalesRow = Omit<PayrollRow, "periodStart" | "periodEnd" | "totalTipsCents" | "declaredCashTipsCents" | "lateTipRefundsDeductedCents">;
+export type PayrollSalesRow = Omit<PayrollRow, "periodStart" | "periodEnd" | "totalTipsCents" | "declaredCashTipsCents">;
 
 /** Not a Squire-era ticket: imported, or paid with a payment the import wrote. */
 const NOT_SQUIRE = sql`not s.is_imported and not exists (select 1 from payments sq where sq.sale_id = s.id and sq.processor = 'squire_import')`;
@@ -588,49 +586,39 @@ export async function declaredTipRowsBetween(s: Pick<ReportScope, "shopIds" | "s
  * Tips per barber per shop per pay period on the brand's calendar (hours stay in iSolved). A barber who
  * works at several shops gets a row per shop, from the shop each ticket was rung up at. Sales land in
  * the period they were paid. A refund in the same period corrects it; one in a later period, of tips
- * already paid, is shown and flagged but never taken from the barber unless the brand deducts those,
- * and a total never goes below zero. Declared cash tips are their own column. Squire's imported tickets
+ * already paid, is shown and flagged but never taken from the barber (the shop's cost), and a total
+ * never goes below zero. Declared cash tips are their own column. Squire's imported tickets
  * come back separately, for reference.
  */
-export async function payrollTips(s: ReportScope): Promise<{ periods: PayPeriod[]; rows: PayrollRow[]; squire: SquireTipRow[]; lateRefunds: "shop_cost" | "deduct" }> {
+export async function payrollTips(s: ReportScope): Promise<{ periods: PayPeriod[]; rows: PayrollRow[]; squire: SquireTipRow[]; lateRefunds: "shop_cost" }> {
   const { brandCalendar } = await import("./payroll/groups");
-  const { staffPayoutConfig } = await import("./tips/ledger");
-  const { payrollTipSplit } = await import("./tips/payouts");
-  const [cal, cfg] = await Promise.all([brandCalendar(), staffPayoutConfig()]);
+  const cal = await brandCalendar();
   const periods = payPeriodsBetween(s.from, s.to, cal);
   const out: PayrollRow[] = [];
   const squire: SquireTipRow[] = [];
   await Promise.all(
     periods.map(async (p) => {
-      const [r, sq, dec, split] = await Promise.all([
-        payrollSalesBetween(s, p.start, p.end),
-        squireTipsBetween(s, p.start, p.end),
-        declaredTipRowsBetween(s, p.start, p.end),
-        payrollTipSplit(s.shopIds, p.start, p.end),
-      ]);
+      const [r, sq, dec] = await Promise.all([payrollSalesBetween(s, p.start, p.end), squireTipsBetween(s, p.start, p.end), declaredTipRowsBetween(s, p.start, p.end)]);
       const declared = new Map(dec.map((d) => [`${d.staffId}|${d.shopId}`, d]));
       for (const row of r) {
         const key = `${row.staffId}|${row.shopId}`;
-        // Deducted: what the ledger took back; a refund the shop absorbed stays its cost.
-        const deducted = Math.max(0, row.lateTipRefundsCents - (split.get(key)?.lateAbsorbedCents ?? 0));
-        const gross = row.cardTipsCents + row.cashTipsCents + row.giftCardTipsCents - deducted;
+        const gross = row.cardTipsCents + row.cashTipsCents + row.giftCardTipsCents;
         out.push({
           ...row,
           periodStart: p.start,
           periodEnd: p.end,
-          lateTipRefundsDeductedCents: Math.min(deducted, Math.max(0, gross + deducted)),
           declaredCashTipsCents: declared.get(key)?.declaredCashTipsCents ?? 0,
           totalTipsCents: Math.max(0, gross),
         });
         declared.delete(key);
       }
       for (const d of declared.values())
-        out.push({ ...d, periodStart: p.start, periodEnd: p.end, tickets: 0, serviceSalesCents: 0, productSalesCents: 0, cardTipsCents: 0, cashTipsCents: 0, giftCardTipsCents: 0, tipRefundsCents: 0, lateTipRefundsCents: 0, lateTipRefundsDeductedCents: 0, totalTipsCents: 0 });
+        out.push({ ...d, periodStart: p.start, periodEnd: p.end, tickets: 0, serviceSalesCents: 0, productSalesCents: 0, cardTipsCents: 0, cashTipsCents: 0, giftCardTipsCents: 0, tipRefundsCents: 0, lateTipRefundsCents: 0, totalTipsCents: 0 });
       for (const row of sq) squire.push({ ...row, periodStart: p.start, periodEnd: p.end });
     }),
   );
   const order = (a: { periodStart: string; label: string; shop: string }, b: typeof a) => a.periodStart.localeCompare(b.periodStart) || a.label.localeCompare(b.label) || a.shop.localeCompare(b.shop);
-  return { periods, rows: out.sort(order), squire: squire.sort(order), lateRefunds: cfg.afterPayoutRefunds };
+  return { periods, rows: out.sort(order), squire: squire.sort(order), lateRefunds: "shop_cost" };
 }
 
 // ───────────────────────────── KPIs (not available in Squire) ─────────────────────────────

@@ -932,7 +932,6 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     const r = await payrollTips(scope);
     // By barber, the barber is the row group, so the Barber column would repeat it.
     const named = !loc.byBarber;
-    const deducts = r.rows.some((x) => x.lateTipRefundsDeductedCents);
     const columns = [
       text("Period start"),
       text("Period end"),
@@ -946,7 +945,6 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
       money("Gift card tips"),
       money("Tip refunds (already subtracted)"),
       money("Post-payout tip refunds (shop cost, not subtracted)"),
-      ...(deducts ? [money("Post-payout tip refunds deducted")] : []),
       money("Total tips"),
       money("Cash tips declared"),
     ];
@@ -966,8 +964,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
         x.cashTipsCents,
         x.giftCardTipsCents,
         x.tipRefundsCents,
-        x.lateTipRefundsCents - x.lateTipRefundsDeductedCents,
-        ...(deducts ? [x.lateTipRefundsDeductedCents] : []),
+        x.lateTipRefundsCents,
         x.totalTipsCents,
         x.declaredCashTipsCents,
       ],
@@ -1020,9 +1017,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
           : []),
       ],
       notes: [
-        r.lateRefunds === "deduct"
-          ? "Post-payout tip refunds (a refund in a later pay period of tips already paid) are deducted from that period's tips, never below zero. Check your state's wage deduction rules (Illinois and Iowa need written consent)."
-          : "Post-payout tip refunds (a refund in a later pay period of tips already paid) are the shop's cost: shown for review, never taken from the barber.",
+        "Post-payout tip refunds (a refund in a later pay period of tips already paid) are the shop's cost: shown for review, never taken from the barber.",
         ...(r.rows.some((x) => x.lateTipRefundsCents) ? ["Some barbers have post-payout tip refunds this range: review them before payroll."] : []),
       ],
     };

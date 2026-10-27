@@ -207,10 +207,8 @@ export interface LineInput {
   declaredCashTips?: number;
   /** Of the tips, card and gift card ("charged") ones; the rest were cash on a ticket. For the W-2 and 45B reports. */
   chargedTips?: number;
-  /** Tip refunds in the period of tickets from an earlier pay period, already paid. */
+  /** Tip refunds in the period of tickets from an earlier pay period, already paid: always the shop's cost. */
   lateTipRefunds?: number;
-  /** Of those, taken off the tips (only when the brand deducts them; never below zero). The rest is the shop's cost. */
-  lateTipRefundsDeducted?: number;
   overrides?: Overrides;
 }
 
@@ -333,7 +331,7 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
     declaredCashTips: i.declaredCashTips ?? 0,
     chargedTips: Math.min(tips, Math.max(0, i.chargedTips ?? 0)),
     lateTipRefunds: i.lateTipRefunds ?? 0,
-    tipRefundsShopCost: (i.lateTipRefunds ?? 0) - (i.lateTipRefundsDeducted ?? 0),
+    tipRefundsShopCost: i.lateTipRefunds ?? 0,
     trainingHours,
     otPay,
     trainingPay,
@@ -615,13 +613,11 @@ export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Ano
       if (l.wage === 0 && l.service > 0 && l.servicePct === 0) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "no_rate", message: `${who} has sales but no wage or commission rate.` });
       const late = l.lateTipRefunds ?? 0;
       if (late > 0) {
-        const cost = l.tipRefundsShopCost ?? late;
-        const taken = late - cost;
         out.push({
           staffId: l.staffId,
           shopId: b.shopId,
           kind: "late_tip_refund",
-          message: `${who}: ${fmtMoney(late)} of tips refunded on tickets from an earlier pay period, already paid. ${cost > 0 ? `${fmtMoney(cost)} is the shop's cost, not taken from their pay.` : ""}${taken > 0 ? ` ${fmtMoney(taken)} comes off this period's tips (the brand deducts them, which needs the employee's written consent in IL and IA).` : ""} Review before locking.`.replace(/\s+/g, " ").trim(),
+          message: `${who}: ${fmtMoney(late)} of tips refunded on tickets from an earlier pay period, already paid. ${fmtMoney(late)} is the shop's cost, never taken from their pay. Review before locking.`,
         });
       }
     }

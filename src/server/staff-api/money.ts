@@ -175,6 +175,9 @@ export async function myEarnings(ctx: StaffAppContext, from: LocalDate, to: Loca
     .where(and(eq(appointments.staffId, me), eq(appointments.status, "completed"), gte(appointments.startsAt, startOfLocalDay(from)), lt(appointments.startsAt, endOfLocalDay(to))));
   const rows = [...day.values()];
   const sum = (k: "serviceNetCents" | "productNetCents" | "tipsCents") => rows.reduce((a, r) => a + r[k], 0);
+  // Tips never show below zero: a refund is never taken from tips already paid (ST-C0b, ST-C15).
+  const tipsTotal = Math.max(0, sum("tipsCents"));
+  for (const r of rows) r.tipsCents = Math.max(0, r.tipsCents);
   return {
     from,
     to,
@@ -183,7 +186,7 @@ export async function myEarnings(ctx: StaffAppContext, from: LocalDate, to: Loca
     totals: {
       serviceNetCents: sees.sales ? sum("serviceNetCents") : null,
       productNetCents: sees.sales ? sum("productNetCents") : null,
-      tipsCents: sees.tips ? sum("tipsCents") : null,
+      tipsCents: sees.tips ? tipsTotal : null,
     },
     commission,
     days: rows.map((r) => ({ date: r.date, serviceNetCents: sees.sales ? r.serviceNetCents : null, productNetCents: sees.sales ? r.productNetCents : null, tipsCents: sees.tips ? r.tipsCents : null })),

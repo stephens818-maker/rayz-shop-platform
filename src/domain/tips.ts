@@ -233,6 +233,16 @@ export interface PayoutTotals {
   netCents: number;
 }
 
+/**
+ * Card and cash tips for a payable line, never below zero: the total is floored at zero and split
+ * with the card part first, so a refund from one tender can't push either column or the sum negative.
+ */
+export function flooredTips(cardCents: number, cashCents: number): { cardCents: number; cashCents: number } {
+  const total = Math.max(0, cardCents + cashCents);
+  const card = Math.min(total, Math.max(0, cardCents));
+  return { cardCents: card, cashCents: total - card };
+}
+
 /** A payout's amounts from its entries: tips less refunds, less their card fee share where the shop nets it, plus adjustments. */
 export function payoutTotals(entries: readonly Pick<LedgerEntry, "kind" | "amountCents" | "feeCents">[], netCardFee: boolean): PayoutTotals {
   const grossCents = entries.filter((e) => e.kind !== "adjust").reduce((a, e) => a + e.amountCents, 0);

@@ -31,12 +31,11 @@ export type OwedVia = (typeof OWED_VIA)[number];
 export const REVERSAL_RULES = ["full_refund_in_window", "any_refund", "never"] as const;
 export type ReversalRule = (typeof REVERSAL_RULES)[number];
 /**
- * A tip refunded after it was paid (its payout went out, or its pay period is past): the shop's
- * cost, or taken back under the reversal rule from a later payout or paycheck. Taking back wages
- * already paid is a deduction (IL 820 ILCS 115/9, Iowa 91A.5: written consent), so it's the shop's
- * cost unless counsel signs off.
+ * A tip refunded after it was paid or put in a payout (or its pay period is past): always the shop's
+ * cost (ST-C15). Taking back wages already paid is a deduction (IL 820 ILCS 115/9, Iowa 91A.5), so
+ * there's no setting for it; an old saved "deduct" reads as the shop's cost.
  */
-export const AFTER_PAYOUT_RULES = ["shop_cost", "deduct"] as const;
+export const AFTER_PAYOUT_RULES = ["shop_cost"] as const;
 export type AfterPayoutRule = (typeof AFTER_PAYOUT_RULES)[number];
 /** Which day a tip belongs to: the sale's business date, or the payment's (a tip added after the sale). */
 export const TIP_DATE_RULES = ["sale_date", "payment_date"] as const;
@@ -69,7 +68,7 @@ export const DEFAULT_STAFF_PAYOUT_SETTINGS: StaffPayoutSettings = {
   serviceAgreement: "recipient",
   onboarding: "embedded",
   owedVia: "payroll",
-  reversalRule: "full_refund_in_window",
+  reversalRule: "never",
   reversalWindowDays: 7,
   afterPayoutRefunds: "shop_cost",
   tipDate: "sale_date",
@@ -113,7 +112,6 @@ export const REVERSAL_RULE_LABEL: Record<ReversalRule, string> = {
 };
 export const AFTER_PAYOUT_LABEL: Record<AfterPayoutRule, string> = {
   shop_cost: "The shop's cost: never taken back from a later payout or paycheck",
-  deduct: "Taken back by the reversal rule (needs the employee's written consent in IL and IA)",
 };
 export const TIP_DATE_LABEL: Record<TipDateRule, string> = { sale_date: "The sale's date", payment_date: "The payment's date" };
 export const TAX_FORMS_LABEL: Record<TaxFormFiling, string> = { will_not_file: "Will not file (tips are W-2 wages through payroll)" };
@@ -230,15 +228,15 @@ export const ABSORPTION_LABEL: Record<AbsorptionKind, string> = {
 
 /**
  * Whether a refund that gave tip back takes it from the barber, or the shop absorbs it. A tip already
- * paid (its payout went out, or it's from an earlier pay period) is the shop's unless the brand
- * deducts after payout. Otherwise, full: the payment is fully refunded once this refund is counted
- * with the earlier ones; the window counts calendar days from the sale's business date to the refund's.
+ * paid or in a payout (or from an earlier pay period) is always the shop's. Otherwise, full: the
+ * payment is fully refunded once this refund is counted with the earlier ones; the window counts
+ * calendar days from the sale's business date to the refund's.
  */
 export function reversalOutcome(
-  s: Pick<StaffPayoutSettings, "reversalRule" | "reversalWindowDays"> & Partial<Pick<StaffPayoutSettings, "afterPayoutRefunds">>,
+  s: Pick<StaffPayoutSettings, "reversalRule" | "reversalWindowDays">,
   r: { saleDate: LocalDate; refundDate: LocalDate; fullyRefunded: boolean; afterPayout?: boolean },
 ): ReversalOutcome {
-  if (r.afterPayout && (s.afterPayoutRefunds ?? "shop_cost") === "shop_cost") return "absorb_after_payout";
+  if (r.afterPayout) return "absorb_after_payout";
   if (s.reversalRule === "never") return "absorb_rule";
   if (s.reversalRule === "any_refund") return "reverse";
   if (!r.fullyRefunded) return "absorb_partial";
@@ -277,6 +275,7 @@ export function tipsPaidStatus(b: TipsPaidBuckets, locked: boolean): { status: T
   const problems: string[] = [];
   if (!locked) problems.push("the pay period isn't approved and locked yet");
   if (b.inFlightCents) problems.push(`${formatCents(b.inFlightCents)} is sent and not paid yet`);
+  if (b.owedCents < 0) problems.push(`owed nets to ${formatCents(b.owedCents)}: never taken back, only offset by this employee's later unpaid tips`);
   const gap = tipsPaidGap(b);
   if (gap) problems.push(`${formatCents(Math.abs(gap))} of tips ${gap > 0 ? "isn't in any bucket" : "is counted twice"}`);
   return { status: problems.length ? "draft" : "final", problems };

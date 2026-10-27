@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   ACCOUNT_STATES,
+  AFTER_PAYOUT_RULES,
   DEFAULT_STAFF_PAYOUT_SETTINGS,
+  REVERSAL_RULES,
   accountState,
   bankingStatusOf,
   canReceiveIn,
@@ -19,7 +21,7 @@ import {
   type AccountFacts,
   type TipsPaidBuckets,
 } from "@/domain/staff-payouts";
-import { DEFAULT_BRAND_TIP_POLICY, brandTipPolicy } from "@/domain/tips";
+import { DEFAULT_BRAND_TIP_POLICY, brandTipPolicy, flooredTips } from "@/domain/tips";
 
 const facts = (o: Partial<AccountFacts> = {}): AccountFacts => ({
   stripeAccountId: "acct_1",
@@ -35,14 +37,15 @@ const facts = (o: Partial<AccountFacts> = {}): AccountFacts => ({
 });
 
 describe("staff payout settings", () => {
-  it("defaults to recipient accounts with no dashboard, embedded onboarding, owed through payroll, a 7-day full-refund window, the sale date and will-not-file", () => {
+  it("defaults to recipient accounts with no dashboard, embedded onboarding, owed through payroll, the shop absorbing refunded tips, the sale date and will-not-file", () => {
     expect(staffPayoutSettings(null)).toEqual(DEFAULT_STAFF_PAYOUT_SETTINGS);
     expect(DEFAULT_STAFF_PAYOUT_SETTINGS).toMatchObject({
       dashboard: "none",
       serviceAgreement: "recipient",
       onboarding: "embedded",
       owedVia: "payroll",
-      reversalRule: "full_refund_in_window",
+      reversalRule: "never",
+      afterPayoutRefunds: "shop_cost",
       reversalWindowDays: 7,
       tipDate: "sale_date",
       taxForms: "will_not_file",
@@ -105,8 +108,11 @@ describe("the seven account states (ST-C12)", () => {
 });
 
 describe("tip reversals (ST-C15)", () => {
-  const d = DEFAULT_STAFF_PAYOUT_SETTINGS;
-  it("takes the tip back on a full refund within the window, counted from the sale date", () => {
+  const d = { ...DEFAULT_STAFF_PAYOUT_SETTINGS, reversalRule: "full_refund_in_window" as const };
+  it("the shop absorbs every refunded tip by default", () => {
+    expect(reversalOutcome(DEFAULT_STAFF_PAYOUT_SETTINGS, { saleDate: "2026-10-01", refundDate: "2026-10-01", fullyRefunded: true })).toBe("absorb_rule");
+  });
+  it("with the window rule, takes an unpaid tip back on a full refund within the window, counted from the sale date", () => {
     expect(reversalOutcome(d, { saleDate: "2026-10-01", refundDate: "2026-10-08", fullyRefunded: true })).toBe("reverse");
     expect(reversalOutcome(d, { saleDate: "2026-10-01", refundDate: "2026-10-09", fullyRefunded: true })).toBe("absorb_window");
     expect(reversalOutcome(d, { saleDate: "2026-10-01", refundDate: "2026-10-02", fullyRefunded: false })).toBe("absorb_partial");
@@ -116,14 +122,11 @@ describe("tip reversals (ST-C15)", () => {
     expect(reversalOutcome({ ...d, reversalRule: "never" }, { saleDate: "2026-10-01", refundDate: "2026-10-01", fullyRefunded: true })).toBe("absorb_rule");
     expect(reversalOutcome({ ...d, reversalRule: "any_refund" }, { saleDate: "2026-10-01", refundDate: "2026-12-01", fullyRefunded: false })).toBe("reverse");
   });
-  it("a tip already paid is the shop's cost by default (SB-C2), whatever the rule; deducting it is the brand's choice", () => {
+  it("a tip already paid or in a payout is always the shop's cost, whatever the rule; an old saved deduct reads as the shop's cost", () => {
     const paid = { saleDate: "2026-10-01", refundDate: "2026-10-02", fullyRefunded: true, afterPayout: true };
-    expect(d.afterPayoutRefunds).toBe("shop_cost");
-    expect(reversalOutcome(d, paid)).toBe("absorb_after_payout");
-    expect(reversalOutcome({ ...d, reversalRule: "any_refund" }, paid)).toBe("absorb_after_payout");
-    expect(reversalOutcome({ ...d, afterPayoutRefunds: undefined }, paid)).toBe("absorb_after_payout");
-    expect(reversalOutcome({ ...d, afterPayoutRefunds: "deduct" }, paid)).toBe("reverse");
-    expect(reversalOutcome({ ...d, afterPayoutRefunds: "deduct", reversalRule: "never" }, paid)).toBe("absorb_rule");
+    expect(AFTER_PAYOUT_RULES).toEqual(["shop_cost"]);
+    for (const reversalRule of REVERSAL_RULES) expect(reversalOutcome({ ...d, reversalRule }, paid)).toBe("absorb_after_payout");
+    expect(staffPayoutSettings({ afterPayoutRefunds: "deduct" }).afterPayoutRefunds).toBe("shop_cost");
   });
 });
 
@@ -138,6 +141,18 @@ describe("tips paid identity (ST-C13)", () => {
     expect(tipsPaidStatus(b({ owedCents: 0, inFlightCents: 2_000 }), true).problems).toEqual(["$20.00 is sent and not paid yet"]);
     expect(tipsPaidStatus(b({ payrollCents: 2_500 }), true).problems).toEqual(["$5.00 of tips isn't in any bucket"]);
     expect(tipsPaidStatus(b({ payrollCents: 3_500 }), true).problems).toEqual(["$5.00 of tips is counted twice"]);
+  });
+  it("flags owed that nets below zero, never taken back (ST-C0b)", () => {
+    expect(tipsPaidStatus(b({ earnedCents: 7_500, owedCents: -500 }), true).problems).toEqual(["owed nets to -$5.00: never taken back, only offset by this employee's later unpaid tips"]);
+  });
+});
+
+describe("payable tips never go below zero (ST-C0b)", () => {
+  it("floors the total and splits it card first", () => {
+    expect(flooredTips(1_000, 500)).toEqual({ cardCents: 1_000, cashCents: 500 });
+    expect(flooredTips(-300, 500)).toEqual({ cardCents: 0, cashCents: 200 });
+    expect(flooredTips(1_000, -400)).toEqual({ cardCents: 600, cashCents: 0 });
+    expect(flooredTips(-300, -200)).toEqual({ cardCents: 0, cashCents: 0 });
   });
 });
 

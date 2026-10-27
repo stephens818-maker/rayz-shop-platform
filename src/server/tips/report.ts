@@ -82,13 +82,15 @@ export async function tipPayoutsData(scope: ReportScope, loc: ViewCtx): Promise<
   const name = new Map((ids.length ? await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, ids)) : []).map((s) => [s.id, s.label]));
   const net = (r: Row) => r.card + r.cashGift + r.refunded + r.adjusted;
   const paid = (r: Row) => r.paidCash + r.paidStripe + r.paidPayroll + r.paidPrior;
+  // Never below zero: a balance that nets negative is never taken back, only offset by that employee's later unpaid tips.
+  const unpaid = (r: Row) => Math.max(0, net(r) - paid(r));
   const sum = (f: (r: Row) => number) => rows.reduce((a, r) => a + f(r), 0);
   return {
     stats: [
       { label: "Tips earned", value: formatCents(sum(net)), hint: `card ${formatCents(sum((r) => r.card))} · cash and gift card ${formatCents(sum((r) => r.cashGift))} · refunded ${formatCents(-sum((r) => r.refunded))}` },
       { label: "Paid out separately", value: formatCents(sum((r) => r.paidCash + r.paidStripe)), hint: `cash ${formatCents(sum((r) => r.paidCash))} · Stripe ${formatCents(sum((r) => r.paidStripe))}` },
       { label: "Paid through payroll", value: formatCents(sum((r) => r.paidPayroll)) },
-      { label: "Not yet paid", value: formatCents(sum((r) => net(r) - paid(r))), hint: "pending settlement, available or in a batch" },
+      { label: "Not yet paid", value: formatCents(sum(unpaid)), hint: "pending settlement, available or in a batch" },
     ],
     tables: [
       listTable(loc, {
@@ -112,7 +114,7 @@ export async function tipPayoutsData(scope: ReportScope, loc: ViewCtx): Promise<
           shopId: r.shopId,
           staffId: r.staffId,
           key: r.staffId,
-          cells: [name.get(r.staffId) ?? "Unknown", r.card, r.cashGift, r.refunded, r.adjusted, net(r), r.paidCash, r.paidStripe, r.paidPayroll, r.paidPrior, r.fees, net(r) - paid(r)],
+          cells: [name.get(r.staffId) ?? "Unknown", r.card, r.cashGift, r.refunded, r.adjusted, net(r), r.paidCash, r.paidStripe, r.paidPayroll, r.paidPrior, r.fees, unpaid(r)],
         })),
         merge: true,
         sort: byName,

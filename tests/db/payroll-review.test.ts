@@ -112,6 +112,24 @@ describe("SB-C1: Squire-era tips never reach payroll", () => {
     const ledger = await m.db.db.select().from(s().tipLedger).where(m.drizzle.inArray(s().tipLedger.saleId, [ticket, payment]));
     expect(ledger).toEqual([]);
   });
+
+  it("nor the time clock's tips CSV or a tip payout batch (ST-C0a)", async () => {
+    const tce = await import("@/server/time-clock-export");
+    const tp = await import("@/server/tips/payouts");
+    const { shop: sh, b } = await barberAt("moline", 2);
+    const { cur } = await periods();
+    await tipSale(sh.id, b.id, 250);
+    const lineFor = async () => (await tce.exportData(cur.start, [sh.id])).lines.find((l) => l.staffId === b.id);
+    const before = await lineFor();
+    const ticket = await tipSale(sh.id, b.id, 1200);
+    await asImported(ticket, "ticket");
+    await tl.syncTipLedger();
+    expect(await lineFor()).toEqual(before);
+    const batch = await tp.buildBatch({ shopId: sh.id, kind: "manual", cutoff: today, actor });
+    const claimed = await m.db.db.select().from(s().tipLedger).innerJoin(s().tipPayouts, eq(s().tipPayouts.id, s().tipLedger.payoutId)).where(and(eq(s().tipPayouts.batchId, batch.batchId), eq(s().tipLedger.saleId, ticket)));
+    expect(claimed).toEqual([]);
+    await tp.cancelBatch(batch.batchId, "Test batch", actor);
+  });
 });
 
 describe("SB-C2: a refund of tips already paid", () => {
@@ -144,24 +162,25 @@ describe("SB-C2: a refund of tips already paid", () => {
     expect(v!.mismatches).toEqual([]);
   });
 
-  it("when the brand deducts them instead, the next period's tips go down, never below zero", async () => {
-    await setStaffPayouts({ afterPayoutRefunds: "deduct", reversalRule: "any_refund" });
+  it("is never clawed back (ST-C15): a saved deduct and the any-refund rule still leave the tip with the barber", async () => {
+    await setStaffPayouts({ afterPayoutRefunds: "deduct" as never, reversalRule: "any_refund" });
     const { shop: sh, b } = await barberAt("silvis", 1);
     const { cur, prev } = await periods();
     const sale = await tipSale(sh.id, b.id, 50_000, noon(m.time.addDays(prev.start, 3)));
     await tl.syncTipLedger();
+    const curBefore = lineOf(await run.buildPayroll(cur.start, cur.end), sh.id, b.id);
     await m.checkout.refundSale({ saleId: sale, items: [], tipCents: 50_000, refundCardFee: false, reason: "Wrong amount", restock: false, actor });
     await tl.syncTipLedger();
 
-    expect(await m.db.db.select().from(s().tipAbsorptions).where(eq(s().tipAbsorptions.saleId, sale))).toEqual([]);
-    expect(await m.db.db.select().from(s().tipLedger).where(and(eq(s().tipLedger.saleId, sale), eq(s().tipLedger.kind, "refund")))).toEqual([expect.objectContaining({ amountCents: -50_000 })]);
+    expect(await m.db.db.select().from(s().tipLedger).where(and(eq(s().tipLedger.saleId, sale), eq(s().tipLedger.kind, "refund")))).toEqual([]);
+    expect(await m.db.db.select().from(s().tipAbsorptions).where(eq(s().tipAbsorptions.saleId, sale))).toEqual([expect.objectContaining({ kind: "after_payout", amountCents: 50_000 })]);
     const r = await m.reports.payrollTips({ shopIds: [sh.id], staffId: b.id, from: cur.start, to: cur.end });
-    expect(r.lateRefunds).toBe("deduct");
-    expect(r.rows.find((x) => x.staffId === b.id)).toMatchObject({ lateTipRefundsCents: 50_000, totalTipsCents: 0 });
+    expect(r.lateRefunds).toBe("shop_cost");
+    expect(r.rows.find((x) => x.staffId === b.id)).toMatchObject({ lateTipRefundsCents: 50_000 });
     const line = lineOf(await run.buildPayroll(cur.start, cur.end), sh.id, b.id)!;
-    expect(line.tips).toBe(0);
+    expect(line.tips).toBe(curBefore?.tips ?? 0);
     expect(line.lateTipRefunds).toBe(500);
-    expect(line.tipsOutside).toBeGreaterThanOrEqual(0);
+    expect(line.tipRefundsShopCost).toBe(500);
   });
 });
 
