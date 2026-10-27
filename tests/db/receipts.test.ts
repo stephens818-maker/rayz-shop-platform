@@ -16,6 +16,7 @@ let R: typeof import("@/server/receipts");
 let privacy: typeof import("@/server/client-privacy");
 const fx = { shopId: "", michelle: "", cutId: "" };
 let seq = 0;
+const RUN = Date.now().toString(36);
 
 beforeAll(async () => {
   m = await loadModules();
@@ -37,10 +38,13 @@ const eq = (...a: Parameters<Mods["drizzle"]["eq"]>) => m.drizzle.eq(...a);
 
 /** A paid ticket for a new client with a phone and email on file. */
 async function paidTicket(o: { smsOptIn?: boolean; emailOptIn?: boolean; card?: string } = {}) {
-  const n = String(1000 + ++seq + Math.floor(Math.random() * 8000)).slice(-4);
+  // Opt-outs outlive a test run, so the phone skips any already opted out and the email is new every run.
+  let n: string;
+  do n = String(1000 + ++seq + Math.floor(Math.random() * 8000)).slice(-4);
+  while (await m.db.db.query.contactOptOuts.findFirst({ where: eq(s().contactOptOuts.phone, `+1712555${n}`) }));
   const [c] = await m.db.db
     .insert(s().customers)
-    .values({ firstName: "Riley", lastName: "Receipt", phone: `+1712555${n}`, email: `riley${n}@example.com`, smsOptIn: !!o.smsOptIn, emailOptIn: !!o.emailOptIn })
+    .values({ firstName: "Riley", lastName: "Receipt", phone: `+1712555${n}`, email: `riley${n}.${RUN}@example.com`, smsOptIn: !!o.smsOptIn, emailOptIn: !!o.emailOptIn })
     .returning();
   const sale = await m.checkout.openBlankSale(fx.shopId, actor, fx.michelle);
   await m.db.db.update(s().sales).set({ customerId: c.id }).where(eq(s().sales.id, sale.id));
