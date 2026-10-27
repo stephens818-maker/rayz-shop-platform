@@ -954,6 +954,36 @@ README "Payroll reports → Payroll review fixes" has the details. Migrations `c
 - [ ] The staff app's own screens for declarations and the clock-out field, by the Rayz App builder: the API and its OpenAPI entries are ready.
 - [ ] A filed W-2 or Form 8846: the reports are figures for the CPA and iSolved, not filings.
 
+## 42. Staff delta for Squire (ST-C0a to C18, I10 to I20, N7, N8)
+
+README "Staff app API → Staff delta for Squire" has the details. Migrations `core_0112` to `core_0124`.
+
+- [x] ST-C0a and C0b: Squire-imported tips stay out of the time clock CSV and the payout batches, and payable tip outputs never go below zero.
+- [x] ST-C0c: per-address and per-email limits and an escalating lock, two-step sign-in required for privileged roles, a 15-minute step-up for reveal, export and refund, a session per browser with revoke (**My sign-in security**), new-device emails, a 30-day idle end for app sessions, and front-desk clocks paired by a manager's QR code.
+- [x] ST-C18: tips are never reduced by fees, with database checks and tests for checkout, the ledger and the batch payout.
+- [x] Imported upcoming appointments queue reminders only when asked, and consent is rechecked at send. The pay-period start is the brand pay calendar setting.
+- [x] ST-C16: cash tip declarations at clock-out with the attestation, a reminder on the 1st, a last call on the 9th, and a close on the 10th.
+- [x] ST-C17: versioned, revocable deposit consent, recorded append-only, required before any Stripe payout. Tips on the paycheck is behind a brand flag, off.
+- [x] ST-C13: W-2 box 12 TP and TT, the 14b occupation code, the tip-credit data (45B monthly, from 2025 at $7.25), and separate iSolved columns for owed tips in payroll and Stripe-paid tips.
+- [x] ST-C15: no claw-back after transfer; the shop absorbs refunds, now the only option.
+- [x] ST-C9: the per-shop tips cutover checklist with the three-way tie-out and the manager's and CPA's sign-offs.
+- [x] ST-I14: a legal entity (FEIN last 4) per shop with state registrations, stamped on punches, time entries, tip payouts, declarations and locked periods.
+- [x] ST-I16: Illinois and Iowa rule sets: minimum wage, Illinois meal periods and missed-meal flags, the Illinois paid leave report, and payroll split by entity and work state.
+- [x] ST-I17: the no-biometrics CI check for the web and both apps.
+- [x] ST-I18: the phone data policy (encrypted 24-hour cache, app lock, blur, no copy or share), `X-Staff-Cache`, wipe on refused sessions with `POST /auth/wiped`, and offline punches.
+- [x] ST-I19: the Demo Shop and reviewer login for App Review, behind `FEATURE_STAFF_REVIEW_LOGIN`.
+- [x] ST-I20: quiet hours: no non-urgent texts or pushes off the clock.
+- [x] ST-I10: the employee privacy notice from a data map, pay questions with escalation to the owners, the promised deletions, and the release gate.
+- [x] ST-N7 (tip pool rules, no pool) and ST-N8 (paystub names in earnings).
+
+**Held or not done yet:**
+- [ ] ST-C5's exact punches, cross-shop weekly overtime and buddy-punch rules: held until iSolved Time is decided.
+- [ ] ST-C11 / I10, separate charges and transfers: pending Charles.
+- [ ] Legal review of the privacy notice and the agency details. The release gate fails until it's done (DEPLOY step 44).
+- [ ] The CPA's confirmation of the new iSolved columns, the 45B start and the state rates.
+- [ ] The staff app's screens (two-step setup, step-up, pairing, deposit consent, data protection, Question my pay, paystub labels), by the Rayz App builder. The API is ready.
+- [ ] Brand-wide lists that aren't search (the admin client list, gift cards) can show Demo Shop clients, and the audit log and sent messages aren't purged.
+
 ## Deferred by decision
 
 - I10 stays on destination charges for customers; `payment_transfers` isn't built, and tips aren't transferred to shops separately. Tip payouts to employees (sections 15, 35 and 40) don't move money yet: Stripe can't transfer from a shop's connected account to a barber's, and the redesign as separate charges and transfers (ST-C11) waits for Charles.

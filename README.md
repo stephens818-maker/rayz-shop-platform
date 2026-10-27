@@ -2961,6 +2961,49 @@ Ray'z is replacing Squire Commander with its own staff app, where staff see thei
 - **Migrations** `core_0099_staff_app` (tokens, devices), `core_0102_staff_app_gaps` (install-bound tokens, app invites, the payout cutover report and confirmations, YTD imports), `core_0103_staff_app_invite_jobs` and `core_0104_staff_payout_confirm_scrub`. Tests: `tests/db/staff-api.test.ts`, `tests/db/staff-app-api.test.ts`, and the staff app section of `tests/db/tenant.test.ts`.
 - **Not in it yet:** approved-device sign-in rules, which the app can't meet away from the shop's network; shop goals (ST-I2 shows personal milestones, since shops have no goals to show).
 
+### Staff delta for Squire (ST-C0a to C18, I10 to I20, N7, N8)
+
+The Rayz App builder's second list, verified at c959576. Migrations `core_0112` to `core_0124`. **Held:** ST-C5's exact punches, cross-shop weekly overtime and buddy-punch rules, until iSolved Time is decided; the basic time clock stays. **Pending Charles:** ST-C11 / I10, separate charges and transfers; money movement stays abstract.
+
+- **Sign-in hardening (C0c), web and staff app:**
+  - Rate limits: 30 attempts per address and 10 wrong passwords per email in 15 minutes. Every 10th wrong password in a row locks the account for 15 minutes, doubling up to a day, and the message reads like the rate limit, so it never shows that an account exists.
+  - Two-step sign-in is required for any privileged role: anyone who manages people or access, runs or approves pay, moves money, exports client or pay data, or changes brand settings (`PRIVILEGED_PERMISSIONS` in `src/domain/staff-auth.ts`). They set it up at their next sign-in. The demo and the test suite skip the rule (`ENFORCE_STAFF_MFA=1` turns it on in a test).
+  - Step-up: revealing a client's hidden details, exporting the client list and refunding a sale need a sign-in or a fresh check in the last 15 minutes. On the web that's a dialog, or `/admin/verify` for downloads; in the app it's `POST /me/step-up`. For a refund, a manager's PIN counts.
+  - Sessions: each browser is its own session, and **My sign-in security** lists browsers and phones and signs one out. A new device sends an email. A staff app session unused for 30 days ends.
+  - Front-desk clocks pair from **Time clock setup → Front-desk clock devices → Pair a clock**: a manager's one-time QR code, opened on the tablet (`/clock/pair`) or by the app (`POST /clock/kiosk/pair`). A paired clock runs with no staff session, and its token works from that install only.
+- **Tips:**
+  - Never negative and never clawed back (C0a, C0b, C15). Squire-imported tips stay out of the time clock CSV and the payout batches. Payable tips are floored at zero. A tip refunded once it's in a held or approved payout is the shop's cost, which is now the only refund option.
+  - Never reduced by fees (C18). Card-fee netting is gone from tip settings, pay plans and payouts. Migration 0114 returned the fee on open payouts, and database checks stop it coming back.
+  - Imported bookings (Squire appointments import) queue client reminders only when **Send reminders** is ticked (off by default). Every reminder rechecks consent when it goes out.
+  - Cash tip declarations (C16): a reminder on the 1st and a last call on the 9th; they close on the 10th.
+  - Deposit consent (C17): nobody is paid by Stripe deposit until they agree to the versioned wording, on **My banking** or in the app (`PUT /banking/deposit-consent`). Until then their tips are owed. Withdrawing holds every payout not yet sent. Each change is audited (`tip_deposit_consents`, append-only) and sends a security notice. Tips on the paycheck is a brand setting (**Tip payout settings → Staff payouts**), off until Charles decides.
+- **Payroll:**
+  - iSolved columns (C13): owed tips paid in payroll (`E_Owed Tips Paid In Payroll_Dollars`) and Stripe-paid tips (`M_Tips Paid By Stripe_Dollars`) each get their own column, only when someone in the file has them. 45B is reported by month of the paycheck, from 2025-01-01 at $7.25 an hour (barbering qualifies from 2025).
+  - Cutover checklist (C9), per shop: Squire's last tips day is a Saturday, and each tip date has one owner. The manager signs a three-way tie-out of Squire's tickets, its final statement and the barbers' confirmations. An owner then records the CPA's sign-off. Either sign-off goes stale if the report changes.
+  - Legal entities (I14): each shop's employer is a legal entity with its state registrations (only the last 4 of each state account number is kept). The employer is stamped on every punch, time entry, tip payout, cash declaration and locked pay period.
+  - Illinois and Iowa rules (I16, `src/domain/wage-hour.ts`): the work state comes from the shop's address. Each state has its minimum wage check, Illinois meal-period reminders during a shift of 7½ hours or more (an urgent alert) and missed-meal flags, and **Reports → Payroll → Illinois paid leave**. Payroll and tips paid split by entity and work state. The CPA confirms the rates each January.
+- **The staff app's phone:**
+  - No biometrics (I17): `pnpm check:biometrics` runs on every pull request (`.github/workflows/no-biometrics.yml`) and bans face, fingerprint, voice and ID-verification SDKs. The phone's own unlock is allowed. Employee custom fields can't hold biometric data.
+  - Data on the phone (I18): `GET /config` `dataProtection` is the policy: an encrypted cache with a 24-hour TTL, app lock, snapshot blur, no copy or share, read-only offline. Every response says whether it may be cached (`X-Staff-Cache`). A refused session says what to wipe (`details.wipe`), and the app confirms with `POST /auth/wiped`. Punches tapped with no signal go in at their tapped time (up to 24 hours), flagged offline, once.
+  - Demo Shop for App Review (I19): one hidden shop and a reviewer login, set up by `pnpm staff:demo-shop` and able to sign in only while `FEATURE_STAFF_REVIEW_LOGIN=true`. It's left out of brand-wide access and payroll, and its clients are kept apart in search. It gets a fresh demo day at each sign-in and has no web sign-in. Nothing it does moves money or reaches a person.
+  - Quiet hours (I20): off the clock or on a break, non-urgent texts and app alerts wait for clock-in, the break's end or the next shift (9 AM if none, skipping time off), and no later than two hours before the appointment. Client arrivals, running late, the waitlist, clock-out and meal reminders go at once, and email is never held.
+- **Privacy notice and pay questions (I10):**
+  - `/staff-app/privacy` is built from a data map (`src/domain/staff-privacy.ts`): what is kept, why, where it comes from, who sees it, which processors, and for how long. It also covers the Illinois Personnel Record Review Act and Iowa Code chapter 91B. It shows a draft banner until a named reviewer approves the current version.
+  - **Pay questions** (web `/admin/pay-questions`, app `/me/pay-questions`): the shop's timecard approvers answer within 5 days. After that, or when the employee asks, a question goes to the owners, who answer within 7. The notice lists the outside agencies (the Illinois Department of Labor, the Iowa Division of Labor and the U.S. Wage and Hour Division) and the no-retaliation promise.
+  - Deletions the notice promises run with the daily cron: phones signed out more than 30 days ago, and punch photos after 90 days unless the person has an open pay question.
+  - `pnpm staff:release-check` (and the `staff-app-v*` tag workflow) fails until the notice is reviewed.
+- **Nice-to-haves:**
+  - Tip pools (N7): there's no pool. `src/domain/tip-pool.ts` keeps owners, managers and supervisors out of one if pooling is ever added, and a test fails if a pool table appears.
+  - Paystub names (N8): `GET /me/earnings` and **My pay** label each line with the iSolved earning name on the paystub.
+- **Tests:**
+  - DB: `tests/db/staff-login-hardening.test.ts`, `tests/db/legal-entities.test.ts`, `tests/db/demo-shop.test.ts`, `tests/db/staff-quiet-hours.test.ts` and `tests/db/pay-questions.test.ts`, plus new cases in the tips, staff payouts, payroll, time clock, clients and staff API suites.
+  - Unit: `tests/staff-auth.test.ts`, `tests/wage-hour.test.ts`, `tests/no-biometrics.test.ts`, `tests/staff-device-policy.test.ts`, `tests/staff-quiet-hours.test.ts`, `tests/staff-privacy.test.ts` and `tests/tip-pool-paystub.test.ts`.
+- **Known limits:**
+  - Brand-wide lists that aren't search (the admin client list, gift cards) can still show Demo Shop clients.
+  - The audit log and sent-message records are kept, never purged; the notice says "at least 4 years".
+  - The notice's wording and the agency details wait on legal review.
+  - The staff app's screens for all of this are the Rayz App builder's: the API is ready (NOTES-SYNC.md, Requests).
+
 ---
 
 ## What's stubbed or simulated
