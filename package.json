@@ -9,7 +9,7 @@
     "db:deploy": "tsx scripts/deploy-db.ts",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node --max-old-space-size=4096 node_modules/typescript/bin/tsc --noEmit",
     "test": "vitest run --exclude \"tests/db/**\" --exclude \"tests/perf/**\"",
     "test:db": "vitest run tests/db",
     "test:perf": "vitest run tests/perf",
