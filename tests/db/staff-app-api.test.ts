@@ -107,7 +107,7 @@ describe("every route is guarded", () => {
     // The front-desk clock: a paired install's own token, else the same guard as staffRoute.
     expect(src).toMatch(/const kioskRoute = [^]*?pairedKiosk\(req\);\s*if \(paired\) return fn\(req, paired\);\s*return fn\(req, await signedInKiosk\(await guardedStaff\(req, KIOSK\), req\)\)/);
     const http = readFileSync(join(process.cwd(), "src/server/staff-api/http.ts"), "utf8");
-    expect(http).toMatch(/assertSupportedStaffClient\(req\);\s*return withCacheRule\(req, await fn\(req, await guardedStaff\(req, guard\), params\)\)/);
+    expect(http).toMatch(/assertSupportedStaffClient\(req\);\s*const \[ctx\] = await Promise\.all\(\[guardedStaff\(req, guard\), loadDisplay\(\)\]\);\s*return withCacheRule\(req, await fn\(req, ctx, params\)\)/);
     expect(http).toMatch(/const ctx = await requireStaffApp\(req\);\s*assertShopHeader\(req, ctx\);\s*authorizeContext\(ctx/);
   });
 
@@ -398,7 +398,9 @@ describe("timecards (ST-C5)", () => {
   it("a manager adds, edits and voids punches with a reason; the barber signs off; the manager approves; no photo or location comes back", async () => {
     const mgr = await login("michelle@rayz.test");
     const t = await login("makenna@rayz.test");
-    const day = m.time.addDays(today, -1);
+    // A day in the last pay period: the seed leaves her clocked in today, which would hold up sign-off.
+    const { periodFor } = await import("@/server/time-clock");
+    const day = m.time.addDays((await periodFor(today)).start, -1);
     const at = (min: number) => m.time.zonedWallTime(day, min).toJSDate().toISOString();
     const add = async (type: string, min: number) => call("POST", `timecards/${ids.makenna}/punches`, { token: mgr.accessToken, body: { shopId: shop.coralville, type, at: at(min), reason: "Forgot to punch" } });
     const inn = await add("in", 9 * 60);
