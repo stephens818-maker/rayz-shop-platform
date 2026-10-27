@@ -701,6 +701,13 @@
       "when": 1796238000000,
       "tag": "core_0099_staff_app",
       "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1796241600000,
+      "tag": "core_0100_staff_tip_stripe",
+      "breakpoints": true
     }
   ]
 }

@@ -74,11 +74,14 @@ export interface PayoutDestination {
 }
 
 interface StripeExternalAccountLike {
+  id?: string;
   object?: string;
   last4?: string | null;
   bank_name?: string | null;
   brand?: string | null;
+  funding?: string | null;
   default_for_currency?: boolean | null;
+  available_payout_methods?: readonly string[] | null;
 }
 
 /** Only the type, last 4 and name of a Stripe bank account or card; anything else Stripe sends is dropped. */
@@ -91,6 +94,47 @@ export function destinationOf(x: StripeExternalAccountLike | null | undefined): 
 export function defaultDestination(list: readonly StripeExternalAccountLike[] | null | undefined): PayoutDestination | null {
   const xs = (list ?? []).filter((x) => destinationOf(x));
   return destinationOf(xs.find((x) => x.default_for_currency) ?? (xs.length === 1 ? xs[0] : null));
+}
+
+/** One bank account or debit card on an employee's Stripe account: Stripe's id for it, its type, name and last 4, and what it takes. */
+export interface ExternalAccount extends PayoutDestination {
+  id: string;
+  /** Standard payouts go here. */
+  default: boolean;
+  /** Stripe takes instant payouts to it (an eligible debit card, or a bank with instant). */
+  instant: boolean;
+}
+
+const EXTERNAL_ID = /^(ba|card|sim)_[A-Za-z0-9_]{1,80}$/;
+
+/** Only an external account's Stripe id, type, last 4, name and payout methods; anything else Stripe sends is dropped. */
+export function externalAccountOf(x: StripeExternalAccountLike | null | undefined): ExternalAccount | null {
+  const d = destinationOf(x);
+  if (!d || !x?.id || !EXTERNAL_ID.test(x.id)) return null;
+  return { id: x.id, ...d, default: !!x.default_for_currency, instant: !!x.available_payout_methods?.includes("instant") };
+}
+
+/** Every bank account and card on the account, the default first. Where none is marked default, a single one is. */
+export function externalAccountsOf(list: readonly StripeExternalAccountLike[] | null | undefined): ExternalAccount[] {
+  const xs = (list ?? []).map(externalAccountOf).filter((x): x is ExternalAccount => !!x);
+  if (xs.length === 1 && !xs[0].default) xs[0] = { ...xs[0], default: true };
+  return xs.sort((a, b) => Number(b.default) - Number(a.default));
+}
+
+/** Where an instant payout goes: the default when it takes instant payouts, else the first debit card that does. */
+export function instantDestination(list: readonly ExternalAccount[]): ExternalAccount | null {
+  return list.find((x) => x.default && x.instant) ?? list.find((x) => x.type === "card" && x.instant) ?? list.find((x) => x.instant) ?? null;
+}
+
+/** The saved list back from JSON, dropping anything that isn't a valid entry. */
+export function storedExternalAccounts(raw: unknown): ExternalAccount[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((r) => {
+    const x = r as Partial<ExternalAccount>;
+    return x && typeof x.id === "string" && EXTERNAL_ID.test(x.id) && (x.type === "card" || x.type === "bank_account") && typeof x.last4 === "string" && /^\d{4}$/.test(x.last4)
+      ? [{ id: x.id, type: x.type, last4: x.last4, name: typeof x.name === "string" ? x.name.slice(0, 60) : null, default: !!x.default, instant: !!x.instant }]
+      : [];
+  });
 }
 
 export function sameDestination(a: PayoutDestination | null, b: PayoutDestination | null): boolean {

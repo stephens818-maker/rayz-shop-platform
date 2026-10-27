@@ -2,7 +2,7 @@ import { inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { staff } from "@/db/schema";
 import { Cell, Column, ViewCtx, listTable } from "@/domain/report-views";
-import { METHOD_LABEL, STATUS_LABEL } from "@/domain/tips";
+import { METHOD_LABEL, STATUS_LABEL, receivedCents, shopCostCents } from "@/domain/tips";
 import { formatCents } from "@/lib/money";
 import { localDateOf } from "@/lib/time";
 import type { ReportData } from "@/server/report-data";
@@ -66,10 +66,13 @@ export async function tipPayoutsData(scope: ReportScope, loc: ViewCtx): Promise<
       adjust: number;
       net: number;
       instantFee: number;
+      feePaidBy: string;
+      last4: string | null;
       ref: string | null;
     }>(sql`
       select p.id, p.shop_id "shopId", p.staff_id "staffId", p.method, p.status, coalesce(p.paid_at, p.sent_at, p.created_at) "at",
-        p.gross_cents gross, p.fee_cents fee, p.adjust_cents adjust, p.net_cents net, p.instant_fee_cents "instantFee", coalesce(p.stripe_transfer_id, p.ack_method) ref
+        p.gross_cents gross, p.fee_cents fee, p.adjust_cents adjust, p.net_cents net, p.instant_fee_cents "instantFee", p.instant_fee_paid_by "feePaidBy",
+        p.destination_last4 last4, coalesce(p.stripe_transfer_id, p.ack_method) ref
       from tip_payouts p
       where p.shop_id in (${uuids(scope.shopIds)}) and p.method <> 'prior' and p.status <> 'cancelled'
         and (coalesce(p.paid_at, p.sent_at, p.created_at) at time zone 'America/Chicago')::date between ${scope.from} and ${scope.to}
@@ -118,12 +121,43 @@ export async function tipPayoutsData(scope: ReportScope, loc: ViewCtx): Promise<
         id: "payouts",
         title: "Payouts",
         subtitle: "Cash, Stripe and payroll payouts in the period, by the day each was paid or sent.",
-        columns: [text("Date"), text("Employee"), text("Method"), text("Status"), money("Tips"), money("Card fee"), money("Adjustments"), money("Paid"), money("Instant fee"), text("Reference")],
-        rows: payouts.map((p) => ({
-          shopId: p.shopId,
-          staffId: p.staffId,
-          cells: [localDateOf(p.at), name.get(p.staffId) ?? "Unknown", METHOD_LABEL[p.method], STATUS_LABEL[p.status], p.gross, -p.fee, p.adjust, p.net - p.instantFee, p.instantFee, p.ref === "pin" ? "PIN" : p.ref === "name" ? "Signed" : p.ref],
-        })),
+        columns: [
+          text("Date"),
+          text("Employee"),
+          text("Method"),
+          text("Status"),
+          money("Tips"),
+          money("Card fee"),
+          money("Adjustments"),
+          money("Paid"),
+          money("Instant fee"),
+          text("Instant fee paid by"),
+          money("Shop's cost"),
+          text("To"),
+          text("Reference"),
+        ],
+        rows: payouts.map((p) => {
+          const amounts = { netCents: p.net, instantFeeCents: p.instantFee, instantFeePaidBy: p.feePaidBy };
+          return {
+            shopId: p.shopId,
+            staffId: p.staffId,
+            cells: [
+              localDateOf(p.at),
+              name.get(p.staffId) ?? "Unknown",
+              METHOD_LABEL[p.method],
+              STATUS_LABEL[p.status],
+              p.gross,
+              -p.fee,
+              p.adjust,
+              receivedCents(amounts),
+              p.instantFee,
+              p.instantFee ? (p.feePaidBy === "shop" ? "Shop" : "Employee") : "",
+              shopCostCents(amounts),
+              p.last4 ? `••${p.last4}` : "",
+              p.ref === "pin" ? "PIN" : p.ref === "name" ? "Signed" : p.ref,
+            ],
+          };
+        }),
         keepShop: loc.shops.length > 1,
         sort: (a, b) => String(b[0]).localeCompare(String(a[0])) || String(a[1]).localeCompare(String(b[1])),
       }),
@@ -131,6 +165,7 @@ export async function tipPayoutsData(scope: ReportScope, loc: ViewCtx): Promise<
     notes: [
       "Card tips count once their card money settles (the shop's delay); cash and gift card tips at once. Refunded tips come off the day of the refund.",
       "Card fee netting is a per-shop setting, off unless turned on; whether it's allowed and how it's reported is for the accountant to confirm.",
+      "Stripe's instant payout fee comes out of the employee's payout where the brand passes it on; otherwise the shop pays it on top (Shop's cost).",
     ],
   };
 }

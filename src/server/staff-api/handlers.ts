@@ -9,7 +9,7 @@ import { refreshStaffTokens, requestWhere, staffCodeLogin, staffLogout, staffPas
 import { appPunch, clockOverview, kioskPunch, kioskQr, kioskStatus, kioskTeam, registerKiosk, setMyPin } from "./clock";
 import { listStaffDevices, registerStaffDevice, revokeStaffDevice, updateStaffDevice } from "./devices";
 import { StaffAppContext, staffRoute } from "./http";
-import { bankingView, dashboardLink, earningsRange, myEarnings, myPayouts, myTipsView, onboardingLink, setMyPayoutMethod } from "./money";
+import { bankingView, dashboardLink, earningsRange, myEarnings, myExternalAccounts, myPayouts, myTipsView, onboardingLink, setMyPayoutMethod } from "./money";
 import { markPopupsSeen, popupsFor } from "./popups";
 import { addAppointmentNote, appointmentNotes, dayRange, myAppointment, myAppointments, mySchedule } from "./schedule";
 import * as S from "./schemas";
@@ -212,6 +212,12 @@ export const getEarnings = staffRoute({ perms: null, person: true }, async (req,
 export const getBanking = staffRoute(TIPS, async (req, ctx) => {
   const q = query(req, S.BankingQuery);
   return json(await bankingView(ctx, { refresh: !!q.refresh }));
+});
+
+/** GET /banking/external-accounts: their bank accounts and debit cards, last 4 only. */
+export const getExternalAccounts = staffRoute(TIPS, async (req, ctx) => {
+  const q = query(req, S.BankingQuery);
+  return json(await myExternalAccounts(ctx, { refresh: !!q.refresh }));
 });
 
 /** POST /banking/onboarding-link: Stripe's hosted page for their own debit card or bank account. */

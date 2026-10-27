@@ -5,13 +5,16 @@ import { auditLog, staff, staffPayoutAccounts, staffShops } from "@/db/schema";
 import {
   BANKING_STATUS_LABEL,
   BankingStatus,
+  ExternalAccount,
   PayoutDestination,
   bankingStatus,
-  defaultDestination,
   destinationLabel,
-  destinationOf,
+  externalAccountOf,
+  externalAccountsOf,
+  instantDestination,
   requirementLabels,
   sameDestination,
+  storedExternalAccounts,
 } from "@/domain/banking";
 import { METHOD_LABEL, TipMethod } from "@/domain/tips";
 import { appBaseUrl } from "@/lib/deployment";
@@ -20,6 +23,7 @@ import { Actor, audit } from "@/server/audit";
 import { AppError, notFound } from "@/server/errors";
 import { enqueueRaw } from "@/server/notifications/queue";
 import { connectMode } from "@/server/payments/connect";
+import { moneyClient } from "@/server/payments/money-movement";
 import { stripe } from "@/server/payments/processor";
 import { tipPolicy } from "./ledger";
 
@@ -175,8 +179,12 @@ export async function setPayoutChoice(staffId: string, v: { method: TipMethod | 
 
 // ───────────────────────────── Stripe ─────────────────────────────
 
-const instantOf = (acct: Stripe.Account) =>
-  !!acct.external_accounts?.data?.some((x) => (x as { available_payout_methods?: string[] }).available_payout_methods?.includes("instant"));
+/** The account's bank accounts and cards (ids, types, names and last 4 only), its default destination, and whether any takes instant payouts. */
+const listCols = (list: ExternalAccount[]): AccountPatch => ({
+  externalAccounts: list,
+  instantEligible: !!instantDestination(list),
+  ...destinationCols(list.find((x) => x.default) ?? null),
+});
 
 const flagsOf = (acct: Stripe.Account): AccountPatch => ({
   payoutsEnabled: !!acct.payouts_enabled,
@@ -185,7 +193,7 @@ const flagsOf = (acct: Stripe.Account): AccountPatch => ({
   requirementsPending: [...new Set(acct.requirements?.pending_verification ?? [])],
   requirementsDeadline: acct.requirements?.current_deadline ? new Date(acct.requirements.current_deadline * 1000) : null,
   disabledReason: acct.requirements?.disabled_reason ?? null,
-  ...(acct.external_accounts ? { instantEligible: instantOf(acct), ...destinationCols(defaultDestination(acct.external_accounts.data as never)) } : {}),
+  ...(acct.external_accounts ? listCols(externalAccountsOf(acct.external_accounts.data as never)) : {}),
 });
 
 /**
@@ -197,7 +205,7 @@ export async function ensureStaffAccount(staffId: string, actor: Actor): Promise
   if (existing?.stripeAccountId && (connectMode() === "simulator" || !existing.simulated)) return existing;
   const person = await db.query.staff.findFirst({ where: eq(staff.id, staffId) });
   if (!person || person.kind !== "person") throw notFound("Staff member");
-  const s = stripe();
+  const s = moneyClient();
   let accountId: string;
   if (s) {
     const acct = await s.accounts
@@ -232,6 +240,7 @@ export async function ensureStaffAccount(staffId: string, actor: Actor): Promise
     requirementsDeadline: null,
     disabledReason: null,
     ...destinationCols(null),
+    externalAccounts: [],
     updatedAt: new Date(),
   };
   const [row] = await db.insert(staffPayoutAccounts).values({ staffId, ...values }).onConflictDoUpdate({ target: staffPayoutAccounts.staffId, set: values }).returning();
@@ -246,7 +255,7 @@ export async function ensureStaffAccount(staffId: string, actor: Actor): Promise
  */
 export async function staffOnboardingUrl(staffId: string, actor: Actor, origin: string, returnPath: string = MY_BANKING): Promise<string | null> {
   const a = await ensureStaffAccount(staffId, actor);
-  const s = stripe();
+  const s = moneyClient();
   if (!s || a.simulated) return null;
   const back = `${origin}${returnPath}`;
   const link = await s.accountLinks
@@ -254,12 +263,13 @@ export async function staffOnboardingUrl(staffId: string, actor: Actor, origin: 
     .catch((e: Stripe.errors.StripeError) => {
       throw new AppError("payment_failed", `Stripe didn't start payout setup: ${e.message}`);
     });
-  await audit(actor, "tips.onboarding_started", "staff", staffId, { stripeAccountId: a.stripeAccountId });
+  await audit(actor, a.detailsSubmitted ? "tips.onboarding_resumed" : "tips.onboarding_started", "staff", staffId, { stripeAccountId: a.stripeAccountId });
   return link.url;
 }
 
-const SIM_CARD: PayoutDestination = { type: "card", last4: "5556", name: "Visa" };
-const SIM_BANK: PayoutDestination = { type: "bank_account", last4: "6789", name: "STRIPE TEST BANK" };
+/** Stripe's test Visa debit card (instant payouts) and test bank, as the simulator's stand-ins. */
+const SIM_CARD: ExternalAccount = { id: "sim_card_5556", type: "card", last4: "5556", name: "Visa", default: true, instant: true };
+const SIM_BANK: ExternalAccount = { id: "sim_ba_6789", type: "bank_account", last4: "6789", name: "STRIPE TEST BANK", default: true, instant: false };
 
 function simulatorOnly(a: StaffPayoutAccount) {
   if (!a.simulated || connectMode() === "stripe") throw new AppError("bad_request", "This account is set up through Stripe, not the simulator");
@@ -271,20 +281,23 @@ export async function simulateStaffOnboarding(staffId: string, actor: Actor) {
   simulatorOnly(a);
   const row = await saveAccount(
     a,
-    { payoutsEnabled: true, detailsSubmitted: true, instantEligible: true, requirementsDue: [], requirementsPending: [], requirementsDeadline: null, disabledReason: null, ...destinationCols(SIM_CARD) },
+    { payoutsEnabled: true, detailsSubmitted: true, requirementsDue: [], requirementsPending: [], requirementsDeadline: null, disabledReason: null, ...listCols([SIM_CARD]) },
     actor,
   );
   await audit(actor, "tips.onboarding_simulated", "staff", staffId, { stripeAccountId: a.stripeAccountId });
   return row;
 }
 
-/** The simulator's stand-in for changing the card or bank in Stripe's dashboard: switches between a test debit card and a test bank account. */
+/**
+ * The simulator's stand-in for changing the card or bank in Stripe's dashboard: the test bank
+ * becomes the default with the debit card kept for instant payouts, or back to the card alone.
+ */
 export async function simulateDestinationChange(staffId: string, actor: Actor) {
   const a = await staffAccount(staffId);
   if (!a?.stripeAccountId || !a.detailsSubmitted) throw new AppError("conflict", "Set up Stripe payouts first.");
   simulatorOnly(a);
-  const next = accountDestination(a)?.type === "card" ? SIM_BANK : SIM_CARD;
-  return saveAccount(a, { ...destinationCols(next), instantEligible: next.type === "card" }, actor);
+  const list = accountDestination(a)?.type === "card" ? [SIM_BANK, { ...SIM_CARD, default: false }] : [SIM_CARD];
+  return saveAccount(a, listCols(list), actor);
 }
 
 export async function refreshStaffAccount(staffId: string): Promise<StaffPayoutAccount | null> {
@@ -313,16 +326,25 @@ type ExternalAccountEvent = "account.external_account.created" | "account.extern
 export async function applyStaffExternalAccount(accountId: string, type: ExternalAccountEvent, obj: Stripe.BankAccount | Stripe.Card) {
   const a = await staffAccountByStripeId(accountId);
   if (!a) return null;
-  const d = destinationOf(obj);
-  const current = accountDestination(a);
+  const x = externalAccountOf(obj as never);
   let row = a;
-  if (type === "account.external_account.deleted") {
-    if (d && sameDestination(d, current)) row = await saveAccount(a, destinationCols(null), STRIPE_ACTOR);
-  } else if (d && (obj.default_for_currency || !current || d.last4 === current.last4)) {
-    const instant = (obj as { available_payout_methods?: string[] }).available_payout_methods?.includes("instant");
-    row = await saveAccount(a, { ...destinationCols(d), ...(instant !== undefined ? { instantEligible: instant } : {}) }, STRIPE_ACTOR);
+  if (x) {
+    const others = storedExternalAccounts(a.externalAccounts).filter((y) => y.id !== x.id);
+    const current = accountDestination(a);
+    const list =
+      type === "account.external_account.deleted"
+        ? others
+        : [{ ...x, default: x.default || (!current && !others.some((y) => y.default)) }, ...others.map((y) => (x.default ? { ...y, default: false } : y))].sort((p, q) => Number(q.default) - Number(p.default));
+    row = await saveAccount(a, listCols(list), STRIPE_ACTOR);
   }
   return (await refreshStaffAccount(a.staffId).catch(() => null)) ?? row;
+}
+
+/** Their bank accounts and debit cards as Stripe last reported them: type, name, last 4, default and instant. Never a number. */
+export function externalAccountsView(a: StaffPayoutAccount | null) {
+  const list = storedExternalAccounts(a?.externalAccounts);
+  const fast = instantDestination(list);
+  return list.map((x) => ({ id: x.id, type: x.type, name: x.name, last4: x.last4, label: destinationLabel(x), default: x.default, instant: x.instant, instantDestination: fast?.id === x.id }));
 }
 
 /** A one-time sign-in to the employee's Stripe Express dashboard, where they change their card or bank. */
@@ -334,7 +356,7 @@ export async function staffDashboardUrl(staffId: string): Promise<string | null>
   return link?.url ?? null;
 }
 
-const BANKING_ACTIONS = ["tips.account_created", "tips.onboarding_started", "tips.onboarding_simulated", "tips.account_state", "tips.destination_changed", "tips.method"];
+const BANKING_ACTIONS = ["tips.account_created", "tips.onboarding_started", "tips.onboarding_resumed", "tips.onboarding_simulated", "tips.account_state", "tips.destination_changed", "tips.method"];
 
 /** The employee's own banking history from the audit log: setup, status changes, destination and method changes. */
 export async function bankingActivity(staffId: string, limit = 12) {

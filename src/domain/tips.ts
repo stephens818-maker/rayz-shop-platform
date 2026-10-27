@@ -41,9 +41,11 @@ export interface BrandTipPolicy {
   employeeChooses: boolean;
   /** Stripe instant payouts to an eligible debit card, for Stripe's fee. */
   instantAllowed: boolean;
+  /** Stripe's instant payout fee comes out of the employee's payout; off, the shop pays it on top. */
+  instantFeePassedOn: boolean;
 }
 
-export const DEFAULT_BRAND_TIP_POLICY: BrandTipPolicy = { methods: ["cash", "stripe", "payroll"], employeeChooses: true, instantAllowed: true };
+export const DEFAULT_BRAND_TIP_POLICY: BrandTipPolicy = { methods: ["cash", "stripe", "payroll"], employeeChooses: true, instantAllowed: true, instantFeePassedOn: true };
 
 export function brandTipPolicy(raw: unknown): BrandTipPolicy {
   const r = (raw && typeof raw === "object" ? raw : {}) as Partial<BrandTipPolicy>;
@@ -53,6 +55,7 @@ export function brandTipPolicy(raw: unknown): BrandTipPolicy {
     methods: methods.length ? methods : d.methods,
     employeeChooses: typeof r.employeeChooses === "boolean" ? r.employeeChooses : d.employeeChooses,
     instantAllowed: typeof r.instantAllowed === "boolean" ? r.instantAllowed : d.instantAllowed,
+    instantFeePassedOn: typeof r.instantFeePassedOn === "boolean" ? r.instantFeePassedOn : d.instantFeePassedOn,
   };
 }
 
@@ -234,6 +237,18 @@ export function instantFeeCents(netCents: number, rate: InstantFeeRate = DEFAULT
   if (netCents <= 0) return 0;
   return Math.min(netCents, Math.max(rate.minCents, Math.round((netCents * rate.pct) / 100)));
 }
+
+/** Who pays Stripe's instant payout fee, by the brand's policy: the employee (out of the payout) or the shop (on top of it). */
+export type InstantFeePayer = "employee" | "shop";
+export const instantFeePayer = (policy: Pick<BrandTipPolicy, "instantFeePassedOn">): InstantFeePayer => (policy.instantFeePassedOn ? "employee" : "shop");
+
+type PayoutAmounts = { netCents: number; instantFeeCents: number; instantFeePaidBy: InstantFeePayer | string };
+/** What reaches the employee's card or bank: the net, less the instant fee where it's passed on. */
+export const receivedCents = (p: PayoutAmounts) => p.netCents - (p.instantFeePaidBy === "shop" ? 0 : p.instantFeeCents);
+/** What the payout costs the shop: the net, plus the instant fee where the shop pays it. */
+export const shopCostCents = (p: PayoutAmounts) => p.netCents + (p.instantFeePaidBy === "shop" ? p.instantFeeCents : 0);
+/** The instant fee the employee pays: all of it, or none where the shop pays it. */
+export const employeeFeeCents = (p: PayoutAmounts) => (p.instantFeePaidBy === "shop" ? 0 : p.instantFeeCents);
 
 /** A card tip's share of the charge's processing fee, pro rata to the charge. */
 export function feeShareCents(feeCents: number, tipCents: number, amountCents: number): number {

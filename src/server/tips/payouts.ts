@@ -2,18 +2,24 @@ import type Stripe from "stripe";
 import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, notInArray, sql } from "drizzle-orm";
 import { db, DBorTx, Tx } from "@/db";
 import { cashDrawers, payGroups, payrollRuns, shops, staff, tipLedger, tipPayoutBatches, tipPayouts, type TipBatchKind, type TipPayoutStatus } from "@/db/schema";
+import { instantDestination, storedExternalAccounts } from "@/domain/banking";
 import {
   DEFAULT_INSTANT_FEE,
+  InstantFeePayer,
   METHOD_LABEL,
   ShopTipSettings,
   TipMethod,
   draftPayouts,
   effectiveMethod,
+  employeeFeeCents,
   instantFeeCents,
+  instantFeePayer,
   netsCardFee,
   parseInstantFee,
   payoutTotals,
+  receivedCents,
   scheduledBatch,
+  shopCostCents,
 } from "@/domain/tips";
 import { formatCents } from "@/lib/money";
 import { todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
@@ -22,7 +28,7 @@ import { Actor, SYSTEM, audit } from "@/server/audit";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { enqueueRaw, enqueueShopEmail } from "@/server/notifications/queue";
 import { settlementAccount } from "@/server/payments/connect";
-import { stripe } from "@/server/payments/processor";
+import { MovementError, moneyClient, moneyMovementReady, payOutToConnectedAccount, unwindPayOut } from "@/server/payments/money-movement";
 import { tipOverrides } from "@/server/compensation";
 import { checkPin } from "@/server/time-clock";
 import { canReceive, staffAccount } from "./accounts";
@@ -45,15 +51,15 @@ async function lastLockedEnd(shopId: string, tx: DBorTx): Promise<LocalDate | nu
   return r?.end ?? null;
 }
 
-/** Recomputes a payout from the entries pointing at it, the only source of its amounts. */
-async function recompute(tx: DBorTx, payoutId: string, netCardFee: boolean) {
+/** Recomputes a payout from the entries pointing at it, the only source of its amounts. `feePaidBy` follows the brand's policy; omitted, it stays as it was. */
+async function recompute(tx: DBorTx, payoutId: string, netCardFee: boolean, feePaidBy?: InstantFeePayer) {
   const [p] = await tx.select().from(tipPayouts).where(eq(tipPayouts.id, payoutId));
   const entries = await tx.select({ kind: tipLedger.kind, amountCents: tipLedger.amountCents, feeCents: tipLedger.feeCents }).from(tipLedger).where(eq(tipLedger.payoutId, payoutId));
   const t = payoutTotals(entries, netCardFee && p.method !== "payroll");
   const fee = p.instant ? instantFeeCents(t.netCents, instantRate()) : 0;
   const [row] = await tx
     .update(tipPayouts)
-    .set({ ...t, instantFeeCents: fee, updatedAt: new Date() })
+    .set({ ...t, instantFeeCents: fee, instantFeePaidBy: feePaidBy ?? p.instantFeePaidBy, updatedAt: new Date() })
     .where(eq(tipPayouts.id, payoutId))
     .returning();
   return row;
@@ -149,7 +155,7 @@ export async function buildBatch(o: { shopId: string; kind: Exclude<TipBatchKind
         p.id,
         d.entryIds.filter((id) => !entries.find((e) => e.id === id)?.inDraft),
       );
-      await recompute(tx, p.id, feeOf(d.staffId));
+      await recompute(tx, p.id, feeOf(d.staffId), instantFeePayer(policy));
     }
     // Someone whose tips now net to nothing (a refund came in) comes out of the draft; their entries wait for the next batch.
     for (const p of mine.filter((x) => x.status === "pending" && !payouts.some((d) => d.staffId === x.staffId))) {
@@ -187,6 +193,8 @@ export async function approveBatch(batchId: string, actor: Actor, now = new Date
     const b = await lockBatch(tx, batchId);
     if (b.status !== "draft") throw new AppError("conflict", "This batch was already approved or cancelled.");
     const ps = await tx.select().from(tipPayouts).where(eq(tipPayouts.batchId, batchId)).for("update");
+    if (!moneyMovementReady() && ps.some((p) => p.method === "stripe" && p.status === "pending" && p.netCents > 0))
+      throw new AppError("conflict", "Stripe tip payouts run in test mode only, and this deployment has live Stripe keys. Hold or remove the Stripe payouts, or pay them another way.");
     for (const p of ps.filter((x) => x.status === "pending" && x.netCents <= 0)) {
       await tx.update(tipPayouts).set({ status: "cancelled", updatedAt: now }).where(eq(tipPayouts.id, p.id));
       await release(tx, p.id);
@@ -363,10 +371,12 @@ export async function cashAwaiting(shopId: string, tx: DBorTx = db) {
 // ───────────────────────────── Stripe Connect ─────────────────────────────
 
 /**
- * Sends an approved Stripe payout: from the shop's own connected account (an account debit to the
- * platform first) or the brand's balance, a transfer to the employee's Express account, then a payout
- * to their debit card or bank (instant where they asked and Stripe allows). The instant fee stays with
- * the platform to cover Stripe's charge. Idempotency keys per payout keep a retry from sending twice.
+ * Sends an approved Stripe payout through the money-movement module: from the shop's own (or its
+ * owner's) connected account by an account debit to the platform, or from the brand's balance; a
+ * transfer to the employee's Express account; then a payout to their bank or debit card, instant to
+ * the card where they asked and Stripe allows. Stripe charges the platform the instant fee (the
+ * platform pays the Express accounts' fees), so the platform keeps it out of the money it moves:
+ * passed on, the employee receives net − fee; absorbed, the shop is debited net + fee.
  */
 export async function sendStripePayout(payoutId: string, now = new Date()) {
   const [p] = await db
@@ -377,57 +387,74 @@ export async function sendStripePayout(payoutId: string, now = new Date()) {
   if (!p) return null;
   const acct = await staffAccount(p.staffId);
   if (!canReceive(acct)) return markFailed(p.id, "Their Stripe payout account isn't ready");
-  const amount = p.netCents - p.instantFeeCents;
+  const list = storedExternalAccounts(acct!.externalAccounts);
+  const fast = p.instant ? instantDestination(list) : null;
+  let sending = p;
+  if (p.instant && !fast && !acct!.instantEligible) {
+    [sending] = await db.update(tipPayouts).set({ instant: false, instantFeeCents: 0, updatedAt: now }).where(eq(tipPayouts.id, p.id)).returning();
+    await audit(SYSTEM, "tips.instant_unavailable", "tip_payout", p.id, { staffId: p.staffId, reason: "No debit card on their Stripe account takes instant payouts; sent as a standard payout" }, p.shopId);
+  }
+  const amount = receivedCents(sending);
   if (amount <= 0) return markFailed(p.id, "Nothing left to send after the instant payout fee");
-  const s = stripe();
+  const dest = fast ?? list.find((x) => x.default) ?? null;
+  const where = { destinationType: dest?.type ?? acct!.destinationType, destinationLast4: dest?.last4 ?? acct!.destinationLast4 };
+  let s: ReturnType<typeof moneyClient>;
+  try {
+    s = moneyClient();
+  } catch (e) {
+    return markFailed(p.id, (e as Error).message);
+  }
   if (!s || acct!.simulated) {
     const sim = (x: string) => `sim_${x}_${p.id.slice(0, 8)}${now.getTime().toString(36)}`;
     const [row] = await db
       .update(tipPayouts)
-      .set({ stripeAccountId: acct!.stripeAccountId, stripeTransferId: sim("tr"), stripePayoutId: sim("po"), sentAt: now, paidAt: now, status: "paid", updatedAt: now })
+      .set({ stripeAccountId: acct!.stripeAccountId, stripeTransferId: sim("tr"), stripePayoutId: sim("po"), ...where, sentAt: now, paidAt: now, status: "paid", updatedAt: now })
       .where(eq(tipPayouts.id, p.id))
       .returning();
-    await audit(SYSTEM, "tips.stripe_sent", "tip_payout", p.id, { staffId: p.staffId, amountCents: amount, instant: p.instant, simulated: true }, p.shopId);
+    await audit(SYSTEM, "tips.stripe_sent", "tip_payout", p.id, { staffId: p.staffId, amountCents: amount, instant: sending.instant, instantFeePaidBy: sending.instantFeePaidBy, simulated: true }, p.shopId);
     await notifyPayout(row, "sent");
     await maybeComplete(p.batchId);
     return row;
   }
   const shop = await db.query.shops.findFirst({ where: eq(shops.id, p.shopId), columns: { id: true, paymentsMode: true, name: true, ownerEntityId: true } });
-  let debitId: string | null = null;
-  let transferId: string | null = null;
   try {
+    let from: string | null = null;
     if (shop?.paymentsMode === "connected" || shop?.paymentsMode === "entity") {
       const sa = await settlementAccount(shop);
-      if (!sa || sa.simulated || sa.deauthorizedAt) throw new Error(`${shop.name}'s ${shop.paymentsMode === "entity" ? "owner's " : ""}Stripe account isn't connected`);
-      const debit = await s.charges.create(
-        { amount: p.netCents, currency: "usd", source: sa.stripeAccountId, description: `Tip payout ${p.id}`, metadata: { tipPayoutId: p.id, staffId: p.staffId } },
-        { idempotencyKey: `tip-debit-${p.id}` },
-      );
-      debitId = debit.id;
+      if (!sa || sa.simulated || sa.deauthorizedAt) throw new MovementError(`${shop.name}'s ${shop.paymentsMode === "entity" ? "owner's " : ""}Stripe account isn't connected`, { debitId: null, transferId: null, payoutId: null });
+      from = sa.stripeAccountId;
     }
-    const tr = await s.transfers.create(
+    const ids = await payOutToConnectedAccount(
+      s,
       {
-        amount,
-        currency: "usd",
-        destination: acct!.stripeAccountId!,
-        transfer_group: `tips-${p.batchId}`,
-        ...(debitId ? { source_transaction: debitId } : {}),
+        key: `tip-${p.id}`,
+        from,
+        debitCents: shopCostCents(sending),
+        amountCents: amount,
+        to: acct!.stripeAccountId!,
+        group: `tips-${p.batchId}`,
+        description: `Tip payout ${p.id}`,
         metadata: { tipPayoutId: p.id, shopId: p.shopId, staffId: p.staffId },
+        payout: { method: sending.instant ? "instant" : "standard", destination: fast?.id ?? null, statementDescriptor: "RAYZ TIPS" },
       },
-      { idempotencyKey: `tip-transfer-${p.id}` },
+      async (x) => {
+        await db.update(tipPayouts).set({ stripeAccountId: acct!.stripeAccountId, stripeDebitId: x.debitId, stripeTransferId: x.transferId, stripePayoutId: x.payoutId, ...where, updatedAt: new Date() }).where(eq(tipPayouts.id, p.id));
+      },
     );
-    transferId = tr.id;
-    await db.update(tipPayouts).set({ stripeAccountId: acct!.stripeAccountId, stripeDebitId: debitId, stripeTransferId: transferId, updatedAt: new Date() }).where(eq(tipPayouts.id, p.id));
-    const po = await s.payouts.create(
-      { amount, currency: "usd", method: p.instant ? "instant" : "standard", statement_descriptor: "RAYZ TIPS", metadata: { tipPayoutId: p.id } },
-      { stripeAccount: acct!.stripeAccountId!, idempotencyKey: `tip-payout-${p.id}` },
+    const [row] = await db.update(tipPayouts).set({ sentAt: new Date(), updatedAt: new Date() }).where(eq(tipPayouts.id, p.id)).returning();
+    await audit(
+      SYSTEM,
+      "tips.stripe_sent",
+      "tip_payout",
+      p.id,
+      { staffId: p.staffId, amountCents: amount, instant: sending.instant, instantFeePaidBy: sending.instantFeePaidBy, transferId: ids.transferId, payoutId: ids.payoutId, debitId: ids.debitId },
+      p.shopId,
     );
-    const [row] = await db.update(tipPayouts).set({ stripePayoutId: po.id, sentAt: new Date(), updatedAt: new Date() }).where(eq(tipPayouts.id, p.id)).returning();
-    await audit(SYSTEM, "tips.stripe_sent", "tip_payout", p.id, { staffId: p.staffId, amountCents: amount, instant: p.instant, transferId, payoutId: po.id, debitId }, p.shopId);
     await notifyPayout(row, "sent");
     return row;
   } catch (e) {
-    await db.update(tipPayouts).set({ stripeDebitId: debitId, stripeTransferId: transferId }).where(eq(tipPayouts.id, p.id));
+    const done = e instanceof MovementError ? e.done : { debitId: null, transferId: null };
+    await db.update(tipPayouts).set({ stripeDebitId: done.debitId, stripeTransferId: done.transferId }).where(eq(tipPayouts.id, p.id));
     return markFailed(p.id, `Stripe: ${(e as Error).message}`.slice(0, 500));
   }
 }
@@ -446,10 +473,16 @@ export async function markFailed(payoutId: string, message: string, o: { transfe
     return row;
   });
   if (!r) return null;
-  const s = stripe();
-  if (s && r.method === "stripe" && !r.stripeTransferId?.startsWith("sim_")) {
-    if (r.stripeTransferId && !o.transferReversed) await s.transfers.createReversal(r.stripeTransferId, { metadata: { tipPayoutId: r.id } }, { idempotencyKey: `tip-reverse-${r.id}` }).catch((e) => console.error(e));
-    if (r.stripeDebitId) await s.refunds.create({ charge: r.stripeDebitId, metadata: { tipPayoutId: r.id } }, { idempotencyKey: `tip-debit-refund-${r.id}` }).catch((e) => console.error(e));
+  const s = (() => {
+    try {
+      return moneyClient();
+    } catch {
+      return null;
+    }
+  })();
+  if (s && r.method === "stripe" && !r.stripeTransferId?.startsWith("sim_") && (r.stripeTransferId || r.stripeDebitId)) {
+    const back = await unwindPayOut(s, { key: `tip-${r.id}`, transferId: r.stripeTransferId, debitId: r.stripeDebitId, transferReversed: o.transferReversed, metadata: { tipPayoutId: r.id } });
+    if (!back.ok) await audit(STRIPE_ACTOR, "tips.unwind_failed", "tip_payout", r.id, { staffId: r.staffId, errors: back.errors.map((x) => x.slice(0, 200)) }, r.shopId);
   }
   await notifyPayout(r, "failed");
   await maybeComplete(r.batchId);
@@ -498,8 +531,17 @@ export async function applyTransferReversed(tr: Pick<Stripe.Transfer, "id" | "me
 async function notifyPayout(p: TipPayout, what: "sent" | "failed") {
   const [person] = await db.select({ email: staff.email, phone: staff.phone, first: staff.firstName }).from(staff).where(eq(staff.id, p.staffId));
   const [shop] = await db.select({ name: shops.name, email: shops.email }).from(shops).where(eq(shops.id, p.shopId));
-  const amount = formatCents(p.netCents - p.instantFeeCents);
-  const how = p.method === "cash" ? "in cash from the drawer" : p.method === "stripe" ? (p.instant ? "to your debit card (instant)" : "to your bank or debit card") : METHOD_LABEL[p.method].toLowerCase();
+  const amount = formatCents(receivedCents(p));
+  const fee = employeeFeeCents(p);
+  const to = p.destinationLast4 ? ` ••${p.destinationLast4}` : "";
+  const how =
+    p.method === "cash"
+      ? "in cash from the drawer"
+      : p.method === "stripe"
+        ? p.instant
+          ? `to your debit card${to} (instant)`
+          : `to your ${p.destinationType === "card" ? "debit card" : p.destinationType === "bank_account" ? "bank account" : "bank or debit card"}${to}`
+        : METHOD_LABEL[p.method].toLowerCase();
   if (person?.email) {
     await enqueueRaw({
       kind: "tip_payout",
@@ -509,7 +551,7 @@ async function notifyPayout(p: TipPayout, what: "sent" | "failed") {
       subject: what === "sent" ? `Tip payout: ${amount}` : "Your tip payout didn't go through",
       body:
         what === "sent"
-          ? `Hi ${person.first}, your tips from Ray'z ${shop?.name ?? ""} were paid out: ${amount} ${how}.${p.instantFeeCents ? ` Stripe's instant payout fee was ${formatCents(p.instantFeeCents)}.` : ""} See your tips: ${appBaseUrl()}/admin/my-tips`
+          ? `Hi ${person.first}, your tips from Ray'z ${shop?.name ?? ""} were paid out: ${amount} ${how}.${fee ? ` Stripe's instant payout fee was ${formatCents(fee)}.` : p.instant && p.instantFeeCents ? " The shop paid Stripe's instant payout fee." : ""} See your tips: ${appBaseUrl()}/admin/my-tips`
           : `Hi ${person.first}, your tip payout of ${amount} from Ray'z ${shop?.name ?? ""} didn't go through (${p.failureMessage ?? "Stripe failed it"}). The tips go into the next payout. Check your payout setup: ${appBaseUrl()}/admin/my-banking`,
     });
   } else if (person?.phone) {

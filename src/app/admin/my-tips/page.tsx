@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { shops } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
 import { BANKING_STATUS_LABEL, BANKING_STATUS_TONE, destinationLabel } from "@/domain/banking";
-import { ENTRY_STATUS_LABEL, METHOD_LABEL, STATUS_LABEL, effectiveMethod, entryStatus } from "@/domain/tips";
+import { ENTRY_STATUS_LABEL, METHOD_LABEL, STATUS_LABEL, effectiveMethod, employeeFeeCents, entryStatus, receivedCents } from "@/domain/tips";
 import { formatCents } from "@/lib/money";
 import { addDays, formatDate, formatDateTime, todayLocal } from "@/lib/time";
 import { workShopIds } from "@/server/auth/access";
@@ -118,9 +118,10 @@ export default async function MyTipsPage({ searchParams }: { searchParams: Promi
                       {p.failureMessage && <span className="ml-2 text-xs text-red-600">{p.failureMessage}</span>}
                     </Td>
                     <Td right>{formatCents(p.grossCents + p.adjustCents)}</Td>
-                    <Td right>{p.feeCents + p.instantFeeCents ? formatCents(-(p.feeCents + p.instantFeeCents)) : ""}</Td>
+                    <Td right>{p.feeCents + employeeFeeCents(p) ? formatCents(-(p.feeCents + employeeFeeCents(p))) : ""}</Td>
                     <Td right className="font-medium">
-                      {formatCents(p.netCents - p.instantFeeCents)}
+                      {formatCents(receivedCents(p))}
+                      {p.destinationLast4 && <span className="block text-xs font-normal text-zinc-500">to ••{p.destinationLast4}</span>}
                     </Td>
                   </tr>
                 ))}

@@ -2,11 +2,24 @@ import "server-only";
 import { and, count, eq, gte, inArray, lt, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, shops } from "@/db/schema";
-import { BANKING_STATUS_LABEL, destinationLabel, requirementLabels } from "@/domain/banking";
+import { BANKING_STATUS_LABEL, BankingStatus, destinationLabel, requirementLabels } from "@/domain/banking";
 import { addTotals, commissionBetween, zeroTotals } from "@/domain/compensation";
 import { reportView } from "@/domain/permissions";
-import { METHOD_LABEL, STATUS_LABEL, TIP_METHODS, TipMethod, effectiveMethod, entryStatus } from "@/domain/tips";
+import {
+  DEFAULT_INSTANT_FEE,
+  METHOD_LABEL,
+  STATUS_LABEL,
+  TIP_METHODS,
+  TipMethod,
+  effectiveMethod,
+  employeeFeeCents,
+  entryStatus,
+  instantFeePayer,
+  parseInstantFee,
+  receivedCents,
+} from "@/domain/tips";
 import { appBaseUrl } from "@/lib/deployment";
+import { formatCents } from "@/lib/money";
 import { LocalDate, addDays, diffDays, endOfLocalDay, isValidLocalDate, startOfLocalDay, todayLocal } from "@/lib/time";
 import { workShopIds } from "@/server/auth/access";
 import { can } from "@/server/auth/staff";
@@ -14,7 +27,9 @@ import { commissionLines, loadCompensationSettings, setupRates, tipOverrides, ve
 import { AppError, forbidden } from "@/server/errors";
 import { connectMode } from "@/server/payments/connect";
 import {
+  StaffPayoutAccount,
   accountDestination,
+  externalAccountsView,
   refreshStaffAccount,
   setPayoutChoice,
   simulateDestinationChange,
@@ -89,8 +104,11 @@ export async function myPayouts(ctx: StaffAppContext) {
         statusLabel: STATUS_LABEL[p.status as keyof typeof STATUS_LABEL] ?? p.status,
         failureMessage: p.failureMessage,
         tipsCents: p.grossCents + p.adjustCents,
-        feesCents: p.feeCents + p.instantFeeCents,
-        netCents: p.netCents - p.instantFeeCents,
+        feesCents: p.feeCents + employeeFeeCents(p),
+        instantFeeCents: p.instantFeeCents,
+        instantFeePaidBy: p.instant && p.instantFeeCents ? p.instantFeePaidBy : null,
+        netCents: receivedCents(p),
+        to: p.destinationLast4 ? { type: p.destinationType, last4: p.destinationLast4 } : null,
         createdAt: p.createdAt.toISOString(),
         sentAt: p.sentAt?.toISOString() ?? null,
         paidAt: p.paidAt?.toISOString() ?? null,
@@ -179,6 +197,10 @@ export async function bankingView(ctx: StaffAppContext, o: { refresh?: boolean }
   const [{ policy, byShop, policyOf }, acct, planned] = await Promise.all([shopTipConfigs(ids), staffAccount(me), tipOverrides([me])]);
   const state = staffAccountState(acct);
   const dest = accountDestination(acct);
+  const list = externalAccountsView(acct);
+  const fast = list.find((x) => x.instantDestination) ?? null;
+  const step = onboardingStep(acct, state);
+  const keyed = (keys: readonly string[]) => keys.map((key) => ({ key, label: requirementLabels([key])[0] ?? key }));
   return {
     stripeAccountId: acct?.stripeAccountId ?? null,
     status: state,
@@ -187,8 +209,25 @@ export async function bankingView(ctx: StaffAppContext, o: { refresh?: boolean }
     needs: requirementLabels(acct?.requirementsDue ?? []),
     checking: requirementLabels(acct?.requirementsPending ?? []),
     deadline: acct?.requirementsDeadline?.toISOString() ?? null,
+    onboarding: { step, label: ONBOARDING_LABEL[step] },
+    requirements: {
+      due: keyed(acct?.requirementsDue ?? []),
+      pending: keyed(acct?.requirementsPending ?? []),
+      deadline: acct?.requirementsDeadline?.toISOString() ?? null,
+      disabledReason: acct?.disabledReason ?? null,
+      detailsSubmitted: !!acct?.detailsSubmitted,
+      payoutsEnabled: !!acct?.payoutsEnabled,
+    },
+    externalAccounts: list.length,
+    instant: {
+      allowed: policy.instantAllowed,
+      eligible: !!acct?.instantEligible,
+      to: fast ? { type: fast.type, name: fast.name, last4: fast.last4, label: fast.label } : null,
+      feePaidBy: instantFeePayer(policy),
+      fee: instantFeeText(),
+    },
     choice: { method: acct?.method ?? null, instant: !!acct?.instant, instantEligible: !!acct?.instantEligible },
-    policy: { methods: policy.methods, employeeChooses: policy.employeeChooses, instantAllowed: policy.instantAllowed },
+    policy: { methods: policy.methods, employeeChooses: policy.employeeChooses, instantAllowed: policy.instantAllowed, instantFeePassedOn: policy.instantFeePassedOn },
     shops: shopRows.map((s) => {
       const method = effectiveMethod(byShop.get(s.id)!, policyOf(s.id), acct?.method ?? null, planned.get(me)?.method);
       return { shopId: s.id, shop: s.name, method, methodLabel: METHOD_LABEL[method] };
@@ -197,15 +236,44 @@ export async function bankingView(ctx: StaffAppContext, o: { refresh?: boolean }
   };
 }
 
+/** What Stripe's hosted page is for now: first setup, finishing a setup they left, adding what Stripe asks for, or nothing. */
+export type OnboardingStep = "start" | "resume" | "update" | "done";
+const ONBOARDING_LABEL: Record<OnboardingStep, string> = {
+  start: "Set up Stripe payouts",
+  resume: "Finish setting up Stripe payouts",
+  update: "Add what Stripe needs",
+  done: "Set up",
+};
+
+function onboardingStep(a: StaffPayoutAccount | null, state: BankingStatus): OnboardingStep {
+  if (state === "not_set_up") return a?.stripeAccountId && !(a.simulated && connectMode() === "stripe") ? "resume" : "start";
+  return state === "action_needed" ? "update" : "done";
+}
+
+const instantFeeText = () => {
+  const r = parseInstantFee(process.env.TIP_INSTANT_FEE) ?? DEFAULT_INSTANT_FEE;
+  return { pct: r.pct, minCents: r.minCents, label: `${r.pct}%${r.minCents ? `, at least ${formatCents(r.minCents)}` : ""}` };
+};
+
 /**
- * Stripe's hosted setup for their own debit card or bank account, also used to add whatever Stripe
- * asks for later. The app opens `url` in the browser; Stripe sends it back to /staff-app/stripe. In
- * the simulator there's no Stripe page and setup finishes at once (url null).
+ * Stripe's hosted setup for their own Express account (identity, then a bank account and a debit
+ * card for instant payouts), started or picked up where they left it, and also used to add whatever
+ * Stripe asks for later. The app opens `url` in the browser; Stripe sends it back to
+ * /staff-app/stripe. In the simulator there's no Stripe page and setup finishes at once (url null).
  */
 export async function onboardingLink(ctx: StaffAppContext) {
+  const before = await staffAccount(ctx.staff.id);
+  const step = onboardingStep(before, staffAccountState(before));
   const url = await staffOnboardingUrl(ctx.staff.id, ctx.actor, appBaseUrl(), STRIPE_RETURN_PATH);
   if (!url) await simulateStaffOnboarding(ctx.staff.id, ctx.actor);
-  return { url, banking: await bankingView(ctx) };
+  return { url, step, banking: await bankingView(ctx) };
+}
+
+/** Every bank account and debit card on their Stripe account (refreshed from Stripe on ?refresh=1): type, name, last 4, the default, and the one instant payouts go to. */
+export async function myExternalAccounts(ctx: StaffAppContext, o: { refresh?: boolean } = {}) {
+  if (o.refresh) await refreshStaffAccount(ctx.staff.id).catch(() => null);
+  const acct = await staffAccount(ctx.staff.id);
+  return { status: staffAccountState(acct), externalAccounts: externalAccountsView(acct), simulator: connectMode() === "simulator" };
 }
 
 /** Stripe's Express dashboard, where they change their card or bank. In the simulator it switches between a test card and a test bank. */

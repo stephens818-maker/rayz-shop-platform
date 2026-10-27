@@ -7,7 +7,7 @@ import type { BankingStatus } from "@/domain/banking";
 import { METHOD_LABEL, TipMethod } from "@/domain/tips";
 import { changeDestinationAction, refreshBankingAction, setMyPayoutMethodAction, startStripeSetupAction } from "./actions";
 
-export function PayoutChoice(p: { methods: TipMethod[]; method: TipMethod | null; instant: boolean; instantAllowed: boolean; instantEligible: boolean; feeText: string }) {
+export function PayoutChoice(p: { methods: TipMethod[]; method: TipMethod | null; instant: boolean; instantAllowed: boolean; instantEligible: boolean; feeText: string; feePassedOn: boolean }) {
   const router = useRouter();
   const [method, setMethod] = useState<TipMethod | "">(p.method ?? "");
   const [instant, setInstant] = useState(p.instant);
@@ -37,7 +37,11 @@ export function PayoutChoice(p: { methods: TipMethod[]; method: TipMethod | null
           <span>
             Instant payout to my debit card
             <span className="block text-xs text-zinc-500">
-              {p.instantEligible ? `Stripe's instant fee comes out of each payout: ${p.feeText}. Without it, payouts reach your bank in 1 to 2 business days at no fee.` : "Your Stripe account needs an eligible debit card for instant payouts."}
+              {!p.instantEligible
+                ? "Your Stripe account needs an eligible debit card for instant payouts."
+                : p.feePassedOn
+                  ? `Stripe's instant fee comes out of each payout: ${p.feeText}. Without it, payouts reach your bank in 1 to 2 business days at no fee.`
+                  : `The shop pays Stripe's instant fee (${p.feeText}), so you get the whole payout in minutes.`}
             </span>
           </span>
         </label>

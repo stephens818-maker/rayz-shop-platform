@@ -11,7 +11,7 @@ import { formatDateTime } from "@/lib/time";
 import { workShopIds } from "@/server/auth/access";
 import { guardPage } from "@/server/auth/staff";
 import { connectMode } from "@/server/payments/connect";
-import { accountDestination, bankingActivity, refreshStaffAccount, staffAccount, staffAccountState } from "@/server/tips/accounts";
+import { accountDestination, bankingActivity, externalAccountsView, refreshStaffAccount, staffAccount, staffAccountState } from "@/server/tips/accounts";
 import { shopTipConfigs } from "@/server/tips/ledger";
 import { tipOverrides } from "@/server/compensation";
 import { PayoutChoice, StripeSetup } from "./client";
@@ -34,6 +34,8 @@ function activityText(a: Activity): string {
       return "Payout account opened on Stripe";
     case "tips.onboarding_started":
       return "Opened Stripe's setup page";
+    case "tips.onboarding_resumed":
+      return "Opened Stripe's page to add what it asked for";
     case "tips.onboarding_simulated":
       return "Setup finished (simulator)";
     case "tips.account_state":
@@ -64,6 +66,8 @@ export default async function MyBankingPage({ searchParams }: { searchParams: Pr
   const [{ policy, policyOf, byShop }, acct, activity, planned] = await Promise.all([shopTipConfigs(shopRows.map((s) => s.id)), staffAccount(me), bankingActivity(me), tipOverrides([me])]);
   const status = staffAccountState(acct);
   const dest = accountDestination(acct);
+  const accounts = externalAccountsView(acct);
+  const fast = accounts.find((x) => x.instantDestination) ?? null;
   const simulator = connectMode() === "simulator";
   const rate = parseInstantFee(process.env.TIP_INSTANT_FEE) ?? DEFAULT_INSTANT_FEE;
   const methods = shopRows.map((s) => ({ shop: s.name, method: effectiveMethod(byShop.get(s.id)!, policyOf(s.id), acct?.method ?? null, planned.get(me)?.method) }));
@@ -101,7 +105,13 @@ export default async function MyBankingPage({ searchParams }: { searchParams: Pr
                 <dt className="text-zinc-500">Paid to</dt>
                 <dd className="font-medium">{dest ? destinationLabel(dest) : "No card or bank yet"}</dd>
                 <dt className="text-zinc-500">Instant payouts</dt>
-                <dd>{acct?.instantEligible ? "Available on this card" : "Not available (needs an eligible debit card)"}</dd>
+                <dd>{fast ? `To ${fast.label}` : acct?.instantEligible ? "Available" : "Not available (needs an eligible debit card)"}</dd>
+                {accounts.length > 1 && (
+                  <>
+                    <dt className="text-zinc-500">On your Stripe account</dt>
+                    <dd>{accounts.map((x) => `${x.label}${x.default ? " (default)" : ""}`).join(", ")}</dd>
+                  </>
+                )}
               </dl>
             )}
             {needs.length > 0 && (
@@ -144,6 +154,7 @@ export default async function MyBankingPage({ searchParams }: { searchParams: Pr
               instantAllowed={policy.instantAllowed}
               instantEligible={!!acct?.instantEligible}
               feeText={`${rate.pct}%${rate.minCents ? `, at least ${formatCents(rate.minCents)}` : ""}`}
+              feePassedOn={policy.instantFeePassedOn}
             />
           )}
         </div>

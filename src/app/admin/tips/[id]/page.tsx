@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Badge, Card, CardHeader, LinkButton, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
 import { BANKING_STATUS_LABEL } from "@/domain/banking";
-import { METHOD_LABEL, STATUS_LABEL } from "@/domain/tips";
+import { METHOD_LABEL, STATUS_LABEL, employeeFeeCents, receivedCents, shopCostCents } from "@/domain/tips";
 import { formatCents } from "@/lib/money";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { guardPage } from "@/server/auth/staff";
@@ -114,12 +114,14 @@ export default async function TipBatchPage({ params }: { params: Promise<{ id: s
             }
             action={
               <div className="text-right tabular">
-                <div className="text-lg font-semibold">{formatCents(p.netCents - p.instantFeeCents)}</div>
+                <div className="text-lg font-semibold">{formatCents(receivedCents(p))}</div>
                 <div className="text-xs text-zinc-500">
                   {formatCents(p.grossCents)} tips
                   {p.feeCents ? ` − ${formatCents(p.feeCents)} card fee` : ""}
                   {p.adjustCents ? ` ${p.adjustCents < 0 ? "−" : "+"} ${formatCents(Math.abs(p.adjustCents))} adjusted` : ""}
-                  {p.instantFeeCents ? ` − ${formatCents(p.instantFeeCents)} instant fee` : ""}
+                  {employeeFeeCents(p) ? ` − ${formatCents(p.instantFeeCents)} instant fee` : ""}
+                  {p.instantFeeCents && p.instantFeePaidBy === "shop" ? ` · shop pays the ${formatCents(p.instantFeeCents)} instant fee (${formatCents(shopCostCents(p))} in all)` : ""}
+                  {p.destinationLast4 ? ` · to ••${p.destinationLast4}` : ""}
                 </div>
               </div>
             }

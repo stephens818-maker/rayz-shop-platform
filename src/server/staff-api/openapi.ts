@@ -56,9 +56,25 @@ const OPS: Op[] = [
   { method: "get", path: "/tips", tag: "Tips and pay", summary: "Their tips (S3): today, settling, ready, in a payout, paid out; how each shop pays them; history by ticket.", permission: "tips.own", query: S.TipsQuery },
   { method: "get", path: "/payouts", tag: "Tips and pay", summary: "Their tip payouts: method, status and what they got after fees.", permission: "tips.own" },
   { method: "get", path: "/earnings", tag: "Tips and pay", summary: "Day by day: net sales (report.my_sales.view with reports.money), tips (tips.own) and commission (compensation.own, where the brand has compensation on). Parts they may not see are null.", permission: "Any of those", query: S.EarningsQuery },
-  { method: "get", path: "/banking", tag: "Banking", summary: "Their Stripe payout account: the account id, status, and the card or bank's type, name and last 4. Never a number.", permission: "tips.own", query: S.BankingQuery },
-  { method: "post", path: "/banking/onboarding-link", tag: "Banking", summary: "Stripe's hosted page to add their own debit card or bank account (or what Stripe asks for later). Open url in the browser; Stripe returns to /staff-app/stripe. url is null in the simulator, where setup finishes at once.", permission: "tips.own" },
-  { method: "post", path: "/banking/dashboard-link", tag: "Banking", summary: "Stripe's Express dashboard, where they change the card or bank.", permission: "tips.own" },
+  {
+    method: "get",
+    path: "/banking",
+    tag: "Banking",
+    summary:
+      "Their Stripe Connect Express account: the account id, status, onboarding step (start, resume, update or done), Stripe's requirements (due, pending, deadline), the default card or bank's type, name and last 4, and instant payouts (allowed, the card they go to, the fee and who pays it). Never a number.",
+    permission: "tips.own",
+    query: S.BankingQuery,
+  },
+  { method: "get", path: "/banking/external-accounts", tag: "Banking", summary: "Every bank account and debit card on their Stripe account: type, bank or brand name, last 4, which is the default and which takes instant payouts. Never a number. ?refresh=1 reads Stripe first.", permission: "tips.own", query: S.BankingQuery },
+  {
+    method: "post",
+    path: "/banking/onboarding-link",
+    tag: "Banking",
+    summary:
+      "Starts or resumes Stripe's hosted onboarding for their own Express account (identity, bank account, debit card for instant payouts), or opens it for what Stripe asks for later. step says which. Open url in the browser; Stripe returns to /staff-app/stripe. url is null in the simulator, where setup finishes at once. Stripe test mode only unless MONEY_MOVEMENT_LIVE is on.",
+    permission: "tips.own",
+  },
+  { method: "post", path: "/banking/dashboard-link", tag: "Banking", summary: "A one-time sign-in to their Stripe Express dashboard, where they change the card or bank and see Stripe's payouts.", permission: "tips.own" },
   { method: "put", path: "/banking/method", tag: "Banking", summary: "How they're paid, where the brand lets them choose. Sends a security notice.", permission: "tips.own", body: S.PayoutMethodBody },
   { method: "get", path: "/popups", tag: "Pop-ups", summary: "Milestones they haven't seen, a clock-in reminder when their first client or shift starts within 30 minutes, and an old open shift.", permission: "Signed in" },
   { method: "post", path: "/popups/seen", tag: "Pop-ups", summary: "Milestones shown: they won't pop up again here or on the web.", permission: "Their own", body: S.SeenBody },

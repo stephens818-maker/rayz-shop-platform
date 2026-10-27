@@ -161,6 +161,8 @@ const PayrollInput = z.object({
   dailyOtHours: z.number().min(1).max(24).nullable(),
   otMultiplier: z.number().min(1).max(3),
   tipsInPayrollHeader: z.string().trim().min(1, "Name the iSolved earning for tips paid in payroll").max(60),
+  markPaidTips: z.boolean(),
+  tipsPaidOutHeader: z.string().trim().min(1, "Name the iSolved memo column for tips already paid out").max(60),
 });
 
 const ClockInput = z.object({
@@ -176,6 +178,7 @@ const TipPolicyInput = z.object({
   methods: z.array(z.enum(TIP_METHODS)).min(1, "Allow at least one payout method"),
   employeeChooses: z.boolean(),
   instantAllowed: z.boolean(),
+  instantFeePassedOn: z.boolean(),
 });
 
 const messageSetting = (kind: TemplateKind) => {
@@ -358,8 +361,13 @@ export const SETTINGS: readonly SettingDef[] = [
     paths: ["/admin/payroll", "/admin/payroll/setup"],
     wholeBrand: "Payroll adds each person's hours up across shops into one overtime count and one export, so these rules are the same at every shop.",
     read: payrollSettings,
-    parse: (raw, before) => payrollSettings(PayrollInput.parse({ ...before, ...obj(raw) })),
-    labels: { otThresholdHours: "Weekly OT after (hours)", dailyOtHours: "Daily OT after (hours)", otMultiplier: "OT multiplier", ftBasis: "Full-time basis" },
+    parse: (raw, before) => {
+      const v = payrollSettings(PayrollInput.parse({ ...before, ...obj(raw) }));
+      const taken = [...EXPORT_COLUMNS.map((c) => c.header), v.tipsInPayrollHeader].map((h) => h.toLowerCase());
+      if (v.markPaidTips && taken.includes(v.tipsPaidOutHeader.toLowerCase())) bad("The column for tips already paid out needs its own name, not another column's.");
+      return v;
+    },
+    labels: { otThresholdHours: "Weekly OT after (hours)", dailyOtHours: "Daily OT after (hours)", otMultiplier: "OT multiplier", ftBasis: "Full-time basis", markPaidTips: "Mark tips already paid out", tipsPaidOutHeader: "Tips paid out column" },
     audit: "payroll.settings",
   }),
   def({
@@ -374,7 +382,8 @@ export const SETTINGS: readonly SettingDef[] = [
     async parse(raw, before, _who, tx) {
       const clean = compensationSettings({ ...before, ...obj(raw) });
       const [b] = await tx.select({ p: brandSettings.payroll }).from(brandSettings).where(eq(brandSettings.id, 1));
-      const problem = compensationProblem(clean, [...EXPORT_COLUMNS.map((c) => c.header), payrollSettings(b?.p).tipsInPayrollHeader]);
+      const ps = payrollSettings(b?.p);
+      const problem = compensationProblem(clean, [...EXPORT_COLUMNS.map((c) => c.header), ps.tipsInPayrollHeader, ...(ps.markPaidTips ? [ps.tipsPaidOutHeader] : [])]);
       if (problem) bad(problem);
       return clean;
     },

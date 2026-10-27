@@ -2538,8 +2538,13 @@ export const tipPayouts = pgTable(
     /** gross − fee + adjust: what leaves the drawer or the Stripe balance. */
     netCents: integer("net_cents").notNull().default(0),
     instant: boolean("instant").notNull().default(false),
-    /** Stripe's instant payout fee, estimated and shown before sending; the employee receives net − this. */
+    /** Stripe's instant payout fee, estimated and shown before sending. */
     instantFeeCents: integer("instant_fee_cents").notNull().default(0),
+    /** Who pays it, by the brand's policy when the payout was built: the employee receives net − fee, or the shop pays net + fee. */
+    instantFeePaidBy: text("instant_fee_paid_by").$type<"employee" | "shop">().notNull().default("employee"),
+    /** Where Stripe sent it: the card or bank's type and last 4, never its number. */
+    destinationType: text("destination_type").$type<"bank_account" | "card">(),
+    destinationLast4: text("destination_last4"),
     stripeAccountId: text("stripe_account_id"),
     /** The account debit that moved the money from the shop's own connected account to the platform first. */
     stripeDebitId: text("stripe_debit_id"),
@@ -2566,6 +2571,8 @@ export const tipPayouts = pgTable(
     check("tip_payouts_status", sql`${t.status} in ('pending', 'held', 'approved', 'processing', 'paid', 'failed', 'cancelled')`),
     check("tip_payouts_ack", sql`${t.ackMethod} is null or ${t.ackMethod} in ('pin', 'name')`),
     check("tip_payouts_held", sql`${t.status} <> 'held' or ${t.holdReason} is not null`),
+    check("tip_payouts_instant_fee_paid_by", sql`${t.instantFeePaidBy} in ('employee', 'shop')`),
+    check("tip_payouts_destination", sql`(${t.destinationType} is null or ${t.destinationType} in ('bank_account', 'card')) and (${t.destinationLast4} is null or ${t.destinationLast4} ~ '^[0-9]{4}$')`),
     uniqueIndex("tip_payouts_batch_staff_uq").on(t.batchId, t.staffId),
     uniqueIndex("tip_payouts_transfer_uq").on(t.stripeTransferId),
     uniqueIndex("tip_payouts_payout_uq").on(t.stripePayoutId),
@@ -2646,6 +2653,11 @@ export const staffPayoutAccounts = pgTable(
     destinationLast4: text("destination_last4"),
     /** The bank's name, or the card's brand. */
     destinationName: text("destination_name"),
+    /** Every bank account and debit card on the Stripe account: Stripe's id for each, its type, name, last 4, whether it's the default and takes instant payouts. Never a number. */
+    externalAccounts: jsonb("external_accounts")
+      .$type<{ id: string; type: "bank_account" | "card"; name: string | null; last4: string; default: boolean; instant: boolean }[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     createdAt: createdAt(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
@@ -2653,6 +2665,7 @@ export const staffPayoutAccounts = pgTable(
     check("staff_payout_accounts_method", sql`${t.method} is null or ${t.method} in ('cash', 'stripe', 'payroll')`),
     check("staff_payout_accounts_destination_type", sql`${t.destinationType} is null or ${t.destinationType} in ('bank_account', 'card')`),
     check("staff_payout_accounts_last4", sql`${t.destinationLast4} is null or ${t.destinationLast4} ~ '^[0-9]{4}$'`),
+    check("staff_payout_accounts_external_accounts", sql`jsonb_typeof(${t.externalAccounts}) = 'array'`),
   ],
 );
 

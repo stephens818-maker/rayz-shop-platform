@@ -29,6 +29,14 @@ export interface PayrollSettings {
    * a shop's file only when someone there has such tips; the code is Charles's to confirm.
    */
   tipsInPayrollHeader: string;
+  /**
+   * Marks tips already paid out (cash from the drawer or Stripe to the employee's card or bank) in
+   * their own column, so iSolved shows which of the tips received were paid. A memo amount only: it's
+   * part of E_Cash Tips Recd, never paid again. Added only when someone in the file has paid tips.
+   */
+  markPaidTips: boolean;
+  /** That column's header; the memo code is Charles's to confirm in iSolved. */
+  tipsPaidOutHeader: string;
 }
 
 export type FtBasis = "worked" | "worked_training" | "paid";
@@ -50,6 +58,8 @@ export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
   ftBasis: "worked",
   ftWindowWeeks: 4,
   tipsInPayrollHeader: "E_Tips Paid In Payroll_Dollars",
+  markPaidTips: true,
+  tipsPaidOutHeader: "M_Tips Paid Out_Dollars",
 };
 
 export function payrollSettings(raw: unknown): PayrollSettings {
@@ -68,6 +78,8 @@ export function payrollSettings(raw: unknown): PayrollSettings {
     ftBasis: r.ftBasis && r.ftBasis in FT_BASIS_LABEL ? r.ftBasis : d.ftBasis,
     ftWindowWeeks: Math.round(num(r.ftWindowWeeks, 1, 26, d.ftWindowWeeks)),
     tipsInPayrollHeader: typeof r.tipsInPayrollHeader === "string" && r.tipsInPayrollHeader.trim() ? r.tipsInPayrollHeader.trim().slice(0, 60) : d.tipsInPayrollHeader,
+    markPaidTips: bool(r.markPaidTips, d.markPaidTips),
+    tipsPaidOutHeader: typeof r.tipsPaidOutHeader === "string" && r.tipsPaidOutHeader.trim() ? r.tipsPaidOutHeader.trim().slice(0, 60) : d.tipsPaidOutHeader,
   };
 }
 
@@ -328,10 +340,11 @@ export interface ExportRow {
 
 /** A shop's file gets the tips-in-payroll column only when someone there has tips paid through payroll, so the usual file is unchanged. */
 export const hasPayrollTips = (lines: readonly Pick<Line, "tipsInPayroll">[]) => lines.some((l) => l.tipsInPayroll !== 0);
+export const hasPaidTips = (lines: readonly Pick<Line, "tipsPaidOut">[]) => lines.some((l) => l.tipsPaidOut !== 0);
 const hasGuarantee = (lines: readonly Pick<Line, "guaranteeTopUp">[]) => lines.some((l) => (l.guaranteeTopUp ?? 0) !== 0);
 
 /** What a column after the standard six carries. */
-export type ExtraFrom = "tipsInPayroll" | "guaranteeTopUp" | "commission" | "productTotal" | "wage";
+export type ExtraFrom = "tipsInPayroll" | "tipsPaidOut" | "guaranteeTopUp" | "commission" | "productTotal" | "wage";
 export interface ExtraColumn {
   header: string;
   from: ExtraFrom;
@@ -344,10 +357,11 @@ export interface ExportOptions {
   guaranteeHeader?: string;
 }
 
-/** The columns after the standard six: tips in payroll and the guarantee top-up when someone in the file has them, then the brand's. */
+/** The columns after the standard six: tips in payroll, tips already paid out (where marked) and the guarantee top-up when someone in the file has them, then the brand's. */
 export function exportExtraColumns(lines: readonly Line[], s: PayrollSettings, o: ExportOptions = {}): ExtraColumn[] {
   return [
     ...(hasPayrollTips(lines) ? [{ header: s.tipsInPayrollHeader, from: "tipsInPayroll" as const }] : []),
+    ...(s.markPaidTips && hasPaidTips(lines) ? [{ header: s.tipsPaidOutHeader, from: "tipsPaidOut" as const }] : []),
     ...(hasGuarantee(lines) ? [{ header: o.guaranteeHeader ?? COLUMN_LABEL.guaranteeTopUp, from: "guaranteeTopUp" as const }] : []),
     ...(o.extras ?? []),
   ];
@@ -423,7 +437,7 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
     const topUps = exported("guaranteeTopUp");
     if (!sameToTheCent(b.totals.guaranteeTopUp ?? 0, topUps))
       out.push({ shopId: b.shopId, column: COLUMN_LABEL.guaranteeTopUp, check: "export", report: b.totals.guaranteeTopUp ?? 0, other: topUps, detail: `${b.shop}: the export's guarantee top-ups add up to a different total than the report's` });
-    for (const k of ["commission", "productTotal"] as const) {
+    for (const k of ["tipsPaidOut", "commission", "productTotal"] as const) {
       if (!from.includes(k)) continue;
       const sum = exported(k);
       if (!sameToTheCent(b.totals[k], sum)) out.push({ shopId: b.shopId, column: COLUMN_LABEL[k], check: "export", report: b.totals[k], other: sum, detail: `${b.shop}: the export's ${COLUMN_LABEL[k]} column adds up to a different total than the report's` });

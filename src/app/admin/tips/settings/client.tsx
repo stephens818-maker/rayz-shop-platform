@@ -52,8 +52,18 @@ export function PolicyForm({ policy }: { policy: BrandTipPolicy }) {
           Employees choose their own method from these
         </Check>
         <Check checked={p.instantAllowed} onChange={(v) => setP({ ...p, instantAllowed: v })}>
-          Allow Stripe instant payouts to an eligible debit card (the employee pays Stripe&rsquo;s instant fee, shown before they choose it)
+          Allow Stripe instant payouts to an eligible debit card (Stripe&rsquo;s instant fee is shown before the employee chooses it)
         </Check>
+        {p.instantAllowed && (
+          <div className="ml-6">
+            <Check checked={p.instantFeePassedOn} onChange={(v) => setP({ ...p, instantFeePassedOn: v })}>
+              Pass the instant payout fee on to the employee
+              <span className="block text-xs text-zinc-500">
+                On: it comes out of their payout. Off: they get every cent and the shop pays the fee on top, out of the same account the tips come from.
+              </span>
+            </Check>
+          </div>
+        )}
         {msg && <Notice tone={msg.ok ? "green" : "red"}>{msg.text}</Notice>}
         <Button disabled={pending || !p.methods.length} onClick={() => saveSetting(p)}>
           Save brand policy
