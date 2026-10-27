@@ -313,8 +313,10 @@ describe("report tables in both views", () => {
     const t = table(await load("tips_payroll", THREE, "shops"), "payroll");
     const sales = await R.salesSummaryByShop(scopeOf(THREE));
     const tips = col(t, "Total tips");
-    for (const sub of styled(t, "subtotal")) expect(sub[tips]).toBe(sales[Object.values(shop).find((s) => s.name === sub[0])!.id].tipsCents);
-    expect(styled(t, "total")[0][tips]).toBe(Object.values(sales).reduce((a, s) => a + s.tipsCents, 0));
+    // Tips refunded after they were paid are the shop's cost: in the sales summary, not taken off payroll tips.
+    const shopCost = col(t, "Post-payout tip refunds (shop cost, not subtracted)");
+    for (const sub of styled(t, "subtotal")) expect(sub[tips]).toBe(sales[Object.values(shop).find((s) => s.name === sub[0])!.id].tipsCents + Number(sub[shopCost]));
+    expect(styled(t, "total")[0][tips]).toBe(Object.values(sales).reduce((a, s) => a + s.tipsCents, 0) + Number(styled(t, "total")[0][shopCost]));
     const split = table(await load("tips_payroll", THREE, "combined"), "split");
     expect(split.rows.filter((r) => r[col(split, "Location")] === "All 2 shops")).toHaveLength(1);
   });

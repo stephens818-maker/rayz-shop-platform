@@ -253,6 +253,8 @@ describe("refunds and disputes (ST-C15)", () => {
   it("a full refund inside the window reverses the tip; after it, or a partial refund, the shop absorbs it; the brand's rule and window are settings", async () => {
     const { shop: sh, ids: [b] } = await barbers("kimberly", ["Beth"]);
     const absorbed = (saleId: string) => m.db.db.select().from(s().tipAbsorptions).where(eq(s().tipAbsorptions.saleId, saleId));
+    // Refunds 8 days on can land in the next pay period, which by default is the shop's cost whatever the window says.
+    await setStaffPayouts({ afterPayoutRefunds: "deduct" });
 
     const late = await tipSale(sh.id, b, 600, card);
     await m.refunds.refundEverything(late.id, "Came back after a week", false, actor, new Date(Date.now() + 8 * 86_400_000));
@@ -278,7 +280,7 @@ describe("refunds and disputes (ST-C15)", () => {
     await m.refunds.refundEverything(kept.id, "Never reverses", false, actor);
     expect((await ledgerOf(kept.id)).map((e) => e.kind)).toEqual(["tip"]);
     expect(await absorbed(kept.id)).toEqual([expect.objectContaining({ kind: "rule", amountCents: 400 })]);
-    await setStaffPayouts({ reversalRule: "full_refund_in_window", reversalWindowDays: 7 });
+    await setStaffPayouts({ reversalRule: "full_refund_in_window", reversalWindowDays: 7, afterPayoutRefunds: "shop_cost" });
 
     // Absorbed tips are never changed or removed.
     const [one] = await absorbed(kept.id);
