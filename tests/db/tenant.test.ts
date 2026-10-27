@@ -1164,3 +1164,136 @@ describe("shop logins", () => {
     expect((await open("/admin/calendar")).text).toContain(CANARY.barber);
   });
 });
+
+// ───────────── The staff app API ─────────────
+
+describe("the staff app API (/api/staff/v1)", () => {
+  let api: Awaited<ReturnType<typeof import("./staff-app")["staffApp"]>>;
+  const tokens: Partial<Record<Login, string>> = {};
+  const punch: { id?: string; request?: string; period?: string } = {};
+  const tokenOf = async (l: Login) => {
+    await m.db.db.delete(m.schema.apiRateEvents);
+    return (tokens[l] ??= (await api.login(email(l))).accessToken);
+  };
+  const callAs = async (o: { login: Login; at?: () => string }, method: Parameters<typeof api.call>[0], path: string, body?: unknown, shopHeader?: string) =>
+    api.call(method, path, { token: await tokenOf(o.login), body, shop: shopHeader ?? o.at?.() });
+
+  beforeAll(async () => {
+    api = await (await import("./staff-app")).staffApp();
+    const at = m.time.zonedWallTime(today, 9 * 60).toJSDate();
+    const [p] = await m.db.db
+      .insert(m.schema.timePunches)
+      .values({ staffId: ids.barber, shopId: shop.coralville, type: "in", at, originalAt: at, source: "self", method: "qr" })
+      .returning();
+    punch.id = p.id;
+    const from = m.time.addDays(today, 30);
+    const [r] = await m.db.db
+      .insert(m.schema.timeOffRequests)
+      .values({ staffId: ids.barber, shopId: shop.coralville, fromDate: from, toDate: from, startsAt: m.time.zonedWallTime(from, 0).toJSDate(), endsAt: m.time.zonedWallTime(m.time.addDays(from, 1), 0).toJSDate(), reason: CANARY.block })
+      .returning();
+    punch.request = r.id;
+    punch.period = (await import("@/server/time-clock")).periodFor(today).start;
+  });
+
+  it("X-Shop-Id naming Coralville is refused, not swapped for one of theirs", async () => {
+    for (const o of OUTSIDERS) {
+      const r = await callAs(o, "GET", "me", undefined, shop.coralville);
+      expect(r.status, o.name).toBe(403);
+    }
+  });
+
+  it("every Coralville record by id is not found or refused, and nothing changes", async () => {
+    const cv = shop.coralville;
+    const before = await coralvilleState();
+    const day = m.time.addDays(today, 3);
+    const at = m.time.zonedWallTime(today, 12 * 60).toJSDate().toISOString();
+    const calls: [Parameters<typeof api.call>[0], string, unknown?][] = [
+      ["GET", `appointments/${ids.appt}`],
+      ["POST", `appointments/${ids.floatAppt}/status`, { action: "cancel" }],
+      ["POST", `appointments/${ids.floatAppt}/move`, { date: day, startMin: 600 }],
+      ["POST", `appointments/${ids.floatAppt}/late`, { minutes: 10 }],
+      ["POST", `appointments/${ids.appt}/notes`, { kind: "visit", body: "x" }],
+      ["GET", `appointments/${ids.appt}/notes`],
+      ["GET", `me/calendar?shopId=${cv}&date=${today}`],
+      ["GET", `openings?shopId=${cv}&date=${day}&serviceId=${ids.service}&staffId=${ids.barber}`],
+      ["POST", "appointments", { shopId: cv, staffId: ids.barber, date: day, startMin: 600, serviceId: ids.service, customerId: ids.client }],
+      ["POST", "blocks", { shopId: cv, staffId: ids.barber, date: day, startMin: 600, endMin: 630, reasonId: ids.reason, confirm: true }],
+      ["DELETE", `blocks/${ids.block}`],
+      ["GET", `timecards?shopId=${cv}`],
+      ["GET", `timecards/export?period=${punch.period}&shopId=${cv}`],
+      ["GET", `timecards/${ids.barber}`],
+      ["POST", `timecards/${ids.barber}/approve`, { shopId: cv, periodStart: punch.period, note: "ok" }],
+      ["POST", `timecards/${ids.barber}/punches`, { shopId: cv, type: "out", at, reason: "x" }],
+      ["PATCH", `punches/${punch.id}`, { at, reason: "x" }],
+      ["POST", `punches/${punch.id}/void`, { reason: "x" }],
+      ["GET", `time-off-requests?shopId=${cv}`],
+      ["POST", `time-off-requests/${punch.request}/decision`, { decision: "deny" }],
+      ["POST", "me/time-off-requests", { shopId: cv, fromDate: day, toDate: day, allDay: true, reasonId: ids.reason }],
+      ["GET", `shops/${cv}/waitlist`],
+      ["POST", `shops/${cv}/waitlist`, { serviceId: ids.service, name: "Walk In" }],
+      ["POST", `waitlist/${ids.wait}/seat`, { staffId: ids.barber }],
+      ["POST", `waitlist/${ids.wait}/status`, { status: "left" }],
+      ["POST", `waitlist/${ids.wait}/notify`],
+      ["POST", "sales", { appointmentId: ids.floatAppt }],
+      ["GET", `manager/board?shopId=${cv}`],
+      ["POST", "me/payout-cutover/confirm", { shopId: cv, status: "confirmed" }],
+      ["POST", "me/timecard/sign-off", { shopId: cv, periodStart: punch.period }],
+      ["POST", "clock/punch", { shopId: cv, type: "in", confirmTimeOff: true }],
+      ["POST", "clock/kiosk/register", { shopId: cv, label: "Stolen iPad" }],
+      ["POST", `staff/${ids.barber}/app-invite`, { channel: "email" }],
+      ["POST", `staff/${ids.barber}/sign-out`],
+      ["POST", "terminal/connection-token", { shopId: cv }],
+    ];
+    for (const o of OUTSIDERS)
+      for (const [method, path, body] of calls) {
+        const r = await callAs(o, method, path, body);
+        expect([403, 404], `${o.name} ${method} ${path}: ${r.status} ${r.text}`).toContain(r.status);
+        for (const s of SECRETS) expect(r.text, `${o.name} ${method} ${path}`).not.toContain(s);
+      }
+    expect(await coralvilleState()).toBe(before);
+    expect((await m.db.db.query.timePunches.findFirst({ where: eq(m.schema.timePunches.id, punch.id!) }))!.voidedAt).toBeNull();
+    expect((await m.db.db.query.timeOffRequests.findFirst({ where: eq(m.schema.timeOffRequests.id, punch.request!) }))!.status).toBe("pending");
+  }, 180_000);
+
+  it("their own lists, boards and searches carry no Coralville canary; the brand client's card has no other shop's detail", async () => {
+    for (const o of OUTSIDERS) {
+      const checks: [string, readonly string[]][] = [
+        ["me", SECRETS],
+        [`me/calendar?date=${today}`, SECRETS],
+        [`appointments?from=${today}&days=7`, SECRETS],
+        [`schedule?from=${today}&days=7`, SECRETS],
+        ["timecards", SECRETS],
+        ["time-off-requests?status=all", SECRETS],
+        ["manager/board", SECRETS],
+        ["me/milestones", SECRETS],
+        ["me/earnings", SECRETS],
+        ["me/payout-cutover", SECRETS],
+        ["popups", SECRETS],
+        ["clock", SECRETS],
+        [`clients?q=${CANARY.first}`, SECRETS.filter((s) => !VISIT_HISTORY.includes(s))],
+        [`clients/${ids.client}`, OTHER_SHOP_DETAIL],
+        [`clients/${ids.shared}`, OTHER_SHOP_DETAIL],
+      ];
+      for (const [path, banned] of checks) {
+        const r = await callAs(o, "GET", path);
+        expect([200, 403, 404], `${o.name} ${path}: ${r.text}`).toContain(r.status);
+        for (const s of banned) expect(r.text, `${o.name} ${path}`).not.toContain(s);
+        expect(r.text, `${o.name} ${path}`).not.toContain(CANARY.phone);
+      }
+      const own = o.at?.() ?? (o.login === "regional" || o.login === "kat" ? null : shop.moline);
+      if (own) {
+        const w = await callAs(o, "GET", `shops/${own}/waitlist`);
+        for (const s of SECRETS) expect(w.text, o.name).not.toContain(s);
+      }
+    }
+  }, 180_000);
+
+  it("the brand owner reaches the same Coralville records, so their absence above means something", async () => {
+    const owner = { login: "owner" as const };
+    const cv = shop.coralville;
+    expect((await callAs(owner, "GET", `shops/${cv}/waitlist`, undefined, cv)).text).toContain(CANARY.waitName.split(" ")[0]);
+    expect((await callAs(owner, "GET", `me/calendar?date=${today}`, undefined, cv)).text).toContain(CANARY.barber);
+    expect((await callAs(owner, "GET", `timecards/${ids.barber}?period=${punch.period}`, undefined, cv)).status).toBe(200);
+    expect((await callAs(owner, "GET", `time-off-requests?shopId=${cv}`, undefined, cv)).json.requests.map((r: { id: string }) => r.id)).toContain(punch.request);
+  });
+});
