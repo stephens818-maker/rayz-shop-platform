@@ -3115,7 +3115,7 @@ export type Sale = typeof sales.$inferSelect;
 
 /**
  * An employer: one legal entity (one FEIN) its shops' pay groups belong to, and every tip is tagged
- * with. Only the last four digits of its EIN are kept; the full number stays in iSolved and Stripe.
+ * with. Only the last four digits of its federal tax id are kept; the full number stays in iSolved and Stripe.
  */
 export const payrollEmployers = pgTable(
   "payroll_employers",
