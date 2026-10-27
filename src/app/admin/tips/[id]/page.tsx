@@ -96,8 +96,8 @@ export default async function TipBatchPage({ params }: { params: Promise<{ id: s
         <Notice tone="amber">
           {owed.length === 1 ? `${owed[0].name}'s payout` : `${owed.length} payouts`} ({formatCents(owed.reduce((a, p) => a + p.netCents, 0))}) can&rsquo;t go to Stripe yet: direct payouts
           aren&rsquo;t turned on. Their tips are owed and go on payroll at the period&rsquo;s cutoff, never twice. See{" "}
-          <Link className="underline" href="/admin/payouts">
-            Payouts
+          <Link className="underline" href="/admin/tips/tracker">
+            Payout tracker
           </Link>
           .
         </Notice>

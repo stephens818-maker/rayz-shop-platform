@@ -458,7 +458,7 @@ export const SETTINGS: readonly SettingDef[] = [
     area: "payroll",
     column: "staffPayouts",
     perms: ["tips.settings"],
-    paths: ["/admin/tips/settings", "/admin/payouts"],
+    paths: ["/admin/tips/settings", "/admin/tips/tracker"],
     wholeBrand: "Tips that can't be paid directly go through the brand's one payroll export, and the tips-paid export reports every shop by the same rules, so these settings are the same at every shop.",
     read: staffPayoutSettings,
     parse: (raw, before) => staffPayoutSettings(StaffPayoutsInput.parse({ ...before, ...obj(raw) })),
