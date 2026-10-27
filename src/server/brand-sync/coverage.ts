@@ -126,6 +126,7 @@ export const TABLES: Record<string, Coverage> = {
   pay_groups: is("shop", "A shop's iSolved pay group and export tab"),
   payments: PAY,
   payout_reconciliations: PAY,
+  payroll_export_sends: LOG,
   payroll_locked_ot: REC,
   payroll_overrides: is("record", "A value typed over the computed one for one barber and pay period"),
   payroll_profiles: is("person", "One person's payroll identity"),

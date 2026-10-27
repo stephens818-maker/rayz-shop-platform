@@ -897,7 +897,7 @@ Charles's requirement with the Stripe decision: the tips stay W-2 wages, so payr
 
 Confirmed with Charles: iSolved is the payroll company and keeps computing paychecks, taxes and blended overtime. Reports → Payroll shows what the platform sends it, from the same Payroll Report each period is approved and locked on. README "Payroll reports" has the details.
 
-- [x] Brand-only by default: Brand Owner, Brand Admin and Bookkeeper hold view and export for all eight; no location role does, and a shop login never can (migration `core_0106_payroll_export_sends`). Each is its own permission under **Reports: payroll (iSolved)**.
+- [x] Brand-only by default: Brand Owner, Brand Admin and Bookkeeper hold view and export for all eight; no location role does, and a shop login never can (migrations `core_0106_payroll_export_sends`, `core_0107_payroll_export_sends_scrub`). Each is its own permission under **Reports: payroll (iSolved)**.
 - [x] Every report filters by pay period (chips for each pay group's recent periods, from Payroll setup, bi-weekly by default), shop, employee and date range.
 - [x] Payroll summary per employee: regular and OT hours from the time clock, hourly rate, gross hourly pay, service and product commission, card and cash tips, tips already paid via Stripe, and the total to iSolved (rates and totals need `payroll.rates`).
 - [x] Timesheet detail: punches, breaks, every manager edit with its reason, and each timesheet's sign-offs, approvals and lock.

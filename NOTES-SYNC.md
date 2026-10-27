@@ -525,7 +525,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ### 2026-10-27: core, payroll reports and the iSolved export status, FYI for mobile
 - **Reports → Payroll** (eight reports, `report.payroll_*`), brand-only by default and in `SHOP_LOGIN_NEVER`. Admin only; nothing in `/api/v1` or `/api/staff/v1`.
-- **Migration `core_0106_payroll_export_sends`:** the `payroll_export_sends` table and the new report permissions for Brand Admin and Bookkeeper. The next free one is `core_0107`.
+- **Migrations `core_0106_payroll_export_sends` and `core_0107_payroll_export_sends_scrub`:** the `payroll_export_sends` table (its note scrubbed) and the new report permissions for Brand Admin and Bookkeeper. The next free one is `core_0108`.
 - `pnpm typecheck` now runs tsc with a 4 GB heap; the full project passes Node's default 2.2 GB.
 
 ### 2026-10-27: core, direct Stripe tip payouts on (ST-I9) with W-2 safeguards, FYI for mobile
