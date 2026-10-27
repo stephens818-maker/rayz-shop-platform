@@ -4,6 +4,7 @@ import { route } from "@/server/api";
 import { StaffContext, assertShopAccess, authorizeContext } from "@/server/auth/staff";
 import { AppError, forbidden } from "@/server/errors";
 import { requireStaffApp } from "./auth";
+import { assertSupportedStaffClient } from "./config";
 
 export type StaffAppContext = StaffContext & { sessionId: string };
 
@@ -39,11 +40,20 @@ export function assertShopHeader(req: Request, ctx: StaffAppContext) {
  */
 export function staffRoute<P = Record<string, string>>(guard: Guard, fn: (req: Request, ctx: StaffAppContext, params: P) => Promise<Response>) {
   return route<P>(async (req, params) => {
+    assertSupportedStaffClient(req);
     const ctx = await requireStaffApp(req);
     assertShopHeader(req, ctx);
     authorizeContext(ctx, guard.perms ?? [], guard.message);
     if (guard.person && ctx.staff.kind !== "person") throw new AppError("forbidden", "A shop login can't do that. Sign in to the app as yourself.");
     return fn(req, ctx, params);
+  });
+}
+
+/** A sign-in route (no token yet): only the version gate. GET /config and the spec use plain route(). */
+export function signInRoute<P = Record<string, string>>(fn: (req: Request, params: P) => Promise<Response>) {
+  return route<P>(async (req, params) => {
+    assertSupportedStaffClient(req);
+    return fn(req, params);
   });
 }
 

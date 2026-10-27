@@ -167,7 +167,7 @@ export async function editTeamPunch(ctx: StaffAppContext, punchId: string, v: { 
   return { id: punchId };
 }
 
-/** DELETE /punches/{id}: voided, kept on record. */
+/** POST /punches/{id}/void: voided, kept on record. */
 export async function voidTeamPunch(ctx: StaffAppContext, punchId: string, reason: string) {
   await punchHere(ctx, punchId);
   await voidPunch(editor(ctx), punchId, reason);

@@ -28,13 +28,107 @@ interface Op {
   params?: boolean;
   kiosk?: boolean;
   public?: boolean;
+  /** 204 with no body. */
+  empty?: boolean;
 }
+
+const ME = "Their own (not a shop login)";
+const MORE: Op[] = [
+  // ST-C1, ST-C10, ST-I8
+  { method: "post", path: "/auth/code/start", tag: "Sign-in", summary: "Text (Twilio Verify where set up) or email a 6-digit sign-in code to the email or mobile number on file. The same answer whether or not it matches anyone. Rate-limited.", permission: "Anyone", body: S.CodeStartBody, public: true },
+  { method: "post", path: "/auth/code/verify", tag: "Sign-in", summary: "The code: { tokens } or, with two-step sign-in, { twoFactor } for /auth/login/code. Five wrong codes and it's used up.", permission: "Any active staff login", body: S.CodeVerifyBody, public: true },
+  { method: "get", path: "/auth/invite", tag: "Sign-in", summary: "The staff app invite screen: their first name, whether they set a password, and when it expires. 404 for a used, replaced or expired link.", permission: "The invite link", query: S.InviteQuery, public: true },
+  { method: "post", path: "/auth/invite/accept", tag: "Sign-in", summary: "Use the invite (once): sets their password when they haven't one, then { tokens } or { twoFactor }.", permission: "The invite link", body: S.InviteAcceptBody, public: true },
+  {
+    method: "get",
+    path: "/config",
+    tag: "App",
+    summary:
+      "Read at launch, before sign-in, and never version-gated: minimum and latest versions per platform (send X-Client: ios|android and X-App-Version; older than the minimum is 426 upgrade_required on every other route), the maintenance message, switches (clock, stripePayouts, tapToPay), the payout default (payroll), links to the staff privacy policy, terms and support, and legal versions.",
+    permission: "Anyone",
+    public: true,
+  },
+  { method: "get", path: "/me/sessions", tag: "Me", summary: "Every phone signed in as them: the name it gave, when it signed in and was last used, and which is this one. Never an IP or token.", permission: "Signed in" },
+  { method: "delete", path: "/me/sessions/{id}", tag: "Me", summary: "Sign one of their phones out (a lost phone); its tokens and pushes stop at once.", permission: "Their own", params: true },
+  { method: "post", path: "/me/sessions/sign-out-others", tag: "Me", summary: "Sign out every phone but this one. { ended }.", permission: "Their own" },
+  // ST-C3
+  { method: "get", path: "/me/calendar", tag: "Calendar", summary: "One day at one shop: their own column, or every barber's with calendar.view_all or calendar.manage (all=0 for just theirs). Blocks, clock state, appointments with names as Client data shows them. Never a client phone.", permission: "Signed in", query: S.CalendarQuery },
+  { method: "get", path: "/me/schedule", tag: "Schedule", summary: "Same as GET /schedule.", permission: ME, query: S.ScheduleQuery },
+  { method: "post", path: "/appointments", tag: "Calendar", summary: "Book from the phone: their own column unless they have calendar.manage; on the grid unless squeezeIn with calendar.squeeze_in. A new client's details each need Client data's add permission. Audited as staff_app.", permission: "Signed in; calendar.manage for others' columns", body: S.BookBody },
+  { method: "post", path: "/appointments/{id}/status", tag: "Calendar", summary: "confirm, check_in, start, finish (to checkout), complete, no_show, cancel or undo: their own, or anyone's with calendar.manage. Audited.", permission: "Their own; calendar.manage for others'", body: S.StatusBody, params: true },
+  { method: "post", path: "/appointments/{id}/move", tag: "Calendar", summary: "Move to another time or barber, with the web calendar's rules.", permission: "Their own; calendar.manage for others'", body: S.MoveBody, params: true },
+  { method: "post", path: "/appointments/{id}/late", tag: "Calendar", summary: "The client told the desk they're running late: the barber gets an app alert (first name only). Nothing goes to the client.", permission: "Their own; calendar.manage for others'", body: S.LateBody, params: true },
+  { method: "get", path: "/openings", tag: "Calendar", summary: "Open starts on a barber's grid for a service and add-ons on a day.", permission: "Their own; calendar.manage for others'", query: S.OpeningsQuery },
+  { method: "post", path: "/blocks", tag: "Calendar", summary: "Block time (a reason from the shop's list). With clients booked in it, { saved: false, conflicts } (first names only) until confirm; they stay booked.", permission: "blocks.own; blocks.others for anyone's", body: S.BlockBody },
+  { method: "delete", path: "/blocks/{id}", tag: "Calendar", summary: "Remove a block.", permission: "blocks.own; blocks.others for anyone's", params: true },
+  // ST-C4, ST-I5
+  { method: "get", path: "/clients", tag: "Clients", summary: "Search by name, client number or a phone's last 4. Only clients they've served, without clients.view_all. Up to 20; the search is logged, never the term. No export.", permission: "Signed in", query: S.ClientSearchQuery },
+  { method: "get", path: "/clients/{id}", tag: "Clients", summary: "The client card as Client data protection shows it to them: hidden fields left out, masked ones masked, contact details never (use /contact). Notes, preferences, visits; ratings only with permission. Logged and counted toward lookup limits. 404 for a client they can't open.", permission: "Signed in", params: true },
+  { method: "post", path: "/clients/{id}/reveal", tag: "Clients", summary: "One masked detail in full, with a reason; logged. Phone, email and address are never revealed in the app.", permission: "clients.reveal", body: S.RevealBody, params: true },
+  { method: "post", path: "/clients/{id}/contact", tag: "Clients", summary: "A call bridged through the shop line, or a text from the shop's number (consent and STOP checked). The number never comes back.", permission: "clients.message", body: S.ContactBody, params: true },
+  // ST-C5
+  { method: "post", path: "/clock/in", tag: "Time clock", summary: "POST /clock/punch with type in. 409 with details.feature = clock while the app clock is switched off (STAFF_APP_CLOCK_OFF).", permission: "timeclock.punch", body: S.ClockInOutBody },
+  { method: "post", path: "/clock/out", tag: "Time clock", summary: "POST /clock/punch with type out.", permission: "timeclock.punch", body: S.ClockInOutBody },
+  { method: "get", path: "/me/timecard", tag: "Timecards", summary: "Their timesheet for a pay period at every shop: days, hours, overtime, breaks, problems, approvals, edits (who, when, why) and whether they can sign off. No punch photos.", permission: "timesheet.own", query: S.PeriodQuery },
+  { method: "post", path: "/me/timecard/sign-off", tag: "Timecards", summary: "Sign off their own timecard for a shop and period.", permission: "timesheet.own", body: S.SignOffBody },
+  { method: "get", path: "/timecards", tag: "Timecards", summary: "The team's timecards at the manager's shops for a period: hours, problems and approvals per person and shop.", permission: "timesheet.edit, timesheet.approve or payroll.export", query: S.TeamTimecardsQuery },
+  { method: "get", path: "/timecards/export", tag: "Timecards", summary: "The iSolved import CSV (or every field) for a period, as text/csv. X-Payroll-Draft: true until the period is locked. Logged.", permission: "payroll.export", query: S.ExportQuery },
+  { method: "get", path: "/timecards/{id}", tag: "Timecards", summary: "One person's timecard (id is the staff member) at the manager's shops, with the punches to fix. 404 outside their shops.", permission: "timesheet.edit, timesheet.approve or payroll.export", query: S.PeriodQuery, params: true },
+  { method: "post", path: "/timecards/{id}/approve", tag: "Timecards", summary: "Approve after their sign-off, or with a note saying why not.", permission: "timesheet.approve", body: S.ApproveBody, params: true },
+  { method: "post", path: "/timecards/{id}/punches", tag: "Timecards", summary: "Add a punch they missed, with a reason (edit log).", permission: "timesheet.edit", body: S.AddPunchBody, params: true },
+  { method: "patch", path: "/punches/{id}", tag: "Timecards", summary: "Change a punch's time, type or shop, with a reason (edit log, before and after).", permission: "timesheet.edit", body: S.EditPunchBody, params: true },
+  { method: "post", path: "/punches/{id}/void", tag: "Timecards", summary: "Void a punch with a reason; kept on record. 204.", permission: "timesheet.edit", body: S.VoidPunchBody, params: true, empty: true },
+  // ST-C6, ST-C7, ST-C9
+  {
+    method: "get",
+    path: "/me/earnings",
+    tag: "Tips and pay",
+    summary:
+      "One pay period (any day in it), per shop and in total, from the same payroll run as the iSolved export, to the cent: hours (timesheet.own), card, cash and gift-card tips (tips.own), service and product sales with refunds netted (report.my_sales.view with reports.money), wages and commission (compensation.own). Parts they may not see are null. payout says how tips reach them.",
+    permission: "Any of those",
+    query: S.PeriodEarningsQuery,
+  },
+  { method: "get", path: "/me/earnings/ytd", tag: "Tips and pay", summary: "Year to date: Ray'z plus what was imported from Squire for the year (W-2 continuity), per shop.", permission: "Any of those", query: S.YtdQuery },
+  {
+    method: "get",
+    path: "/me/payout-setup",
+    tag: "Tips and pay",
+    summary:
+      "How each shop pays their tips: payroll (iSolved, the default), cash or Stripe. With payroll, bank details live in iSolved employee self-service: open payrollPortalUrl. stripePayouts.enabled is false while direct Stripe payouts are on hold.",
+    permission: "tips.own",
+  },
+  { method: "get", path: "/me/payout-cutover", tag: "Tips and pay", summary: "What Squire still owed them at the switch, Squire's last payout and Ray'z's first, and whether they've confirmed it.", permission: "tips.own" },
+  { method: "post", path: "/me/payout-cutover/confirm", tag: "Tips and pay", summary: "Confirm the Squire amount, or dispute it with a note; the manager can't sign off the reconciliation while anything is disputed.", permission: "tips.own", body: S.CutoverAnswerBody },
+  // ST-I1, ST-I2
+  { method: "get", path: "/me/milestones", tag: "Me", summary: "Trophies, personal bests, progress, congratulations; their rebook rate with the rebook report; teammates' only with reports.all_staff.", permission: ME },
+  { method: "get", path: "/me/time-off-requests", tag: "Time off", summary: "Their requests, newest first, and the reasons they can ask with (private reasons masked).", permission: ME },
+  { method: "post", path: "/me/time-off-requests", tag: "Time off", summary: "Ask for time off at one shop or all of theirs, with the brand's notice rule. With clients booked, { saved: false, conflicts } (first names) until confirm. Approved requests become blocks.", permission: "timeoff.request", body: S.TimeOffBody },
+  { method: "delete", path: "/me/time-off-requests/{id}", tag: "Time off", summary: "Withdraw their own request.", permission: ME, params: true },
+  { method: "get", path: "/time-off-requests", tag: "Time off", summary: "Requests at the approver's shops (pending, or all from the last 14 days).", permission: "timeoff.approve", query: S.TeamTimeOffQuery },
+  { method: "post", path: "/time-off-requests/{id}/decision", tag: "Time off", summary: "Approve (it becomes a block) or deny; they get a push either way. Returns the appointments in the way. 404 outside their shops.", permission: "timeoff.approve", body: S.DecisionBody, params: true },
+  // ST-I3, ST-I4
+  { method: "get", path: "/shops/{id}/waitlist", tag: "Walk-ins", summary: "Who's waiting (names as Client data shows them, never a phone; canText says a number is on file), the estimated wait, barbers and services.", permission: "walkins.manage", params: true },
+  { method: "post", path: "/shops/{id}/waitlist", tag: "Walk-ins", summary: "A walk-in: seated now with a free barber, or added to the waitlist with a quoted wait.", permission: "walkins.manage", body: S.WalkInBody, params: true },
+  { method: "post", path: "/waitlist/{id}/seat", tag: "Walk-ins", summary: "Seat with a barber at that shop; the barber gets \"you're up\".", permission: "walkins.manage", body: S.SeatBody, params: true },
+  { method: "post", path: "/waitlist/{id}/status", tag: "Walk-ins", summary: "They left, or they're done. 204.", permission: "walkins.manage", body: S.EntryStatusBody, params: true, empty: true },
+  { method: "post", path: "/waitlist/{id}/notify", tag: "Walk-ins", summary: "Text \"your chair is ready\" from the shop's number, unless they opted out of texts.", permission: "walkins.manage", params: true },
+  { method: "post", path: "/sales", tag: "Checkout", summary: "The ticket for an appointment (theirs, or anyone's with checkout.any), priced by the server, with the credit card fee from the shop's policy (computeCardFee). Paying is at the front desk until Tap to Pay is switched on.", permission: "Their own; checkout.any for others'", body: S.SaleBody },
+  { method: "post", path: "/terminal/connection-token", tag: "Checkout", summary: "A Stripe Terminal connection token for the shop's Terminal location (Tap to Pay). 403 with details.feature = tap_to_pay until FEATURE_STAFF_TAP_TO_PAY is on.", permission: "timeclock.punch, checkout.any or pos.custom_charge", body: S.TerminalTokenBody },
+  // ST-I6, ST-I7
+  { method: "get", path: "/clock/kiosk", tag: "Front-desk clock", summary: "The front-desk screen in one call: the rotating QR, the PIN pad's team and the walk-in queue (first names and waits; for a shop login or walkins.manage).", permission: "timeclock.kiosk", kiosk: true },
+  { method: "get", path: "/clock/kiosk/queue", tag: "Front-desk clock", summary: "The walk-in queue alone: first names, positions and waits.", permission: "timeclock.kiosk, and a shop login or walkins.manage", kiosk: true },
+  { method: "get", path: "/manager/board", tag: "Manager", summary: "Today at one shop in the parts they may see (sees): each barber's clock and chair, the waitlist, time off to decide, timecards to approve, products running low.", permission: "Any manager permission", query: S.BoardQuery },
+  { method: "post", path: "/staff/{id}/app-invite", tag: "Manager", summary: "Send someone the staff app's sign-in link by text or email; a new link cancels the last. link comes back only when it couldn't be sent.", permission: "permissions.manage", body: S.AppInviteBody, params: true },
+  { method: "post", path: "/staff/{id}/sign-out", tag: "Manager", summary: "Sign someone out of the staff app on every phone (a lost or shared phone) without deactivating them. Deactivating does this too. 204.", permission: "permissions.manage", params: true, empty: true },
+];
+
+const HELD = " On hold: 403 with details.feature = staff_stripe_payouts until FEATURE_STAFF_STRIPE_PAYOUTS is on. Tips are paid through payroll (iSolved) until then; see GET /me/payout-setup.";
 
 const OPS: Op[] = [
   { method: "post", path: "/auth/login", tag: "Sign-in", summary: "Email and password. Returns { tokens } or, with two-step sign-in, { twoFactor: { ticket, enroll? } } for /auth/login/code.", permission: "Any active staff login", body: S.LoginBody, public: true },
   { method: "post", path: "/auth/login/code", tag: "Sign-in", summary: "The authenticator code for the ticket. A wrong code is 401 with details.twoFactor to try again.", permission: "Any active staff login", body: S.LoginCodeBody, public: true },
-  { method: "post", path: "/auth/refresh", tag: "Sign-in", summary: "Rotates the refresh token. Reusing an old one ends every staff app session for that person.", permission: "A live session", body: S.RefreshBody, public: true },
-  { method: "post", path: "/auth/logout", tag: "Sign-in", summary: "Ends the session; its access token and its phone's pushes stop at once. 204.", permission: "A live session", body: S.RefreshBody, public: true },
+  { method: "post", path: "/auth/refresh", tag: "Sign-in", summary: "Rotates the refresh token. Reusing an old one ends every staff app session for that person. A token from a sign-in that sent deviceId works only with the same deviceId.", permission: "A live session", body: S.RefreshBody, public: true },
+  { method: "post", path: "/auth/logout", tag: "Sign-in", summary: "Ends the session; its access token and its phone's pushes stop at once. 204.", permission: "A live session", body: S.LogoutBody, public: true, empty: true },
   { method: "get", path: "/me", tag: "Me", summary: "Who they are, their shops, the app features they may use and every permission they hold.", permission: "Signed in" },
   { method: "get", path: "/me/notifications", tag: "Me", summary: "How they hear about their own clients' bookings, changes, cancellations and arrivals, and their phones.", permission: "Their own (not a shop login)" },
   { method: "put", path: "/me/notifications", tag: "Me", summary: "Change it. push is the app.", permission: "Their own (not a shop login)", body: S.NotificationPrefsBody },
@@ -88,6 +182,7 @@ const OPS: Op[] = [
   { method: "post", path: "/devices", tag: "Push", summary: "Register this phone's push token for their own clients' new, changed and cancelled bookings. A first phone turns those on when they've never chosen.", permission: "Their own", body: S.DeviceBody },
   { method: "patch", path: "/devices/{id}", tag: "Push", summary: "A rotated token, notification permission or app version.", permission: "Their own", body: S.DevicePatch, params: true },
   { method: "delete", path: "/devices/{id}", tag: "Push", summary: "Stop pushes to the phone. 204.", permission: "Their own", params: true },
+  ...MORE,
 ];
 
 /** The staff app's API as OpenAPI 3.1, for the app builder. */
@@ -98,15 +193,16 @@ export function staffOpenApiDocument(baseUrl: string) {
     (paths[op.path] ??= {})[op.method] = {
       tags: [op.tag],
       summary: op.summary,
-      description: `Permission: ${op.permission}.`,
+      description: `Permission: ${op.permission}.${op.tag === "Banking" ? HELD : ""}`,
       ...(op.public ? { security: [] } : {}),
       ...(parameters.length ? { parameters } : {}),
       ...(op.body ? { requestBody: { required: true, content: { "application/json": { schema: schema(op.body) } } } } : {}),
       responses: {
-        ...(op.method === "delete" || op.path === "/auth/logout" ? { "204": { description: "Done" } } : { "200": { description: "OK" } }),
+        ...(op.method === "delete" || op.empty ? { "204": { description: "Done" } } : { "200": { description: "OK" } }),
         "400": { description: "Invalid request", content: { "application/json": { schema: { $ref: "#/components/schemas/Error" } } } },
         "401": { description: "Sign in required" },
         "403": { description: "Their role or the location's sign-in rule doesn't allow it" },
+        ...(op.path === "/config" ? {} : { "426": { description: "This app build is older than the platform's minimum (GET /config)" } }),
       },
     };
   }

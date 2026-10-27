@@ -188,12 +188,15 @@ export async function kioskPunch(ctx: StaffAppContext, req: Request, v: { staffI
 /** The walk-in queue on the front-desk device: first names and waits only. */
 export async function kioskQueueView(ctx: StaffAppContext, req: Request) {
   const device = await kiosk(ctx, req);
+  if (!showsQueue(ctx)) throw forbidden("The walk-in queue needs a shop login or walk-in management");
   return kioskQueue(device.shopId);
 }
+
+const showsQueue = (ctx: StaffAppContext) => can(ctx, "walkins.manage") || ctx.staff.kind === "shop";
 
 /** Everything the front-desk screen draws in one call: the rotating QR, the PIN pad's team and the walk-in queue. */
 export async function kioskHome(ctx: StaffAppContext, req: Request) {
   const device = await kiosk(ctx, req);
-  const [qr, team, queue] = await Promise.all([kioskQr(ctx, req), kioskTeam(ctx, req), kioskQueue(device.shopId)]);
-  return { shopId: device.shopId, shop: device.shop, device: device.label, qr: { url: qr.url, expiresAt: qr.expiresAt }, team: team.team, queue: can(ctx, "walkins.manage") || ctx.staff.kind === "shop" ? queue : null };
+  const [qr, team, queue] = await Promise.all([kioskQr(ctx, req), kioskTeam(ctx, req), showsQueue(ctx) ? kioskQueue(device.shopId) : null]);
+  return { shopId: device.shopId, shop: device.shop, device: device.label, qr: { url: qr.url, expiresAt: qr.expiresAt }, team: team.team, queue };
 }

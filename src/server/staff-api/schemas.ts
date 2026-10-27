@@ -56,6 +56,8 @@ export const PunchBody = z.object({
   confirmTimeOff: z.boolean().optional().describe("Clock in anyway during time off, after the confirm reply"),
 });
 
+export const ClockInOutBody = PunchBody.omit({ type: true });
+
 export const BreakStartBody = z.object({
   shopId: z.uuid().optional().describe("The shop they're clocked in at when left out"),
   breakReasonId: z.uuid().nullish().describe("From GET /clock breakReasons; none is Break"),

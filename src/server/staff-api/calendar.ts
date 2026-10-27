@@ -66,7 +66,7 @@ export async function setStatus(ctx: StaffAppContext, id: string, action: Status
 }
 
 /** POST /appointments: on the grid unless they may squeeze in; their own column unless they manage the calendar. */
-export async function book(ctx: StaffAppContext, input: StaffBookingInput) {
+export async function book(ctx: StaffAppContext, input: Omit<StaffBookingInput, "shopId"> & { shopId?: string | null }) {
   const appt = await bookForStaff(ctx, { ...input, shopId: shopOf(ctx, input.shopId) }, "staff_app");
   return myAppointment(ctx, appt.id);
 }

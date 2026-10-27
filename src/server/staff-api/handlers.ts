@@ -3,16 +3,41 @@ import { z } from "zod";
 import { body, json, options, query, route } from "@/server/api";
 import { can, canAny } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
+import { answerPayoutCutover, myPayoutCutover } from "@/server/payout-cutover";
 import { loadNotificationPrefs, saveNotificationPrefs } from "@/server/staff-settings";
+import { requireInTenant } from "@/server/tenant";
 import { clockState } from "@/server/time-clock";
+import { assertStripePayouts } from "@/server/tips/payout-model";
 import { refreshStaffTokens, requestWhere, staffCodeLogin, staffLogout, staffPasswordLogin } from "./auth";
-import { appPunch, clockOverview, kioskPunch, kioskQr, kioskStatus, kioskTeam, registerKiosk, setMyPin } from "./clock";
+import { block, book, move, myCalendar, openings, runningLate, seesEveryColumn, setStatus, unblock } from "./calendar";
+import { clientCard, contactForApp, findClientsFor, revealForApp } from "./clients";
+import { appPunch, clockOverview, kioskHome, kioskPunch, kioskQr, kioskQueueView, kioskStatus, kioskTeam, registerKiosk, setMyPin } from "./clock";
+import { assertClockOn, staffAppConfig, staffSwitches } from "./config";
 import { listStaffDevices, registerStaffDevice, revokeStaffDevice, updateStaffDevice } from "./devices";
-import { StaffAppContext, staffRoute } from "./http";
+import {
+  addWalkIn,
+  askForTimeOff,
+  decideTeamTimeOff,
+  managerBoard,
+  myMilestones,
+  myTimeOff,
+  notifyEntry,
+  saleForAppointment,
+  seatEntry,
+  setEntryStatus,
+  shopWaitlist,
+  teamTimeOff,
+  terminalConnectionToken,
+  withdrawTimeOff,
+} from "./front";
+import { StaffAppContext, shopOf, signInRoute, staffRoute } from "./http";
 import { bankingView, dashboardLink, earningsRange, myEarnings, myExternalAccounts, myPayouts, myTipsView, onboardingLink, setMyPayoutMethod } from "./money";
+import { myPeriodEarnings, myYearToDate, payoutSetup } from "./pay";
 import { markPopupsSeen, popupsFor } from "./popups";
 import { addAppointmentNote, appointmentNotes, dayRange, myAppointment, myAppointments, mySchedule } from "./schedule";
 import * as S from "./schemas";
+import { acceptAppInvite, appInviteView, endMyOtherSessions, endMyStaffAppSession, listStaffAppSessions, sendStaffAppInvite, signOutOfStaffApp, startStaffCode, verifyStaffCode } from "./sign-in";
+import { addTeamPunch, approveTimecard, editTeamPunch, managesTimecards, myTimecard, signOffMine, teamTimecard, teamTimecards, timecardExport, voidTeamPunch } from "./timecard";
 
 /**
  * The staff app's API, /api/staff/v1. Each route file under src/app/api/staff/v1 re-exports one of
@@ -25,47 +50,89 @@ export const OPTIONS = options;
 // ───────────────────────────── Sign-in ─────────────────────────────
 
 /** POST /auth/login: tokens, or { twoFactor: { ticket, enroll? } } for the code step. */
-export const postLogin = route(async (req) => {
+export const postLogin = signInRoute(async (req) => {
   const v = await body(req, S.LoginBody);
   return json(await staffPasswordLogin(v, requestWhere(req)));
 });
 
 /** POST /auth/login/code */
-export const postLoginCode = route(async (req) => {
+export const postLoginCode = signInRoute(async (req) => {
   const v = await body(req, S.LoginCodeBody);
   return json({ tokens: await staffCodeLogin(v, requestWhere(req)) });
 });
 
-/** POST /auth/refresh */
-export const postRefresh = route(async (req) => {
+/** POST /auth/code/start: a sign-in code by text (Twilio Verify where set up) or email. The same answer whether or not they're on file. */
+export const postCodeStart = signInRoute(async (req) => {
+  const v = await body(req, S.CodeStartBody);
+  return json(await startStaffCode(v, requestWhere(req)));
+});
+
+/** POST /auth/code/verify: tokens, or the authenticator step for two-step sign-in. */
+export const postCodeVerify = signInRoute(async (req) => {
+  const v = await body(req, S.CodeVerifyBody);
+  return json(await verifyStaffCode(v, requestWhere(req)));
+});
+
+/** GET /auth/invite?token=: the invite screen. */
+export const getInvite = signInRoute(async (req) => {
+  const q = query(req, S.InviteQuery);
+  return json(await appInviteView(q.token));
+});
+
+/** POST /auth/invite/accept */
+export const postInviteAccept = signInRoute(async (req) => {
+  const v = await body(req, S.InviteAcceptBody);
+  return json(await acceptAppInvite(v, requestWhere(req)));
+});
+
+/** POST /auth/refresh: a refresh token bound to an install works only with that install's deviceId. */
+export const postRefresh = signInRoute(async (req) => {
   const v = await body(req, S.RefreshBody);
-  return json({ tokens: await refreshStaffTokens(v.refreshToken) });
+  return json({ tokens: await refreshStaffTokens(v.refreshToken, v.deviceId) });
 });
 
 /** POST /auth/logout: ends the session and stops its phone's pushes. */
-export const postLogout = route(async (req) => {
-  const v = await body(req, S.RefreshBody);
+export const postLogout = signInRoute(async (req) => {
+  const v = await body(req, S.LogoutBody);
   await staffLogout(v.refreshToken);
   return new Response(null, { status: 204 });
 });
+
+/** GET /config: minimum versions, switches and links, read at launch before sign-in. Not version-gated. */
+export const getConfig = route(async (req) => json(staffAppConfig(req)));
 
 // ───────────────────────────── Me ─────────────────────────────
 
 function features(ctx: StaffAppContext) {
   const person = ctx.staff.kind === "person";
+  const on = staffSwitches();
   return {
     schedule: person,
+    calendar: person || seesEveryColumn(ctx),
     clientNotes: can(ctx, "notes.view"),
-    clock: person && can(ctx, "timeclock.punch"),
+    clients: true,
+    clock: on.clock && person && can(ctx, "timeclock.punch"),
     kiosk: can(ctx, "timeclock.kiosk"),
     kioskRegister: can(ctx, "settings.shop"),
     tips: person && can(ctx, "tips.own"),
-    banking: person && can(ctx, "tips.own"),
-    earnings: person && canAny(ctx, ["tips.own", "compensation.own", "report.my_sales.view"]),
+    payouts: person && can(ctx, "tips.own"),
+    banking: on.stripePayouts && person && can(ctx, "tips.own"),
+    earnings: person && canAny(ctx, ["tips.own", "compensation.own", "report.my_sales.view", "timesheet.own"]),
     timesheet: person && can(ctx, "timesheet.own"),
-    seeEveryCalendar: canAny(ctx, ["calendar.view_all", "calendar.manage"]),
+    timeOff: person && can(ctx, "timeoff.request"),
+    milestones: person,
+    waitlist: can(ctx, "walkins.manage"),
+    checkout: person || can(ctx, "checkout.any"),
+    tapToPay: on.tapToPay && (person || can(ctx, "checkout.any")),
+    manager: canAny(ctx, MANAGER_PERMS),
+    timecards: managesTimecards(ctx),
+    approveTimeOff: can(ctx, "timeoff.approve"),
+    manageUsers: can(ctx, "permissions.manage"),
+    seeEveryCalendar: seesEveryColumn(ctx),
   };
 }
+
+const MANAGER_PERMS = ["calendar.view_all", "calendar.manage", "walkins.manage", "timeoff.approve", "timesheet.approve", "inventory.manage", "inventory.adjust", "po.create", "po.receive"] as const;
 
 /** GET /me: who they are, their shops, what this app may show them, and every permission they hold. */
 export const getMe = staffRoute({ perms: null }, async (_req, ctx) => {
@@ -90,9 +157,89 @@ export const putNotificationPrefs = staffRoute({ perms: null, person: true }, as
   return json({ prefs: await saveNotificationPrefs({ actor: ctx.actor, staffId: ctx.staff.id, shopIds: ctx.shopIds, brandWide: ctx.brandWide, canManage: false }, { staffId: ctx.staff.id, prefs }) });
 });
 
+/** GET /me/sessions: every phone signed in as them. */
+export const getSessions = staffRoute({ perms: null }, async (_req, ctx) => json({ sessions: await listStaffAppSessions(ctx.staff.id, ctx.sessionId) }));
+
+/** DELETE /me/sessions/{id}: sign a lost phone out. */
+export const deleteSession = staffRoute<{ id: string }>({ perms: null }, async (_req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  await endMyStaffAppSession(ctx.staff.id, id);
+  return new Response(null, { status: 204 });
+});
+
+/** POST /me/sessions/sign-out-others */
+export const postSignOutOthers = staffRoute({ perms: null }, async (_req, ctx) => json({ ended: await endMyOtherSessions(ctx.staff.id, ctx.sessionId) }));
+
+/** GET /me/calendar?date=&shopId=&all= */
+export const getCalendar = staffRoute({ perms: null }, async (req, ctx) => {
+  const q = query(req, S.CalendarQuery);
+  if (ctx.staff.kind !== "person" && !seesEveryColumn(ctx)) throw new AppError("forbidden", "A shop login sees the calendar with calendar.view_all");
+  return json(await myCalendar(ctx, { date: q.date, shopId: q.shopId, all: q.all === undefined ? undefined : q.all === "1" || q.all === "true" }));
+});
+
+/** GET /me/timecard?period= */
+export const getMyTimecard = staffRoute({ perms: "timesheet.own", person: true, message: "You can't see your timecard" }, async (req, ctx) => {
+  const q = query(req, S.PeriodQuery);
+  return json(await myTimecard(ctx, q.period));
+});
+
+/** POST /me/timecard/sign-off */
+export const postTimecardSignOff = staffRoute({ perms: "timesheet.own", person: true, message: "You can't sign off your timecard" }, async (req, ctx) => {
+  const v = await body(req, S.SignOffBody);
+  return json(await signOffMine(ctx, v));
+});
+
+const PAY = { perms: ["timesheet.own", "tips.own", "compensation.own", "report.my_sales.view"], person: true, message: "You can't see your earnings" } as const;
+
+/** GET /me/earnings?period=: one pay period, per shop, from the same payroll run as the iSolved export. */
+export const getPeriodEarnings = staffRoute(PAY, async (req, ctx) => {
+  const q = query(req, S.PeriodEarningsQuery);
+  return json(await myPeriodEarnings(ctx, q.period));
+});
+
+/** GET /me/earnings/ytd?year= */
+export const getYearToDate = staffRoute(PAY, async (req, ctx) => {
+  const q = query(req, S.YtdQuery);
+  return json(await myYearToDate(ctx, q.year));
+});
+
+/** GET /me/payout-setup: how each shop pays their tips (payroll by default) and the payroll portal link. */
+export const getPayoutSetup = staffRoute({ perms: "tips.own", person: true, message: "You can't see tips" }, async (_req, ctx) => json(await payoutSetup(ctx)));
+
+/** GET /me/payout-cutover: what Squire still owed them at the switch, and their answer. */
+export const getPayoutCutover = staffRoute({ perms: "tips.own", person: true, message: "You can't see tips" }, async (_req, ctx) => json(await myPayoutCutover(ctx.staff.id, ctx.shopIds)));
+
+/** POST /me/payout-cutover/confirm */
+export const postPayoutCutoverConfirm = staffRoute({ perms: "tips.own", person: true, message: "You can't see tips" }, async (req, ctx) => {
+  const v = await body(req, S.CutoverAnswerBody);
+  const shopId = shopOf(ctx, v.shopId);
+  await answerPayoutCutover(ctx.actor, ctx.staff.id, shopId, v);
+  return json(await myPayoutCutover(ctx.staff.id, ctx.shopIds));
+});
+
+/** GET /me/milestones */
+export const getMilestones = staffRoute({ perms: null, person: true }, async (_req, ctx) => json(await myMilestones(ctx)));
+
+/** GET /me/time-off-requests */
+export const getMyTimeOff = staffRoute({ perms: null, person: true }, async (_req, ctx) => json(await myTimeOff(ctx)));
+
+/** POST /me/time-off-requests */
+export const postMyTimeOff = staffRoute({ perms: "timeoff.request", person: true, message: "You can't request time off" }, async (req, ctx) => {
+  const v = await body(req, S.TimeOffBody);
+  const r = await askForTimeOff(ctx, v);
+  return json(r, r.saved ? 201 : 200);
+});
+
+/** DELETE /me/time-off-requests/{id} */
+export const deleteMyTimeOff = staffRoute<{ id: string }>({ perms: null, person: true }, async (_req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  await withdrawTimeOff(ctx, id);
+  return new Response(null, { status: 204 });
+});
+
 // ───────────────────────────── Schedule and appointments ─────────────────────────────
 
-/** GET /schedule */
+/** GET /schedule (and GET /me/schedule) */
 export const getSchedule = staffRoute({ perms: null, person: true }, async (req, ctx) => {
   const q = query(req, S.ScheduleQuery);
   const r = dayRange(q.from, q.days);
@@ -124,6 +271,80 @@ export const postAppointmentNote = staffRoute<{ id: string }>({ perms: "notes.vi
   return json(await addAppointmentNote(ctx, id, await body(req, z.unknown())), 201);
 });
 
+/** POST /appointments: book from the phone. */
+export const postAppointment = staffRoute({ perms: null }, async (req, ctx) => {
+  const v = await body(req, S.BookBody);
+  if (!v.customerId && !v.customer) throw new AppError("bad_request", "Send customerId, or customer for a new client", { field: "customerId" });
+  return json(await book(ctx, { ...v, staffId: v.staffId ?? ctx.staff.id, addonIds: v.addonIds ?? [], customerId: v.customerId ?? null, customer: v.customer ?? null, notes: v.notes ?? null, squeezeIn: !!v.squeezeIn }), 201);
+});
+
+/** POST /appointments/{id}/status */
+export const postAppointmentStatus = staffRoute<{ id: string }>({ perms: null }, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  const v = await body(req, S.StatusBody);
+  return json(await setStatus(ctx, id, v.action));
+});
+
+/** POST /appointments/{id}/move */
+export const postAppointmentMove = staffRoute<{ id: string }>({ perms: null }, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  return json(await move(ctx, id, await body(req, S.MoveBody)));
+});
+
+/** POST /appointments/{id}/late */
+export const postAppointmentLate = staffRoute<{ id: string }>({ perms: null }, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  const v = await body(req, S.LateBody);
+  return json(await runningLate(ctx, id, v.minutes));
+});
+
+/** GET /openings */
+export const getOpenings = staffRoute({ perms: null }, async (req, ctx) => {
+  const q = query(req, S.OpeningsQuery);
+  const addonIds = q.addonIds ? z.array(z.uuid()).max(10).parse(q.addonIds.split(",").filter(Boolean)) : [];
+  return json(await openings(ctx, { ...q, addonIds }));
+});
+
+/** POST /blocks */
+export const postBlock = staffRoute({ perms: ["blocks.own", "blocks.others"], message: "You can't block time" }, async (req, ctx) => {
+  const v = await body(req, S.BlockBody);
+  const r = await block(ctx, { ...v, note: v.note ?? null, allShops: !!v.allShops, confirm: !!v.confirm });
+  return json(r, r.saved ? 201 : 200);
+});
+
+/** DELETE /blocks/{id} */
+export const deleteBlock = staffRoute<{ id: string }>({ perms: ["blocks.own", "blocks.others"], message: "You can't change blocked time" }, async (_req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  await unblock(ctx, id);
+  return new Response(null, { status: 204 });
+});
+
+// ───────────────────────────── Clients ─────────────────────────────
+
+/** GET /clients?q= */
+export const getClients = staffRoute({ perms: null }, async (req, ctx) => {
+  const q = query(req, S.ClientSearchQuery);
+  return json(await findClientsFor(ctx, q.q, q.limit));
+});
+
+/** GET /clients/{id} */
+export const getClient = staffRoute<{ id: string }>({ perms: null }, async (_req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  return json(await clientCard(ctx, id));
+});
+
+/** POST /clients/{id}/reveal */
+export const postClientReveal = staffRoute<{ id: string }>({ perms: "clients.reveal", message: "You can't reveal client details" }, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  return json(await revealForApp(ctx, id, await body(req, S.RevealBody)));
+});
+
+/** POST /clients/{id}/contact */
+export const postClientContact = staffRoute<{ id: string }>({ perms: "clients.message", message: "You can't contact clients" }, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  return json(await contactForApp(ctx, id, await body(req, S.ContactBody)));
+});
+
 // ───────────────────────────── Time clock and breaks ─────────────────────────────
 
 const CLOCK = { perms: "timeclock.punch", person: true, message: "You can't use the time clock" } as const;
@@ -133,9 +354,23 @@ export const getClock = staffRoute(CLOCK, async (_req, ctx) => json(await clockO
 
 /** POST /clock/punch: in or out. */
 export const postPunch = staffRoute(CLOCK, async (req, ctx) => {
+  assertClockOn();
   const v = await body(req, S.PunchBody);
   return json(await appPunch(ctx, req, v));
 });
+
+const punchAs = (type: "in" | "out") =>
+  staffRoute(CLOCK, async (req, ctx) => {
+    assertClockOn();
+    const v = await body(req, S.ClockInOutBody);
+    return json(await appPunch(ctx, req, { ...v, type }));
+  });
+
+/** POST /clock/in */
+export const postClockIn = punchAs("in");
+
+/** POST /clock/out */
+export const postClockOut = punchAs("out");
 
 async function shiftShop(ctx: StaffAppContext, shopId: string | undefined) {
   if (shopId) return shopId;
@@ -146,12 +381,14 @@ async function shiftShop(ctx: StaffAppContext, shopId: string | undefined) {
 
 /** POST /clock/breaks/start */
 export const postBreakStart = staffRoute(CLOCK, async (req, ctx) => {
+  assertClockOn();
   const v = await body(req, S.BreakStartBody);
   return json(await appPunch(ctx, req, { ...v, shopId: await shiftShop(ctx, v.shopId), type: "break_start" }));
 });
 
 /** POST /clock/breaks/end */
 export const postBreakEnd = staffRoute(CLOCK, async (req, ctx) => {
+  assertClockOn();
   const v = await body(req, S.BreakEndBody);
   return json(await appPunch(ctx, req, { ...v, shopId: await shiftShop(ctx, v.shopId), type: "break_end" }));
 });
@@ -188,6 +425,12 @@ export const postKioskPunch = staffRoute(KIOSK, async (req, ctx) => {
   return json(await kioskPunch(ctx, req, v));
 });
 
+/** GET /clock/kiosk: the front-desk screen in one call (QR, team, walk-in queue). */
+export const getKioskHome = staffRoute(KIOSK, async (req, ctx) => json(await kioskHome(ctx, req)));
+
+/** GET /clock/kiosk/queue */
+export const getKioskQueue = staffRoute(KIOSK, async (req, ctx) => json(await kioskQueueView(ctx, req)));
+
 // ───────────────────────────── Tips, earnings, payouts and banking ─────────────────────────────
 
 const TIPS = { perms: "tips.own", person: true, message: "You can't see tips" } as const;
@@ -208,28 +451,175 @@ export const getEarnings = staffRoute({ perms: null, person: true }, async (req,
   return json(await myEarnings(ctx, r.from, r.to));
 });
 
+/**
+ * Direct Stripe payouts to each employee (ST-I9) are on hold: with FEATURE_STAFF_STRIPE_PAYOUTS off,
+ * every /banking route is 403 with details.feature = staff_stripe_payouts, and tips go through payroll.
+ */
+const banking = <P = Record<string, string>>(fn: (req: Request, ctx: StaffAppContext, params: P) => Promise<Response>) =>
+  staffRoute<P>(TIPS, async (req, ctx, params) => {
+    assertStripePayouts();
+    return fn(req, ctx, params);
+  });
+
 /** GET /banking */
-export const getBanking = staffRoute(TIPS, async (req, ctx) => {
+export const getBanking = banking(async (req, ctx) => {
   const q = query(req, S.BankingQuery);
   return json(await bankingView(ctx, { refresh: !!q.refresh }));
 });
 
 /** GET /banking/external-accounts: their bank accounts and debit cards, last 4 only. */
-export const getExternalAccounts = staffRoute(TIPS, async (req, ctx) => {
+export const getExternalAccounts = banking(async (req, ctx) => {
   const q = query(req, S.BankingQuery);
   return json(await myExternalAccounts(ctx, { refresh: !!q.refresh }));
 });
 
 /** POST /banking/onboarding-link: Stripe's hosted page for their own debit card or bank account. */
-export const postOnboardingLink = staffRoute(TIPS, async (_req, ctx) => json(await onboardingLink(ctx)));
+export const postOnboardingLink = banking(async (_req, ctx) => json(await onboardingLink(ctx)));
 
 /** POST /banking/dashboard-link: Stripe's page for changing that card or bank. */
-export const postDashboardLink = staffRoute(TIPS, async (_req, ctx) => json(await dashboardLink(ctx)));
+export const postDashboardLink = banking(async (_req, ctx) => json(await dashboardLink(ctx)));
 
 /** PUT /banking/method */
-export const putPayoutMethod = staffRoute(TIPS, async (req, ctx) => {
+export const putPayoutMethod = banking(async (req, ctx) => {
   const v = await body(req, S.PayoutMethodBody);
   return json(await setMyPayoutMethod(ctx, v));
+});
+
+// ───────────────────────────── Manager: timecards (ST-C5, ST-I7) ─────────────────────────────
+
+const TIMECARDS = { perms: ["timesheet.edit", "timesheet.approve", "payroll.export"], message: "You can't see the team's timecards" } as const;
+const EDIT_PUNCHES = { perms: "timesheet.edit", message: "You can't edit punches" } as const;
+
+/** GET /timecards?period=&shopId= */
+export const getTimecards = staffRoute(TIMECARDS, async (req, ctx) => {
+  const q = query(req, S.TeamTimecardsQuery);
+  return json(await teamTimecards(ctx, q));
+});
+
+/** GET /timecards/export?period=&format=&shopId=: the CSV itself; X-Payroll-Draft: true before the period is locked. */
+export const getTimecardExport = staffRoute({ perms: "payroll.export", message: "You can't export payroll" }, async (req, ctx) => {
+  const q = query(req, S.ExportQuery);
+  const r = await timecardExport(ctx, q);
+  return new Response(r.body, {
+    headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${r.fileName}"`, "Cache-Control": "no-store", "X-Payroll-Draft": String(r.draft) },
+  });
+});
+
+/** GET /timecards/{id}?period=: id is the staff member. */
+export const getTimecard = staffRoute<{ id: string }>(TIMECARDS, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  const q = query(req, S.PeriodQuery);
+  return json(await teamTimecard(ctx, id, q.period));
+});
+
+/** POST /timecards/{id}/approve */
+export const postTimecardApprove = staffRoute<{ id: string }>({ perms: "timesheet.approve", message: "You can't approve timecards" }, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  return json(await approveTimecard(ctx, id, await body(req, S.ApproveBody)));
+});
+
+/** POST /timecards/{id}/punches */
+export const postTeamPunch = staffRoute<{ id: string }>(EDIT_PUNCHES, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  return json(await addTeamPunch(ctx, id, await body(req, S.AddPunchBody)), 201);
+});
+
+/** PATCH /punches/{id} */
+export const patchPunch = staffRoute<{ id: string }>(EDIT_PUNCHES, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  return json(await editTeamPunch(ctx, id, await body(req, S.EditPunchBody)));
+});
+
+/** POST /punches/{id}/void */
+export const postPunchVoid = staffRoute<{ id: string }>(EDIT_PUNCHES, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  const v = await body(req, S.VoidPunchBody);
+  await voidTeamPunch(ctx, id, v.reason);
+  return new Response(null, { status: 204 });
+});
+
+// ───────────────────────────── Manager: time off (ST-I1) ─────────────────────────────
+
+const APPROVE_OFF = { perms: "timeoff.approve", message: "You can't approve time off" } as const;
+
+/** GET /time-off-requests?shopId=&status= */
+export const getTeamTimeOff = staffRoute(APPROVE_OFF, async (req, ctx) => json(await teamTimeOff(ctx, query(req, S.TeamTimeOffQuery))));
+
+/** POST /time-off-requests/{id}/decision */
+export const postTimeOffDecision = staffRoute<{ id: string }>(APPROVE_OFF, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  return json(await decideTeamTimeOff(ctx, id, await body(req, S.DecisionBody)));
+});
+
+// ───────────────────────────── Walk-ins and the waitlist (ST-I3) ─────────────────────────────
+
+const WALKINS = { perms: "walkins.manage", message: "You can't manage walk-ins" } as const;
+
+/** GET /shops/{id}/waitlist */
+export const getWaitlist = staffRoute<{ id: string }>(WALKINS, async (_req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  return json(await shopWaitlist(ctx, id));
+});
+
+/** POST /shops/{id}/waitlist */
+export const postWaitlist = staffRoute<{ id: string }>(WALKINS, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  return json(await addWalkIn(ctx, id, await body(req, S.WalkInBody)), 201);
+});
+
+/** POST /waitlist/{id}/seat */
+export const postWaitlistSeat = staffRoute<{ id: string }>(WALKINS, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  const v = await body(req, S.SeatBody);
+  return json(await seatEntry(ctx, id, v.staffId));
+});
+
+/** POST /waitlist/{id}/status */
+export const postWaitlistStatus = staffRoute<{ id: string }>(WALKINS, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  const v = await body(req, S.EntryStatusBody);
+  await setEntryStatus(ctx, id, v.status);
+  return new Response(null, { status: 204 });
+});
+
+/** POST /waitlist/{id}/notify */
+export const postWaitlistNotify = staffRoute<{ id: string }>(WALKINS, async (_req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  return json(await notifyEntry(ctx, id));
+});
+
+// ───────────────────────────── Checkout at the chair (ST-I4) ─────────────────────────────
+
+/** POST /sales */
+export const postSale = staffRoute({ perms: null }, async (req, ctx) => json(await saleForAppointment(ctx, await body(req, S.SaleBody)), 201));
+
+/** POST /terminal/connection-token: off until FEATURE_STAFF_TAP_TO_PAY. */
+export const postTerminalToken = staffRoute({ perms: null }, async (req, ctx) => json(await terminalConnectionToken(ctx, await body(req, S.TerminalTokenBody))));
+
+// ───────────────────────────── Manager: the board and the team's app access (ST-I7, ST-C10) ─────────────────────────────
+
+/** GET /manager/board?shopId= */
+export const getManagerBoard = staffRoute({ perms: MANAGER_PERMS, message: "You don't have a manager's view of this shop" }, async (req, ctx) => {
+  const q = query(req, S.BoardQuery);
+  return json(await managerBoard(ctx, q.shopId));
+});
+
+const USERS = { perms: "permissions.manage", message: "You can't manage users" } as const;
+
+/** POST /staff/{id}/app-invite: the staff app's sign-in link by text or email. */
+export const postStaffAppInvite = staffRoute<{ id: string }>(USERS, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  await requireInTenant(ctx, "staff", id);
+  const v = await body(req, S.AppInviteBody);
+  return json(await sendStaffAppInvite(ctx, id, v.channel ?? null));
+});
+
+/** POST /staff/{id}/sign-out: every staff app session and phone, without deactivating them. */
+export const postStaffSignOut = staffRoute<{ id: string }>(USERS, async (_req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  await requireInTenant(ctx, "staff", id);
+  await signOutOfStaffApp(ctx, id);
+  return new Response(null, { status: 204 });
 });
 
 // ───────────────────────────── Pop-ups and push ─────────────────────────────
