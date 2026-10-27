@@ -346,6 +346,10 @@ describe("employee fields", () => {
       expect(await brand.saveFieldAction(null, { label, kind: "text", options: [], position: 1 }), label).toMatchObject({ ok: false, error: expect.stringMatching(/Stripe and iSolved/) });
     await expect(m.db.db.insert(m.schema.staffCustomFields).values({ label: "Bank account", kind: "text" })).rejects.toThrow();
     await expect(m.db.db.insert(m.schema.staffCustomFields).values({ label: "ssn", kind: "text" })).rejects.toThrow();
+    for (const label of ["Fingerprint ID", "Face scan on file", "Biometric template"])
+      expect(await brand.saveFieldAction(null, { label, kind: "text", options: [], position: 1 }), label).toMatchObject({ ok: false, error: expect.stringMatching(/biometric/) });
+    await expect(m.db.db.insert(m.schema.staffCustomFields).values({ label: "Thumbprint", kind: "text" })).rejects.toThrow();
+    await expect(m.db.db.insert(m.schema.staffCustomFields).values({ label: "Clock-in", kind: "dropdown", options: ["PIN", "Face ID match"] })).rejects.toThrow();
 
     const add = async (label: string, kind: import("@/domain/compensation").FieldKind, options: string[] = []) => {
       const r = await brand.saveFieldAction(null, { label, kind, options, position: 1 });

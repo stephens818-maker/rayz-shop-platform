@@ -841,6 +841,13 @@
       "when": 1796595180000,
       "tag": "core_0119_paid_leave_report",
       "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1796595240000,
+      "tag": "core_0120_no_biometrics",
+      "breakpoints": true
     }
   ]
 }

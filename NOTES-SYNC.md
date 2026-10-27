@@ -511,6 +511,8 @@ Append-only `analytics_events`, written by database triggers on the tables both 
   - `src/server/payments/webhook.ts` (`charge.dispute.created`) calls `recordTipDispute`; please keep it when you change disputes.
 - (core → mobile) Core edited the two `.well-known` routes (`apple-app-site-association`, `assetlinks.json`) to add the staff app's universal links and App Links (`src/server/staff-app-links.ts`) next to the customer app's. Please review, and keep `withStaffAppleLinks` / `withStaffAssetLinks` when you change them.
 
+- (core → mobile) **No biometrics in either app (ST-I17).** Please run `node scripts/check-no-biometrics.mjs` (copy it from this repo, it has no dependencies) in the CI of the customer app and the Ray'z Staff app repos, on every pull request, as `.github/workflows/no-biometrics.yml` does here. It fails on face, fingerprint, voice or ID-verification SDKs (face-api, ML Kit or Vision face detection, ARKit face tracking, Rekognition, FaceTec, Onfido, Stripe Identity and the like) in `package.json`, lockfiles, `app.json` plugins, Podfiles, Gradle files and source. The phone's own unlock through `expo-local-authentication`, `react-native-biometrics` or `react-native-keychain` is allowed (the app only gets yes or no). The policy wording is `NO_BIOMETRICS_POLICY` in `src/domain/biometrics.ts`.
+
 - (core → mobile, optional) If the customer app gets an "I'm running late" button, please call `queueStaffAlert("late", appointmentId, { detail: "about N min late" })` from `src/server/staff-alerts.ts`, so the barber gets the same alert as when the desk marks it from the staff app. Nothing goes back to the client.
 
 ## Open questions

@@ -8,6 +8,7 @@
 import { formatCents } from "@/lib/money";
 import { findSensitive, isForbiddenKey } from "@/lib/sensitive";
 import { addDays, diffDays, isValidLocalDate, type LocalDate } from "@/lib/time";
+import { BIOMETRIC_LABEL } from "./biometrics";
 import { roundHalfUp2 } from "./payroll/calc";
 import { TIP_METHODS, type TipMethod } from "./tips";
 
@@ -449,6 +450,7 @@ export const SENSITIVE_LABEL =
   /(^|[^a-z])(ssn|social security|bank|routing|iban|swift|account (number|no|#)|acct|card number|credit card|debit card|cvv|cvc|tax ?id|tin|itin|ein|fein|driver.?s licen[cs]e|passport|date of birth|dob|birth ?date)([^a-z]|$)/i;
 export const sensitiveLabel = (s: string) => isForbiddenKey(s) || SENSITIVE_LABEL.test(s);
 const NO_SENSITIVE = "Bank, card, SSN, tax ID and ID document details stay with Stripe and iSolved, so they can't be employee fields.";
+const NO_BIOMETRIC = "Ray'z never collects fingerprints, face scans or other biometric data, so they can't be employee fields.";
 
 export interface FieldDef {
   label: string;
@@ -460,6 +462,7 @@ export function fieldProblem(f: FieldDef, otherLabels: readonly string[]): strin
   const label = f.label.trim();
   if (!label || label.length > 60) return "Give the field a name of up to 60 characters";
   if (sensitiveLabel(label) || findSensitive(label).length) return NO_SENSITIVE;
+  if (BIOMETRIC_LABEL.test(label)) return NO_BIOMETRIC;
   if (otherLabels.some((l) => l.trim().toLowerCase() === label.toLowerCase())) return `There's already a field called "${label}"`;
   if (!FIELD_KINDS.includes(f.kind)) return "Pick a field type";
   if (f.kind === "dropdown") {
@@ -468,6 +471,7 @@ export function fieldProblem(f: FieldDef, otherLabels: readonly string[]): strin
     if (opts.some((o) => !o || o.length > 40)) return "Each choice needs a name of up to 40 characters";
     if (new Set(opts.map((o) => o.toLowerCase())).size !== opts.length) return "Each choice can be listed once";
     if (opts.some((o) => sensitiveLabel(o) || findSensitive(o).length)) return NO_SENSITIVE;
+    if (opts.some((o) => BIOMETRIC_LABEL.test(o))) return NO_BIOMETRIC;
   } else if (f.options.length) return "Only dropdowns have choices";
   return null;
 }

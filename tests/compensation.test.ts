@@ -324,6 +324,13 @@ describe("custom employee fields", () => {
     expect(fieldProblem({ label: "Size", kind: "dropdown", options: ["S", "Bank"] }, [])).toMatch(/Stripe and iSolved/);
   });
 
+  it("refuses biometric fields (ST-I17) but not barbershop words that look close", () => {
+    for (const l of ["Biometric", "Fingerprint", "Finger print on file", "Thumbprints", "Face scan", "Faceprint", "Face ID", "Facial recognition", "Retina scan", "Iris scan", "Voiceprint", "Hand geometry", "Palm vein"])
+      expect(fieldProblem({ label: l, kind: "text", options: [] }, []), l).toMatch(/biometric/);
+    expect(fieldProblem({ label: "Clock-in", kind: "dropdown", options: ["PIN", "Fingerprint"] }, [])).toMatch(/biometric/);
+    for (const l of ["Facial certified", "Facials", "Iris", "Hand towels", "Face shave", "Beard lineup"]) expect(fieldProblem({ label: l, kind: "text", options: [] }, []), l).toBeNull();
+  });
+
   it("checks names, types and choices", () => {
     expect(fieldProblem({ label: "Shirt size", kind: "text", options: [] }, ["shirt size"])).toMatch(/already/);
     expect(fieldProblem({ label: "Shirt size", kind: "dropdown", options: [] }, [])).toMatch(/1 to 30/);

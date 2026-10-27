@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { LegalPage } from "@/components/legal-page";
+import { NO_BIOMETRICS_POLICY } from "@/domain/biometrics";
 import { STAFF_LEGAL_VERSIONS } from "@/domain/legal";
 import { staffSupport } from "@/server/staff-api/config";
 
@@ -48,6 +49,14 @@ export default function StaffPrivacyPage() {
             <strong>What you do with client records:</strong> opening a client card, searching, revealing a masked detail (with the reason you gave), calling or texting through the shop line, and
             changes to bookings are logged, as the brand&apos;s client privacy rules require.
           </li>
+        </ul>
+
+        <h2>{NO_BIOMETRICS_POLICY.title}</h2>
+        <p>{NO_BIOMETRICS_POLICY.summary}</p>
+        <ul>
+          {NO_BIOMETRICS_POLICY.points.map((p) => (
+            <li key={p}>{p}</li>
+          ))}
         </ul>
 
         <h2>Why we use it</h2>
