@@ -5,7 +5,6 @@ import { cashDrawers, payGroups, payrollRuns, shops, staff, tipAbsorptions, tipL
 import { instantDestination, storedExternalAccounts } from "@/domain/banking";
 import {
   BrandTipPolicy,
-  DEFAULT_INSTANT_FEE,
   InstantFeePayer,
   METHOD_LABEL,
   ShopTipSettings,
@@ -16,7 +15,6 @@ import {
   instantFeeCents,
   instantFeePayer,
   netsCardFee,
-  parseInstantFee,
   payoutTotals,
   receivedCents,
   scheduledBatch,
