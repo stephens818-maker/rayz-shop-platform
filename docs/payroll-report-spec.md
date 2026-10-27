@@ -2,7 +2,7 @@
 
 How the platform builds the bi-weekly Payroll Report and the per-shop iSolved timecard files, replacing Charles's payroll workbook. Section numbers follow the original review (§2.1 Total Wages, §3.2 overtime, §6 export), so the findings that refer to them still line up.
 
-**Status:** built. Code in `src/domain/payroll/` (pure math), `src/server/payroll/` (loading, locking, export) and `src/app/admin/payroll/` (pages). Migration `core_0022_payroll`. Tests: `tests/payroll-engine.test.ts`, `tests/payroll-export.test.ts`, `tests/payroll-time-csv.test.ts`, `tests/db/payroll.test.ts`. Workbook problems are in [payroll-workbook-discrepancies.md](payroll-workbook-discrepancies.md).
+**Status:** built. Code in `src/domain/payroll/` (pure math), `src/server/payroll/` (loading, locking, export) and `src/app/admin/payroll/` (pages). The Payroll Report page is `src/app/admin/reports/payroll/report/`. Migrations `core_0022_payroll` and `core_0128_payroll_approvals`. Tests: `tests/payroll-engine.test.ts`, `tests/payroll-export.test.ts`, `tests/payroll-golden.test.ts` (all 33 golden rows and the iSolved file, cell for cell), `tests/payroll-time-csv.test.ts`, `tests/db/payroll.test.ts`, `tests/db/payroll-approval.test.ts`, `tests/db/payroll-reports.test.ts`. Workbook problems are in [payroll-workbook-discrepancies.md](payroll-workbook-discrepancies.md).
 
 **No iSolved connection.** There's no API, sync, credentials or automated upload. The only output is a downloadable xlsx per shop, in exactly the workbook's format, which Charles uploads by hand after approve-and-lock (§6.4). The export sits behind a `PayrollExporter` interface so a direct integration can be added later (§10).
 
@@ -15,11 +15,12 @@ How the platform builds the bi-weekly Payroll Report and the per-shop iSolved ti
 | Hours worked, training, PTO | `time_entries`: added on Payroll → Hours, or imported from a shift CSV (§1.1). Each entry has a kind: `worked`, `training` or `pto`. | Squire "Hours Worked" feed (column B); training and PTO typed |
 | Service $ and product $ | POS tickets rung up at that shop, paid in the period, less refunds issued in it (`payrollSalesBetween`). Service and product net of discounts, no tax, no tips. | Feed column J (card + cash + gift card used) and the product block |
 | Tips | All tips on those tickets (card, cash and gift card), less tip refunds | Feed column P |
-| Wage, service %, product %, training rate | `payroll_rates`, per person, either for one shop or as their default at every shop. A change applies to periods that aren't locked yet. | Columns C, G, K |
+| Sales tax | Tax on the employee's tickets (service and product, less refunds). Reference only: shown on the report, never used in pay math or the export. | Feed column R |
+| Wage, service %, product %, training rate | `payroll_rates`, per person, either for one shop or as their default at every shop. A change applies to periods that aren't locked yet. With compensation plans driving payroll, rates are effective-dated instead (§11). | Columns C, G, K |
 | Employee Number, iSolved name, Key type, row order | `payroll_profiles` | iSolved tab columns A and B |
 | Hand-entered values | `payroll_overrides`: a value plus a required reason, per person, shop and period | Cells typed over formulas |
 
-A barber who works at several shops gets one line per shop. Sales and tips land in the shop where the ticket was rung up.
+A barber who works at several shops gets one line per shop. Sales and tips land in the shop where the ticket was rung up. Sales on a ticket with no employee are shown under the shop's block as unassigned sales and flagged (`unassigned_sales`, §8); nobody is credited for them.
 
 ### 1.1 Shift CSV import
 
@@ -141,16 +142,31 @@ The Payroll Report picks a period by its dates. Pay groups whose calendars share
 
 ## 5. The Payroll Report
 
-Payroll → Report, for people with `payroll.run` (prepare and download) or `payroll.approve` (lock). Both permissions are brand-only and Brand Admin has them; Brand Owner has everything.
+There are two screens over the same figures.
+
+**Reports → Payroll → Payroll Report** (`/admin/reports/payroll/report`) is Charles's workbook's Locations tab. It needs the report's permission, which is brand-only like every payroll report (Brand Owner, Brand Admin and Bookkeeper have it by default; migration `core_0128` grants it), and "See pay rates and labor cost".
+
+- **Pay period and location chips.** Shops are in the order set in Payroll setup (default Utica, Moline, Kimberly, Rock Island, Silvis, Coralville, LeClaire). Names match on letters only, so "Le Claire" is LeClaire.
+- **One block per shop.** It has a title row (Utica FFFF00, Rock Island 00B0F0, Silvis 92D050) and the 19 columns A to S with the workbook's headers. The download keeps "Hourly Total " and "Training  Hours" exactly. Then a row per employee, a totals row and Gross Profit = ΣService$ − ΣTotal Wages. Money is shown in Excel's Accounting style, with negatives in parentheses and zero as "-". Service% and Prod% are `0%`. Total % of Gross is `0%` per row and `0.00%` in totals. "—" stands in for `#DIV/0!`.
+- **Totals sum every row.** The workbook's ranges skip employees at five shops (§8 of Charles's spec). Rates aren't totalled; Gross /Hr and Total % of Gross come from the totals.
+- **Adjusted cells** are highlighted, with the reason on hover. **"mixed"** replaces a rate that changed inside the period (§11).
+- **Sales tax (reference).** This is a grey column after S: the sales tax on the employee's tickets. It's never used in any pay figure or in the file.
+- **Unassigned sales.** Service or product sales with no employee on the ticket get a red line under their shop. Nobody is credited for them.
+- **Review before approving:** the anomalies (§8), each with a link to that employee's drill-down.
+- **Location summary:** Service Sales, Employee Cost (= Total Wages, as in the workbook) and Gross Profit per shop, plus a total.
+- **Downloads.** The report comes as `.xlsx` (one "Locations" sheet laid out like the tab, with the Accounting format) or as CSV, named `Rayz Payroll Report MM.DD.YY-MM.DD.YY`. After approval, each shop's iSolved file and the all-shops workbook are offered too. Every download is audited.
+- **Audit trail:** every adjustment, approval, take-back, lock and download for the period, oldest first.
+- **Approval controls:** Approve figures, Take back approval and Lock period (§9).
+
+**Payroll → Report** (`payroll.run` or `payroll.approve`) is the working screen, with the same approval controls and audit trail plus:
 
 - **Period chips** for recent and upcoming periods, with each pay group's period number and check date.
 - **Reconciliation gate** (§7) at the top: either the list of mismatches or a green "every total is the sum of its rows".
-- **Locations view:** per shop, Service Sales, Total Wages, O.T. Pay, Training Pay, Employee Cost (= Labor Cost), Gross Profit and Cost %, plus a total row. Every number is the sum of the shop blocks below it.
+- **Locations view:** per shop, Service Sales, Total Wages, O.T. Pay, Training Pay, Employee Cost (= Labor Cost), Gross Profit and Cost %, plus a total row.
 - **Anomalies** (§8).
-- **Per-shop blocks:** columns B to S as in the workbook, then O.T. Pay, Training Pay and Labor Cost highlighted as platform additions, a totals row and a Gross Profit row. Rate columns (C, G, K) are blank on the totals row; Gross /Hr and Total % of Gross are worked out from the totals, not added up.
-- **Per-employee drill-down:** the labor cost formula, O.T. Pay with "iSolved may compute blended OT higher.", Training Pay, FT/PT status, the cross-shop weekly breakdown, and the override form.
-- **Export preview** per shop: the exact values that will go in the file, unrounded unless the rounding setting is on.
-- **Approve and lock** (`payroll.approve`), enabled only when the gate is clear. Download buttons appear once the period is locked.
+- **Per-shop blocks:** columns B to S, then O.T. Pay, Training Pay and Labor Cost highlighted as platform additions.
+- **Per-employee drill-down:** the labor cost formula, O.T. Pay with "iSolved may compute blended OT higher.", Training Pay, FT/PT status, the cross-shop weekly breakdown, and the adjustment form (a value and a required reason).
+- **Export preview** per shop: the exact values that will go in the file.
 
 ### 5.1 OT cost layout
 
@@ -180,11 +196,14 @@ One file per pay group per period, exactly the workbook's tab: the same columns,
 
 ### 6.2 Formatting
 
-The file copies the workbook's tab cell for cell: cell types, number formats (General vs `0.00` per cell), fonts (Arial or Roboto 8, per tab), fills, alignment, borders, column widths and zoom. These vary by tab, and the exporter keeps each tab's own.
+There are two layouts (Payroll setup → iSolved files):
 
-The formatting lives in `src/server/payroll/isolved-template.json`, generated by `scripts/payroll-template.ts` from the workbook. It holds styles and header text only, no names, Keys or amounts. For each tab it has the header row, each data row position, and the rows after the roster. Rows past the workbook's roster reuse the last data row's styles. A pay group with no tab of its own (Dubuque) uses Rock Island's layout under its own sheet name.
+- **0.00 on every hours and dollars column** (the default) is the reference file `expected_isolved_export.xlsx`. Every sheet uses Arial 8 with bold headers, grey fills on A1:F1 and `0.00` on columns C to H. The Key is General, or `@` when it's text, so each Key keeps its cell type. Column widths match the reference.
+- **Each tab's own formatting** copies Charles's workbook cell for cell (General vs `0.00` per cell, Arial or Roboto 8 per tab, fills, alignment, borders, widths and zoom) from `src/server/payroll/isolved-template.json`. That file holds styles and header text only.
 
-`tests/payroll-export.test.ts` diffs every tab's formatting against the template, not just the values. Locally, `scripts/payroll-golden.ts <workbook>` regenerates all seven tabs from the workbook's own rows and diffs them cell by cell against the original: 0 differences in values, types or formatting.
+There's one row per employee from row 2. There are no totals, no blank rows and no extra columns. The sheet name is the shop's export tab.
+
+`tests/payroll-golden.test.ts` builds the file from the golden fixture and compares it to `expected_isolved_export.xlsx` cell for cell: sheets and their order, values, cell types, number formats, fonts, fills and widths. `tests/payroll-export.test.ts` checks the workbook layout against the template.
 
 ### 6.3 Rounding
 
@@ -194,12 +213,15 @@ A brand setting rounds export values to 2 decimals half-up instead. It's **off**
 
 ### 6.4 Upload (by hand)
 
-1. Prepare the period and clear the reconciliation gate.
-2. Approve and lock (`payroll.approve`).
-3. Download each pay group's file (`payroll.run`). The file name is `<tab> - period NN (start to end).xlsx`.
-4. In iSolved: Timecard Import (Excel/CSV), pick that pay group, upload.
+1. Run the period: the figures build live from the time clock, sales and tips.
+2. Review: the anomalies and drill-downs, plus adjustments with reasons.
+3. Approve the figures (`payroll.approve`, brand-wide).
+4. Download each shop's file (`payroll.run` or `payroll.export`), or the all-shops workbook from Reports → Payroll → iSolved export. Then upload in iSolved: Timecard Import (Excel/CSV), picking that pay group.
+5. Lock the period.
 
-Downloads are only for locked periods. They're served from the locked snapshot, not recomputed, so a file can't change after approval. Each download is audited.
+File names are Payroll setup settings (Q9). A shop's file defaults to `MM.DD.YY-MM.DD.YY <shop>.xlsx`, and the all-shops workbook to `Rayz Payroll MM.DD.YY-MM.DD.YY.xlsx`. The placeholders are `{start}`, `{end}`, `{startIso}`, `{endIso}`, `{shop}`, `{payGroup}` and `{period}`. The all-shops workbook has a sheet per shop in the workbook's tab order (Rock Island, Moline, Silvis, Coralville, Utica, Kimberly, LeClaire, then the rest by name). It's marked DRAFT until the figures are approved.
+
+Files download only while an approval covers the live figures, and once locked they come from the lock's snapshot. A change after approval holds the files until the period is approved again. Each download is audited.
 
 ## 7. Reconciliation gate
 
@@ -231,6 +253,9 @@ Anomalies never block the lock. They list what a person should look at before ap
 | `hours_not_locked` | The shop's timesheets aren't locked for the period. Only listed when **Hours come from the time clock** is off; when it's on, this blocks the lock (§9). |
 | `sales_day_without_hours` | Service sales on a day with no hours at that shop, for someone who has hours in the period (a missed clock-in?) |
 | `hours_not_from_clock` | Worked hours typed in or imported rather than clocked (while hours come from the clock) |
+| `unassigned_sales` | Service or product sales at the shop with no employee on the ticket (Squire's "Unassigned sales"). Nobody is credited for them. |
+| `mixed_rates` | A wage, service % or product % changed inside the period, so the report shows "mixed" (§11) |
+| `hours_source` | PTO or training time entries left unpaid because those hours are entered by a manager (§11) |
 
 The time clock's flags cover shops not yet locked; a locked shop is history.
 
@@ -238,11 +263,15 @@ The two workbook cases waiting on Q17 (the Coralville NetComm typed $123.46 abov
 
 ## 9. Approve and lock
 
-- Locking takes the period's dates and locks every pay group whose calendar has that period, in one transaction.
-- **Hours come from the time clock** (a payroll setting, on by default; Charles decided the basic clock ships at launch): locking is refused until every shop's timesheets are locked for each day of the period. A shop's timesheets lock (Payroll → Timesheets) only after the period ends and every timesheet with hours or missed punches is approved by a manager, which in turn needs the missed punches fixed. The refusal names the shops and the timesheets still waiting.
-- It stores a snapshot per pay group: the shop block, lines, totals and export rows, plus the OT each slice was given (`payroll_locked_ot`).
-- After locking, time entries and overrides in the period are refused, and the report shows the snapshot.
-- Each pay group's lock is audited.
+The flow is run → review → approve → lock. Each step is recorded.
+
+- **Approve** (`payroll.approve`, brand-wide) takes the period's figures as they stand: every shop's rows (inputs, rates, adjustments and results), totals and iSolved file, hashed (`payroll_approvals.figures_hash`), with Service Sales, Employee Cost and Gross Profit per shop. It's refused while the reconciliation gate has a mismatch, or while hours come from the clock and a shop's timesheets aren't locked. An optional note is kept.
+- **Changed since approval.** Any change that would alter what's paid or uploaded hashes differently: an adjustment, a late punch, a sale, a rate. The approval then no longer covers the figures. The screens say so, the iSolved files are held, and the lock is refused until someone approves again. Approving changed figures takes back the earlier approval ("Approved again with changed figures").
+- **Take back an approval** before the lock, with a required reason. Approvals are never edited or deleted; a database trigger refuses both. A take-back is a one-time change to the row.
+- **Lock** needs a current approval. It rechecks the hash inside the transaction and locks every pay group whose calendar has that period. It stores a snapshot per pay group: the shop block, lines, totals and export rows, plus the OT each slice was given (`payroll_locked_ot`). After locking, time entries and adjustments in the period are refused, and the report shows the snapshot. A locked period's approval can't be taken back.
+- **Audit:** `payroll.approve`, `payroll.approval_revoked`, `payroll.lock` (with the approval's id), `payroll.download`, `payroll.isolved_file` and `payroll.report_file`, plus the adjustments (`payroll.override`). Every one carries the period's dates, and the audit trail on both screens lists them.
+- **Hours come from the time clock** (a payroll setting, on by default; Charles decided the basic clock ships at launch). Approval and the lock wait until every shop's timesheets are locked for each day of the period. A shop's timesheets lock (Payroll → Timesheets) only after the period ends and every timesheet with hours or missed punches is approved by a manager.
+- "Approve and lock" in one step remains for the API and older callers. It records both steps.
 
 ## 10. Future: direct iSolved integration
 
@@ -270,22 +299,34 @@ Payroll → Setup (`payroll.run`).
 | OT multiplier (for O.T. Pay on the report only) | 1.5 | |
 | Training counts toward OT (C2) | Off | Pending Q11 |
 | Training pay is labor cost | On | |
-| Round export to 2 decimals, half-up | Off | Pending Charles |
+| Round export to 2 decimals, half-up | Off (unrounded, as today) | Pending Charles (Q4) |
+| iSolved file cell formats | 0.00 on every hours and dollars column (the reference file) | |
+| A shop's file name; the all-shops workbook's name | `{start}-{end} {shop}`; `Rayz Payroll {start}-{end}` | Pending Charles (Q9) |
+| Earning code per column | The workbook's headers | |
+| Card tips paid outside payroll go under | `E_Cash Tips Recd_Dollars` (with cash tips, as today). Another code gives them their own column | Pending Charles and his CPA (Q2) |
+| PTO hours and training hours come from | Time entries, or a manager's entry with a reason. Can also be time entries only (typing them on the report is refused) or a manager only (clocked PTO or training is left out and flagged) | Pending Charles (Q10) |
+| Payroll Report shop order; all-shops workbook sheet order | The workbook's | |
 | Full-time threshold, hours basis, window | 32 h; clocked worked hours; rolling 4 weeks | Pending Charles |
 
-Per pay group: label, legal entity, export tab and calendar (§4). Per person: Employee Number, iSolved name, Key as text, export position, and rates per shop.
+Per pay group: label, legal entity, export tab and calendar (§4). Per person (Payroll setup, and the Staff page's Payroll (iSolved) card): iSolved employee number (the Key), Key as text, iSolved name (`LAST, FIRST`), export position, "$0 hourly pay" (the owner's row: hours go to iSolved, Hourly Total is $0), and rates per shop.
+
+**Effective-dated rates.** With compensation plans on and Payroll using them (Staff → Compensation, both off by default), each employee's wage, service % and product % come from their plan's versions. Each sale is paid at the rate in effect on its checkout date (a refund at the original sale's date), and each day's hours at that day's wage. Where a rate changed inside the period, the report shows "mixed" and flags it (`mixed_rates`). With plans off, the rates are Payroll setup's, one per employee per shop.
 
 ## 12. Golden files
 
-The golden files from the original review aren't in this repo (they hold real data). `scripts/payroll-golden.ts <workbook> --write <dir>` regenerates them into a folder outside the repo, with Testing Bot's fixes:
+Charles's golden data (33 employee rows, the seven iSolved tabs) holds real names, Keys and pay rates, so it never goes in the repo.
 
-- `expected_isolved_export.xlsx` copies each tab's own formatting (the text Key keeps `@`, number formats aren't forced to `0.00`, each tab's fills and fonts are kept).
-- `golden_locations_calc.csv`:
-  - `feed_hours` is the feed's own value, blank when the person isn't in the feed. Total hours is a separate `total_hours` column (B + Q).
-  - `manual_*` columns flag every typed cell (hours, hourly total, service, commission, service total, product total, NetComm, Total Wages, tips).
-  - Blank instead of the text `#DIV/0!`.
+- `tests/fixtures/payroll-golden/anon/` is committed. It's `scripts/payroll-golden-anonymize.py`'s output: fictional names, Keys, rates, hours and sales that keep every formula branch, typed cell, zero and `#DIV/0!` of the original, plus the matching `expected_isolved_export.xlsx`.
+- `tests/fixtures/payroll-golden/private/` is gitignored. It's where the real `golden.json` and `expected_isolved_export.xlsx` go on a machine that has them.
 
-The script refuses a `--write` path inside the repo.
+`tests/payroll-golden.test.ts` runs against both (the private one only when present):
+
+- every row's Hourly Total, Gross /Hr, Commission$, Service Total, Product Total, NetComm, Total Wages and Total % of Gross;
+- every typed workbook cell as an adjustment with a reason;
+- the workbook's cached totals as known bugs, and the corrected all-rows totals;
+- the summary;
+- the Payroll Report download's headers, values and formats;
+- the iSolved export, cell for cell against `expected_isolved_export.xlsx`.
 
 ## 13. Declined and open
 
@@ -296,4 +337,4 @@ The script refuses a `--write` path inside the repo.
 | Q11 training inside clocked hours | Open. C2 off; training flagged. |
 | Q16 Dubuque export | Resolved: Dubuque has its own pay calendar and its own file in the same format. |
 | Q17 owner row and the Coralville NetComm gap | Open. Flagged, not fixed. |
-| FT/PT basis and window, 2-decimal rounding | Pending Charles; defaults above. |
+| FT/PT basis and window, 2-decimal rounding, file names, PTO and training source, card tips code | Pending Charles; configurable, defaults above (§11). |

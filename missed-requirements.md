@@ -119,10 +119,16 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 - [x] Cross-shop OT per Sun–Sat America/Chicago workweek per FEIN, split by share of hours. Tested: 25 h + 20 h, a week spanning two pay periods, a DST week, and the training flag on and off.
 - [x] Reconciliation gate blocks approve-and-lock on any $0.01 mismatch and shows it on screen.
 - [x] Per-shop pay groups and calendars; Dubuque has its own calendar and file (Q16 resolved).
-- [x] Per-shop iSolved xlsx in the workbook's exact format, OT hours only, unrounded by default, formatting copied per tab and diffed in a test. Downloads only after approve-and-lock. No iSolved API.
+- [x] Per-shop iSolved xlsx in the workbook's exact format, OT hours only, unrounded by default, formatting copied per tab and diffed in a test. Downloads once the figures are approved (sheet named for the shop, `0.00` by default, the Key's cell type kept). No iSolved API.
 - [x] FT/PT: averaging more than 32 h/week; basis and window are settings.
 - [x] `docs/payroll-report-spec.md` and the anonymized `docs/payroll-workbook-discrepancies.md`.
 - [ ] Charles: Q11 (training inside clocked hours; C2 flag off), Q17 (the owner row and the Coralville NetComm gap), the FT basis and window, and 2-decimal rounding (off).
+- [x] Payroll Report under Reports (Charles's spec): the workbook's Locations tab per shop, totals over every employee, Gross Profit, the Service Sales / Employee Cost / Gross Profit summary, sales tax for reference only, unassigned sales, matching by employee ID, adjustments with reasons instead of typed-over cells, product sales and OT from the system, and xlsx and CSV downloads.
+- [x] Run → review (drill-down, anomalies) → approve → lock, with an audit trail. A change after approval makes it stale; take-backs need a reason; approvals can't be edited or deleted (migration `core_0128_payroll_approvals`, DEPLOY step 48).
+- [x] Effective-dated rates by checkout date from Staff → Compensation, shown as "mixed" when they change inside a period (needs compensation plans on and Payroll using them).
+- [x] iSolved employee number (Key) and iSolved name on Payroll → Setup and the Staff page.
+- [x] Golden tests: all 33 rows, the totals and the iSolved file cell for cell, on anonymized committed fixtures; the real ones stay in a gitignored folder. Tests: `tests/payroll-golden.test.ts`, `tests/db/payroll-approval.test.ts`, `tests/db/payroll-reports.test.ts`.
+- [ ] Charles (settings until he answers): rounding (unrounded), file names, PTO and training hours from the time clock or a manager (both), and the earning code for card tips (`E_Cash Tips Recd_Dollars`).
 - [ ] Enter the real Employee Numbers, iSolved names and rates on Payroll → Setup (they're never in the repo).
 
 ## 7. Service time tracking
@@ -992,7 +998,7 @@ Employees clock in and out at the shop, because the Payroll Report's hours come 
 - [x] ST-I6, kiosk mode with a manager's QR pairing: built (`/clock/pair`, `POST /clock/kiosk/pair`, PIN punches with breaks). **Critical for launch** in the staff app.
 - [x] Approve and lock waits until every shop's timesheets are locked for the period (setting **Hours come from the time clock**, on by default); a timesheet locks only once it's manager-approved with no missed punches.
 - [x] Payroll Report flags: missed punches, open shifts, timesheets not approved, service sales on a day with no hours, sales with no hours in the period, and hours typed in or imported.
-- [ ] The full Payroll Report spec from Charles's spreadsheet: coming.
+- [x] The full Payroll Report spec from Charles's spreadsheet (section 6).
 - [ ] The staff app's kiosk mode, by the Rayz App builder (NOTES-SYNC Requests). The API is ready.
 - [ ] Still held: ST-C5's exact punches, cross-shop weekly overtime and buddy-punch rules, until iSolved Time is decided.
 
@@ -1007,7 +1013,7 @@ README "Times read 12-hour" and DEPLOY steps 46 and 47. Migrations `core_0126_br
 - [x] Sales keep service, product, tax and tip separate, never netted; each refund is its own dated record.
 - [x] Times stay UTC instants in the database, shown in the shop's time zone.
 - [x] **Payroll hours** read decimal (the workbook's style, the default) or as hours and minutes; the iSolved file stays decimal.
-- [ ] Which payroll hours style Charles's spreadsheet spec wants: coming with the spec. Decimal until then.
+- [x] Charles's spreadsheet spec shows hours as decimals with 2 places, the default.
 - [ ] The Ray'z Staff app formats times from `GET /config` `display.timeFormat` (NOTES-SYNC Requests).
 - [ ] The customer app (PR #2) drops its own `time_format` column add and keeps core's `brand-time.ts` when it rebases (NOTES-SYNC Requests).
 
