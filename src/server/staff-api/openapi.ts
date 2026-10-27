@@ -122,6 +122,20 @@ const MORE: Op[] = [
   },
   { method: "get", path: "/me/payout-cutover", tag: "Tips and pay", summary: "What Squire still owed them at the switch, Squire's last payout and Ray'z's first, and whether they've confirmed it.", permission: "tips.own" },
   { method: "post", path: "/me/payout-cutover/confirm", tag: "Tips and pay", summary: "Confirm the Squire amount, or dispute it with a note; the manager can't sign off the reconciliation while anything is disputed.", permission: "tips.own", body: S.CutoverAnswerBody },
+  // ST-I10
+  { method: "get", path: "/me/pay-questions", tag: "Tips and pay", summary: "Their pay questions, newest first, with the history (asked, answered, escalated, closed), who has it (manager or owner), when it's due and canEscalate.", permission: "timesheet.own" },
+  {
+    method: "post",
+    path: "/me/pay-questions",
+    tag: "Tips and pay",
+    summary: "Question their pay for a shop (and pay period). The shop's timecard approvers and payroll people answer within 5 days, or it goes to the owners. Emails name the topic and period only. At most 10 open.",
+    permission: "timesheet.own",
+    body: S.PayQuestionBody,
+  },
+  { method: "post", path: "/me/pay-questions/{id}/escalate", tag: "Tips and pay", summary: "Send it to the owners (once), with a note; owners answer within 7 days.", permission: "timesheet.own", body: S.PayQuestionEscalateBody, params: true },
+  { method: "post", path: "/me/pay-questions/{id}/resolve", tag: "Tips and pay", summary: "Close it: the answer settled it.", permission: "timesheet.own", params: true },
+  { method: "get", path: "/pay-questions", tag: "Manager", summary: "Pay questions at their shops (never their own), open first, with canAnswer; escalated ones are answered by owners or payroll.approve only.", permission: "timesheet.approve, payroll.run, payroll.export or payroll.approve", query: S.TeamPayQuestionsQuery },
+  { method: "post", path: "/pay-questions/{id}/answer", tag: "Manager", summary: "Answer it; the employee gets a push (held off the clock) and can close it or send it to the owners. 404 outside their shops or for their own.", permission: "timesheet.approve, payroll.run, payroll.export or payroll.approve", body: S.PayQuestionAnswerBody, params: true },
   // ST-I1, ST-I2
   { method: "get", path: "/me/milestones", tag: "Me", summary: "Trophies, personal bests, progress, congratulations; their rebook rate with the rebook report; teammates' only with reports.all_staff.", permission: ME },
   { method: "get", path: "/me/time-off-requests", tag: "Time off", summary: "Their requests, newest first, and the reasons they can ask with (private reasons masked).", permission: ME },

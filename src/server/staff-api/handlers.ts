@@ -6,6 +6,7 @@ import { assertShopAccess, can, canAny } from "@/server/auth/staff";
 import { stepUp } from "@/server/auth/sign-in-guard";
 import { AppError } from "@/server/errors";
 import { answerPayoutCutover, myPayoutCutover } from "@/server/payout-cutover";
+import { answerPayQuestion, askPayQuestion, escalatePayQuestion, myPayQuestions, resolvePayQuestion, teamPayQuestions } from "@/server/pay-questions";
 import { loadNotificationPrefs, saveNotificationPrefs } from "@/server/staff-settings";
 import { requireInTenant } from "@/server/tenant";
 import { clockState } from "@/server/time-clock";
@@ -706,4 +707,45 @@ export const deleteDevice = staffRoute<{ id: string }>({ perms: null, person: tr
   const { id } = S.IdParam.parse(params);
   await revokeStaffDevice(ctx.staff.id, id);
   return new Response(null, { status: 204 });
+});
+
+// ───────────────────────────── Pay questions (ST-I10) ─────────────────────────────
+
+const OWN_PAY = { perms: "timesheet.own", person: true, message: "You can't ask about your pay here" } as const;
+const ANSWER_PAY = { perms: ["timesheet.approve", "payroll.run", "payroll.export", "payroll.approve"], message: "You can't answer pay questions" } as const;
+const viewer = (ctx: StaffAppContext) => ({ staffId: ctx.staff.id, actor: ctx.actor, isOwner: ctx.isOwner, shopIds: ctx.shopIds, permissions: ctx.permissions });
+
+/** GET /me/pay-questions */
+export const getMyPayQuestions = staffRoute(OWN_PAY, async (_req, ctx) => json({ questions: await myPayQuestions(ctx.staff.id) }));
+
+/** POST /me/pay-questions */
+export const postPayQuestion = staffRoute(OWN_PAY, async (req, ctx) => {
+  const v = await body(req, S.PayQuestionBody);
+  return json(await askPayQuestion({ staffId: ctx.staff.id, actor: ctx.actor }, v), 201);
+});
+
+/** POST /me/pay-questions/{id}/escalate */
+export const postPayQuestionEscalate = staffRoute<{ id: string }>(OWN_PAY, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  const v = await body(req, S.PayQuestionEscalateBody);
+  return json(await escalatePayQuestion({ staffId: ctx.staff.id, actor: ctx.actor }, id, v.note ?? null));
+});
+
+/** POST /me/pay-questions/{id}/resolve */
+export const postPayQuestionResolve = staffRoute<{ id: string }>(OWN_PAY, async (_req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  return json(await resolvePayQuestion({ staffId: ctx.staff.id, actor: ctx.actor }, id));
+});
+
+/** GET /pay-questions?open= */
+export const getTeamPayQuestions = staffRoute(ANSWER_PAY, async (req, ctx) => {
+  const q = query(req, S.TeamPayQuestionsQuery);
+  return json({ questions: await teamPayQuestions(viewer(ctx), { open: q.open === "true" }) });
+});
+
+/** POST /pay-questions/{id}/answer */
+export const postPayQuestionAnswer = staffRoute<{ id: string }>(ANSWER_PAY, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  const v = await body(req, S.PayQuestionAnswerBody);
+  return json(await answerPayQuestion(viewer(ctx), id, v.answer));
 });

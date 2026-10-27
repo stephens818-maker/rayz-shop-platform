@@ -125,6 +125,7 @@ export const TABLES: Record<string, Coverage> = {
   otp_codes: REC,
   owner_entities: is("structure", "Who owns which shops"),
   pay_groups: is("shop", "A shop's iSolved pay group and export tab"),
+  pay_questions: REC,
   payments: PAY,
   payout_reconciliations: PAY,
   payroll_employers: is("structure", "The legal entities (one FEIN each) the pay groups and tips belong to"),

@@ -58,6 +58,8 @@ export type NotificationKind =
   | "tip_onboarding"
   /** The monthly reminder to declare last month's cash tips. */
   | "tip_declaration"
+  /** An employee's pay question: to the managers or owners who answer it, and the answer back to them. */
+  | "pay_question"
   /** Time clock, live: not clocked in for the first client, and clients booked over a break or after an early clock-out. */
   | "clock_late_in"
   | "clock_affected"

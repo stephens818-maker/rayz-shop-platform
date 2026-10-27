@@ -3752,6 +3752,53 @@ export const timesheets = pgTable(
   (t) => [unique("timesheets_uq").on(t.staffId, t.shopId, t.periodStart)],
 );
 
+export interface PayQuestionEvent {
+  at: string;
+  kind: "asked" | "answered" | "escalated" | "resolved" | "reminded";
+  /** The staff member, or null for the system (an overdue escalation). */
+  by: string | null;
+  byLabel: string;
+  text: string | null;
+}
+
+/**
+ * An employee's question about their pay (ST-I10): answered by the managers who approve timecards
+ * at the shop, and escalated to the owners when nobody answers in time or the employee asks. Kept
+ * after it's closed, with its history, as a pay record.
+ */
+export const payQuestions = pgTable(
+  "pay_questions",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    periodStart: date("period_start", { mode: "string" }),
+    /** PAY_QUESTION_TOPICS in src/domain/staff-privacy.ts. */
+    topic: text("topic").notNull(),
+    detail: text("detail").notNull(),
+    status: text("status").$type<"open" | "answered" | "resolved">().notNull().default("open"),
+    level: text("level").$type<"manager" | "owner">().notNull().default("manager"),
+    /** An answer is due by then; past it, a manager-level question goes to the owners. */
+    dueAt: ts("due_at").notNull(),
+    escalatedAt: ts("escalated_at"),
+    /** The owners were reminded once about an overdue escalated question. */
+    remindedAt: ts("reminded_at"),
+    history: jsonb("history").$type<PayQuestionEvent[]>().notNull().default(sql`'[]'::jsonb`),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    index("pay_questions_staff_idx").on(t.staffId, t.createdAt),
+    index("pay_questions_open_idx").on(t.shopId, t.status, t.dueAt),
+    check("pay_questions_status_ck", sql`${t.status} in ('open', 'answered', 'resolved')`),
+    check("pay_questions_level_ck", sql`${t.level} in ('manager', 'owner')`),
+  ],
+);
+
 /** A shop's pay period, closed to punches and edits once every timesheet in it is approved. */
 export const timesheetLocks = pgTable(
   "timesheet_locks",

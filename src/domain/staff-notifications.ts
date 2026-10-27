@@ -6,7 +6,7 @@
 
 import { addDays, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
 
-export const STAFF_EVENTS = ["confirm", "reschedule", "cancel", "arrived", "late", "waitlist", "clock_out", "meal_break", "schedule"] as const;
+export const STAFF_EVENTS = ["confirm", "reschedule", "cancel", "arrived", "late", "waitlist", "clock_out", "meal_break", "schedule", "pay_question"] as const;
 export type StaffEvent = (typeof STAFF_EVENTS)[number];
 export const STAFF_EVENT_LABEL: Record<StaffEvent, string> = {
   confirm: "New booking",
@@ -18,11 +18,12 @@ export const STAFF_EVENT_LABEL: Record<StaffEvent, string> = {
   clock_out: "Clock-out reminder",
   meal_break: "Meal break reminder",
   schedule: "Schedule change",
+  pay_question: "Pay question",
 };
 /** About one of their clients' appointments; the rest are about their own time. */
 export const APPOINTMENT_EVENTS = ["confirm", "reschedule", "cancel", "arrived", "late", "waitlist"] as const satisfies readonly StaffEvent[];
 /** Unset, these go to their staff app phones (push needs the app, so only people using it hear them); the rest stay off until chosen. */
-export const PUSH_BY_DEFAULT: readonly StaffEvent[] = ["late", "waitlist", "clock_out", "meal_break", "schedule"];
+export const PUSH_BY_DEFAULT: readonly StaffEvent[] = ["late", "waitlist", "clock_out", "meal_break", "schedule", "pay_question"];
 
 export const STAFF_CHANNELS = ["sms", "email", "push"] as const;
 export type StaffChannel = (typeof STAFF_CHANNELS)[number];

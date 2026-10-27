@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { STAFF_CHANNELS, STAFF_EVENTS } from "@/domain/staff-notifications";
 import { TIP_METHODS } from "@/domain/tips";
+import { PAY_QUESTION_MAX_CHARS, PAY_QUESTION_TOPICS } from "@/domain/staff-privacy";
 
 /** Request bodies and queries for /api/staff/v1, shared by the handlers and the OpenAPI document. */
 
@@ -245,3 +246,14 @@ export const EntryStatusBody = z.object({ status: z.enum(["left", "done"]) });
 export const SaleBody = z.object({ appointmentId: z.uuid(), tipCents: z.number().int().min(0).max(100_000).optional().describe("For the card fee quote") });
 export const TerminalTokenBody = z.object({ shopId: z.uuid().optional() });
 export const BoardQuery = z.object({ shopId: z.uuid().optional() });
+
+/** ST-I10: pay questions. */
+export const PayQuestionBody = z.object({
+  shopId: z.uuid(),
+  periodStart: DateStr.nullish().describe("The pay period it's about, if any"),
+  topic: z.enum(PAY_QUESTION_TOPICS),
+  detail: z.string().min(1).max(PAY_QUESTION_MAX_CHARS).describe("What looks wrong"),
+});
+export const PayQuestionEscalateBody = z.object({ note: z.string().max(PAY_QUESTION_MAX_CHARS).nullish().describe("Why the answer didn't settle it") });
+export const PayQuestionAnswerBody = z.object({ answer: z.string().min(1).max(PAY_QUESTION_MAX_CHARS) });
+export const TeamPayQuestionsQuery = z.object({ open: z.enum(["true", "false"]).optional().describe("true: only the ones not closed") });

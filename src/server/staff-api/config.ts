@@ -8,6 +8,7 @@ import { STAFF_LEGAL_VERSIONS } from "@/domain/legal";
 import { NO_BIOMETRICS_POLICY } from "@/domain/biometrics";
 import { STAFF_DEVICE_POLICY } from "@/domain/staff-device-policy";
 import { QUIET_HOURS_POLICY } from "@/domain/staff-notifications";
+import { PAY_AGENCIES, PAY_QUESTION_MANAGER_DAYS, PAY_QUESTION_OWNER_DAYS, PAY_QUESTION_TOPICS, privacyReviewed } from "@/domain/staff-privacy";
 
 /**
  * What the staff app reads at launch (GET /api/staff/v1/config, ST-I8) and the version gate every
@@ -91,6 +92,9 @@ export function staffAppConfig(req: Request) {
     biometrics: { collected: false, policy: NO_BIOMETRICS_POLICY.summary },
     /** ST-I20: which alerts wait while the person is off the clock. */
     quietHours: QUIET_HOURS_POLICY,
+    /** ST-I10: the privacy notice (links.privacy) is a draft until reviewed; how pay questions escalate. */
+    privacyNotice: { reviewed: privacyReviewed(), version: STAFF_LEGAL_VERSIONS.privacy },
+    payQuestions: { topics: PAY_QUESTION_TOPICS, managerDays: PAY_QUESTION_MANAGER_DAYS, ownerDays: PAY_QUESTION_OWNER_DAYS, agencies: PAY_AGENCIES },
     support: staffSupport(),
     environment: demoMode() ? ("demo" as const) : process.env.VERCEL_ENV === "production" ? ("production" as const) : ("development" as const),
   };

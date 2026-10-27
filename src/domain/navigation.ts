@@ -115,6 +115,7 @@ export const PAGE_ACCESS = {
   "/admin/clock": ["timeclock.punch"],
   "/admin/clock/kiosk": ["timeclock.kiosk", "settings.shop"],
   "/admin/timesheets": TIMESHEETS,
+  "/admin/pay-questions": ["timesheet.own", "timesheet.approve", "payroll.run", "payroll.export", "payroll.approve"],
   "/admin/timesheets/[staffId]": TIMESHEETS,
   "/admin/time-clock": ["payroll.run", "settings.shop"],
   "/admin/campaign-center": CAMPAIGN_CENTER,
@@ -213,6 +214,7 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
     title: "Payroll",
     items: [
       { href: "/admin/timesheets", label: "Timesheets" },
+      { href: "/admin/pay-questions", label: "Pay questions" },
       { href: "/admin/payroll/report", label: "Payroll report" },
       { href: "/admin/payroll/tips", label: "Payroll tip report" },
       { href: "/admin/tips", label: "Tip payouts" },

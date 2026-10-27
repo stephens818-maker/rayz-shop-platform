@@ -76,6 +76,7 @@ export const MESSAGE_KIND_LABEL: Record<string, string> = {
   tip_banking: "Payout account notice",
   tip_onboarding: "Payout setup invite",
   tip_declaration: "Cash tip declaration reminder",
+  pay_question: "Pay question",
   staff_invite: "Brand portal invite",
   milestone: "Staff milestone",
 };

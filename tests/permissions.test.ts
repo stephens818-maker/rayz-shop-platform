@@ -406,7 +406,7 @@ describe("navigation follows permissions", () => {
     expect(hrefs).not.toContain("/admin/catalog");
     for (const h of hrefs) expect(pageAllowed(fd, h as keyof typeof PAGE_ACCESS)).toBe(true);
     const barber = navFor(access("barber").permissions).flatMap((s) => s.items.map((i) => i.href));
-    expect(barber).toEqual(["/admin", "/admin/calendar", "/admin/clock", "/admin/my-time", "/admin/my-tips", "/admin/my-banking", "/admin/milestones", "/admin/customers", "/admin/reports", "/admin/timesheets"]);
+    expect(barber).toEqual(["/admin", "/admin/calendar", "/admin/clock", "/admin/my-time", "/admin/my-tips", "/admin/my-banking", "/admin/milestones", "/admin/customers", "/admin/reports", "/admin/timesheets", "/admin/pay-questions"]);
     expect(hrefs).toContain("/admin/my-time");
     expect(hrefs).toContain("/admin/time-off");
     expect(barber).not.toContain("/admin/time-off");
