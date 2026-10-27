@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_BRAND_TIP_POLICY,
   DEFAULT_SHOP_TIP_SETTINGS,
+  REMINDER_DAYS,
+  REMINDER_MAX,
   availableOn,
+  reminderPolicy,
   brandTipPolicy,
   draftPayouts,
   employeeFeeCents,
@@ -171,6 +174,16 @@ describe("settings and methods", () => {
     expect(parseInstantFee("1%")).toEqual({ pct: 1, minCents: 0 });
     expect(parseInstantFee("cheap")).toBeNull();
     expect(instantFeeCents(10_000, { pct: 1.75, minCents: 25 })).toBe(175);
+  });
+});
+
+describe("payout setup reminders in the brand's tip policy", () => {
+  it("every 3 days, up to 4 after each invite, by default; out-of-range values fall back", () => {
+    expect(reminderPolicy(brandTipPolicy({}))).toEqual({ everyDays: 3, max: 4 });
+    expect(reminderPolicy(brandTipPolicy({ reminderEveryDays: 7, reminderMax: 0 }))).toEqual({ everyDays: 7, max: 0 });
+    expect(reminderPolicy(brandTipPolicy({ reminderEveryDays: 0, reminderMax: 11 }))).toEqual({ everyDays: 3, max: 4 });
+    expect(reminderPolicy(brandTipPolicy({ reminderEveryDays: 2.5, reminderMax: "2" }))).toEqual({ everyDays: 3, max: 4 });
+    expect(brandTipPolicy({ reminderEveryDays: 14, reminderMax: 10 })).toMatchObject({ reminderEveryDays: REMINDER_DAYS.max, reminderMax: REMINDER_MAX.max });
   });
 });
 
