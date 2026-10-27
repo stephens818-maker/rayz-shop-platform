@@ -1,6 +1,5 @@
 import Stripe from "stripe";
-import { applyStaffAccountUpdate, applyStaffExternalAccount, refreshStaffAccount, staffAccountByStripeId } from "@/server/tips/accounts";
-import { applyStaffPayoutEvent } from "@/server/tips/payouts";
+import { handleStaffConnectEvent, isStaffAccount } from "@/server/tips/connect-events";
 import { accountHolder, applyAccountUpdate, markDeauthorized, recordPayout, refreshAccount, refreshEntityAccount } from "./connect";
 import { onceOnly } from "./stripe-events";
 
@@ -23,7 +22,7 @@ export async function handleConnectWebhook(rawBody: string, signature: string, s
 
 async function connectEvent(event: Stripe.Event) {
   const account = event.account;
-  if (account && (await staffAccountByStripeId(account))) return staffEvent(event, account);
+  if (account && (await isStaffAccount(account))) return handleStaffConnectEvent(event, account);
   const holder = account ? await accountHolder(account) : null;
   if (account && !holder) return { status: 200, body: "ignored" };
   switch (event.type) {
@@ -47,31 +46,6 @@ async function connectEvent(event: Stripe.Event) {
     case "payout.failed":
     case "payout.canceled":
       if (account) await recordPayout(account, event.data.object as Stripe.Payout);
-      break;
-  }
-  return { status: 200, body: "ok" };
-}
-
-/** An employee's own Express account: onboarding status and the payouts of their tips. */
-async function staffEvent(event: Stripe.Event, account: string) {
-  switch (event.type) {
-    case "account.updated":
-      await applyStaffAccountUpdate(event.data.object as Stripe.Account);
-      break;
-    case "capability.updated": {
-      const a = await staffAccountByStripeId(account);
-      if (a) await refreshStaffAccount(a.staffId).catch(() => null);
-      break;
-    }
-    case "account.external_account.created":
-    case "account.external_account.updated":
-    case "account.external_account.deleted":
-      await applyStaffExternalAccount(account, event.type, event.data.object as Stripe.BankAccount | Stripe.Card);
-      break;
-    case "payout.paid":
-    case "payout.failed":
-    case "payout.canceled":
-      await applyStaffPayoutEvent(account, event.data.object as Stripe.Payout);
       break;
   }
   return { status: 200, body: "ok" };

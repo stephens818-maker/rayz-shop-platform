@@ -5,6 +5,7 @@ import { appointments, shops } from "@/db/schema";
 import { BANKING_STATUS_LABEL, BankingStatus, destinationLabel, requirementLabels } from "@/domain/banking";
 import { addTotals, commissionBetween, zeroTotals } from "@/domain/compensation";
 import { reportView } from "@/domain/permissions";
+import { ACCOUNT_STATE_LABEL, ONBOARDING_LABEL as ONBOARDING_MODE_LABEL, heldLabel } from "@/domain/staff-payouts";
 import {
   DEFAULT_INSTANT_FEE,
   METHOD_LABEL,
@@ -29,22 +30,23 @@ import { connectMode } from "@/server/payments/connect";
 import {
   StaffPayoutAccount,
   accountDestination,
+  currentInstantFeeTerms,
   externalAccountsView,
   refreshStaffAccount,
   setPayoutChoice,
   simulateDestinationChange,
   simulateStaffOnboarding,
   staffAccount,
+  staffAccountSession,
   staffAccountState,
+  staffAccountStatus,
   staffDashboardUrl,
   staffOnboardingUrl,
 } from "@/server/tips/accounts";
-import { ledgerRows, myTips, shopTipConfigs } from "@/server/tips/ledger";
+import { ledgerRows, myTips, shopTipConfigs, staffPayoutConfig } from "@/server/tips/ledger";
 import { waitingForSetup } from "@/server/tips/payouts";
 import type { StaffAppContext } from "./http";
 
-/** Where Stripe's hosted pages send the app's browser back to (a public page that opens the app). */
-export const STRIPE_RETURN_PATH = "/staff-app/stripe";
 const MAX_DAYS = 62;
 
 async function myShops(staffId: string) {
@@ -89,11 +91,12 @@ export async function myTipsView(ctx: StaffAppContext, days = 14, today: LocalDa
 export async function myPayouts(ctx: StaffAppContext) {
   const me = ctx.staff.id;
   const shopRows = await myShops(me);
-  if (!shopRows.length) return { waitingForSetup: { cents: 0, payouts: 0 }, payouts: [] };
+  if (!shopRows.length) return { waitingForSetup: { cents: 0, payouts: 0 }, owed: { cents: 0, payouts: 0 }, payouts: [] };
   const name = new Map(shopRows.map((s) => [s.id, s.name]));
   const t = await myTips(me, shopRows.map((s) => s.id));
   return {
     waitingForSetup: t.waitingForSetup,
+    owed: t.owed,
     payouts: t.payouts
       .filter((p) => p.method !== "prior" && p.status !== "cancelled")
       .map((p) => ({
@@ -103,8 +106,9 @@ export async function myPayouts(ctx: StaffAppContext) {
         method: p.method,
         instant: p.instant,
         status: p.status,
-        statusLabel: p.holdKind === "stripe_setup" && p.status === "held" ? "Waiting for your Stripe setup" : (STATUS_LABEL[p.status as keyof typeof STATUS_LABEL] ?? p.status),
+        statusLabel: heldLabel(p) ?? STATUS_LABEL[p.status as keyof typeof STATUS_LABEL] ?? p.status,
         waitingForSetup: p.status === "held" && p.holdKind === "stripe_setup",
+        owed: p.status === "held" && (p.holdKind === "stripe_setup" || p.holdKind === "transfers_pending"),
         failureMessage: p.failureMessage,
         tipsCents: p.grossCents + p.adjustCents,
         feesCents: p.feeCents + employeeFeeCents(p),
@@ -197,8 +201,16 @@ export async function bankingView(ctx: StaffAppContext, o: { refresh?: boolean }
   const shopRows = await myShops(me);
   if (o.refresh) await refreshStaffAccount(me).catch(() => null);
   const ids = shopRows.map((s) => s.id);
-  const [{ policy, byShop, policyOf }, acct, planned, waiting] = await Promise.all([shopTipConfigs(ids), staffAccount(me), tipOverrides([me]), waitingForSetup([me])]);
+  const [{ policy, byShop, policyOf }, acct, planned, waiting, cfg] = await Promise.all([
+    shopTipConfigs(ids),
+    staffAccount(me),
+    tipOverrides([me]),
+    waitingForSetup([me]),
+    staffPayoutConfig(),
+  ]);
   const state = staffAccountState(acct);
+  const account = staffAccountStatus(acct);
+  const terms = currentInstantFeeTerms();
   const dest = accountDestination(acct);
   const list = externalAccountsView(acct);
   const fast = list.find((x) => x.instantDestination) ?? null;
@@ -208,6 +220,10 @@ export async function bankingView(ctx: StaffAppContext, o: { refresh?: boolean }
     stripeAccountId: acct?.stripeAccountId ?? null,
     status: state,
     statusLabel: BANKING_STATUS_LABEL[state],
+    state: account,
+    stateLabel: ACCOUNT_STATE_LABEL[account],
+    dashboard: acct?.dashboard ?? cfg.dashboard,
+    onboardingMode: { mode: cfg.onboarding, label: ONBOARDING_MODE_LABEL[cfg.onboarding] },
     destination: dest ? { type: dest.type, name: dest.name, last4: dest.last4, label: destinationLabel(dest) } : null,
     needs: requirementLabels(acct?.requirementsDue ?? []),
     checking: requirementLabels(acct?.requirementsPending ?? []),
@@ -228,7 +244,9 @@ export async function bankingView(ctx: StaffAppContext, o: { refresh?: boolean }
       eligible: !!acct?.instantEligible,
       to: fast ? { type: fast.type, name: fast.name, last4: fast.last4, label: fast.label } : null,
       feePaidBy: instantFeePayer(policy),
-      fee: instantFeeText(),
+      fee: { ...instantFeeText(), terms, ackRequired: cfg.instantFeeAck },
+      accepted: !!acct?.instantFeeTerms && acct.instantFeeTerms === terms,
+      acceptedAt: acct?.instantFeeAcceptedAt?.toISOString() ?? null,
     },
     choice: { method: acct?.method ?? null, instant: !!acct?.instant, instantEligible: !!acct?.instantEligible },
     policy: { methods: policy.methods, employeeChooses: policy.employeeChooses, instantAllowed: policy.instantAllowed, instantFeePassedOn: policy.instantFeePassedOn },
@@ -268,9 +286,23 @@ const instantFeeText = () => {
 export async function onboardingLink(ctx: StaffAppContext) {
   const before = await staffAccount(ctx.staff.id);
   const step = onboardingStep(before, staffAccountState(before));
-  const url = await staffOnboardingUrl(ctx.staff.id, ctx.actor, appBaseUrl(), STRIPE_RETURN_PATH);
+  const url = await staffOnboardingUrl(ctx.staff.id, ctx.actor, appBaseUrl(), "app");
   if (!url) await simulateStaffOnboarding(ctx.staff.id, ctx.actor);
   return { url, step, banking: await bankingView(ctx) };
+}
+
+/**
+ * Embedded onboarding and account management (ST-I9): an Account Session the app hands to Stripe's
+ * Connect components with the publishable key. Stripe collects identity, tax and bank details in the
+ * component; the app never sees them. In the simulator there's no session and setup finishes at once.
+ */
+export async function accountSession(ctx: StaffAppContext) {
+  const session = await staffAccountSession(ctx.staff.id, ctx.actor);
+  if (!session) await simulateStaffOnboarding(ctx.staff.id, ctx.actor);
+  return {
+    session: session ? { ...session, publishableKey: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || null } : null,
+    banking: await bankingView(ctx),
+  };
 }
 
 /** Every bank account and debit card on their Stripe account (refreshed from Stripe on ?refresh=1): type, name, last 4, the default, and the one instant payouts go to. */
@@ -292,7 +324,7 @@ export async function dashboardLink(ctx: StaffAppContext) {
   return { url, banking: null };
 }
 
-export async function setMyPayoutMethod(ctx: StaffAppContext, v: { method: TipMethod | null; instant: boolean }) {
+export async function setMyPayoutMethod(ctx: StaffAppContext, v: { method: TipMethod | null; instant: boolean; acceptInstantFee?: string | null }) {
   if (v.method && !TIP_METHODS.includes(v.method)) throw new AppError("bad_request", "Unknown payout method");
   await setPayoutChoice(ctx.staff.id, v, ctx.actor);
   return bankingView(ctx);

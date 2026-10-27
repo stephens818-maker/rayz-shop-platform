@@ -171,11 +171,27 @@ const OPS: Op[] = [
     path: "/banking/onboarding-link",
     tag: "Banking",
     summary:
-      "Starts or resumes Stripe's hosted onboarding for their own Express account (identity, bank account, debit card for instant payouts), or opens it for what Stripe asks for later. step says which. Open url in the browser; Stripe returns to /staff-app/stripe. url is null in the simulator, where setup finishes at once. Stripe test mode only unless MONEY_MOVEMENT_LIVE is on.",
+      "The fallback to embedded onboarding: starts or resumes Stripe's hosted onboarding for their own Stripe account (identity, bank account, debit card for instant payouts), or opens it for what Stripe asks for later. step says which. Open url in the browser; Stripe returns to https://…/staff-app/stripe/return (or /refresh when the link ran out), which the app opens as a universal link or App Link. url is null in the simulator, where setup finishes at once. Stripe test mode only unless MONEY_MOVEMENT_LIVE is on.",
     permission: "tips.own",
   },
-  { method: "post", path: "/banking/dashboard-link", tag: "Banking", summary: "A one-time sign-in to their Stripe Express dashboard, where they change the card or bank and see Stripe's payouts.", permission: "tips.own" },
-  { method: "put", path: "/banking/method", tag: "Banking", summary: "How they're paid, where the brand lets them choose. Sends a security notice.", permission: "tips.own", body: S.PayoutMethodBody },
+  {
+    method: "post",
+    path: "/banking/account-session",
+    tag: "Banking",
+    summary:
+      "An Account Session for Stripe's embedded components (Connect.js): account_onboarding, account_management (change the card or bank: accounts have no Stripe Dashboard by default) and notification_banner. Returns clientSecret (short-lived; never store or log it), expiresAt, accountId and publishableKey. Call again when it expires. session is null in the simulator, where setup finishes at once. If embedded onboarding fails to load, fall back to /banking/onboarding-link.",
+    permission: "tips.own",
+  },
+  { method: "post", path: "/banking/dashboard-link", tag: "Banking", summary: "A one-time sign-in to their Stripe Express dashboard, for accounts made with one (dashboard express). Accounts with no dashboard (the default) change the card or bank in the embedded account management (/banking/account-session); this returns 409 for them.", permission: "tips.own" },
+  {
+    method: "put",
+    path: "/banking/method",
+    tag: "Banking",
+    summary:
+      "How they're paid, where the brand lets them choose. Instant payouts are off by default; turning them on shows Stripe's fee first and, where the brand asks, needs acceptInstantFee set to the fee text shown (400 with details.reason instant_fee_ack and details.terms otherwise). Sends a security notice.",
+    permission: "tips.own",
+    body: S.PayoutMethodBody,
+  },
   { method: "get", path: "/popups", tag: "Pop-ups", summary: "Milestones they haven't seen, a clock-in reminder when their first client or shift starts within 30 minutes, and an old open shift.", permission: "Signed in" },
   { method: "post", path: "/popups/seen", tag: "Pop-ups", summary: "Milestones shown: they won't pop up again here or on the web.", permission: "Their own", body: S.SeenBody },
   { method: "get", path: "/devices", tag: "Push", summary: "Their phones registered for push.", permission: "Their own" },

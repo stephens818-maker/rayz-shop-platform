@@ -6,6 +6,7 @@ import { shops } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
 import { BANKING_STATUS_LABEL, BANKING_STATUS_TONE, destinationLabel } from "@/domain/banking";
 import { ENTRY_STATUS_LABEL, METHOD_LABEL, STATUS_LABEL, effectiveMethod, employeeFeeCents, entryStatus, receivedCents } from "@/domain/tips";
+import { heldLabel } from "@/domain/staff-payouts";
 import { formatCents } from "@/lib/money";
 import { addDays, formatDate, formatDateTime, todayLocal } from "@/lib/time";
 import { workShopIds } from "@/server/auth/access";
@@ -57,6 +58,12 @@ export default async function MyTipsPage({ searchParams }: { searchParams: Promi
             Stripe payout setup
           </Link>
           .
+        </Notice>
+      )}
+      {t.owed.payouts > 0 && (
+        <Notice tone="amber">
+          {formatCents(t.owed.cents)} in approved tips is owed to you. Direct payouts aren&rsquo;t on yet, so it&rsquo;s paid with your paycheck at the pay period&rsquo;s cutoff unless it&rsquo;s sent to
+          Stripe first. It&rsquo;s never paid twice.
         </Notice>
       )}
       <Card>
@@ -123,7 +130,7 @@ export default async function MyTipsPage({ searchParams }: { searchParams: Promi
                       {p.instant ? " (instant)" : ""}
                     </Td>
                     <Td>
-                      <Badge tone={PAYOUT_STATUS_TONE[p.status]}>{p.status === "held" && p.holdKind === "stripe_setup" ? "Waiting for your Stripe setup" : STATUS_LABEL[p.status]}</Badge>
+                      <Badge tone={PAYOUT_STATUS_TONE[p.status]}>{heldLabel(p) ?? STATUS_LABEL[p.status]}</Badge>
                       {p.failureMessage && <span className="ml-2 text-xs text-red-600">{p.failureMessage}</span>}
                     </Td>
                     <Td right>{formatCents(p.grossCents + p.adjustCents)}</Td>

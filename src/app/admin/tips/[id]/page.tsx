@@ -33,9 +33,11 @@ export default async function TipBatchPage({ params }: { params: Promise<{ id: s
   const toApprove = live.filter((p) => p.status === "pending" && p.netCents > 0);
   const waitsForSetup = (p: (typeof payouts)[number]) => p.status === "held" && p.holdKind === "stripe_setup";
   const setupWaiting = live.filter(waitsForSetup);
+  const owedToPayroll = (p: (typeof payouts)[number]) => p.status === "held" && p.holdKind === "transfers_pending";
+  const owed = live.filter(owedToPayroll);
   const opsFor = (p: (typeof payouts)[number]) => {
     const own = p.staffId === ctx.staff.id;
-    if (waitsForSetup(p)) return batch.status === "draft" && !own ? (["remove", "adjust"] as const) : (["remove"] as const);
+    if (waitsForSetup(p) || owedToPayroll(p)) return batch.status === "draft" && !own ? (["remove", "adjust"] as const) : (["remove"] as const);
     if (batch.status === "draft") {
       if (p.status === "pending") return own ? (["hold", "remove"] as const) : (["hold", "remove", "adjust"] as const);
       if (p.status === "held") return own ? (["release", "remove"] as const) : (["release", "remove", "adjust"] as const);
@@ -90,6 +92,16 @@ export default async function TipBatchPage({ params }: { params: Promise<{ id: s
           to invite or remind them.
         </Notice>
       )}
+      {owed.length > 0 && (
+        <Notice tone="amber">
+          {owed.length === 1 ? `${owed[0].name}'s payout` : `${owed.length} payouts`} ({formatCents(owed.reduce((a, p) => a + p.netCents, 0))}) can&rsquo;t go to Stripe yet: direct payouts
+          aren&rsquo;t turned on. Their tips are owed and go on payroll at the period&rsquo;s cutoff, never twice. See{" "}
+          <Link className="underline" href="/admin/payouts">
+            Payouts
+          </Link>
+          .
+        </Notice>
+      )}
       {batch.notes && <Notice tone="amber">{batch.notes}</Notice>}
       {payouts.map((p) => (
         <Card key={p.id} className={p.status === "cancelled" ? "opacity-60" : ""}>
@@ -110,7 +122,7 @@ export default async function TipBatchPage({ params }: { params: Promise<{ id: s
             }
             subtitle={
               <>
-                {p.holdReason && <span className="block text-amber-700">{waitsForSetup(p) ? "Waiting for Stripe setup" : p.status === "held" ? "Held" : "Taken out"}: {p.holdReason}</span>}
+                {p.holdReason && <span className="block text-amber-700">{waitsForSetup(p) ? "Waiting for Stripe setup" : owedToPayroll(p) ? "Owed" : p.status === "held" ? "Held" : "Taken out"}: {p.holdReason}</span>}
                 {p.failureMessage && <span className="block text-red-600">{p.failureMessage}</span>}
                 {p.acknowledgedAt && (
                   <span className="block">

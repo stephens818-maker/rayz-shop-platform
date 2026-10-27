@@ -7,7 +7,6 @@ import {
   BankingStatus,
   ExternalAccount,
   PayoutDestination,
-  bankingStatus,
   destinationLabel,
   externalAccountOf,
   externalAccountsOf,
@@ -16,7 +15,8 @@ import {
   sameDestination,
   storedExternalAccounts,
 } from "@/domain/banking";
-import { METHOD_LABEL, TipMethod } from "@/domain/tips";
+import { AccountState, accountState, bankingStatusOf, canReceiveIn, expectedTransition, instantFeeTerms } from "@/domain/staff-payouts";
+import { DEFAULT_INSTANT_FEE, METHOD_LABEL, TipMethod, parseInstantFee } from "@/domain/tips";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatDateTime } from "@/lib/time";
 import { Actor, audit } from "@/server/audit";
@@ -25,7 +25,7 @@ import { enqueueRaw } from "@/server/notifications/queue";
 import { connectMode } from "@/server/payments/connect";
 import { moneyClient } from "@/server/payments/money-movement";
 import { stripe } from "@/server/payments/processor";
-import { tipPolicy } from "./ledger";
+import { staffPayoutConfig, tipPolicy } from "./ledger";
 import { assertStripePayouts } from "./payout-model";
 
 export type StaffPayoutAccount = typeof staffPayoutAccounts.$inferSelect;
@@ -39,8 +39,9 @@ const MCC_BARBER = "7241";
  * through payroll (iSolved), so the platform files no 1099 for them. Stripe reads none of this; it's
  * for anyone looking at the account in the Dashboard, and for the tax form exclusion list.
  */
-export const W2_METADATA = { purpose: "tip_payouts", worker_type: "w2_employee", tax_forms: "w2_via_payroll_no_1099" } as const;
-const isW2Tagged = (m: Stripe.Metadata | null | undefined) => m?.worker_type === W2_METADATA.worker_type && m?.tax_forms === W2_METADATA.tax_forms;
+export const W2_METADATA = { purpose: "tip_payouts", worker_type: "w2_employee", tax_forms: "w2_via_payroll_no_1099", tax_form_filing: "will_not_file" } as const;
+const isW2Tagged = (m: Stripe.Metadata | null | undefined) =>
+  m?.worker_type === W2_METADATA.worker_type && m?.tax_forms === W2_METADATA.tax_forms && m?.tax_form_filing === W2_METADATA.tax_form_filing;
 
 /**
  * Stripe files a 1099-K for a connected account only when the account pays its own Stripe fees
@@ -61,15 +62,20 @@ export async function staffAccountByStripeId(accountId: string, tx: DBorTx = db)
   return (await tx.query.staffPayoutAccounts.findFirst({ where: eq(staffPayoutAccounts.stripeAccountId, accountId) })) ?? null;
 }
 
-/** Stripe can send to this account: onboarding finished and payouts on. A simulator account never reaches real Stripe. */
-export function canReceive(a: StaffPayoutAccount | null): boolean {
-  return !!a?.stripeAccountId && a.payoutsEnabled && a.detailsSubmitted && !(connectMode() === "stripe" && a.simulated);
+/** One of the seven states (accountState). A simulator account counts as not started once real Stripe keys are in. */
+export function staffAccountStatus(a: StaffPayoutAccount | null): AccountState {
+  if (a?.simulated && connectMode() === "stripe") return "not_started";
+  return accountState(a);
 }
 
-/** Not set up, pending verification, ready or action needed. A simulator account counts as not set up once real Stripe keys are in. */
+/** Stripe can send to this account: active, or active with something due by a deadline. A simulator account never reaches real Stripe. */
+export function canReceive(a: StaffPayoutAccount | null): boolean {
+  return !!a?.stripeAccountId && a.payoutsEnabled && a.detailsSubmitted && canReceiveIn(staffAccountStatus(a));
+}
+
+/** Not set up, pending verification, ready or action needed: the seven states as the staff app and My banking show them. */
 export function staffAccountState(a: StaffPayoutAccount | null): BankingStatus {
-  if (a?.simulated && connectMode() === "stripe") return "not_set_up";
-  return bankingStatus(a);
+  return bankingStatusOf(staffAccountStatus(a));
 }
 export const STAFF_ACCOUNT_STATE_LABEL = BANKING_STATUS_LABEL;
 
@@ -82,7 +88,7 @@ const destinationCols = (d: PayoutDestination | null) => ({ destinationType: d?.
 /** What managers may see of each employee's payout account: the method, the status and the last 4 digits, nothing more. */
 export async function payoutAccountSummaries(staffIds: readonly string[]) {
   const rows = staffIds.length ? await db.select().from(staffPayoutAccounts).where(inArray(staffPayoutAccounts.staffId, [...staffIds])) : [];
-  return new Map(rows.map((r) => [r.staffId, { staffId: r.staffId, method: r.method, status: staffAccountState(r), last4: r.destinationLast4 }]));
+  return new Map(rows.map((r) => [r.staffId, { staffId: r.staffId, method: r.method, status: staffAccountState(r), state: staffAccountStatus(r), last4: r.destinationLast4 }]));
 }
 
 /** The shop's active team with each one's payout account summary, for the managers' page. */
@@ -94,7 +100,7 @@ export async function shopPayoutAccounts(shopId: string) {
     .where(and(eq(staffShops.shopId, shopId), eq(staff.active, true), eq(staff.kind, "person")))
     .orderBy(staff.displayLabel);
   const byStaff = await payoutAccountSummaries(team.map((t) => t.id));
-  return team.map((t) => ({ name: t.name, ...(byStaff.get(t.id) ?? { staffId: t.id, method: null, status: "not_set_up" as BankingStatus, last4: null }) }));
+  return team.map((t) => ({ name: t.name, ...(byStaff.get(t.id) ?? { staffId: t.id, method: null, status: "not_set_up" as BankingStatus, state: "not_started" as AccountState, last4: null }) }));
 }
 
 // ───────────────────────────── Notices ─────────────────────────────
@@ -146,14 +152,23 @@ async function noticeActionNeeded(a: StaffPayoutAccount) {
  */
 async function saveAccount(before: StaffPayoutAccount, patch: AccountPatch, actor: Actor): Promise<StaffPayoutAccount> {
   const now = new Date();
+  const state = accountState({ ...before, ...patch } as StaffPayoutAccount);
+  const moved = state !== before.state;
   const [after] = await db
     .update(staffPayoutAccounts)
-    .set({ ...patch, updatedAt: now })
+    .set({ ...patch, state, ...(moved ? { stateChangedAt: now } : {}), updatedAt: now })
     .where(eq(staffPayoutAccounts.staffId, before.staffId))
     .returning();
   const from = staffAccountState(before);
   const to = staffAccountState(after);
-  if (from !== to) await audit(actor, "tips.account_state", "staff", after.staffId, { stripeAccountId: after.stripeAccountId, from, to });
+  if (from !== to || moved)
+    await audit(actor, "tips.account_state", "staff", after.staffId, {
+      stripeAccountId: after.stripeAccountId,
+      from,
+      to,
+      state: { from: before.state, to: state },
+      ...(expectedTransition(before.state, state) ? {} : { unexpected: true }),
+    });
   const newlyDue = after.requirementsDue.filter((k) => !before.requirementsDue.includes(k));
   if (to === "action_needed" && (from !== "action_needed" || newlyDue.length)) await noticeActionNeeded(after);
   const was = accountDestination(before);
@@ -170,18 +185,33 @@ async function saveAccount(before: StaffPayoutAccount, patch: AccountPatch, acto
 
 // ───────────────────────────── The employee's choice ─────────────────────────────
 
-/** An employee's choice of how they're paid, held to what the brand allows. A change is audited and sends a security notice. */
-export async function setPayoutChoice(staffId: string, v: { method: TipMethod | null; instant: boolean }, actor: Actor) {
-  const policy = await tipPolicy();
+export const instantRate = () => parseInstantFee(process.env.TIP_INSTANT_FEE) ?? DEFAULT_INSTANT_FEE;
+/** Stripe's instant payout fee in words, as the employee is shown it and accepts it. */
+export const currentInstantFeeTerms = () => instantFeeTerms(instantRate());
+
+/**
+ * An employee's choice of how they're paid, held to what the brand allows. Instant payouts are off
+ * until they ask, and (where the brand requires it, ST-I12) until they've accepted Stripe's fee as
+ * shown: `acceptInstantFee` is the fee text they saw, and must be today's. A change is audited and
+ * sends a security notice.
+ */
+export async function setPayoutChoice(staffId: string, v: { method: TipMethod | null; instant: boolean; acceptInstantFee?: string | null }, actor: Actor) {
+  const [policy, cfg] = await Promise.all([tipPolicy(), staffPayoutConfig()]);
   if (!policy.employeeChooses && v.method) throw new AppError("forbidden", "The brand sets how tips are paid; ask a manager.");
   if (v.method && !policy.methods.includes(v.method)) throw new AppError("bad_request", "The brand doesn't allow that payout method.");
   const instant = v.instant && policy.instantAllowed;
   const before = await staffAccount(staffId);
+  const terms = currentInstantFeeTerms();
+  const accepting = instant && v.acceptInstantFee === terms && before?.instantFeeTerms !== terms;
+  if (instant && cfg.instantFeeAck && before?.instantFeeTerms !== terms && !accepting)
+    throw new AppError("bad_request", `Instant payouts cost ${terms}, taken from the payout. Accept the fee to turn them on.`, { reason: "instant_fee_ack", terms });
+  const now = new Date();
+  const fee = accepting ? { instantFeeTerms: terms, instantFeeAcceptedAt: now } : {};
   await db
     .insert(staffPayoutAccounts)
-    .values({ staffId, method: v.method, instant })
-    .onConflictDoUpdate({ target: staffPayoutAccounts.staffId, set: { method: v.method, instant, updatedAt: new Date() } });
-  await audit(actor, "tips.method", "staff", staffId, { method: v.method, instant, from: before ? { method: before.method, instant: before.instant } : null });
+    .values({ staffId, method: v.method, instant, ...fee })
+    .onConflictDoUpdate({ target: staffPayoutAccounts.staffId, set: { method: v.method, instant, ...fee, updatedAt: now } });
+  await audit(actor, "tips.method", "staff", staffId, { method: v.method, instant, ...(accepting ? { instantFeeAccepted: terms } : {}), from: before ? { method: before.method, instant: before.instant } : null });
   if ((before?.method ?? null) !== v.method) {
     const how = v.method ? METHOD_LABEL[v.method].toLowerCase() : "the shop's default";
     const link = `${appBaseUrl()}${MY_BANKING}`;
@@ -206,8 +236,14 @@ const listCols = (list: ExternalAccount[]): AccountPatch => ({
   ...destinationCols(list.find((x) => x.default) ?? null),
 });
 
+const dashboardOf = (t: string | undefined) => (t === "none" || t === "express" ? t : null);
+
 const flagsOf = (acct: Stripe.Account): AccountPatch => ({
   ...(acct.controller?.fees?.payer ? { feesPayer: acct.controller.fees.payer } : {}),
+  ...(dashboardOf(acct.controller?.stripe_dashboard?.type) ? { dashboard: dashboardOf(acct.controller?.stripe_dashboard?.type) } : {}),
+  ...(acct.tos_acceptance?.service_agreement === "recipient" || acct.tos_acceptance?.service_agreement === "full" ? { serviceAgreement: acct.tos_acceptance.service_agreement } : {}),
+  transfersCapability: acct.capabilities?.transfers ?? null,
+  requirementsPastDue: [...new Set(acct.requirements?.past_due ?? [])],
   payoutsEnabled: !!acct.payouts_enabled,
   detailsSubmitted: !!acct.details_submitted,
   requirementsDue: [...new Set([...(acct.requirements?.past_due ?? []), ...(acct.requirements?.currently_due ?? [])])],
@@ -218,8 +254,12 @@ const flagsOf = (acct: Stripe.Account): AccountPatch => ({
 });
 
 /**
- * The employee's own Stripe Connect Express account, for transfers only, created on first use.
- * Payouts are manual so each tip payout goes out when it's approved, not on Stripe's schedule.
+ * The employee's own connected account, one per barber, created on first use (ST-I9): by default a
+ * recipient account (Stripe's recipient service agreement, transfers only, no card payments) with no
+ * Stripe Dashboard, set up in the app with Stripe's embedded onboarding and Stripe's hosted page as
+ * the fallback. The brand's staff_payouts setting can pick an Express dashboard or the full
+ * agreement instead. The platform pays Stripe's fees (so no 1099-K) and carries losses; Stripe
+ * collects the requirements. Payouts are manual so each one goes out when it's approved.
  */
 export async function ensureStaffAccount(staffId: string, actor: Actor): Promise<StaffPayoutAccount> {
   assertStripePayouts();
@@ -227,6 +267,7 @@ export async function ensureStaffAccount(staffId: string, actor: Actor): Promise
   if (existing?.stripeAccountId && (connectMode() === "simulator" || !existing.simulated)) return existing;
   const person = await db.query.staff.findFirst({ where: eq(staff.id, staffId) });
   if (!person || person.kind !== "person") throw notFound("Staff member");
+  const cfg = await staffPayoutConfig();
   const s = moneyClient();
   let accountId: string;
   if (s) {
@@ -236,8 +277,9 @@ export async function ensureStaffAccount(staffId: string, actor: Actor): Promise
           country: "US",
           email: person.email ?? undefined,
           business_type: "individual",
-          controller: { stripe_dashboard: { type: "express" }, fees: { payer: "application" }, losses: { payments: "application" }, requirement_collection: "stripe" },
+          controller: { stripe_dashboard: { type: cfg.dashboard }, fees: { payer: "application" }, losses: { payments: "application" }, requirement_collection: "stripe" },
           capabilities: { transfers: { requested: true } },
+          ...(cfg.serviceAgreement === "recipient" ? { tos_acceptance: { service_agreement: "recipient" } } : {}),
           business_profile: { mcc: MCC_BARBER, product_description: "Tips earned at Ray'z Barber Shop, paid out by the shop" },
           settings: { payouts: { schedule: { interval: "manual" } } },
           metadata: { staffId, ...W2_METADATA },
@@ -255,6 +297,14 @@ export async function ensureStaffAccount(staffId: string, actor: Actor): Promise
     stripeAccountId: accountId,
     simulated: !s,
     feesPayer: "application",
+    dashboard: cfg.dashboard,
+    serviceAgreement: cfg.serviceAgreement,
+    state: "in_progress" as const,
+    stateChangedAt: new Date(),
+    transfersCapability: null,
+    requirementsPastDue: [],
+    deauthorizedAt: null,
+    taxForms: cfg.taxForms,
     w2TaggedAt: new Date(),
     payoutsEnabled: false,
     detailsSubmitted: false,
@@ -268,27 +318,60 @@ export async function ensureStaffAccount(staffId: string, actor: Actor): Promise
     updatedAt: new Date(),
   };
   const [row] = await db.insert(staffPayoutAccounts).values({ staffId, ...values }).onConflictDoUpdate({ target: staffPayoutAccounts.staffId, set: values }).returning();
-  await audit(actor, "tips.account_created", "staff", staffId, { stripeAccountId: accountId, simulated: !s });
+  await audit(actor, "tips.account_created", "staff", staffId, { stripeAccountId: accountId, simulated: !s, dashboard: cfg.dashboard, serviceAgreement: cfg.serviceAgreement });
   return row;
 }
 
+/** The HTTPS pages Stripe's hosted onboarding comes back to (ST-I15); the staff app opens them as universal links and App Links. */
+export const STRIPE_RETURN_PAGE = "/staff-app/stripe/return";
+export const STRIPE_REFRESH_PAGE = "/staff-app/stripe/refresh";
+
 /**
- * Stripe-hosted onboarding, also used to add whatever Stripe asks for later. Stripe collects identity,
- * tax and bank details; the app never sees them. In the simulator there's no Stripe page: setup
- * finishes at once (simulateStaffOnboarding).
+ * Stripe-hosted onboarding (an Account Link), the fallback where embedded onboarding can't run, also
+ * used to add whatever Stripe asks for later. Stripe collects identity, tax and bank details; the app
+ * never sees them. It comes back to the HTTPS return page (or the refresh page, when the link ran
+ * out), which hands over to the staff app or, from the web, My banking. In the simulator there's no
+ * Stripe page: setup finishes at once (simulateStaffOnboarding).
  */
-export async function staffOnboardingUrl(staffId: string, actor: Actor, origin: string, returnPath: string = MY_BANKING): Promise<string | null> {
+export async function staffOnboardingUrl(staffId: string, actor: Actor, origin: string, from: "web" | "app" = "web"): Promise<string | null> {
   const a = await ensureStaffAccount(staffId, actor);
   const s = moneyClient();
   if (!s || a.simulated) return null;
-  const back = `${origin}${returnPath}`;
+  const q = from === "web" ? "?from=web" : "";
   const link = await s.accountLinks
-    .create({ account: a.stripeAccountId!, type: "account_onboarding", collection_options: { fields: "eventually_due" }, refresh_url: `${back}?stripe=refresh`, return_url: `${back}?stripe=return` })
+    .create({ account: a.stripeAccountId!, type: "account_onboarding", collection_options: { fields: "eventually_due" }, refresh_url: `${origin}${STRIPE_REFRESH_PAGE}${q}`, return_url: `${origin}${STRIPE_RETURN_PAGE}${q}` })
     .catch((e: Stripe.errors.StripeError) => {
       throw new AppError("payment_failed", `Stripe didn't start payout setup: ${e.message}`);
     });
-  await audit(actor, a.detailsSubmitted ? "tips.onboarding_resumed" : "tips.onboarding_started", "staff", staffId, { stripeAccountId: a.stripeAccountId });
+  await audit(actor, a.detailsSubmitted ? "tips.onboarding_resumed" : "tips.onboarding_started", "staff", staffId, { stripeAccountId: a.stripeAccountId, via: "account_link" });
   return link.url;
+}
+
+/**
+ * A short-lived Account Session for Stripe's embedded components in the staff app (ST-I9): onboarding,
+ * account management (their card or bank, for accounts with no Stripe Dashboard) and the
+ * notification banner for what Stripe asks for later. The client secret goes only to the employee
+ * the account belongs to and is never stored. Null in the simulator, where setup finishes at once.
+ */
+export async function staffAccountSession(staffId: string, actor: Actor): Promise<{ clientSecret: string; expiresAt: string; accountId: string } | null> {
+  const a = await ensureStaffAccount(staffId, actor);
+  const s = moneyClient();
+  if (!s || a.simulated) return null;
+  const features = { external_account_collection: true };
+  const session = await s.accountSessions
+    .create({
+      account: a.stripeAccountId!,
+      components: {
+        account_onboarding: { enabled: true, features },
+        account_management: { enabled: true, features },
+        notification_banner: { enabled: true, features },
+      },
+    })
+    .catch((e: Stripe.errors.StripeError) => {
+      throw new AppError("payment_failed", `Stripe didn't start payout setup: ${e.message}`);
+    });
+  await audit(actor, a.detailsSubmitted ? "tips.onboarding_resumed" : "tips.onboarding_started", "staff", staffId, { stripeAccountId: a.stripeAccountId, via: "account_session" });
+  return { clientSecret: session.client_secret, expiresAt: new Date(session.expires_at * 1000).toISOString(), accountId: a.stripeAccountId! };
 }
 
 /** Stripe's test Visa debit card (instant payouts) and test bank, as the simulator's stand-ins. */
@@ -305,7 +388,7 @@ export async function simulateStaffOnboarding(staffId: string, actor: Actor) {
   simulatorOnly(a);
   const row = await saveAccount(
     a,
-    { payoutsEnabled: true, detailsSubmitted: true, requirementsDue: [], requirementsPending: [], requirementsDeadline: null, disabledReason: null, ...listCols([SIM_CARD]) },
+    { payoutsEnabled: true, detailsSubmitted: true, transfersCapability: "active", requirementsDue: [], requirementsPastDue: [], requirementsPending: [], requirementsDeadline: null, disabledReason: null, ...listCols([SIM_CARD]) },
     actor,
   );
   await audit(actor, "tips.onboarding_simulated", "staff", staffId, { stripeAccountId: a.stripeAccountId });
@@ -344,6 +427,13 @@ async function tagW2(a: StaffPayoutAccount, acct: Stripe.Account): Promise<Accou
   const s = moneyClient();
   if (s) await s.accounts.update(acct.id, { metadata: { staffId: a.staffId, ...W2_METADATA } }).catch((e: Stripe.errors.StripeError) => console.error(`W-2 tags on ${acct.id}: ${e.message}`));
   return { w2TaggedAt: null };
+}
+
+/** account.application.deauthorized: the account was disconnected from the platform. It's rejected from now on; owed tips go through payroll. */
+export async function applyStaffDeauthorized(accountId: string) {
+  const a = await staffAccountByStripeId(accountId);
+  if (!a || a.deauthorizedAt) return a;
+  return saveAccount(a, { deauthorizedAt: new Date(), payoutsEnabled: false }, STRIPE_ACTOR);
 }
 
 /** account.updated for an employee's account, from the Connect webhook. */
@@ -385,12 +475,12 @@ export function externalAccountsView(a: StaffPayoutAccount | null) {
   return list.map((x) => ({ id: x.id, type: x.type, name: x.name, last4: x.last4, label: destinationLabel(x), default: x.default, instant: x.instant, instantDestination: fast?.id === x.id }));
 }
 
-/** A one-time sign-in to the employee's Stripe Express dashboard, where they change their card or bank. */
+/** A one-time sign-in to the employee's Stripe Express dashboard, where they change their card or bank. Accounts with no Stripe Dashboard use the embedded account management in the app instead (null here). */
 export async function staffDashboardUrl(staffId: string): Promise<string | null> {
   assertStripePayouts();
   const a = await staffAccount(staffId);
   const s = stripe();
-  if (!a?.stripeAccountId || !s || a.simulated || !a.detailsSubmitted) return null;
+  if (!a?.stripeAccountId || !s || a.simulated || !a.detailsSubmitted || a.dashboard === "none") return null;
   const link = await s.accounts.createLoginLink(a.stripeAccountId).catch(() => null);
   return link?.url ?? null;
 }

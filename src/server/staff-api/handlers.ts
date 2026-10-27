@@ -31,7 +31,7 @@ import {
   withdrawTimeOff,
 } from "./front";
 import { StaffAppContext, shopOf, signInRoute, staffRoute } from "./http";
-import { bankingView, dashboardLink, earningsRange, myEarnings, myExternalAccounts, myPayouts, myTipsView, onboardingLink, setMyPayoutMethod } from "./money";
+import { accountSession, bankingView, dashboardLink, earningsRange, myEarnings, myExternalAccounts, myPayouts, myTipsView, onboardingLink, setMyPayoutMethod } from "./money";
 import { myPeriodEarnings, myYearToDate, payoutSetup } from "./pay";
 import { markPopupsSeen, popupsFor } from "./popups";
 import { addAppointmentNote, appointmentNotes, dayRange, myAppointment, myAppointments, mySchedule } from "./schedule";
@@ -475,6 +475,9 @@ export const getExternalAccounts = banking(async (req, ctx) => {
 
 /** POST /banking/onboarding-link: Stripe's hosted page for their own debit card or bank account. */
 export const postOnboardingLink = banking(async (_req, ctx) => json(await onboardingLink(ctx)));
+
+/** POST /banking/account-session: Stripe's embedded onboarding and account management in the app. */
+export const postAccountSession = banking(async (_req, ctx) => json(await accountSession(ctx)));
 
 /** POST /banking/dashboard-link: Stripe's page for changing that card or bank. */
 export const postDashboardLink = banking(async (_req, ctx) => json(await dashboardLink(ctx)));

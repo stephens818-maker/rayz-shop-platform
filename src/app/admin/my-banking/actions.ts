@@ -30,7 +30,7 @@ function revalidate() {
   revalidatePath("/admin/my-tips");
 }
 
-const choiceSchema = z.object({ method: z.enum(TIP_METHODS).nullable(), instant: z.boolean() });
+const choiceSchema = z.object({ method: z.enum(TIP_METHODS).nullable(), instant: z.boolean(), acceptInstantFee: z.string().max(200).nullish() });
 
 export async function setMyPayoutMethodAction(input: z.input<typeof choiceSchema>) {
   return safe(async () => {
@@ -53,7 +53,11 @@ export async function startStripeSetupAction() {
   });
 }
 
-/** Stripe's Express dashboard, where the employee changes their card or bank. In the simulator it switches between a test card and a test bank. */
+/**
+ * Stripe's Express dashboard, where the employee changes their card or bank. An account with no
+ * Stripe dashboard (the default, ST-I9) changes them in the staff app's embedded account management
+ * instead. In the simulator it switches between a test card and a test bank.
+ */
 export async function changeDestinationAction() {
   return safe(async () => {
     const ctx = await me();
@@ -63,6 +67,7 @@ export async function changeDestinationAction() {
       revalidate();
       return { url: null };
     }
+    if (a?.dashboard === "none" && a.detailsSubmitted) throw new AppError("conflict", "Change your card or bank in the staff app: Banking, then Manage payout account.");
     const url = await staffDashboardUrl(ctx.staff.id);
     if (!url) throw new AppError("conflict", "Stripe didn't open your payout dashboard. Finish setup first, or try again.");
     return { url };

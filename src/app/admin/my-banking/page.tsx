@@ -22,6 +22,7 @@ import {
   destinationLabel,
   requirementLabels,
 } from "@/domain/banking";
+import { ACCOUNT_STATE_LABEL, AccountState } from "@/domain/staff-payouts";
 import {
   DEFAULT_INSTANT_FEE,
   METHOD_LABEL,
@@ -37,12 +38,13 @@ import { connectMode } from "@/server/payments/connect";
 import {
   accountDestination,
   bankingActivity,
+  currentInstantFeeTerms,
   externalAccountsView,
   refreshStaffAccount,
   staffAccount,
   staffAccountState,
 } from "@/server/tips/accounts";
-import { shopTipConfigs } from "@/server/tips/ledger";
+import { shopTipConfigs, staffPayoutConfig } from "@/server/tips/ledger";
 import { waitingForSetup } from "@/server/tips/payouts";
 import { tipOverrides } from "@/server/compensation";
 import { PayoutChoice, StripeSetup } from "./client";
@@ -76,8 +78,11 @@ function activityText(a: Activity): string {
       return "Invited to set up Stripe payouts under Ray'z";
     case "tips.onboarding_reminder":
       return "Reminded to finish Stripe payout setup";
-    case "tips.account_state":
+    case "tips.account_state": {
+      const st = d.state as { from: AccountState; to: AccountState } | undefined;
+      if (st && st.from !== st.to) return `Status changed from ${ACCOUNT_STATE_LABEL[st.from] ?? st.from} to ${ACCOUNT_STATE_LABEL[st.to] ?? st.to}`;
       return `Status changed from ${BANKING_STATUS_LABEL[d.from as BankingStatus] ?? d.from} to ${BANKING_STATUS_LABEL[d.to as BankingStatus] ?? d.to}`;
+    }
     case "tips.destination_changed": {
       const from = d.from as PayoutDestination | null;
       const to = d.to as PayoutDestination | null;
@@ -89,7 +94,7 @@ function activityText(a: Activity): string {
     }
     case "tips.method": {
       const m = d.method as TipMethod | null;
-      return `Payout method set to ${m ? METHOD_LABEL[m] : "the shop's default"}${d.instant ? " (instant)" : ""}`;
+      return `Payout method set to ${m ? METHOD_LABEL[m] : "the shop's default"}${d.instant ? " (instant)" : ""}${d.instantFeeAccepted ? `, instant fee accepted (${d.instantFeeAccepted})` : ""}`;
     }
     default:
       return a.action;
@@ -130,13 +135,16 @@ export default async function MyBankingPage({
     activity,
     planned,
     waitingByStaff,
+    cfg,
   ] = await Promise.all([
     shopTipConfigs(shopRows.map((s) => s.id)),
     staffAccount(me),
     bankingActivity(me),
     tipOverrides([me]),
     waitingForSetup([me]),
+    staffPayoutConfig(),
   ]);
+  const feeTerms = currentInstantFeeTerms();
   const waiting = waitingByStaff.get(me);
   const status = staffAccountState(acct);
   const dest = accountDestination(acct);
@@ -332,6 +340,9 @@ export default async function MyBankingPage({
               instantEligible={!!acct?.instantEligible}
               feeText={`${rate.pct}%${rate.minCents ? `, at least ${formatCents(rate.minCents)}` : ""}`}
               feePassedOn={policy.instantFeePassedOn}
+              feeTerms={feeTerms}
+              feeAckRequired={cfg.instantFeeAck}
+              feeAccepted={acct?.instantFeeTerms === feeTerms}
             />
           )}
         </div>

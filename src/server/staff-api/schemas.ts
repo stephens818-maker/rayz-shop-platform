@@ -84,7 +84,11 @@ export const KioskPunchBody = KioskStatusBody.extend({
 export const TipsQuery = z.object({ days: z.coerce.number().int().min(1).max(60).optional().describe("History days, 1 to 60; 14 when left out") });
 export const EarningsQuery = z.object({ from: DateStr.optional().describe("6 days before `to` when left out"), to: DateStr.optional().describe("Today when left out") });
 export const BankingQuery = z.object({ refresh: z.enum(["1", "true"]).optional().describe("Ask Stripe for the latest first, e.g. after coming back from its page") });
-export const PayoutMethodBody = z.object({ method: z.enum(TIP_METHODS).nullable().describe("null follows the shop's default"), instant: z.boolean() });
+export const PayoutMethodBody = z.object({
+  method: z.enum(TIP_METHODS).nullable().describe("null follows the shop's default"),
+  instant: z.boolean(),
+  acceptInstantFee: z.string().max(200).nullish().describe("Turning instant payouts on: the fee text they were shown (GET /banking instant.fee.terms), exactly. Needed once per fee where the brand asks for it."),
+});
 
 export const SeenBody = z.object({ ids: z.array(z.uuid()).max(50) });
 

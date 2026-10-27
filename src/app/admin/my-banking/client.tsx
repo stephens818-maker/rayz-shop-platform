@@ -7,15 +7,29 @@ import type { BankingStatus } from "@/domain/banking";
 import { METHOD_LABEL, TipMethod } from "@/domain/tips";
 import { changeDestinationAction, refreshBankingAction, setMyPayoutMethodAction, startStripeSetupAction } from "./actions";
 
-export function PayoutChoice(p: { methods: TipMethod[]; method: TipMethod | null; instant: boolean; instantAllowed: boolean; instantEligible: boolean; feeText: string; feePassedOn: boolean }) {
+export function PayoutChoice(p: {
+  methods: TipMethod[];
+  method: TipMethod | null;
+  instant: boolean;
+  instantAllowed: boolean;
+  instantEligible: boolean;
+  feeText: string;
+  feePassedOn: boolean;
+  feeTerms: string;
+  feeAckRequired: boolean;
+  feeAccepted: boolean;
+}) {
   const router = useRouter();
   const [method, setMethod] = useState<TipMethod | "">(p.method ?? "");
   const [instant, setInstant] = useState(p.instant);
+  const [accept, setAccept] = useState(false);
   const [pending, start] = useTransition();
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const wantsInstant = method === "stripe" && instant;
+  const needsAck = wantsInstant && p.feeAckRequired && !p.feeAccepted;
   const save = () =>
     start(async () => {
-      const r = await setMyPayoutMethodAction({ method: method || null, instant: method === "stripe" && instant });
+      const r = await setMyPayoutMethodAction({ method: method || null, instant: wantsInstant, acceptInstantFee: needsAck && accept ? p.feeTerms : null });
       setMsg(r.ok ? { ok: true, text: "Saved" } : { ok: false, text: r.error });
       if (r.ok) router.refresh();
     });
@@ -46,8 +60,15 @@ export function PayoutChoice(p: { methods: TipMethod[]; method: TipMethod | null
           </span>
         </label>
       )}
+      {method === "stripe" && p.instantAllowed && p.instantEligible && !instant && <p className="text-xs text-zinc-500">Instant payouts are off unless you turn them on. Stripe&rsquo;s fee: {p.feeTerms}.</p>}
+      {needsAck && (
+        <label className="flex items-start gap-2 rounded-md bg-amber-50 p-2 text-sm text-amber-900 ring-1 ring-inset ring-amber-200">
+          <input type="checkbox" className="mt-0.5" checked={accept} onChange={(e) => setAccept(e.target.checked)} />
+          <span>I accept Stripe&rsquo;s instant payout fee: {p.feeTerms}.</span>
+        </label>
+      )}
       <div className="flex items-center gap-3">
-        <Button size="sm" disabled={pending} onClick={save}>
+        <Button size="sm" disabled={pending || (needsAck && !accept)} onClick={save}>
           Save
         </Button>
         {msg && <span className={`text-sm ${msg.ok ? "text-emerald-700" : "text-red-600"}`}>{msg.text}</span>}
