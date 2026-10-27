@@ -11,6 +11,7 @@ import {
   shopTipSettings,
   summarize,
 } from "@/domain/tips";
+import type { StaffPayoutSettings } from "@/domain/staff-payouts";
 import { addDays, todayLocal, type LocalDate } from "@/lib/time";
 import { settingAt, settingFor } from "../brand-sync/settings";
 import { noteShopSetting } from "../brand-sync/shop-settings";
@@ -29,6 +30,7 @@ import { railed } from "./payout-model";
  * (the seed, a dashboard refund).
  */
 export async function syncTipLedger(tx: DBorTx = db, o: { saleId?: string; shopIds?: readonly string[] } = {}) {
+  const cfg = await staffPayoutConfig(tx);
   const only = o.saleId
     ? sql`and s.id = ${o.saleId}::uuid`
     : o.shopIds
@@ -44,22 +46,56 @@ export async function syncTipLedger(tx: DBorTx = db, o: { saleId?: string; shopI
     select p.shop_id, coalesce(sh.staff_id, s.staff_id), s.id, p.id, 'tip', p.method::text, coalesce(sh.tip_cents, p.tip_cents),
       case when p.method = 'card' and p.amount_cents > 0
         then round(coalesce(nullif(p.processor_fee_cents, 0), p.application_fee_cents, 0)::numeric * coalesce(sh.tip_cents, p.tip_cents) / p.amount_cents)::int else 0 end,
-      s.business_date
+      ${cfg.tipDate === "payment_date" ? sql`p.business_date` : sql`s.business_date`}
     from payments p join sales s on s.id = p.sale_id
     left join tip_split_shares sh on sh.source = 'payment' and sh.source_id = p.id
     where p.tip_cents <> 0 and coalesce(sh.staff_id, s.staff_id) is not null and coalesce(sh.tip_cents, 1) <> 0
       and not s.is_imported and s.status <> 'open' ${only}
     on conflict (payment_id, staff_id) where kind = 'tip' do nothing`);
+  // A refund that gave tip back either takes it from the barber (a reversal in the ledger) or the shop
+  // absorbs it (tip_absorptions), by the brand's reversal rule; never both.
+  // Full: with the earlier refunds, everything on the payment but a card fee the shop keeps is back.
+  const full = sql`(r.kind = 'void' or (r.payment_id is null and s.status in ('refunded', 'voided')) or (pay.amount_cents > 0 and (select coalesce(sum(r2.amount_cents - r2.card_fee_cents), 0) from refunds r2
+      where r2.payment_id = r.payment_id and (r2.created_at, r2.id) <= (r.created_at, r.id)) >= pay.amount_cents - pay.card_fee_cents))`;
+  const inWindow = sql`r.business_date <= coalesce(t.business_date, s.business_date) + ${cfg.reversalWindowDays}::int`;
+  const reverses = cfg.reversalRule === "any_refund" ? sql`true` : cfg.reversalRule === "never" ? sql`false` : sql`(${full} and ${inWindow})`;
+  const refunded = sql`
+    from refunds r join sales s on s.id = r.sale_id
+    left join payments pay on pay.id = r.payment_id
+    left join tip_split_shares sh on sh.source = 'refund' and sh.source_id = r.id
+    left join tip_ledger t on t.payment_id = r.payment_id and t.kind = 'tip' and t.staff_id = coalesce(sh.staff_id, s.staff_id)
+    where r.tip_cents <> 0 and coalesce(sh.staff_id, s.staff_id) is not null and coalesce(sh.tip_cents, 1) <> 0 and not s.is_imported ${only}`;
   await tx.execute(sql`
     insert into tip_ledger (shop_id, staff_id, sale_id, payment_id, refund_id, kind, method, amount_cents, fee_cents, business_date)
     select r.shop_id, coalesce(sh.staff_id, s.staff_id), s.id, r.payment_id, r.id, 'refund', r.method::text, -coalesce(sh.tip_cents, r.tip_cents),
       -coalesce(case when t.amount_cents > 0 then round(t.fee_cents::numeric * coalesce(sh.tip_cents, r.tip_cents) / t.amount_cents)::int end, 0),
       r.business_date
-    from refunds r join sales s on s.id = r.sale_id
-    left join tip_split_shares sh on sh.source = 'refund' and sh.source_id = r.id
-    left join tip_ledger t on t.payment_id = r.payment_id and t.kind = 'tip' and t.staff_id = coalesce(sh.staff_id, s.staff_id)
-    where r.tip_cents <> 0 and coalesce(sh.staff_id, s.staff_id) is not null and coalesce(sh.tip_cents, 1) <> 0 and not s.is_imported ${only}
+    ${refunded} and ${reverses}
+      and not exists (select 1 from tip_absorptions a where a.refund_id = r.id and a.staff_id = coalesce(sh.staff_id, s.staff_id))
     on conflict (refund_id, staff_id) where kind = 'refund' do nothing`);
+  await tx.execute(sql`
+    insert into tip_absorptions (shop_id, staff_id, sale_id, payment_id, refund_id, kind, amount_cents, business_date)
+    select r.shop_id, coalesce(sh.staff_id, s.staff_id), s.id, r.payment_id, r.id,
+      ${cfg.reversalRule === "never" ? sql`'rule'` : sql`case when ${full} then 'outside_window' else 'partial_refund' end`},
+      coalesce(sh.tip_cents, r.tip_cents), r.business_date
+    ${refunded} and not ${reverses}
+      and not exists (select 1 from tip_ledger l where l.refund_id = r.id and l.kind = 'refund' and l.staff_id = coalesce(sh.staff_id, s.staff_id))
+    on conflict (refund_id, staff_id) where refund_id is not null do nothing`);
+}
+
+/**
+ * A card dispute on a payment with a tip: the shop absorbs it (ST-C15), so the barber keeps the tip
+ * and the tip ledger is untouched. Recorded once per dispute and barber, for the tips-paid export.
+ */
+export async function recordTipDispute(paymentId: string, disputeId: string, on: LocalDate, tx: DBorTx = db) {
+  if (!/^(dp|du|sim)_[A-Za-z0-9_]{1,80}$/.test(disputeId)) return 0;
+  const rows = await tx.execute<{ id: string }>(sql`
+    insert into tip_absorptions (shop_id, staff_id, sale_id, payment_id, stripe_dispute_id, kind, amount_cents, business_date)
+    select l.shop_id, l.staff_id, l.sale_id, l.payment_id, ${disputeId}, 'dispute', l.amount_cents, ${on}::date
+    from tip_ledger l where l.payment_id = ${paymentId}::uuid and l.kind = 'tip' and l.amount_cents > 0
+    on conflict (stripe_dispute_id, staff_id) where stripe_dispute_id is not null do nothing
+    returning id`);
+  return [...rows].length;
 }
 
 /**
@@ -91,6 +127,11 @@ export async function recordOpeningTips(before: LocalDate, tx: DBorTx = db) {
 }
 
 // ───────────────────────────── Settings ─────────────────────────────
+
+/** The brand's staff payout settings (the staff_payouts setting, one value for every shop). */
+export async function staffPayoutConfig(tx: DBorTx = db): Promise<StaffPayoutSettings> {
+  return settingAt<StaffPayoutSettings>("staff_payouts", null, tx);
+}
 
 /** The tip payout policy at a shop (the tip_payouts setting); no shop, the brand's. */
 export async function tipPolicy(shopId?: string | null, tx: DBorTx = db): Promise<BrandTipPolicy> {
@@ -208,5 +249,7 @@ export async function myTips(staffId: string, shopIds: readonly string[], today:
     .limit(100);
   const waiting = payouts.filter((p) => p.status === "held" && p.holdKind === "stripe_setup");
   const waitingForSetup = { cents: waiting.reduce((a, p) => a + p.netCents, 0), payouts: waiting.length };
-  return { policy, perShop, total, payouts, waitingForSetup, recent: rows.filter((r) => r.businessDate >= addDays(today, -60)) };
+  const owedList = payouts.filter((p) => p.status === "held" && p.holdKind === "transfers_pending");
+  const owed = { cents: owedList.reduce((a, p) => a + p.netCents, 0), payouts: owedList.length };
+  return { policy, perShop, total, payouts, waitingForSetup, owed, recent: rows.filter((r) => r.businessDate >= addDays(today, -60)) };
 }

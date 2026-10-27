@@ -438,14 +438,14 @@ async function tipSplits(scope: ReportScope) {
     order by s.business_date desc, s.number desc`);
 }
 
-/** Direct payouts held because the employee hasn't finished their Stripe setup, per employee and shop, for a period's tips. */
+/** Direct payouts held as owed (the employee hasn't finished their Stripe setup, or there's no direct path yet), per employee and shop, for a period's tips. */
 async function heldForSetup(shopIds: string[], start: LocalDate, end: LocalDate) {
   if (!shopIds.length) return new Map<string, number>();
   const list = await db
     .select({ shopId: tipLedger.shopId, staffId: tipLedger.staffId, cents: sql<number>`sum(${tipLedger.amountCents})::int` })
     .from(tipLedger)
     .innerJoin(tipPayouts, eq(tipPayouts.id, tipLedger.payoutId))
-    .where(and(inArray(tipLedger.shopId, shopIds), gte(tipLedger.businessDate, start), lte(tipLedger.businessDate, end), eq(tipPayouts.status, "held"), eq(tipPayouts.holdKind, "stripe_setup")))
+    .where(and(inArray(tipLedger.shopId, shopIds), gte(tipLedger.businessDate, start), lte(tipLedger.businessDate, end), eq(tipPayouts.status, "held"), inArray(tipPayouts.holdKind, ["stripe_setup", "transfers_pending"])))
     .groupBy(tipLedger.shopId, tipLedger.staffId);
   return new Map(list.map((r) => [`${r.staffId}|${r.shopId}`, r.cents]));
 }

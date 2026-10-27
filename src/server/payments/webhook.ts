@@ -5,7 +5,9 @@ import { payments } from "@/db/schema";
 import { SYSTEM, audit } from "@/server/audit";
 import { recordProcessorRefund } from "@/server/refunds";
 import { applyMembershipEvent } from "@/server/memberships";
+import { recordTipDispute } from "@/server/tips/ledger";
 import { applyTransferReversed } from "@/server/tips/payouts";
+import { todayLocal } from "@/lib/time";
 import { completeFromWebhook, failFromWebhook } from "@/server/app-pay";
 import { PLATFORM_ACCOUNT, recordPayout } from "./connect";
 import { recordDetached, recordSetupIntent } from "./saved-cards";
@@ -57,7 +59,8 @@ export async function platformEvent(event: Stripe.Event) {
     const d = event.data.object as Stripe.Dispute;
     const pi = typeof d.payment_intent === "string" ? d.payment_intent : (d.payment_intent?.id ?? null);
     const p = pi ? await db.query.payments.findFirst({ where: eq(payments.stripePaymentIntentId, pi) }) : null;
-    await audit(SYSTEM, "stripe.charge.dispute.created", "payment", p?.id ?? pi ?? d.id, { eventId: event.id, amountCents: d.amount, reason: d.reason, stripeAccountId: p?.stripeAccountId ?? null }, p?.shopId ?? null);
+    const tipsAbsorbed = p ? await recordTipDispute(p.id, d.id, todayLocal(new Date((d.created ?? event.created) * 1000))) : 0;
+    await audit(SYSTEM, "stripe.charge.dispute.created", "payment", p?.id ?? pi ?? d.id, { eventId: event.id, amountCents: d.amount, reason: d.reason, stripeAccountId: p?.stripeAccountId ?? null, tipsAbsorbed }, p?.shopId ?? null);
   } else if (event.type === "transfer.reversed") {
     await applyTransferReversed(event.data.object as Stripe.Transfer);
   } else if (event.type.startsWith("payout.") && !event.account) {
