@@ -21,6 +21,8 @@ export interface ExportFile {
   /** The sheet name: the shop's name as iSolved's tab has it ("LeClaire"). In the workbook format, also the tab whose formatting the file copies. */
   tab: string;
   payGroup: string;
+  /** iSolved's pay group code, for the file name; absent or null until set. */
+  payGroupCode?: string | null;
   periodNumber: number;
   periodStart: string;
   periodEnd: string;
@@ -161,9 +163,10 @@ const mdy = (d: string) => (d ? DateTime.fromISO(d).toFormat("MM.dd.yy") : "");
 
 /**
  * A file name from its pattern (payroll settings): {start} and {end} as MM.DD.YY, {startIso},
- * {endIso}, {shop}, {payGroup} and {period}. Anything a file name can't hold becomes a space.
+ * {endIso}, {shop}, {payGroup}, {code} (iSolved's pay group code, blank until set) and {period}.
+ * Anything a file name can't hold becomes a space.
  */
-export function exportFileName(pattern: string, f: Pick<ExportFile, "tab" | "payGroup" | "periodNumber" | "periodStart" | "periodEnd">): string {
+export function exportFileName(pattern: string, f: Pick<ExportFile, "tab" | "payGroup" | "payGroupCode" | "periodNumber" | "periodStart" | "periodEnd">): string {
   const v: Record<string, string> = {
     start: mdy(f.periodStart),
     end: mdy(f.periodEnd),
@@ -171,6 +174,7 @@ export function exportFileName(pattern: string, f: Pick<ExportFile, "tab" | "pay
     endIso: f.periodEnd,
     shop: f.tab,
     payGroup: f.payGroup,
+    code: f.payGroupCode ?? "",
     period: String(f.periodNumber).padStart(2, "0"),
   };
   const name = pattern

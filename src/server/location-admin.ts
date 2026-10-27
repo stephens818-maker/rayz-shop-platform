@@ -258,6 +258,7 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
           anchorNumber: from.anchorNumber,
           periodDays: from.periodDays,
           checkOffsetDays: from.checkOffsetDays,
+          submitOffsetDays: from.submitOffsetDays,
           numberResetsYearly: from.numberResetsYearly,
         });
     }

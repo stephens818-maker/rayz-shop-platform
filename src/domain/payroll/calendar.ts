@@ -3,8 +3,8 @@ import { LocalDate, SHOP_TZ, addDays, diffDays, endOfLocalDay, startOfLocalDay, 
 
 /**
  * One pay group's calendar. In iSolved each shop is a pay group with its own calendar: bi-weekly,
- * Sun–Sat, checks on the Friday after the period ends. Dubuque runs on a separate calendar from the
- * other shops, so calendars belong to pay groups, never to the brand.
+ * Sun–Sat, submitted by the Wednesday and paid on the Friday after the period ends. Dubuque runs on a
+ * separate calendar from the other shops, so calendars belong to pay groups, never to the brand.
  */
 export interface PayCalendar {
   /** The first day (a Sunday) of a known period. */
@@ -14,8 +14,17 @@ export interface PayCalendar {
   periodDays: number;
   /** Days from the period's last day to its check date (6 = the Friday after a Saturday). */
   checkOffsetDays: number;
+  /** Days from the period's last day to iSolved's submission deadline (4 = the Wednesday after a Saturday). */
+  submitOffsetDays: number;
   /** iSolved numbers periods per check-date year: the first check of a new year is period 1. */
   numberResetsYearly: boolean;
+  /** Each period's stored dates, by its first day, where they differ from the offsets (a holiday moved the check). */
+  dates?: Readonly<Record<LocalDate, PeriodDates>>;
+}
+
+export interface PeriodDates {
+  checkDate: LocalDate;
+  submitBy: LocalDate;
 }
 
 export interface CalendarPeriod {
@@ -24,16 +33,28 @@ export interface CalendarPeriod {
   start: LocalDate;
   end: LocalDate;
   checkDate: LocalDate;
+  /** The day the hours are due in iSolved. */
+  submitBy: LocalDate;
+  /** The check or submit-by date was moved by hand from the calendar's offsets. */
+  datesMoved: boolean;
   startsAt: Date;
   /** Exclusive: local midnight after `end`. */
   endsAt: Date;
 }
 
-/** Until the brand saves its own (Payroll setup, the payroll setting's calendar): period 23 = 10/18–10/31/2026. */
-export const DEFAULT_BRAND_CALENDAR: PayCalendar = { anchorStart: "2026-10-18", anchorNumber: 23, periodDays: 14, checkOffsetDays: 6, numberResetsYearly: true };
+/**
+ * Until the brand saves its own (Payroll setup, the payroll setting's calendar), iSolved's: bi-weekly
+ * Sun–Sat, period 22 = 10/4–10/17/2026, submitted by Wednesday 10/21, check Friday 10/23.
+ */
+export const DEFAULT_BRAND_CALENDAR: PayCalendar = { anchorStart: "2026-10-04", anchorNumber: 22, periodDays: 14, checkOffsetDays: 6, submitOffsetDays: 4, numberResetsYearly: true };
 
 export const sameCalendar = (a: PayCalendar, b: PayCalendar) =>
-  a.anchorStart === b.anchorStart && a.anchorNumber === b.anchorNumber && a.periodDays === b.periodDays && a.checkOffsetDays === b.checkOffsetDays && a.numberResetsYearly === b.numberResetsYearly;
+  a.anchorStart === b.anchorStart &&
+  a.anchorNumber === b.anchorNumber &&
+  a.periodDays === b.periodDays &&
+  a.checkOffsetDays === b.checkOffsetDays &&
+  a.submitOffsetDays === b.submitOffsetDays &&
+  a.numberResetsYearly === b.numberResetsYearly;
 
 /** Both calendars start and end their periods on the same days (they may number them differently). */
 export const sameDates = (a: Pick<PayCalendar, "anchorStart" | "periodDays">, b: Pick<PayCalendar, "anchorStart" | "periodDays">) =>
@@ -45,6 +66,16 @@ export function calendarProblem(c: PayCalendar): string | null {
   if (c.periodDays === 14 && weekdayOf(c.anchorStart) !== 0) return "Bi-weekly periods run Sunday to Saturday; the first day must be a Sunday.";
   if (!Number.isInteger(c.anchorNumber) || c.anchorNumber < 1) return "The period number is a whole number from 1.";
   if (!Number.isInteger(c.checkOffsetDays) || c.checkOffsetDays < 0 || c.checkOffsetDays > 31) return "The check date is 0 to 31 days after the period ends.";
+  if (!Number.isInteger(c.submitOffsetDays) || c.submitOffsetDays < 0 || c.submitOffsetDays > c.checkOffsetDays) return "Hours are due in iSolved on or after the period's last day, and no later than the check date.";
+  return null;
+}
+
+/** A period's own check and submit-by dates: due once the period has ended, no later than the check. */
+export function periodDatesProblem(p: { end: LocalDate; checkDate: LocalDate; submitBy: LocalDate }): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(p.checkDate) || !/^\d{4}-\d{2}-\d{2}$/.test(p.submitBy)) return "Pick both dates.";
+  if (p.submitBy < p.end) return "Hours can't be due in iSolved before the period's last day.";
+  if (p.checkDate < p.submitBy) return "The check date can't be before the submit-by date.";
+  if (diffDays(p.checkDate, p.end) > 31) return "The check date is at most 31 days after the period ends.";
   return null;
 }
 
@@ -53,9 +84,14 @@ const yearOf = (d: LocalDate) => Number(d.slice(0, 4));
 function raw(c: PayCalendar, index: number) {
   const start = addDays(c.anchorStart, index * c.periodDays);
   const end = addDays(start, c.periodDays - 1);
-  return { start, end, checkDate: addDays(end, c.checkOffsetDays) };
+  const checkDate = addDays(end, c.checkOffsetDays);
+  const submitBy = addDays(end, c.submitOffsetDays);
+  const stored = c.dates?.[start];
+  const moved = !!stored && (stored.checkDate !== checkDate || stored.submitBy !== submitBy);
+  return { start, end, checkDate: stored?.checkDate ?? checkDate, submitBy: stored?.submitBy ?? submitBy, datesMoved: moved };
 }
 
+/** iSolved numbers by the year of the check date actually paid, so a check moved into January starts the new year. */
 function numberOf(c: PayCalendar, index: number, checkDate: LocalDate): number {
   if (!c.numberResetsYearly) return c.anchorNumber + index;
   const anchorYear = yearOf(raw(c, 0).checkDate);

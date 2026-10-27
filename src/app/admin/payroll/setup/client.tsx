@@ -7,7 +7,7 @@ import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import { EXPORT_COLUMNS, EXPORT_FORMAT_LABEL, FT_BASIS_LABEL, HOURS_SOURCE_LABEL, type ExportFormat, type HoursSource, type PayrollSettings, type TipDeclarationSettings, type TipTaxSettings } from "@/domain/payroll/calc";
 import { calendarProblem, periodsAround, type PayCalendar } from "@/domain/payroll/calendar";
 import { formatDate, todayLocal } from "@/lib/time";
-import { removeEmployerStateAction, saveEmployerAction, saveEmployerStateAction, savePayGroupAction, saveProfileAction } from "../actions";
+import { removeEmployerStateAction, saveEmployerAction, saveEmployerStateAction, savePayGroupAction, savePeriodDatesAction, saveProfileAction } from "../actions";
 
 const Check = ({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) => (
   <label className="flex items-start gap-2 text-sm">
@@ -270,6 +270,7 @@ function BrandCalendarFields({ cal, onChange }: { cal: PayCalendar; onChange: (c
             <option value={7}>Weekly</option>
           </Select>
         </label>
+        <Num label="Due in iSolved, days after the end" value={cal.submitOffsetDays} onChange={(submitOffsetDays) => onChange({ ...cal, submitOffsetDays })} />
         <Num label="Check date, days after the end" value={cal.checkOffsetDays} onChange={(checkOffsetDays) => onChange({ ...cal, checkOffsetDays })} />
         <Check label="Numbers restart each year" checked={cal.numberResetsYearly} onChange={(numberResetsYearly) => onChange({ ...cal, numberResetsYearly })} />
       </div>
@@ -279,7 +280,7 @@ function BrandCalendarFields({ cal, onChange }: { cal: PayCalendar; onChange: (c
         <ul className="mt-2 grid gap-1 text-xs text-zinc-600 sm:grid-cols-2">
           {preview.map((p) => (
             <li key={p.index}>
-              Period {p.number}: {formatDate(p.start, "MMM d")} – {formatDate(p.end, "MMM d, yyyy")}, check {formatDate(p.checkDate, "EEE MMM d")}
+              Period {p.number}: {formatDate(p.start, "EEE MMM d")} – {formatDate(p.end, "EEE MMM d, yyyy")}, due {formatDate(p.submitBy, "EEE MMM d")}, check {formatDate(p.checkDate, "EEE MMM d")}
             </li>
           ))}
         </ul>
@@ -351,10 +352,12 @@ export interface GroupRow {
   label: string;
   legalEntity: string;
   exportTab: string;
+  code: string;
   anchorStart: string;
   anchorNumber: number;
   periodDays: number;
   checkOffsetDays: number;
+  submitOffsetDays: number;
   numberResetsYearly: boolean;
 }
 
@@ -368,6 +371,9 @@ export function PayGroupRow({ g, tabs }: { g: GroupRow; tabs: string[] }) {
       <td className="px-2 py-1.5 font-medium">{g.shop}</td>
       <td className="px-2 py-1.5">
         <Input aria-label="Pay group label" value={v.label} onChange={txt("label")} className="h-8 w-36 text-xs" />
+      </td>
+      <td className="px-2 py-1.5">
+        <Input aria-label="iSolved pay group code" value={v.code} onChange={(e) => setV({ ...v, code: e.target.value.toUpperCase() })} maxLength={4} className="h-8 w-14 text-xs" />
       </td>
       <td className="px-2 py-1.5">
         <Input aria-label="Legal entity" value={v.legalEntity} onChange={txt("legalEntity")} className="h-8 w-32 text-xs" />
@@ -393,6 +399,9 @@ export function PayGroupRow({ g, tabs }: { g: GroupRow; tabs: string[] }) {
         </Select>
       </td>
       <td className="px-2 py-1.5">
+        <Input aria-label="Due in iSolved, days after period end" type="number" value={v.submitOffsetDays} onChange={num("submitOffsetDays")} className="h-8 w-16 text-xs" />
+      </td>
+      <td className="px-2 py-1.5">
         <Input aria-label="Check date, days after period end" type="number" value={v.checkOffsetDays} onChange={num("checkOffsetDays")} className="h-8 w-16 text-xs" />
       </td>
       <td className="px-2 py-1.5 text-center">
@@ -404,6 +413,73 @@ export function PayGroupRow({ g, tabs }: { g: GroupRow; tabs: string[] }) {
         </Button>
         {error && <p className="mt-1 max-w-48 text-xs text-red-700">{error}</p>}
       </td>
+    </tr>
+  );
+}
+
+export interface PeriodDatesView {
+  key: string;
+  start: string;
+  end: string;
+  checkDate: string;
+  submitBy: string;
+  moved: boolean;
+  reason: string | null;
+  locked: boolean;
+  groups: { label: string; code: string | null; number: number }[];
+}
+
+export function PeriodDatesRow({ p }: { p: PeriodDatesView }) {
+  const { pending, error, run } = useAction();
+  const [editing, setEditing] = useState(false);
+  const [v, setV] = useState({ checkDate: p.checkDate, submitBy: p.submitBy, reason: "" });
+  const numbers = [...new Set(p.groups.map((g) => g.number))];
+  const nums = numbers.length === 1 ? String(numbers[0]).padStart(2, "0") : p.groups.map((g) => `${g.label} ${String(g.number).padStart(2, "0")}`).join(", ");
+  return (
+    <tr className="border-t border-zinc-100 align-top" data-testid={`period-dates-${p.start}`}>
+      <td className="px-2 py-1.5 font-medium tabular-nums">{nums}</td>
+      <td className="px-2 py-1.5 whitespace-nowrap">
+        {formatDate(p.start, "EEE MMM d")} – {formatDate(p.end, "EEE MMM d, yyyy")}
+      </td>
+      {editing ? (
+        <>
+          <td className="px-2 py-1.5">
+            <Input aria-label="Due in iSolved" type="date" value={v.submitBy} onChange={(e) => setV({ ...v, submitBy: e.target.value })} className="h-8 w-36 text-xs" />
+          </td>
+          <td className="px-2 py-1.5">
+            <Input aria-label="Check date" type="date" value={v.checkDate} onChange={(e) => setV({ ...v, checkDate: e.target.value })} className="h-8 w-36 text-xs" />
+          </td>
+          <td className="px-2 py-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <Input aria-label="Why the dates moved" placeholder="Why (e.g. a holiday)" value={v.reason} onChange={(e) => setV({ ...v, reason: e.target.value })} maxLength={200} className="h-8 w-52 text-xs" />
+              <Button size="sm" variant="secondary" disabled={pending} onClick={() => run(() => savePeriodDatesAction({ start: p.start, end: p.end, ...v }), () => setEditing(false))}>
+                Save
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>
+                Cancel
+              </Button>
+            </div>
+            {error && <p className="mt-1 max-w-64 text-xs text-red-700">{error}</p>}
+          </td>
+        </>
+      ) : (
+        <>
+          <td className={`px-2 py-1.5 whitespace-nowrap ${p.moved ? "font-medium text-amber-800" : ""}`}>{formatDate(p.submitBy, "EEE MMM d")}</td>
+          <td className={`px-2 py-1.5 whitespace-nowrap ${p.moved ? "font-medium text-amber-800" : ""}`}>
+            {formatDate(p.checkDate, "EEE MMM d")}
+            {p.reason && <span className="ml-2 text-xs font-normal text-zinc-500">Moved: {p.reason}</span>}
+          </td>
+          <td className="px-2 py-1.5">
+            {p.locked ? (
+              <span className="text-xs text-zinc-500">Locked</span>
+            ) : (
+              <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>
+                Move dates
+              </Button>
+            )}
+          </td>
+        </>
+      )}
     </tr>
   );
 }

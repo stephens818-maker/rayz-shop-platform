@@ -9,8 +9,11 @@ import { stripePayoutsOn } from "../tips/payout-model";
 import type { LocalDate } from "@/lib/time";
 import { audit, type Actor } from "../audit";
 import { TEMPLATE_TABS } from "./export";
+import { groupCalendar, storedPeriodDates } from "./period-dates";
 
-/** Until the brand saves its own calendar (the payroll setting): period 23 = 10/18–10/31/2026. */
+export { groupCalendar } from "./period-dates";
+
+/** Until the brand saves its own calendar (the payroll setting): period 22 = 10/4–10/17/2026, due 10/21, check 10/23. */
 export const DEFAULT_CALENDAR: PayCalendar = DEFAULT_BRAND_CALENDAR;
 
 /** The brand's pay calendar (Payroll setup), matched to iSolved's. New pay groups start on it; a shop on its own calendar is edited in Payroll setup. */
@@ -28,10 +31,16 @@ export interface PayGroup {
   /** The shop's work state (its address), whose wage-hour rules and withholding apply. Null when the address has none. */
   workState: string | null;
   exportTab: string;
+  /** iSolved's pay group code (B is Rock Island), picked at upload. Null until entered. */
+  code: string | null;
+  /** With each period's stored check and submit-by dates. */
   calendar: PayCalendar;
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+
+/** The pay group codes iSolved has given so far (still being confirmed); the rest are entered on Payroll → Setup. */
+export const KNOWN_PAY_GROUP_CODES: Readonly<Record<string, string>> = { rockisland: "B", moline: "C" };
 
 /** Every open shop gets a pay group the first time payroll looks: labelled after the shop, on the brand's calendar. Never the Demo Shop (ST-I19). */
 export async function ensurePayGroups(): Promise<PayGroup[]> {
@@ -39,6 +48,7 @@ export async function ensurePayGroups(): Promise<PayGroup[]> {
   const missing = list.filter((s) => !s.pg);
   if (missing.length) {
     const cal = await brandCalendar();
+    const taken = new Set((await db.select({ c: payGroups.isolvedCode }).from(payGroups)).map((r) => r.c));
     await db
       .insert(payGroups)
       .values(
@@ -47,10 +57,12 @@ export async function ensurePayGroups(): Promise<PayGroup[]> {
             shopId: s.id,
             label: s.name,
             exportTab: TEMPLATE_TABS.find((t) => norm(t) === norm(s.name)) ?? s.name,
+            isolvedCode: taken.has(KNOWN_PAY_GROUP_CODES[norm(s.name)]) ? null : (KNOWN_PAY_GROUP_CODES[norm(s.name)] ?? null),
             anchorStart: cal.anchorStart,
             anchorNumber: cal.anchorNumber,
             periodDays: cal.periodDays,
             checkOffsetDays: cal.checkOffsetDays,
+            submitOffsetDays: cal.submitOffsetDays,
             numberResetsYearly: cal.numberResetsYearly,
           };
         }),
@@ -58,6 +70,7 @@ export async function ensurePayGroups(): Promise<PayGroup[]> {
       .onConflictDoNothing();
   }
   const rows = await db.select({ g: payGroups, shop: shops.name, state: shops.state }).from(payGroups).innerJoin(shops, eq(shops.id, payGroups.shopId)).where(and(eq(shops.active, true), eq(shops.isDemo, false))).orderBy(shops.name);
+  const dates = await storedPeriodDates(rows.map((r) => r.g));
   return rows.map(({ g, shop, state }) => ({
     id: g.id,
     shopId: g.shopId,
@@ -67,7 +80,8 @@ export async function ensurePayGroups(): Promise<PayGroup[]> {
     employerId: g.employerId,
     workState: workStateOf(state),
     exportTab: g.exportTab,
-    calendar: { anchorStart: g.anchorStart, anchorNumber: g.anchorNumber, periodDays: g.periodDays, checkOffsetDays: g.checkOffsetDays, numberResetsYearly: g.numberResetsYearly },
+    code: g.isolvedCode,
+    calendar: groupCalendar(g, dates.get(g.id)),
   }));
 }
 
@@ -82,7 +96,7 @@ export async function loadSettings(): Promise<PayrollSettings> {
 export async function isLockedOn(shopId: string, date: LocalDate, tx: DBorTx = db): Promise<boolean> {
   const [g] = await tx.select().from(payGroups).where(eq(payGroups.shopId, shopId));
   if (!g) return false;
-  const p = periodOf({ anchorStart: g.anchorStart, anchorNumber: g.anchorNumber, periodDays: g.periodDays, checkOffsetDays: g.checkOffsetDays, numberResetsYearly: g.numberResetsYearly }, date);
+  const p = periodOf(groupCalendar(g), date);
   const [r] = await tx.select({ id: payrollRuns.id }).from(payrollRuns).where(and(eq(payrollRuns.payGroupId, g.id), eq(payrollRuns.periodStart, p.start)));
   return !!r;
 }

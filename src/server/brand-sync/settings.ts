@@ -19,6 +19,7 @@ import { OpeningsSettingsSchema, openingsSettings, openingsTemplatesProblem } fr
 import { cleanOutreachRules, outreachRules, outreachRulesProblem } from "@/domain/outreach";
 import { EXPORT_FORMAT_LABEL, FT_BASIS_LABEL, HOURS_SOURCE_LABEL, cardTipsSplit, earningHeaders, payrollSettings } from "@/domain/payroll/calc";
 import { calendarProblem, sameCalendar, sameDates, type PayCalendar } from "@/domain/payroll/calendar";
+import { groupCalendar, resyncPeriodDates } from "../payroll/period-dates";
 import type { Permission } from "@/domain/permissions";
 import { ReviewRulesSchema, locationReviewRules, reviewRules } from "@/domain/reviews";
 import { FILING_LABEL, cleanTaxFiling } from "@/domain/sales-tax";
@@ -216,6 +217,7 @@ const PayrollInput = z.object({
     anchorNumber: z.number().int().min(1, "The period number is a whole number from 1").max(60),
     periodDays: z.union([z.literal(7), z.literal(14)], { message: "Pay periods are weekly or bi-weekly" }),
     checkOffsetDays: z.number().int().min(0).max(31),
+    submitOffsetDays: z.number().int().min(0).max(31),
     numberResetsYearly: z.boolean(),
   }),
   cashTipsDeclaredHeader: z.string().trim().min(1, "Name the iSolved earning for declared cash tips").max(60),
@@ -246,7 +248,6 @@ async function brandCalendarProblem(tx: DBorTx, from: PayCalendar, to: PayCalend
   return locked ? "Shops on the brand's calendar have locked pay periods, so it can only be renumbered (the same Sundays), not moved to different dates." : null;
 }
 
-const groupCalendar = (g: typeof payGroups.$inferSelect): PayCalendar => ({ anchorStart: g.anchorStart, anchorNumber: g.anchorNumber, periodDays: g.periodDays, checkOffsetDays: g.checkOffsetDays, numberResetsYearly: g.numberResetsYearly });
 
 const ClockInput = z.object({
   unpaidBreakFromMinutes: z.number().int().min(0).max(240),
@@ -539,8 +540,9 @@ export const SETTINGS: readonly SettingDef[] = [
         if (!sameCalendar(groupCalendar(g), from.calendar)) continue;
         await tx
           .update(payGroups)
-          .set({ anchorStart: c.anchorStart, anchorNumber: c.anchorNumber, periodDays: c.periodDays, checkOffsetDays: c.checkOffsetDays, numberResetsYearly: c.numberResetsYearly, updatedAt: new Date() })
+          .set({ anchorStart: c.anchorStart, anchorNumber: c.anchorNumber, periodDays: c.periodDays, checkOffsetDays: c.checkOffsetDays, submitOffsetDays: c.submitOffsetDays, numberResetsYearly: c.numberResetsYearly, updatedAt: new Date() })
           .where(eq(payGroups.id, g.id));
+        await resyncPeriodDates(tx, g.id);
       }
     },
     labels: {

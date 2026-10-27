@@ -24,6 +24,7 @@ import {
   revokeApproval,
   ensurePayGroups,
   savePayGroup,
+  savePeriodDates,
   saveProfile,
   saveRate,
   setOverride,
@@ -112,10 +113,12 @@ export async function savePayGroupAction(input: {
   label: string;
   legalEntity: string;
   exportTab: string;
+  code: string;
   anchorStart: string;
   anchorNumber: number;
   periodDays: number;
   checkOffsetDays: number;
+  submitOffsetDays: number;
   numberResetsYearly: boolean;
 }) {
   return safe(async () => {
@@ -126,10 +129,12 @@ export async function savePayGroupAction(input: {
         label: z.string().max(80),
         legalEntity: z.string().max(120),
         exportTab: z.string().max(31),
+        code: z.string().max(8),
         anchorStart: date,
         anchorNumber: z.number().int(),
         periodDays: z.number().int(),
         checkOffsetDays: z.number().int(),
+        submitOffsetDays: z.number().int(),
         numberResetsYearly: z.boolean(),
       })
       .parse(input);
@@ -141,11 +146,29 @@ export async function savePayGroupAction(input: {
           label: v.label,
           legalEntity: v.legalEntity,
           exportTab: v.exportTab,
-          calendar: { anchorStart: v.anchorStart, anchorNumber: v.anchorNumber, periodDays: v.periodDays, checkOffsetDays: v.checkOffsetDays, numberResetsYearly: v.numberResetsYearly },
+          code: v.code,
+          calendar: {
+            anchorStart: v.anchorStart,
+            anchorNumber: v.anchorNumber,
+            periodDays: v.periodDays,
+            checkOffsetDays: v.checkOffsetDays,
+            submitOffsetDays: v.submitOffsetDays,
+            numberResetsYearly: v.numberResetsYearly,
+          },
         },
         ctx.actor,
       ),
     );
+    refresh();
+    return null;
+  });
+}
+
+export async function savePeriodDatesAction(input: { start: string; end: string; checkDate: string; submitBy: string; reason: string }) {
+  return safe(async () => {
+    const ctx = await authorize("payroll.run");
+    const v = z.object({ start: date, end: date, checkDate: date, submitBy: date, reason: z.string().max(300) }).parse(input);
+    fail(await savePeriodDates(v.start, v.end, v, ctx.actor));
     refresh();
     return null;
   });

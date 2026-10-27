@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, payGroups, payrollApprovals, payrollEmployers, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, sales as salesTable, staff, timeEntries, timePunches, type PayrollApprovalTotals } from "@/db/schema";
-import { calendarProblem, periodOf, periodStarting, periodsAround, workweeksOf, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
+import { calendarProblem, periodOf, periodStarting, periodsAround, sameCalendar, workweeksOf, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
 import {
   OVERRIDABLE,
   anomalies,
@@ -41,6 +41,7 @@ import { payrollHoursCheck, type PayrollHoursCheck } from "@/server/time-clock";
 import { isolvedTimecardExporter, type PayrollExporter } from "./export";
 import { checkPayrollTips, type TipCheck } from "./tip-reconcile";
 import { ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type LegalEntity, type PayGroup } from "./groups";
+import { groupCalendar, resyncPeriodDates, savePeriodDates as savePeriodDatesFor } from "./period-dates";
 
 export { DEFAULT_CALENDAR, ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type PayGroup } from "./groups";
 
@@ -49,7 +50,7 @@ export interface PeriodChoice {
   key: string;
   start: LocalDate;
   end: LocalDate;
-  groups: { id: string; label: string; number: number; checkDate: LocalDate }[];
+  groups: { id: string; label: string; code: string | null; number: number; checkDate: LocalDate; submitBy: LocalDate; datesMoved: boolean }[];
   lockedGroups: number;
   current: boolean;
 }
@@ -66,7 +67,7 @@ export async function periodChoices(now = new Date()): Promise<PeriodChoice[]> {
       if (p.number < 1) continue;
       const key = periodKey(p.start, p.end);
       const c = map.get(key) ?? { key, start: p.start, end: p.end, groups: [], lockedGroups: 0, current: p.start <= today && today <= p.end };
-      c.groups.push({ id: g.id, label: g.label, number: p.number, checkDate: p.checkDate });
+      c.groups.push({ id: g.id, label: g.label, code: g.code, number: p.number, checkDate: p.checkDate, submitBy: p.submitBy, datesMoved: p.datesMoved });
       map.set(key, c);
     }
   }
@@ -98,6 +99,8 @@ export interface LockDrift {
 export interface BlockView extends ShopBlock {
   payGroupId: string;
   payGroup: string;
+  /** iSolved's pay group code (B is Rock Island), picked at upload. */
+  payGroupCode: string | null;
   exportTab: string;
   /** The shop's legal entity: its pay group's employer, or the one it had when the period was locked. */
   employer: LegalEntity | null;
@@ -390,10 +393,11 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       shop: g.shop,
       payGroupId: g.id,
       payGroup: g.label,
+      payGroupCode: g.code,
       exportTab: g.exportTab,
       employer: employerOf.get((run ? run.employerId : g.employerId) ?? "") ?? null,
       workState: g.workState,
-      period: p,
+      period: run ? { ...p, checkDate: run.checkDate } : p,
       locked: run ? { at: run.lockedAt.toISOString(), by: run.lockedBy ? (lockedBy.get(run.lockedBy) ?? null) : null } : null,
       lockCheck,
     };
@@ -928,14 +932,14 @@ export async function approveAndLock(start: LocalDate, end: LocalDate, actor: Ac
 /** The approved file for one shop. Only locked periods download; the file is built from what was approved. */
 export async function lockedExport(payGroupId: string, start: LocalDate, end: LocalDate, exporter: PayrollExporter = isolvedTimecardExporter) {
   const [row] = await db
-    .select({ run: payrollRuns, tab: payGroups.exportTab, label: payGroups.label })
+    .select({ run: payrollRuns, tab: payGroups.exportTab, label: payGroups.label, code: payGroups.isolvedCode })
     .from(payrollRuns)
     .innerJoin(payGroups, eq(payGroups.id, payrollRuns.payGroupId))
     .where(and(eq(payrollRuns.payGroupId, payGroupId), eq(payrollRuns.periodStart, start), eq(payrollRuns.periodEnd, end)));
   if (!row) return null;
   const block = (row.run.snapshot as Snapshot).block;
   const s = await loadSettings();
-  const f = { tab: row.tab, payGroup: row.label, periodNumber: row.run.periodNumber, periodStart: start, periodEnd: end, rows: block.exportRows, headers: block.exportHeaders, format: s.exportFormat, namePattern: s.exportFileName };
+  const f = { tab: row.tab, payGroup: row.label, payGroupCode: row.code, periodNumber: row.run.periodNumber, periodStart: start, periodEnd: end, rows: block.exportRows, headers: block.exportHeaders, format: s.exportFormat, namePattern: s.exportFileName };
   return { fileName: exporter.fileName(f), contentType: exporter.contentType, body: await exporter.render(f), runId: row.run.id as string | null, approvalId: null as string | null, shopId: row.run.payGroupId };
 }
 
@@ -953,7 +957,7 @@ export async function approvedExport(payGroupId: string, start: LocalDate, end: 
   const approval = await approvalOf(view);
   if (!b || b.locked || !approval?.current) return null;
   const s = view.settings;
-  const f = { tab: b.exportTab, payGroup: b.payGroup, periodNumber: b.period.number, periodStart: start, periodEnd: end, rows: b.exportRows, headers: b.exportHeaders, format: s.exportFormat, namePattern: s.exportFileName };
+  const f = { tab: b.exportTab, payGroup: b.payGroup, payGroupCode: b.payGroupCode, periodNumber: b.period.number, periodStart: start, periodEnd: end, rows: b.exportRows, headers: b.exportHeaders, format: s.exportFormat, namePattern: s.exportFileName };
   return { fileName: exporter.fileName(f), contentType: exporter.contentType, body: await exporter.render(f), runId: null as string | null, approvalId: approval.id as string | null, shopId: b.payGroupId };
 }
 
@@ -972,38 +976,57 @@ export async function payrollTrail(start: LocalDate, end: LocalDate) {
     .map(({ r }) => ({ ...r, details: (r.details ?? {}) as Record<string, unknown> }));
 }
 
-export async function savePayGroup(id: string, v: { label: string; legalEntity: string; exportTab: string; calendar: PayCalendar }, actor: Actor): Promise<string | null> {
+/** Moves one pay period's check and submit-by dates for every pay group that has it (a holiday), with a reason. */
+export async function savePeriodDates(start: LocalDate, end: LocalDate, v: { checkDate: LocalDate; submitBy: LocalDate; reason: string }, actor: Actor): Promise<string | null> {
+  return savePeriodDatesFor(start, end, v, await ensurePayGroups(), actor);
+}
+
+export async function savePayGroup(
+  id: string,
+  v: { label: string; legalEntity: string; exportTab: string; code?: string | null; calendar: PayCalendar },
+  actor: Actor,
+): Promise<string | null> {
   const label = v.label.trim();
   const entity = v.legalEntity.trim();
   if (!label) return "Give the pay group a label.";
   if (!entity) return "Name the legal entity (FEIN) the pay group belongs to.";
   const problem = calendarProblem(v.calendar);
   if (problem) return problem;
-  const [g] = await db.select({ id: payGroups.id, shopId: payGroups.shopId }).from(payGroups).where(eq(payGroups.id, id));
-  if (!g) return "That pay group is gone.";
-  const [hasRun] = await db.select({ id: payrollRuns.id }).from(payrollRuns).where(eq(payrollRuns.payGroupId, id)).limit(1);
   const [cur] = await db.select().from(payGroups).where(eq(payGroups.id, id));
-  const calChanged =
-    cur.anchorStart !== v.calendar.anchorStart || cur.anchorNumber !== v.calendar.anchorNumber || cur.periodDays !== v.calendar.periodDays || cur.checkOffsetDays !== v.calendar.checkOffsetDays;
+  if (!cur) return "That pay group is gone.";
+  const code = v.code === undefined ? cur.isolvedCode : v.code?.trim().toUpperCase() || null;
+  if (code && !/^[A-Z0-9]{1,4}$/.test(code)) return "The iSolved pay group code is 1 to 4 letters or digits, like B.";
+  if (code) {
+    const [other] = await db.select({ label: payGroups.label }).from(payGroups).where(and(eq(payGroups.isolvedCode, code), ne(payGroups.id, id)));
+    if (other) return `${other.label} already has pay group code ${code}.`;
+  }
+  const [hasRun] = await db.select({ id: payrollRuns.id }).from(payrollRuns).where(eq(payrollRuns.payGroupId, id)).limit(1);
+  const calChanged = !sameCalendar(groupCalendar(cur), v.calendar);
   if (hasRun && calChanged) {
     const p = periodOf(v.calendar, cur.anchorStart);
     if (p.start !== cur.anchorStart) return "This pay group has locked periods; its calendar can only be renumbered, not moved to different dates.";
   }
-  await db
-    .update(payGroups)
-    .set({
-      label,
-      legalEntity: entity,
-      exportTab: v.exportTab.trim() || label,
-      anchorStart: v.calendar.anchorStart,
-      anchorNumber: v.calendar.anchorNumber,
-      periodDays: v.calendar.periodDays,
-      checkOffsetDays: v.calendar.checkOffsetDays,
-      numberResetsYearly: v.calendar.numberResetsYearly,
-      updatedAt: new Date(),
-    })
-    .where(eq(payGroups.id, id));
-  await audit(actor, "payroll.pay_group", "pay_group", id, { label, legalEntity: entity, exportTab: v.exportTab, ...v.calendar }, g.shopId);
+  const { dates: _dates, ...cal } = v.calendar;
+  await db.transaction(async (tx) => {
+    await tx
+      .update(payGroups)
+      .set({
+        label,
+        legalEntity: entity,
+        exportTab: v.exportTab.trim() || label,
+        isolvedCode: code,
+        anchorStart: cal.anchorStart,
+        anchorNumber: cal.anchorNumber,
+        periodDays: cal.periodDays,
+        checkOffsetDays: cal.checkOffsetDays,
+        submitOffsetDays: cal.submitOffsetDays,
+        numberResetsYearly: cal.numberResetsYearly,
+        updatedAt: new Date(),
+      })
+      .where(eq(payGroups.id, id));
+    if (calChanged) await resyncPeriodDates(tx, id);
+  });
+  await audit(actor, "payroll.pay_group", "pay_group", id, { label, legalEntity: entity, exportTab: v.exportTab, isolvedCode: code, ...cal }, cur.shopId);
   return null;
 }
 

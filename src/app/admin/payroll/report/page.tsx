@@ -151,10 +151,10 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
   );
 }
 
-function periodNumbers(groups: { label: string; number: number; checkDate: string }[]) {
+function periodNumbers(groups: { label: string; number: number; checkDate: string; submitBy: string }[]) {
   const by = new Map<string, string[]>();
   for (const g of groups) {
-    const k = `period ${String(g.number).padStart(2, "0")}, check ${formatDate(g.checkDate, "EEE MMM d")}`;
+    const k = `period ${String(g.number).padStart(2, "0")}, due in iSolved ${formatDate(g.submitBy, "EEE MMM d")}, check ${formatDate(g.checkDate, "EEE MMM d")}`;
     by.set(k, [...(by.get(k) ?? []), g.label]);
   }
   const parts = [...by.entries()];
@@ -462,8 +462,9 @@ function ShopBlockCard({ b, view, canRun, downloadable }: { b: BlockView; view: 
         title={
           <>
             {b.shop} <span className="font-normal text-zinc-500">· pay group {b.payGroup}
+            {b.payGroupCode ? ` (iSolved ${b.payGroupCode})` : " (no iSolved code yet)"}
             {b.employer ? ` · ${b.employer.legalName}${b.employer.isolvedCompanyCode ? ` (iSolved ${b.employer.isolvedCompanyCode})` : ""}` : ""}
-            {b.workState ? ` · ${b.workState}` : ""} · period {String(b.period.number).padStart(2, "0")}, check {formatDate(b.period.checkDate, "EEE MMM d")}</span>
+            {b.workState ? ` · ${b.workState}` : ""} · period {String(b.period.number).padStart(2, "0")}, due {formatDate(b.period.submitBy ?? b.period.checkDate, "EEE MMM d")}, check {formatDate(b.period.checkDate, "EEE MMM d")}</span>
           </>
         }
         subtitle={b.locked ? `Locked ${formatDateTime(b.locked.at)}${b.locked.by ? ` by ${b.locked.by}` : ""}` : "Open: live from hours, sales and overrides"}

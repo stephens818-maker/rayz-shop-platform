@@ -3293,8 +3293,8 @@ export const payrollEmployerStates = pgTable(
 
 /**
  * Each shop is an iSolved pay group with its own pay calendar (Dubuque's differs from the rest).
- * The label is whatever Charles calls the pay group; no iSolved IDs are stored in the repo.
- * Shops of the same legal entity (one FEIN) share overtime across shops.
+ * The label is whatever Charles calls the pay group, and the code is iSolved's letter for it (B is
+ * Rock Island). Shops of the same legal entity (one FEIN; Ray'z Inc. is the only one) share overtime.
  */
 export const payGroups = pgTable(
   "pay_groups",
@@ -3310,15 +3310,51 @@ export const payGroups = pgTable(
     employerId: uuid("employer_id").references(() => payrollEmployers.id),
     /** The workbook tab this shop's export copies: its sheet name and formatting. */
     exportTab: text("export_tab").notNull(),
+    /** iSolved's pay group code: 1 to 4 capital letters or digits, one per pay group. */
+    isolvedCode: text("isolved_code"),
     /** First day of a known period, and that period's number in iSolved. */
     anchorStart: date("anchor_start", { mode: "string" }).notNull(),
     anchorNumber: integer("anchor_number").notNull(),
     periodDays: integer("period_days").notNull().default(14),
     checkOffsetDays: integer("check_offset_days").notNull().default(6),
+    submitOffsetDays: integer("submit_offset_days").notNull().default(4),
     numberResetsYearly: boolean("number_resets_yearly").notNull().default(true),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
-  (t) => [check("pay_groups_period_days", sql`${t.periodDays} in (7, 14)`)],
+  (t) => [
+    check("pay_groups_period_days", sql`${t.periodDays} in (7, 14)`),
+    check("pay_groups_submit_offset", sql`${t.submitOffsetDays} between 0 and ${t.checkOffsetDays}`),
+    check("pay_groups_isolved_code", sql`${t.isolvedCode} is null or ${t.isolvedCode} ~ '^[A-Z0-9]{1,4}$'`),
+    uniqueIndex("pay_groups_isolved_code_uq").on(t.isolvedCode).where(sql`${t.isolvedCode} is not null`),
+  ],
+);
+
+/**
+ * Each pay period's check date and iSolved submit-by date, per pay group. Written from the calendar's
+ * offsets for the periods around today, and kept when someone moves one (a holiday), with the reason.
+ */
+export const payPeriodDates = pgTable(
+  "pay_period_dates",
+  {
+    id: id(),
+    payGroupId: uuid("pay_group_id")
+      .notNull()
+      .references(() => payGroups.id, { onDelete: "cascade" }),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    periodEnd: date("period_end", { mode: "string" }).notNull(),
+    periodNumber: integer("period_number").notNull(),
+    checkDate: date("check_date", { mode: "string" }).notNull(),
+    submitBy: date("submit_by", { mode: "string" }).notNull(),
+    /** Set when someone moved the dates off the calendar's offsets; the calendar's own rows have none. */
+    reason: text("reason"),
+    updatedBy: uuid("updated_by").references(() => staff.id),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("pay_period_dates_uq").on(t.payGroupId, t.periodStart),
+    check("pay_period_dates_order", sql`${t.periodEnd} >= ${t.periodStart} and ${t.submitBy} >= ${t.periodEnd} and ${t.checkDate} >= ${t.submitBy}`),
+    check("pay_period_dates_reason_len", sql`${t.reason} is null or char_length(${t.reason}) <= 200`),
+  ],
 );
 
 /** Payroll identity. The iSolved Employee Number is the export's Key and lives only in the database. */

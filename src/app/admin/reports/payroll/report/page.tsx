@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Badge, Card, CardHeader, Notice, PageHeader, cx } from "@/components/ui";
 import { LOCATIONS_COLUMNS, MIXED_RATE_NAME, locationSummary, type Line, type Overridable } from "@/domain/payroll/calc";
 import { reportExport } from "@/domain/permissions";
-import { formatDate, isValidLocalDate } from "@/lib/time";
+import { formatDate, isValidLocalDate, todayLocal } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { NO_VALUE, locationBlocks, locationsRow, locationsTotals, titleFill, type LocationsCell, type LocationsColumnKey } from "@/server/payroll/locations";
 import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, payrollTrail, periodChoices, type ApprovalStatus, type BlockView, type PeriodChoice } from "@/server/payroll/run";
@@ -125,6 +125,10 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
         <Notice>The Payroll Report shows pay rates and wages, so it needs &quot;See pay rates and labor cost&quot;.</Notice>
       ) : (
         <>
+          <p className="text-sm text-zinc-600" data-testid="payroll-due">
+            {dueLine(blocks)}
+          </p>
+          {status !== "locked" && <DueNotice blocks={blocks} />}
           <ApprovalNotice view={view} approval={approval} status={status} />
           {approvalBlocked(view) && status !== "locked" && (
             <Notice tone="red">
@@ -162,6 +166,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
                         data-testid="isolved-shop-file"
                       >
                         {b.shop}
+                        {b.payGroupCode && <span className="ml-1 font-normal text-zinc-500">({b.payGroupCode})</span>}
                       </a>
                     ))}
                     {can(ctx, reportExport("payroll_isolved")) && can(ctx, "payroll.export") && (
@@ -225,6 +230,33 @@ function adjustedTitle(l: Line, key: LocationsColumnKey): string | undefined {
   return undefined;
 }
 
+/** "Period 22 · due in iSolved Wed Oct 21 · check Fri Oct 23", per set of shops when their dates differ. */
+function dueLine(blocks: readonly BlockView[]) {
+  const by = new Map<string, string[]>();
+  for (const b of blocks) {
+    const p = b.period;
+    const k = `Period ${String(p.number).padStart(2, "0")} · due in iSolved ${formatDate(p.submitBy ?? p.checkDate, "EEE MMM d")} · check ${formatDate(p.checkDate, "EEE MMM d")}`;
+    by.set(k, [...(by.get(k) ?? []), b.payGroupCode ? `${b.shop} (${b.payGroupCode})` : b.shop]);
+  }
+  const parts = [...by.entries()];
+  return parts.length === 1 ? parts[0][0] : parts.map(([k, shops]) => `${shops.join(", ")}: ${k}`).join("; ");
+}
+
+function DueNotice({ blocks }: { blocks: readonly BlockView[] }) {
+  const today = todayLocal();
+  const open = blocks.filter((b) => !b.locked && b.period.submitBy);
+  const late = open.filter((b) => b.period.submitBy < today);
+  const dueToday = open.filter((b) => b.period.submitBy === today);
+  if (late.length)
+    return (
+      <Notice tone="red">
+        Hours were due in iSolved on {formatDate(late[0].period.submitBy, "EEEE, MMM d")} for {late.map((b) => b.shop).join(", ")}, and the period isn&apos;t locked yet.
+      </Notice>
+    );
+  if (dueToday.length) return <Notice tone="amber">Hours are due in iSolved today for {dueToday.map((b) => b.shop).join(", ")}.</Notice>;
+  return null;
+}
+
 function LocationBlock({ b, periodKey, drill }: { b: BlockView; periodKey: string; drill: boolean }) {
   const fill = titleFill(b.shop);
   const gp = b.totals.service - b.totals.totalWages;
@@ -232,6 +264,7 @@ function LocationBlock({ b, periodKey, drill }: { b: BlockView; periodKey: strin
     <Card data-testid="payroll-location">
       <div className="px-4 py-2 text-center font-semibold" style={fill ? { backgroundColor: `#${fill}` } : undefined}>
         {b.shop}
+        {b.payGroupCode && <span className="ml-2 text-xs font-normal text-zinc-700">iSolved {b.payGroupCode}</span>}
         {b.locked && (
           <Badge tone="green" className="ml-2">
             locked

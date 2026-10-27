@@ -31,8 +31,8 @@ const days = (shopId: string, from: string, n: number, hours: number, kind: Time
     return { staffId, shopId, kind, startsAt: d.toJSDate(), endsAt: d.plus({ minutes: hours * 60 }).toJSDate() };
   });
 
-const MAIN: PayCalendar = { anchorStart: "2026-10-18", anchorNumber: 23, periodDays: 14, checkOffsetDays: 6, numberResetsYearly: true };
-const DUBUQUE: PayCalendar = { anchorStart: "2026-10-04", anchorNumber: 1, periodDays: 14, checkOffsetDays: 6, numberResetsYearly: true };
+const MAIN: PayCalendar = { anchorStart: "2026-10-18", anchorNumber: 23, periodDays: 14, checkOffsetDays: 6, submitOffsetDays: 4, numberResetsYearly: true };
+const DUBUQUE: PayCalendar = { anchorStart: "2026-10-04", anchorNumber: 1, periodDays: 14, checkOffsetDays: 6, submitOffsetDays: 4, numberResetsYearly: true };
 
 const opts = (over: Partial<OtOptions> = {}): OtOptions => ({
   thresholdCenti: 4000,
@@ -93,7 +93,7 @@ describe("cross-shop overtime (C4)", () => {
 
   it("a workweek that spans two pay periods: OT is on the whole week, shared by each period's hours", () => {
     // A weekly calendar starting Wednesdays puts Sun–Tue and Wed–Sat of one workweek in different periods.
-    const wed: PayCalendar = { anchorStart: "2026-10-21", anchorNumber: 1, periodDays: 7, checkOffsetDays: 2, numberResetsYearly: false };
+    const wed: PayCalendar = { anchorStart: "2026-10-21", anchorNumber: 1, periodDays: 7, checkOffsetDays: 2, submitOffsetDays: 2, numberResetsYearly: false };
     const e = [...days("A", "2026-10-18", 3, 10), ...days("A", "2026-10-21", 2, 10)];
     const o = opts({ periodOf: (_s, d) => periodOf(wed, d).start });
     const slices = overtimeSlices(dailyHours(e), o);

@@ -3,6 +3,7 @@ import { DBorTx } from "@/db";
 import { payGroups, tipLedger, tipPayoutPeriods, tipPayouts, type TipPayoutStatus } from "@/db/schema";
 import { periodOf, type PayCalendar } from "@/domain/payroll/calendar";
 import { DEFAULT_CALENDAR } from "@/server/payroll/groups";
+import { groupCalendar } from "@/server/payroll/period-dates";
 
 /** A payout's tips count toward its pay period once it's approved; held, failed and cancelled ones have no period. */
 const RECORDED: readonly TipPayoutStatus[] = ["approved", "processing", "paid"];
@@ -10,9 +11,7 @@ const RECORDED: readonly TipPayoutStatus[] = ["approved", "processing", "paid"];
 /** Each shop's pay group calendar; a shop without a pay group yet is on the brand's. */
 export async function shopCalendars(shopIds: readonly string[], tx: DBorTx): Promise<(shopId: string) => PayCalendar> {
   const rows = shopIds.length ? await tx.select().from(payGroups).where(inArray(payGroups.shopId, [...shopIds])) : [];
-  const by = new Map(
-    rows.map((g) => [g.shopId, { anchorStart: g.anchorStart, anchorNumber: g.anchorNumber, periodDays: g.periodDays, checkOffsetDays: g.checkOffsetDays, numberResetsYearly: g.numberResetsYearly }]),
-  );
+  const by = new Map(rows.map((g) => [g.shopId, groupCalendar(g)]));
   return (shopId) => by.get(shopId) ?? DEFAULT_CALENDAR;
 }
 

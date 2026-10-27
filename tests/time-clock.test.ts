@@ -169,7 +169,7 @@ describe("overnight and DST shifts", () => {
   });
 });
 
-const MAIN: PayCalendar = { anchorStart: "2026-10-18", anchorNumber: 23, periodDays: 14, checkOffsetDays: 6, numberResetsYearly: true };
+const MAIN: PayCalendar = { anchorStart: "2026-10-18", anchorNumber: 23, periodDays: 14, checkOffsetDays: 6, submitOffsetDays: 4, numberResetsYearly: true };
 const opts = (over: Partial<OtOptions> = {}): OtOptions => ({
   thresholdCenti: 4000,
   trainingCountsTowardOt: false,

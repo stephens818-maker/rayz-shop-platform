@@ -904,6 +904,13 @@
       "when": 1796595720000,
       "tag": "core_0128_payroll_approvals",
       "breakpoints": true
+    },
+    {
+      "idx": 129,
+      "version": "7",
+      "when": 1796599320000,
+      "tag": "core_0129_pay_calendar",
+      "breakpoints": true
     }
   ]
 }

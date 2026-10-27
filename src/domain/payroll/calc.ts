@@ -194,8 +194,10 @@ function calendarOf(v: unknown): PayCalendar {
     anchorNumber: typeof c.anchorNumber === "number" ? c.anchorNumber : d.anchorNumber,
     periodDays: typeof c.periodDays === "number" ? c.periodDays : d.periodDays,
     checkOffsetDays: typeof c.checkOffsetDays === "number" ? c.checkOffsetDays : d.checkOffsetDays,
+    submitOffsetDays: 0,
     numberResetsYearly: typeof c.numberResetsYearly === "boolean" ? c.numberResetsYearly : d.numberResetsYearly,
   };
+  cal.submitOffsetDays = typeof c.submitOffsetDays === "number" ? c.submitOffsetDays : Math.min(d.submitOffsetDays, cal.checkOffsetDays);
   return calendarProblem(cal) ? d : cal;
 }
 
