@@ -938,7 +938,7 @@ Stripe can't transfer from a shop's connected account to a barber's, so the mone
 
 ## 41. Payroll review (Claude bot: SB-C1, C2, C3, C6, C7, I2)
 
-README "Payroll reports → Payroll review fixes" has the details. Migration `core_0110_payroll_review`.
+README "Payroll reports → Payroll review fixes" has the details. Migrations `core_0110_payroll_review` and `core_0111_tip_declarations_scrub`.
 
 - [x] SB-C1: imported Squire tickets and `squire_import` payments are left out of payroll sales, payroll tips, the Payroll Report, the iSolved files and the tip ledger; they're shown only in a reference table on the Tips report.
 - [x] SB-C1: a locked period stays as exported: the snapshot's input hash, drift and late-import flags, and no reassigning tickets or declaring tips in it.

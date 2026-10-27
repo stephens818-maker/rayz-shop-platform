@@ -753,7 +753,7 @@ iSolved is the payroll company and stays the system of record: it computes paych
 
 ### Payroll review fixes (SB-C1, C2, C3, C6, C7, I2)
 
-From the Claude bot payroll review. Migration `core_0110_payroll_review`.
+From the Claude bot payroll review. Migrations `core_0110_payroll_review` and `core_0111_tip_declarations_scrub` (a declaration's reason is scrubbed like every other note).
 
 - **Squire-era tips never reach payroll (SB-C1).** Payroll sales, payroll tips, the Payroll Report, the iSolved files and the tip ledger leave out imported tickets (`sales.is_imported`) and anything paid with a `squire_import` payment, so tips Squire already paid aren't exported to iSolved and paid twice. Reports → Payroll → Tips lists them in a separate **Squire-era tips (reference only)** table.
 - **A locked period stays as exported.** Each shop's snapshot keeps the hash of the inputs it was approved on. If hours, sales or tips for a locked period change afterwards, or a Squire import lands in it, the run keeps the locked figures and flags each value that moved (was, and is now) and any late Squire import, to correct in the current period or in iSolved. Reassigning a ticket, and declaring cash tips, are refused in a locked period.

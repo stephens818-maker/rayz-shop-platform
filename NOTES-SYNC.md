@@ -530,7 +530,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ### 2026-10-27: core, payroll review (SB-C1, C2, C3, C6, C7, I2), FYI for mobile
 - **Squire imports are out of payroll.** Payroll sales, tips, the run and the tip ledger skip `sales.is_imported` tickets and any sale with a `squire_import` payment. If the importer marks Squire tickets another way, please tell core so payroll matches.
-- **Migration `core_0110_payroll_review`:** `tip_declarations` (append-only), `payroll_profiles.tipped_occupation_code`, the `after_payout` absorption kind and the `report.payroll_w2_codes.*` and `report.payroll_fica_tip_credit.*` permissions. The next free one is `core_0111`.
+- **Migration `core_0110_payroll_review`:** `tip_declarations` (append-only), `payroll_profiles.tipped_occupation_code`, the `after_payout` absorption kind and the `report.payroll_w2_codes.*` and `report.payroll_fica_tip_credit.*` permissions; `core_0111_tip_declarations_scrub` scrubs a declaration's reason. The next free one is `core_0112`.
 - **Staff API (core's):** `GET`/`POST /tips/declarations`, `cashTips` on `GET /clock` and on clock-out (see "Staff app API").
 - **The brand pay calendar is a payroll setting** (`brand_settings.payroll.calendar`); `PAYROLL_ANCHOR_END` is gone. `payPeriodFor(date, cal)` in `src/domain/payroll.ts` takes it; on the server use `brandCalendar()` from `src/server/payroll/groups.ts`. The time clock's `periodFor` is now async.
 - **Nothing under `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts` (customer), `connect.ts` or `processor.ts` changed.** No request.
