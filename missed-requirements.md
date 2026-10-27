@@ -1017,6 +1017,18 @@ README "Times read 12-hour" and DEPLOY steps 46 and 47. Migrations `core_0126_br
 - [ ] The Ray'z Staff app formats times from `GET /config` `display.timeFormat` (NOTES-SYNC Requests).
 - [ ] The customer app (PR #2) drops its own `time_format` column add and keeps core's `brand-time.ts` when it rebases (NOTES-SYNC Requests).
 
+## 45. iSolved pay calendar (from iSolved, via the Isolved Bot, still being confirmed)
+
+[docs/payroll-report-spec.md](docs/payroll-report-spec.md) §4 and DEPLOY step 49. Migration `core_0129_pay_calendar`.
+
+- [x] Ray'z Inc. is one legal entity (one FEIN); every pay group defaults to it.
+- [x] An iSolved pay group code per shop (`pay_groups.isolved_code`), one shop per code: B is Rock Island, C is Moline. It's shown on the Payroll Report and in Payroll → Setup, and file names can use `{code}`.
+- [x] The default pay calendar is iSolved's: bi-weekly Sun–Sat from 10/4/2026 as period 22 (period 21 = 9/20–10/3, check 10/9; period 22 = 10/4–10/17, due 10/21, check 10/23). It's configurable in Payroll → Setup.
+- [x] Each period's check date and submit-by date are stored (`pay_period_dates`), and can be moved with a reason for every shop with that period, but not once it's locked. The Payroll Report says when hours are due in iSolved and warns once that date has passed.
+- [x] The OT workweek starts Sunday (it already did).
+- [ ] The other shops' iSolved pay group codes, entered on Payroll → Setup once iSolved confirms them.
+- [ ] Dubuque's numbering: the seed has 10/4–10/17 as Dubuque's period 01, and iSolved gives it as period 22. Unchanged until confirmed.
+
 ## Deferred by decision
 
 - I10 stays on destination charges for customers; `payment_transfers` isn't built, and tips aren't transferred to shops separately. Tip payouts to employees (sections 15, 35 and 40) don't move money yet: Stripe can't transfer from a shop's connected account to a barber's, and the redesign as separate charges and transfers (ST-C11) waits for Charles.

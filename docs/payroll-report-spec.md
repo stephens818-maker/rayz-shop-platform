@@ -2,11 +2,11 @@
 
 How the platform builds the bi-weekly Payroll Report and the per-shop iSolved timecard files, replacing Charles's payroll workbook. Section numbers follow the original review (§2.1 Total Wages, §3.2 overtime, §6 export), so the findings that refer to them still line up.
 
-**Status:** built. Code in `src/domain/payroll/` (pure math), `src/server/payroll/` (loading, locking, export) and `src/app/admin/payroll/` (pages). The Payroll Report page is `src/app/admin/reports/payroll/report/`. Migrations `core_0022_payroll` and `core_0128_payroll_approvals`. Tests: `tests/payroll-engine.test.ts`, `tests/payroll-export.test.ts`, `tests/payroll-golden.test.ts` (all 33 golden rows and the iSolved file, cell for cell), `tests/payroll-time-csv.test.ts`, `tests/db/payroll.test.ts`, `tests/db/payroll-approval.test.ts`, `tests/db/payroll-reports.test.ts`. Workbook problems are in [payroll-workbook-discrepancies.md](payroll-workbook-discrepancies.md).
+**Status:** built. Code in `src/domain/payroll/` (pure math), `src/server/payroll/` (loading, locking, export) and `src/app/admin/payroll/` (pages). The Payroll Report page is `src/app/admin/reports/payroll/report/`. Migrations `core_0022_payroll`, `core_0128_payroll_approvals` and `core_0129_pay_calendar`. Tests: `tests/payroll-engine.test.ts`, `tests/payroll-export.test.ts`, `tests/payroll-golden.test.ts` (all 33 golden rows and the iSolved file, cell for cell), `tests/payroll-time-csv.test.ts`, `tests/db/payroll.test.ts`, `tests/db/payroll-approval.test.ts`, `tests/db/payroll-reports.test.ts`, `tests/db/pay-calendar.test.ts`. Workbook problems are in [payroll-workbook-discrepancies.md](payroll-workbook-discrepancies.md).
 
 **No iSolved connection.** There's no API, sync, credentials or automated upload. The only output is a downloadable xlsx per shop, in exactly the workbook's format, which Charles uploads by hand after approve-and-lock (§6.4). The export sits behind a `PayrollExporter` interface so a direct integration can be added later (§10).
 
-**Privacy.** iSolved Employee Numbers live in the database only (`payroll_profiles`), never in the repo, seed or logs. The audit trail records that a number changed, not the number. The pay group letter codes in iSolved aren't stored either; pay group labels default to the shop name and are editable.
+**Privacy.** iSolved Employee Numbers live in the database only (`payroll_profiles`), never in the repo, seed or logs. The audit trail records that a number changed, not the number. iSolved's pay group letter codes (B is Rock Island, C is Moline) are stored per pay group; they aren't sensitive. Pay group labels default to the shop name and are editable.
 
 ## 1. Inputs
 
@@ -117,26 +117,32 @@ The status is shown per person in the drill-down with the average it came from. 
 
 ## 4. Pay groups and calendars
 
-Each shop is a pay group with its own pay calendar. Calendars are per pay group, not brand-wide.
+Ray'z Inc. is one legal entity (one FEIN). In iSolved each shop is its own pay group, with a letter code, and its own pay calendar. Calendars are per pay group, not brand-wide.
 
 | Field | Meaning |
 | --- | --- |
 | Label | How the pay group is named on screen and in the file name. Defaults to the shop name. |
+| iSolved pay group code | iSolved's letter code for the pay group (B is Rock Island, C is Moline), 1 to 4 letters or digits, one shop per code. Shown on the Payroll Report and usable in file names. New pay groups get B and C by shop name; the rest are entered on Payroll → Setup. |
 | Legal entity | The FEIN it belongs to, for §3.2. Default "Ray'z Inc." |
 | Export tab | The workbook tab whose layout and formatting the file copies (§6.2). |
 | Anchor start, anchor number | A known period's first Sunday and its number |
 | Period length | 7 or 14 days, Sunday to Saturday |
 | Check offset | Days from the period's last day to the check date (6 = the Friday after) |
+| Submit-by offset | Days from the period's last day to iSolved's submission deadline (4 = the Wednesday after). 0 up to the check offset. |
 | Numbers reset yearly | The first check date in a new year is period 1 |
 
 Current calendars (verified in iSolved, read-only):
 
 | Pay groups | Calendar |
 | --- | --- |
-| Rock Island, Moline, Utica, Kimberly, Silvis, Coralville, LeClaire | Bi-weekly, Sun–Sat, check the following Friday. Period 23 is 10/18–10/31/2026 (check 11/6); period 24 is 11/1–11/14 (check 11/20). |
-| Dubuque | Its own calendar. Period 01 was 10/4–10/17/2026 (check 10/23). |
+| Rock Island, Moline, Utica, Kimberly, Silvis, Coralville, LeClaire | Bi-weekly, Sun–Sat, due in iSolved the following Wednesday, check the following Friday. Period 21 was 9/20–10/3/2026 (check 10/9); period 22 is 10/4–10/17 (due 10/21, check 10/23); period 23 is 10/18–10/31 (due 11/4, check 11/6). |
+| Dubuque | Its own numbering. Period 01 was 10/4–10/17/2026 (check 10/23). Open: iSolved now gives 10/4–10/17 as period 22; until that's confirmed for Dubuque, its numbering is unchanged. |
+
+The brand's default calendar (new pay groups start on it, and so do the brand-wide pay periods) is iSolved's: anchored on Sunday 10/4/2026 as period 22, 14 days, submit-by +4, check +6, numbers reset yearly. It's a Payroll setup setting. The OT workweek is always Sunday to Saturday (§3.2), so a bi-weekly period is exactly two workweeks.
 
 Because the 12/13–12/26 period's check falls on 1/1/2027, that's period 1 of 2027. Calendars can be edited on Payroll → Setup; once a pay group has locked periods, its calendar can be renumbered but not moved to different dates.
+
+**Stored period dates.** Each period's check date and submit-by date are on record in `pay_period_dates`, per pay group: the periods from about four months back to six months ahead are written from the calendar the first time payroll looks, and again when a calendar changes. On Payroll → Setup → Pay period dates, someone with `payroll.run` can move a period's dates (a holiday, or iSolved's calendar says otherwise) with a reason. The move applies to every pay group with that period and is audited (`payroll.period_dates`). The submit-by date can't be before the period's last day, the check can't be before the submit-by date, and the check is at most 31 days after the end. Dates equal to the calendar's offsets clear the reason. A locked period keeps its dates: the lock records the check date. Period numbers follow the check date actually paid, so a New Year's Day check moved into December makes that period the last of the old year.
 
 The Payroll Report picks a period by its dates. Pay groups whose calendars share those dates are reported and locked together; Dubuque's periods are separate.
 
@@ -161,6 +167,7 @@ There are two screens over the same figures.
 **Payroll → Report** (`payroll.run` or `payroll.approve`) is the working screen, with the same approval controls and audit trail plus:
 
 - **Period chips** for recent and upcoming periods, with each pay group's period number and check date.
+- **When hours are due**: the period number, iSolved's submit-by date and the check date under the title, with a red notice once the submit-by date has passed and the period isn't locked (amber on the day). Each shop block shows its iSolved pay group code.
 - **Reconciliation gate** (§7) at the top: either the list of mismatches or a green "every total is the sum of its rows".
 - **Locations view:** per shop, Service Sales, Total Wages, O.T. Pay, Training Pay, Employee Cost (= Labor Cost), Gross Profit and Cost %, plus a total row.
 - **Anomalies** (§8).
@@ -219,7 +226,7 @@ A brand setting rounds export values to 2 decimals half-up instead. It's **off**
 4. Download each shop's file (`payroll.run` or `payroll.export`), or the all-shops workbook from Reports → Payroll → iSolved export. Then upload in iSolved: Timecard Import (Excel/CSV), picking that pay group.
 5. Lock the period.
 
-File names are Payroll setup settings (Q9). A shop's file defaults to `MM.DD.YY-MM.DD.YY <shop>.xlsx`, and the all-shops workbook to `Rayz Payroll MM.DD.YY-MM.DD.YY.xlsx`. The placeholders are `{start}`, `{end}`, `{startIso}`, `{endIso}`, `{shop}`, `{payGroup}` and `{period}`. The all-shops workbook has a sheet per shop in the workbook's tab order (Rock Island, Moline, Silvis, Coralville, Utica, Kimberly, LeClaire, then the rest by name). It's marked DRAFT until the figures are approved.
+File names are Payroll setup settings (Q9). A shop's file defaults to `MM.DD.YY-MM.DD.YY <shop>.xlsx`, and the all-shops workbook to `Rayz Payroll MM.DD.YY-MM.DD.YY.xlsx`. The placeholders are `{start}`, `{end}`, `{startIso}`, `{endIso}`, `{shop}`, `{payGroup}`, `{code}` (the iSolved pay group code, blank until it's set) and `{period}`. The all-shops workbook has a sheet per shop in the workbook's tab order (Rock Island, Moline, Silvis, Coralville, Utica, Kimberly, LeClaire, then the rest by name). It's marked DRAFT until the figures are approved.
 
 Files download only while an approval covers the live figures, and once locked they come from the lock's snapshot. A change after approval holds the files until the period is approved again. Each download is audited.
 
@@ -308,7 +315,7 @@ Payroll → Setup (`payroll.run`).
 | Payroll Report shop order; all-shops workbook sheet order | The workbook's | |
 | Full-time threshold, hours basis, window | 32 h; clocked worked hours; rolling 4 weeks | Pending Charles |
 
-Per pay group: label, legal entity, export tab and calendar (§4). Per person (Payroll setup, and the Staff page's Payroll (iSolved) card): iSolved employee number (the Key), Key as text, iSolved name (`LAST, FIRST`), export position, "$0 hourly pay" (the owner's row: hours go to iSolved, Hourly Total is $0), and rates per shop.
+Per pay group: label, legal entity, iSolved pay group code, export tab and calendar, including the submit-by offset (§4). Per period: its check and submit-by dates (§4). Per person (Payroll setup, and the Staff page's Payroll (iSolved) card): iSolved employee number (the Key), Key as text, iSolved name (`LAST, FIRST`), export position, "$0 hourly pay" (the owner's row: hours go to iSolved, Hourly Total is $0), and rates per shop.
 
 **Effective-dated rates.** With compensation plans on and Payroll using them (Staff → Compensation, both off by default), each employee's wage, service % and product % come from their plan's versions. Each sale is paid at the rate in effect on its checkout date (a refund at the original sale's date), and each day's hours at that day's wage. Where a rate changed inside the period, the report shows "mixed" and flags it (`mixed_rates`). With plans off, the rates are Payroll setup's, one per employee per shop.
 
