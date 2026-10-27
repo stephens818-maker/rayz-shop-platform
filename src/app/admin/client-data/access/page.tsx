@@ -45,7 +45,7 @@ export default async function ClientAccessPage({ searchParams }: { searchParams:
             <LinkButton variant="secondary" href="/admin/client-data">
               Protection settings
             </LinkButton>
-            <LinkButton variant="secondary" href={`/admin/client-data/access/export?${qs({})}`}>
+            <LinkButton variant="secondary" href={`/admin/client-data/access/export?${qs({})}`} prefetch={false}>
               Export CSV
             </LinkButton>
           </div>

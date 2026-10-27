@@ -78,7 +78,7 @@ export default async function CatalogPage() {
                   <Td right>{r.skipped}</Td>
                   <Td right>
                     {r.skipped > 0 && (
-                      <Link className="text-xs underline" href={`/admin/import/${r.id}/errors`}>
+                      <Link className="text-xs underline" href={`/admin/import/${r.id}/errors`} prefetch={false}>
                         Skipped rows CSV
                       </Link>
                     )}
