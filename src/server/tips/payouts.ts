@@ -28,7 +28,7 @@ import { appBaseUrl } from "@/lib/deployment";
 import { Actor, SYSTEM, audit } from "@/server/audit";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { enqueueRaw, enqueueShopEmail } from "@/server/notifications/queue";
-import { MovementError, type MovedIds, TRANSFERS_PENDING_REASON, directPayoutsAvailable, moneyClient, moneyMovement, moneyMovementReady } from "@/server/payments/money-movement";
+import { LIVE_SWITCH_REASON, MovementError, type MovedIds, directPayoutsAvailable, moneyClient, moneyMovement, moneyMovementReady, transfersPendingReason } from "@/server/payments/money-movement";
 import { tipOverrides } from "@/server/compensation";
 import { checkPin } from "@/server/time-clock";
 import { TAX_FORMS_HOLD_REASON, canReceive, currentInstantFeeTerms, instantRate, issues1099K, setupHoldReason, staffAccount, stripeReady, type StaffPayoutAccount } from "./accounts";
@@ -139,7 +139,7 @@ export async function buildBatch(o: { shopId: string; kind: Exclude<TipBatchKind
         let method: TipMethod = methodOf(d.staffId);
         if (method === "payroll") method = policy.methods.includes("stripe") && !policy.methods.includes("cash") ? "stripe" : "cash";
         const holdKind: TipHoldKind | null = method !== "stripe" ? null : !canReceive(acct) ? "stripe_setup" : !directPayoutsAvailable() ? "transfers_pending" : null;
-        const holdReason = holdKind === "stripe_setup" ? setupHoldReason(acct) : holdKind ? TRANSFERS_PENDING_REASON : null;
+        const holdReason = holdKind === "stripe_setup" ? setupHoldReason(acct) : holdKind ? transfersPendingReason() : null;
         const instant = method === "stripe" && instantOnFor(policy, acct, instantFeeAck);
         [p] = await tx
           .insert(tipPayouts)
@@ -266,7 +266,9 @@ export async function releasePayout(payoutId: string, actor: Actor, now = new Da
     const b = await lockBatch(tx, p.batchId);
     if (p.method === "stripe" && !stripePayoutsOn()) throw new AppError("conflict", `${STRIPE_PAYOUTS_HELD} Take this payout out of the batch to pay it another way; its tips stay reserved until then.`);
     if (p.method === "stripe" && (b.status === "approved" || p.holdKind === "transfers_pending") && !directPayoutsAvailable())
-      throw new AppError("conflict", `${TRANSFERS_PENDING_REASON} Take this payout out of the batch to pay it in cash; otherwise its tips go through payroll at the cutoff.`);
+      throw new AppError("conflict", `${transfersPendingReason()} Take this payout out of the batch to pay it in cash; otherwise its tips go through payroll at the cutoff.`);
+    const shopHold = p.method === "stripe" && p.holdKind === "transfers_pending" ? await moneyMovement()?.holdReason?.(p.shopId, tx) : null;
+    if (shopHold) throw new AppError("conflict", `${shopHold} Take this payout out of the batch to pay it in cash; otherwise its tips go through payroll at the cutoff.`);
     if (p.method === "stripe" && (b.status === "approved" || p.holdKind === "stripe_setup")) {
       const a = await staffAccount(p.staffId, tx);
       if (!canReceive(a))
@@ -431,8 +433,8 @@ export async function sendStripePayout(payoutId: string, now = new Date()) {
   let s: ReturnType<typeof moneyClient>;
   try {
     s = moneyClient();
-  } catch (e) {
-    return markFailed(p.id, (e as Error).message);
+  } catch {
+    return holdForTransfers(p, now, LIVE_SWITCH_REASON);
   }
   if (!s || acct!.simulated) {
     const sim = (x: string) => `sim_${x}_${p.id.slice(0, 8)}${now.getTime().toString(36)}`;
@@ -448,6 +450,8 @@ export async function sendStripePayout(payoutId: string, now = new Date()) {
   }
   const mm = moneyMovement();
   if (!mm) return holdForTransfers(p, now);
+  const shopHold = (await mm.holdReason?.(p.shopId)) ?? null;
+  if (shopHold) return holdForTransfers(p, now, shopHold);
   let ids: MovedIds;
   try {
     ids = await mm.send(
@@ -523,16 +527,16 @@ export async function holdForWithdrawnConsent(staffId: string, now = new Date())
   return rows.length;
 }
 
-/** An approved Stripe payout with no transfer path yet (ST-C11): held as owed, nothing moved. Owed tips go through payroll at the cutoff, or out once transfers are on. */
-async function holdForTransfers(p: TipPayout, now: Date) {
+/** An approved Stripe payout that can't be transferred yet (live switch off, or the shop's tips aren't on the platform): held as owed, nothing moved. Owed tips go through payroll at the cutoff, or out once transfers are on. */
+async function holdForTransfers(p: TipPayout, now: Date, reason = transfersPendingReason()) {
   const [row] = await db
     .update(tipPayouts)
-    .set({ status: "held", holdKind: "transfers_pending", holdReason: TRANSFERS_PENDING_REASON, heldBy: null, heldAt: now, updatedAt: now })
+    .set({ status: "held", holdKind: "transfers_pending", holdReason: reason, heldBy: null, heldAt: now, updatedAt: now })
     .where(and(eq(tipPayouts.id, p.id), eq(tipPayouts.status, "processing"), isNull(tipPayouts.stripeTransferId), isNull(tipPayouts.stripeDebitId)))
     .returning();
   if (!row) return null;
   await recordPayoutPeriods(db, [p.id]);
-  await audit(STRIPE_ACTOR, "tips.hold", "tip_payout", p.id, { reason: TRANSFERS_PENDING_REASON, kind: "transfers_pending", staffId: p.staffId, netCents: p.netCents, from: "approved" }, p.shopId);
+  await audit(STRIPE_ACTOR, "tips.hold", "tip_payout", p.id, { reason, kind: "transfers_pending", staffId: p.staffId, netCents: p.netCents, from: "approved" }, p.shopId);
   return row;
 }
 
@@ -571,8 +575,8 @@ export async function releaseSetupHolds(staffId: string, now = new Date()) {
       const b = await lockBatch(tx, p.batchId);
       if (b.status !== "draft" && b.status !== "approved") continue;
       if (!directPayoutsAvailable()) {
-        await tx.update(tipPayouts).set({ holdKind: "transfers_pending", holdReason: TRANSFERS_PENDING_REASON, updatedAt: now }).where(eq(tipPayouts.id, p.id));
-        await audit(STRIPE_ACTOR, "tips.hold", "tip_payout", p.id, { reason: TRANSFERS_PENDING_REASON, kind: "transfers_pending", staffId: p.staffId, netCents: p.netCents, from: "held", why: "stripe_setup_done" }, p.shopId, tx);
+        await tx.update(tipPayouts).set({ holdKind: "transfers_pending", holdReason: transfersPendingReason(), updatedAt: now }).where(eq(tipPayouts.id, p.id));
+        await audit(STRIPE_ACTOR, "tips.hold", "tip_payout", p.id, { reason: transfersPendingReason(), kind: "transfers_pending", staffId: p.staffId, netCents: p.netCents, from: "held", why: "stripe_setup_done" }, p.shopId, tx);
         continue;
       }
       const { policyOf } = await shopTipConfigs([p.shopId], tx);

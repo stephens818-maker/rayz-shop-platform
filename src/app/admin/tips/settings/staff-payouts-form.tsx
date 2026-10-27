@@ -50,8 +50,8 @@ export function StaffPayoutsForm({ settings, directPayouts }: { settings: StaffP
       <div className="space-y-3 p-4">
         {!directPayouts && (
           <Notice tone="blue">
-            Direct Stripe payouts aren&rsquo;t turned on yet (the money flow is being redesigned). Stripe tips are owed until then; with owed tips through payroll, they&rsquo;re paid with the
-            paycheck at the cutoff.
+            Direct Stripe payouts are off in this deployment: live Stripe keys wait for the CPA&rsquo;s sign-off (MONEY_MOVEMENT_LIVE). Stripe tips are owed until then; with owed tips through
+            payroll, they&rsquo;re paid with the paycheck at the cutoff.
           </Notice>
         )}
         <div className="grid gap-3 sm:grid-cols-2">

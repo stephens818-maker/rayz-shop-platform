@@ -2624,7 +2624,7 @@ export const tipPayouts = pgTable(
     ackMethod: text("ack_method").$type<"pin" | "name">(),
     ackName: text("ack_name"),
     holdReason: text("hold_reason"),
-    /** manager = held by hand; stripe_setup = waiting for the employee to finish Stripe payout setup, released on its own when they do; transfers_pending = no transfer path yet (owed, paid through payroll at the cutoff). */
+    /** manager = held by hand; stripe_setup = waiting for the employee to finish Stripe payout setup, released on its own when they do; transfers_pending = can't be transferred yet: live keys before MONEY_MOVEMENT_LIVE, or the shop's card tips aren't on the platform (owed, paid through payroll at the cutoff). */
     holdKind: text("hold_kind").$type<TipHoldKind>(),
     heldBy: uuid("held_by"),
     heldAt: ts("held_at"),

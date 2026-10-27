@@ -63,6 +63,8 @@ beforeAll(async () => {
     .where(m.drizzle.sql`${m.schema.shops.tipPayouts} = '{}'::jsonb`);
   await tl.syncTipLedger();
   await tl.recordOpeningTips(m.time.addDays(today, 1));
+  // Each test picks its transfer path; the platform's is the default outside tests.
+  mm.registerMoneyMovement(null);
 }, 180_000);
 
 afterEach(() => {

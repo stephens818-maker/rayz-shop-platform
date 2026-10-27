@@ -5,8 +5,9 @@
  * of a barber's Stripe account and the identity the iSolved tips-paid export is final on. Pure, so
  * every rule is tested without Stripe or a database (tests/staff-payouts.test.ts).
  *
- * Money only moves through the money-movement module, which stays abstract until the separate
- * charges and transfers design (ST-C11) is signed off: with no transfer path, tips are owed and go
+ * Money only moves through the money-movement module (ST-C11, separate charges and transfers): a
+ * transfer from the platform balance, then a payout. Whatever can't be sent that way yet (live keys
+ * before MONEY_MOVEMENT_LIVE, a shop whose card tips settle to its own account) is owed and goes
  * through payroll at the pay period cutoff.
  */
 import { addDays, type LocalDate } from "@/lib/time";

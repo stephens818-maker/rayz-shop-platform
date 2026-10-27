@@ -1,12 +1,12 @@
 /**
- * Employees' Stripe tip payouts against a stand-in Stripe client that records every call, with the
- * money-movement module kept abstract (ST-C11 pending): test mode only; no transfer path registered
- * means approved payouts are held as owed and nothing moves; a registered implementation is asked for
- * exactly what reaches the employee and what it costs the shop, and unwinds a failed payout; and the
- * Connect webhooks keep each bank account and card with its last 4 only.
+ * Employees' Stripe tip payouts against a stand-in Stripe client that records every call: test mode
+ * only; with no transfer path, approved payouts are held as owed and nothing moves; a transfer path is
+ * asked for exactly what reaches the employee and what it costs the shop, and unwinds a failed payout;
+ * the platform transfer path (ST-C11) moves tips for brand-settled shops and holds the rest as owed;
+ * and the Connect webhooks keep each bank account and card with its last 4 only.
  */
 import Stripe from "stripe";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { CONSENT_HOLD_REASON, TIP_DEPOSIT_CONSENT_TEXT, TIP_DEPOSIT_CONSENT_VERSION } from "@/domain/tip-deposit-consent";
 import { Mods, actor, agreeToStripeDeposits, loadModules } from "./setup";
 
@@ -28,7 +28,10 @@ const record = (op: string, prefix: string) => async (params: Record<string, unk
 };
 const fake = {
   charges: { create: record("debit", "py") },
-  transfers: { create: record("transfer", "tr") },
+  transfers: {
+    create: record("transfer", "tr"),
+    createReversal: async (id: string, params: Record<string, unknown>, opts?: Record<string, unknown>) => (calls.push({ op: "reversal", params: { id, ...params }, opts }), { id: `trr_fake_${++n}` }),
+  },
   payouts: { create: record("payout", "po") },
   refunds: { create: record("refund", "re") },
   accounts: {
@@ -43,7 +46,7 @@ const fake = {
   accountSessions: { create: record("account_session", "accs") },
 };
 const fakeStripe = (on: boolean) => ((globalThis as { __fakeStripe?: unknown }).__fakeStripe = on ? fake : undefined);
-const STRIPE_MONEY = ["debit", "transfer", "payout", "refund"];
+const STRIPE_MONEY = ["debit", "transfer", "payout", "refund", "reversal"];
 
 let m: Mods;
 let tl: typeof import("@/server/tips/ledger");
@@ -68,6 +71,8 @@ beforeAll(async () => {
     .where(m.drizzle.sql`${m.schema.shops.tipPayouts} = '{}'::jsonb`);
   await tl.syncTipLedger();
   await tl.recordOpeningTips(m.time.addDays(today, 1));
+  // Each test picks its transfer path; the platform's is the default outside tests.
+  mm.registerMoneyMovement(null);
 }, 180_000);
 
 afterEach(() => {
@@ -177,7 +182,7 @@ async function payOne(shopId: string, staffId: string, tipCents: number) {
 }
 
 describe("test mode only", () => {
-  it("live keys are refused for employee accounts, onboarding and approving Stripe payouts, unless MONEY_MOVEMENT_LIVE is on", async () => {
+  it("live keys are refused for employee accounts and onboarding, and Stripe payouts are held as owed, unless MONEY_MOVEMENT_LIVE is on", async () => {
     const { shop, staffId } = await person("moline", "Jen");
     await tipSale(shop.id, staffId, 1200);
     fakeStripe(true);
@@ -188,11 +193,15 @@ describe("test mode only", () => {
     await expect(accounts.staffAccountSession(staffId, actor)).rejects.toThrow(/test mode only/);
 
     await readyOnStripe(staffId, "acct_fake_jen", false);
-    movement();
+    const { sent: moved } = movement();
+    calls.length = 0;
     const r = await tp.buildBatch({ shopId: shop.id, kind: "manual", cutoff: today, actor });
-    await expect(tp.approveBatch(r.batchId, actor)).rejects.toThrow(/test mode only/);
-    expect((await m.db.db.query.tipPayoutBatches.findFirst({ where: eq(s().tipPayoutBatches.id, r.batchId) }))!.status).toBe("draft");
-    await tp.cancelBatch(r.batchId, "Test over", actor);
+    const [held] = await m.db.db.select().from(s().tipPayouts).where(and(eq(s().tipPayouts.batchId, r.batchId), eq(s().tipPayouts.staffId, staffId)));
+    expect(held).toMatchObject({ method: "stripe", status: "held", holdKind: "transfers_pending", holdReason: mm.LIVE_SWITCH_REASON });
+    await tp.approveBatch(r.batchId, actor);
+    expect(moved).toEqual([]);
+    expect(calls.filter((c) => STRIPE_MONEY.includes(c.op))).toEqual([]);
+    await expect(tp.releasePayout(held.id, actor)).rejects.toThrow(/until the CPA signs off/);
 
     process.env.MONEY_MOVEMENT_LIVE = "true";
     expect(mm.moneyMovementReady()).toBe(true);
@@ -203,7 +212,7 @@ describe("test mode only", () => {
   });
 });
 
-describe("the money-movement module stays abstract (ST-C11 pending)", () => {
+describe("the money-movement module, with a stand-in transfer path", () => {
   it("with no transfer path registered, an approved Stripe payout is held as owed, nothing moves, and it can't be released until one is", async () => {
     const { shop, staffId } = await person("moline", "Sara");
     await readyOnStripe(staffId, "acct_fake_sara_owed", false);
@@ -213,7 +222,7 @@ describe("the money-movement module stays abstract (ST-C11 pending)", () => {
     expect(stripeMoney).toEqual([]);
     expect(sent).toMatchObject({ status: "held", holdKind: "transfers_pending", holdReason: mm.TRANSFERS_PENDING_REASON, stripeTransferId: null, stripeDebitId: null, stripePayoutId: null });
     expect(await m.db.db.select().from(s().tipLedger).where(eq(s().tipLedger.payoutId, sent.id))).not.toEqual([]);
-    await expect(tp.releasePayout(sent.id, actor)).rejects.toThrow(/aren't switched on yet/);
+    await expect(tp.releasePayout(sent.id, actor)).rejects.toThrow(/aren't switched on in this deployment/);
     expect((await payoutRow(sent.id)).status).toBe("held");
 
     const { sent: moved } = movement();
@@ -306,6 +315,80 @@ describe("the money-movement module stays abstract (ST-C11 pending)", () => {
     const [back] = await m.db.db.select().from(s().tipPayouts).where(and(eq(s().tipPayouts.batchId, again.batchId), eq(s().tipPayouts.staffId, staffId)));
     expect(back.netCents).toBe(700);
     await tp.cancelBatch(again.batchId, "Test over", actor);
+  });
+});
+
+describe("the platform transfer path (ST-C11, separate charges and transfers)", () => {
+  const usePlatform = () => mm.registerMoneyMovement(mm.platformTipTransfers);
+  const setMode = (shopId: string, mode: "brand" | "connected") => m.db.db.update(s().shops).set({ paymentsMode: mode }).where(eq(s().shops.id, shopId));
+
+  it("a brand-settled shop: a transfer from the platform balance to the employee's account, then their payout, each idempotent on the payout's id, with no account debit", async () => {
+    const { shop, staffId } = await person("silvis", "Abigail");
+    await setMode(shop.id, "brand");
+    onTestFinished(() => setMode(shop.id, "connected"));
+    await readyOnStripe(staffId, "acct_fake_abigail", false);
+    usePlatform();
+    const { draft, sent, stripeMoney } = await payOne(shop.id, staffId, 1800);
+    expect(stripeMoney.map((c) => c.op)).toEqual(["transfer", "payout"]);
+    const [tr, po] = stripeMoney;
+    expect(tr.params).toMatchObject({ amount: 1800, currency: "usd", destination: "acct_fake_abigail", transfer_group: `tips-${draft.batchId}`, metadata: { tipPayoutId: draft.id } });
+    expect(tr.params).not.toHaveProperty("source_transaction");
+    expect(tr.opts).toEqual({ idempotencyKey: `tip-${draft.id}-transfer` });
+    expect(po.params).toMatchObject({ amount: 1800, currency: "usd", method: "standard", statement_descriptor: "RAYZ TIPS" });
+    expect(po.opts).toEqual({ stripeAccount: "acct_fake_abigail", idempotencyKey: `tip-${draft.id}-payout` });
+    expect(sent).toMatchObject({ status: "processing", stripeDebitId: null, stripeTransferId: tr.id, stripePayoutId: po.id });
+    const [audit] = await m.db.db.select().from(s().auditLog).where(and(eq(s().auditLog.action, "tips.stripe_sent"), eq(s().auditLog.entityId, draft.id)));
+    expect(audit.details).toMatchObject({ via: "platform_transfers", amountCents: 1800 });
+  });
+
+  it("a shop on its own Stripe account keeps its card tips there, so its payouts are held as owed and nothing moves", async () => {
+    const { shop, staffId } = await person("moline", "Sara");
+    await readyOnStripe(staffId, "acct_fake_sara_connected", false);
+    usePlatform();
+    expect(mm.directPayoutsAvailable()).toBe(true);
+    const { sent, stripeMoney } = await payOne(shop.id, staffId, 900);
+    expect(stripeMoney).toEqual([]);
+    expect(sent).toMatchObject({ status: "held", holdKind: "transfers_pending", holdReason: mm.CONNECTED_SHOP_REASON, stripeTransferId: null });
+    await expect(tp.releasePayout(sent.id, actor)).rejects.toThrow(/settle to its own Stripe account/);
+  });
+
+  it("live keys without MONEY_MOVEMENT_LIVE: direct payouts are off and holds say it waits for the CPA's sign-off", async () => {
+    usePlatform();
+    fakeStripe(true);
+    process.env.STRIPE_SECRET_KEY = "sk_live_not_real";
+    expect(mm.directPayoutsAvailable()).toBe(false);
+    expect(mm.transfersPendingReason()).toBe(mm.LIVE_SWITCH_REASON);
+    process.env.MONEY_MOVEMENT_LIVE = "true";
+    expect(mm.directPayoutsAvailable()).toBe(true);
+  });
+
+  it("a payout Stripe refuses after the transfer: the payout fails, the transfer is reversed once, and the tips go back for the next batch", async () => {
+    const { shop, staffId } = await person("silvis", "Abigail");
+    await setMode(shop.id, "brand");
+    onTestFinished(() => setMode(shop.id, "connected"));
+    await readyOnStripe(staffId, "acct_fake_abigail_fail", false);
+    usePlatform();
+    const ok = fake.payouts.create;
+    fake.payouts.create = async () => {
+      throw new Error("Insufficient funds in Stripe account");
+    };
+    onTestFinished(() => void (fake.payouts.create = ok));
+    const { draft, sent, stripeMoney } = await payOne(shop.id, staffId, 600);
+    expect(sent).toMatchObject({ status: "failed", failureMessage: "Stripe: Insufficient funds in Stripe account", stripeTransferId: expect.stringMatching(/^tr_fake_/), stripePayoutId: null });
+    expect(stripeMoney.map((c) => c.op)).toEqual(["transfer", "reversal"]);
+    const reversals = calls.filter((c) => c.op === "reversal");
+    expect(reversals).toEqual([{ op: "reversal", params: { id: sent.stripeTransferId, metadata: { tipPayoutId: draft.id } }, opts: { idempotencyKey: `tip-${draft.id}-reverse` } }]);
+    expect(await m.db.db.select().from(s().tipLedger).where(eq(s().tipLedger.payoutId, draft.id))).toEqual([]);
+    expect(await tp.markFailed(draft.id, "again")).toBeNull();
+    expect(calls.filter((c) => c.op === "reversal")).toHaveLength(1);
+  });
+
+  it("a transfer Stripe already reversed isn't reversed again", async () => {
+    fakeStripe(true);
+    calls.length = 0;
+    const r = await mm.platformTipTransfers.unwind({ key: "tip-x", ids: { debitId: null, transferId: "tr_already", payoutId: null }, transferReversed: true, metadata: {} });
+    expect(r).toEqual({ ok: true, errors: [] });
+    expect(calls).toEqual([]);
   });
 });
 

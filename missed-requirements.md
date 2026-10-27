@@ -938,7 +938,8 @@ Stripe can't transfer from a shop's connected account to a barber's, so the mone
 - [x] Tests: `tests/staff-payouts.test.ts`, `tests/db/staff-payouts.test.ts`, `tests/db/tip-stripe.test.ts`, and the updated tip, onboarding and staff API tests.
 
 **Not done yet:**
-- [ ] ST-C11: the transfer path itself (a `MoneyMovement` implementation), once Charles signs off. Mobile (bc-645fbcc0) owns Connect charges; the request is in NOTES-SYNC.md.
+- [x] ST-C11: the transfer path (`platformTipTransfers`): a platform-balance transfer to the employee's account, then their payout, with a reversal if the payout fails. Tested against a stand-in Stripe. It pays shops that settle to the brand's account; live money waits for `MONEY_MOVEMENT_LIVE` (the CPA).
+- [ ] ST-C11, the charge side: shops on their own connected accounts need `chargeCard` to leave card tips on the platform (mobile, bc-645fbcc0; NOTES-SYNC Requests). Until then their payouts are held as owed and go through payroll.
 - [ ] Embedded components on the web: My banking still uses the Account Link, since `@stripe/connect-js` isn't installed. The staff app uses the Account Session.
 - [ ] A run against real Stripe test mode (recipient accounts, the Account Session, the webhooks); the tests use a stand-in client.
 
@@ -984,7 +985,7 @@ README "Staff app API → Staff delta for Squire" has the details. Migrations `c
 
 **Held or not done yet:**
 - [ ] ST-C5's exact punches, cross-shop weekly overtime and buddy-punch rules: held until iSolved Time is decided.
-- [ ] ST-C11 / I10, separate charges and transfers: pending Charles.
+- [ ] ST-C11 / I10: the tip transfers are built (section 40); the charge side for connected shops is mobile's.
 - [ ] Legal review of the privacy notice and the agency details. The release gate fails until it's done (DEPLOY step 44).
 - [ ] The CPA's confirmation of the new iSolved columns, the 45B start and the state rates.
 - [ ] The staff app's screens (two-step setup, step-up, pairing, deposit consent, data protection, Question my pay, paystub labels), by the Rayz App builder. The API is ready.
@@ -1049,7 +1050,7 @@ The iSolved file's columns, headers, order and codes stay exactly as in Charles'
 
 ## Deferred by decision
 
-- I10 stays on destination charges for customers; `payment_transfers` isn't built, and tips aren't transferred to shops separately. Tip payouts to employees (sections 15, 35 and 40) don't move money yet: Stripe can't transfer from a shop's connected account to a barber's, and the redesign as separate charges and transfers (ST-C11) waits for Charles.
+- I10 stays on destination charges for customers until mobile's charge side lands. Tip payouts to employees (sections 15, 35 and 40) move by platform transfer for brand-settled shops. They're held as owed for connected shops until then, and stay test mode only until the CPA signs off (`MONEY_MOVEMENT_LIVE`).
 - The Q11/C2 training setting stays a setting until Charles answers Q11 (on by default since section 46).
 - PR #8 isn't merged.
 - `DEMO_MODE` isn't turned on in production, because it would break the Vercel demo.

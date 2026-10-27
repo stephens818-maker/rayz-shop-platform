@@ -79,7 +79,7 @@ export default async function PayoutTrackerPage({ searchParams }: { searchParams
         ))}
       </div>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-        <Stat label="Owed" value={formatCents(t.owed.cents)} hint={`${t.owed.payouts} held payout${t.owed.payouts === 1 ? "" : "s"}: ${formatCents(t.owed.setupCents)} waiting on setup, ${formatCents(t.owed.transfersCents)} waiting on a transfer path`} />
+        <Stat label="Owed" value={formatCents(t.owed.cents)} hint={`${t.owed.payouts} held payout${t.owed.payouts === 1 ? "" : "s"}: ${formatCents(t.owed.setupCents)} waiting on setup, ${formatCents(t.owed.transfersCents)} waiting to be transferred`} />
         <Stat label="Sent, not paid yet" value={formatCents(t.inFlightCents)} />
         <Stat label="Payouts (60 days)" value={String(t.payouts.length)} />
       </div>
