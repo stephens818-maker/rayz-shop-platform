@@ -202,5 +202,7 @@ export async function myTips(staffId: string, shopIds: readonly string[], today:
     .where(and(eq(tipPayouts.staffId, staffId), inArray(tipPayouts.shopId, [...shopIds]), gte(tipPayouts.createdAt, new Date(Date.now() - 400 * 86_400_000))))
     .orderBy(desc(tipPayouts.createdAt))
     .limit(100);
-  return { policy, perShop, total, payouts, recent: rows.filter((r) => r.businessDate >= addDays(today, -60)) };
+  const waiting = payouts.filter((p) => p.status === "held" && p.holdKind === "stripe_setup");
+  const waitingForSetup = { cents: waiting.reduce((a, p) => a + p.netCents, 0), payouts: waiting.length };
+  return { policy, perShop, total, payouts, waitingForSetup, recent: rows.filter((r) => r.businessDate >= addDays(today, -60)) };
 }

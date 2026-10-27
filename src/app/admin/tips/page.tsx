@@ -148,6 +148,11 @@ export default async function TipsPage() {
         <CardHeader
           title="Payout accounts"
           subtitle="How each person is paid and whether Stripe can pay them. Bank and card details stay with Stripe: you see only the status and the last 4 digits."
+          action={
+            <LinkButton size="sm" variant="secondary" href="/admin/tips/onboarding">
+              Payout onboarding
+            </LinkButton>
+          }
         />
         {accounts.length ? (
           <Table>

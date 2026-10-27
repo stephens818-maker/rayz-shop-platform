@@ -40,6 +40,7 @@ import {
   staffOnboardingUrl,
 } from "@/server/tips/accounts";
 import { ledgerRows, myTips, shopTipConfigs } from "@/server/tips/ledger";
+import { waitingForSetup } from "@/server/tips/payouts";
 import type { StaffAppContext } from "./http";
 
 /** Where Stripe's hosted pages send the app's browser back to (a public page that opens the app). */
@@ -88,10 +89,11 @@ export async function myTipsView(ctx: StaffAppContext, days = 14, today: LocalDa
 export async function myPayouts(ctx: StaffAppContext) {
   const me = ctx.staff.id;
   const shopRows = await myShops(me);
-  if (!shopRows.length) return { payouts: [] };
+  if (!shopRows.length) return { waitingForSetup: { cents: 0, payouts: 0 }, payouts: [] };
   const name = new Map(shopRows.map((s) => [s.id, s.name]));
   const t = await myTips(me, shopRows.map((s) => s.id));
   return {
+    waitingForSetup: t.waitingForSetup,
     payouts: t.payouts
       .filter((p) => p.method !== "prior" && p.status !== "cancelled")
       .map((p) => ({
@@ -101,7 +103,8 @@ export async function myPayouts(ctx: StaffAppContext) {
         method: p.method,
         instant: p.instant,
         status: p.status,
-        statusLabel: STATUS_LABEL[p.status as keyof typeof STATUS_LABEL] ?? p.status,
+        statusLabel: p.holdKind === "stripe_setup" && p.status === "held" ? "Waiting for your Stripe setup" : (STATUS_LABEL[p.status as keyof typeof STATUS_LABEL] ?? p.status),
+        waitingForSetup: p.status === "held" && p.holdKind === "stripe_setup",
         failureMessage: p.failureMessage,
         tipsCents: p.grossCents + p.adjustCents,
         feesCents: p.feeCents + employeeFeeCents(p),
@@ -194,7 +197,7 @@ export async function bankingView(ctx: StaffAppContext, o: { refresh?: boolean }
   const shopRows = await myShops(me);
   if (o.refresh) await refreshStaffAccount(me).catch(() => null);
   const ids = shopRows.map((s) => s.id);
-  const [{ policy, byShop, policyOf }, acct, planned] = await Promise.all([shopTipConfigs(ids), staffAccount(me), tipOverrides([me])]);
+  const [{ policy, byShop, policyOf }, acct, planned, waiting] = await Promise.all([shopTipConfigs(ids), staffAccount(me), tipOverrides([me]), waitingForSetup([me])]);
   const state = staffAccountState(acct);
   const dest = accountDestination(acct);
   const list = externalAccountsView(acct);
@@ -219,6 +222,7 @@ export async function bankingView(ctx: StaffAppContext, o: { refresh?: boolean }
       payoutsEnabled: !!acct?.payoutsEnabled,
     },
     externalAccounts: list.length,
+    waitingForSetup: waiting.get(me) ?? { cents: 0, payouts: 0 },
     instant: {
       allowed: policy.instantAllowed,
       eligible: !!acct?.instantEligible,

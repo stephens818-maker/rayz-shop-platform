@@ -54,14 +54,20 @@ const OPS: Op[] = [
   { method: "post", path: "/clock/kiosk/status", tag: "Front-desk clock", summary: "Their PIN, then what they can punch next. Five wrong PINs lock theirs for five minutes.", permission: "timeclock.kiosk", body: S.KioskStatusBody, kiosk: true },
   { method: "post", path: "/clock/kiosk/punch", tag: "Front-desk clock", summary: "Punch (in, out, break start or end) as the person whose PIN was typed.", permission: "timeclock.kiosk", body: S.KioskPunchBody, kiosk: true },
   { method: "get", path: "/tips", tag: "Tips and pay", summary: "Their tips (S3): today, settling, ready, in a payout, paid out; how each shop pays them; history by ticket.", permission: "tips.own", query: S.TipsQuery },
-  { method: "get", path: "/payouts", tag: "Tips and pay", summary: "Their tip payouts: method, status and what they got after fees.", permission: "tips.own" },
+  {
+    method: "get",
+    path: "/payouts",
+    tag: "Tips and pay",
+    summary: "Their tip payouts: method, status and what they got after fees. waitingForSetup marks a payout held until they finish Stripe payout setup; it goes out on its own then.",
+    permission: "tips.own",
+  },
   { method: "get", path: "/earnings", tag: "Tips and pay", summary: "Day by day: net sales (report.my_sales.view with reports.money), tips (tips.own) and commission (compensation.own, where the brand has compensation on). Parts they may not see are null.", permission: "Any of those", query: S.EarningsQuery },
   {
     method: "get",
     path: "/banking",
     tag: "Banking",
     summary:
-      "Their Stripe Connect Express account: the account id, status, onboarding step (start, resume, update or done), Stripe's requirements (due, pending, deadline), the default card or bank's type, name and last 4, and instant payouts (allowed, the card they go to, the fee and who pays it). Never a number.",
+      "Their Stripe Connect Express account: the account id, status, onboarding step (start, resume, update or done), Stripe's requirements (due, pending, deadline), the default card or bank's type, name and last 4, and instant payouts (allowed, the card they go to, the fee and who pays it). waitingForSetup: tips approved for them and waiting until Stripe can pay them. Never a number.",
     permission: "tips.own",
     query: S.BankingQuery,
   },

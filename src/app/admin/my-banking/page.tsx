@@ -13,6 +13,7 @@ import { guardPage } from "@/server/auth/staff";
 import { connectMode } from "@/server/payments/connect";
 import { accountDestination, bankingActivity, externalAccountsView, refreshStaffAccount, staffAccount, staffAccountState } from "@/server/tips/accounts";
 import { shopTipConfigs } from "@/server/tips/ledger";
+import { waitingForSetup } from "@/server/tips/payouts";
 import { tipOverrides } from "@/server/compensation";
 import { PayoutChoice, StripeSetup } from "./client";
 
@@ -38,6 +39,10 @@ function activityText(a: Activity): string {
       return "Opened Stripe's page to add what it asked for";
     case "tips.onboarding_simulated":
       return "Setup finished (simulator)";
+    case "tips.onboarding_invite":
+      return "Invited to set up Stripe payouts under Ray'z";
+    case "tips.onboarding_reminder":
+      return "Reminded to finish Stripe payout setup";
     case "tips.account_state":
       return `Status changed from ${BANKING_STATUS_LABEL[d.from as BankingStatus] ?? d.from} to ${BANKING_STATUS_LABEL[d.to as BankingStatus] ?? d.to}`;
     case "tips.destination_changed": {
@@ -63,7 +68,14 @@ export default async function MyBankingPage({ searchParams }: { searchParams: Pr
   const shopRows = assigned.length ? await db.select({ id: shops.id, name: shops.name }).from(shops).where(and(inArray(shops.id, assigned), ne(shops.status, "archived"))) : [];
   if (!shopRows.length) return <Empty title="You aren't on a shop's team yet">Ask a manager to add you to a shop.</Empty>;
   if (sp.stripe) await refreshStaffAccount(me).catch(() => null);
-  const [{ policy, policyOf, byShop }, acct, activity, planned] = await Promise.all([shopTipConfigs(shopRows.map((s) => s.id)), staffAccount(me), bankingActivity(me), tipOverrides([me])]);
+  const [{ policy, policyOf, byShop }, acct, activity, planned, waitingByStaff] = await Promise.all([
+    shopTipConfigs(shopRows.map((s) => s.id)),
+    staffAccount(me),
+    bankingActivity(me),
+    tipOverrides([me]),
+    waitingForSetup([me]),
+  ]);
+  const waiting = waitingByStaff.get(me);
   const status = staffAccountState(acct);
   const dest = accountDestination(acct);
   const accounts = externalAccountsView(acct);
@@ -87,6 +99,14 @@ export default async function MyBankingPage({ searchParams }: { searchParams: Pr
       />
       {sp.stripe === "return" && status !== "ready" && <Notice>{status === "pending_verification" ? "Thanks. Stripe is checking your details now." : "Stripe still needs a few details before it can pay you."}</Notice>}
       {sp.stripe === "refresh" && <Notice>Stripe&rsquo;s page expired. Open it again below.</Notice>}
+      {waiting && waiting.payouts > 0 && (
+        <Notice>
+          {formatCents(waiting.cents)} in approved tips is waiting for your Stripe setup. Nothing is lost: it goes out on its own as soon as Stripe can pay you.
+        </Notice>
+      )}
+      {status === "not_set_up" && paidByStripe && (
+        <Notice tone="blue">Everyone sets up a new Stripe payout account under Ray&rsquo;z, even if you had one with Squire. It takes about 5 minutes.</Notice>
+      )}
       {policy.methods.includes("stripe") ? (
         <Card>
           <CardHeader title="Stripe payout account" subtitle="Your own debit card or bank account, set up and changed on Stripe's secure pages." />

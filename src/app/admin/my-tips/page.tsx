@@ -3,7 +3,7 @@ import Link from "next/link";
 import { and, inArray, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { shops } from "@/db/schema";
-import { Badge, Card, CardHeader, Empty, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
+import { Badge, Card, CardHeader, Empty, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
 import { BANKING_STATUS_LABEL, BANKING_STATUS_TONE, destinationLabel } from "@/domain/banking";
 import { ENTRY_STATUS_LABEL, METHOD_LABEL, STATUS_LABEL, effectiveMethod, employeeFeeCents, entryStatus, receivedCents } from "@/domain/tips";
 import { formatCents } from "@/lib/money";
@@ -50,6 +50,15 @@ export default async function MyTipsPage({ searchParams }: { searchParams: Promi
         <Stat label="In a payout" value={formatCents(t.total.inPayoutCents)} hint="being approved or sent" />
         <Stat label="Paid out" value={formatCents(t.total.paidOutCents)} />
       </div>
+      {t.waitingForSetup.payouts > 0 && (
+        <Notice tone="amber">
+          {formatCents(t.waitingForSetup.cents)} in approved tips is waiting for you. Nothing is lost: it goes out on its own as soon as you finish{" "}
+          <Link className="underline" href="/admin/my-banking">
+            Stripe payout setup
+          </Link>
+          .
+        </Notice>
+      )}
       <Card>
         <CardHeader
           title="How you're paid"
@@ -114,7 +123,7 @@ export default async function MyTipsPage({ searchParams }: { searchParams: Promi
                       {p.instant ? " (instant)" : ""}
                     </Td>
                     <Td>
-                      <Badge tone={PAYOUT_STATUS_TONE[p.status]}>{STATUS_LABEL[p.status]}</Badge>
+                      <Badge tone={PAYOUT_STATUS_TONE[p.status]}>{p.status === "held" && p.holdKind === "stripe_setup" ? "Waiting for your Stripe setup" : STATUS_LABEL[p.status]}</Badge>
                       {p.failureMessage && <span className="ml-2 text-xs text-red-600">{p.failureMessage}</span>}
                     </Td>
                     <Td right>{formatCents(p.grossCents + p.adjustCents)}</Td>
