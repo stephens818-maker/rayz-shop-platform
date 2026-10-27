@@ -101,6 +101,7 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    | `CONNECT_FEE_KEYED`, `CONNECT_FEE_TERMINAL` | optional: the processing fee passed on to each shop, e.g. `2.9%+30` and `2.7%+5` (the defaults) |
    | `STRIPE_STATEMENT_PREFIX` | optional: the start of card statements for shops on the brand account (default `RAYZ`, shown as `RAYZ* CLINTON`). It should match the brand account's shortened descriptor in Stripe. |
    | `TIP_INSTANT_FEE` | optional: Stripe's instant payout fee taken from an employee's instant tip payout, as a percentage and a minimum in cents, e.g. `1.5%min50` (the default) |
+   | `STAFF_IOS_BUNDLE_ID`, `STAFF_ANDROID_PACKAGE`, `STAFF_ANDROID_CERT_SHA256` | optional: the Ray'z Staff app's iOS bundle id (with `APPLE_TEAM_ID`), Android package and signing-cert SHA-256 fingerprints (comma-separated), so Stripe's return and refresh pages open in the staff app (universal links and App Links). Off until set |
    | `NOTIFICATIONS_*` | leave `disabled` until the shop goes live (see the README's cutover plan) |
    | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` | the Twilio account, for texts, call-in calls and the shop line. Set `NOTIFICATIONS_SMS_PROVIDER` and `NOTIFICATIONS_VOICE_PROVIDER` to `twilio` when the shop goes live. |
    | `TWILIO_MESSAGING_SERVICE_SID`, `TWILIO_FROM` | optional fallbacks for shops without their own Twilio number |
@@ -327,6 +328,12 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
 41. Payroll reports (migrations `core_0106_payroll_export_sends` and `core_0107_payroll_export_sends_scrub`): they add the `payroll_export_sends` table (one row per pay period marked sent to iSolved, its note scrubbed like every other note) and gives Brand Admin and Bookkeeper view and export of the eight payroll reports. Brand Owner has them already. No location role or shop login gets them.
    - Nothing to configure. Pay periods come from **Payroll → Setup** (bi-weekly by default).
    - After each period's Timecard Import upload, mark it sent on **Reports → Payroll → iSolved export preview**.
+42. Staff payouts update (migrations `core_0108_staff_payouts` and `core_0109_tip_employer_backfill`): they add the `staff_payouts` brand setting, the account state columns, `payroll_employers` (from each pay group's legal entity, with only the last 4 of an EIN), each tip's employer tag (backfilled, and filled in once a shop gets a pay group), `tip_absorptions`, `tax_form_checks`, and the permissions `payouts.view`, `payouts.manage`, `payouts.chain` and the Tips paid report. Managers get view and manage at their shops; Bookkeeper gets view and every shop.
+   - **No tip moves through Stripe yet.** The transfer path waits for ST-C11 (separate charges and transfers, Charles's sign-off). Until then approved Stripe tip payouts are held as owed and paid through payroll at approve and lock.
+   - New barber accounts are recipient accounts with no Stripe Dashboard (**Tip payout settings → Staff payouts**). In the Stripe Dashboard, under **Connect → Settings**, make sure recipient accounts and the transfers capability are enabled for the platform.
+   - For the staff app's universal links and App Links, set `STAFF_IOS_BUNDLE_ID` (with `APPLE_TEAM_ID`), `STAFF_ANDROID_PACKAGE` and `STAFF_ANDROID_CERT_SHA256`, then check `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json`.
+   - Under **Payroll → Setup → Employers**, enter each employer's iSolved company code and the last 4 of its EIN. The Tips paid export stays a draft until they're set.
+   - Each January, record the tax form check on **Tips → Payout tracker** after importing the 1099 exclusions in Stripe.
 
 ## Running the production build locally
 

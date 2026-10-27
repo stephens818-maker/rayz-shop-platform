@@ -914,9 +914,31 @@ Confirmed with Charles: iSolved is the payroll company and keeps computing paych
 - [ ] Whether franchisee owners should get the payroll reports (they have the older tip reports today). Off until he says.
 - [ ] That "sent" is marked by hand after the Timecard Import upload; there's no iSolved API to confirm it.
 
+## 40. Staff payouts update (Rayz App builder, ST-I9 to ST-I15, ST-C12 to ST-C15)
+
+Stripe can't transfer from a shop's connected account to a barber's, so the money flow is being redesigned as separate charges and transfers (ST-C11, pending Charles). This update leaves the transfer path out and keeps money movement abstract. README "Tip payouts → Staff payouts update" has the details. Migrations `core_0108_staff_payouts` and `core_0109_tip_employer_backfill`.
+
+- [x] ST-I9: one recipient connected account per barber: no Stripe Dashboard, the transfers capability only, the recipient service agreement, Ray'z paying fees and losses. Embedded onboarding through an Account Session (`POST /api/staff/v1/banking/account-session`), with an Account Link as the fallback.
+- [x] ST-C12: Connect webhooks drive a seven-state machine (not started, in progress, pending verification, requirements due, restricted, active, rejected), each move audited.
+- [x] ST-C13: Reports → Payroll → Tips paid and its iSolved CSV per pay period, employer and employee, final only when earned = via Stripe + cash + through payroll + owed to the cent, the period is locked and the codes are set.
+- [x] ST-C14: owed tips (no active account, or no transfer path) are paid through payroll at approve and lock, claimed once and never paid again.
+- [x] ST-C15: a full refund within the window (7 days by default) reverses the tip; partial and later refunds and card disputes are absorbed by the shop; both are in the export.
+- [x] ST-I11: the payout tracker with `payouts.view`, `payouts.manage` and `payouts.chain`.
+- [x] ST-I12: Instant Payouts opt-in, off by default, on only after the barber accepts the fee as shown.
+- [x] ST-I13: tax forms set to will not file, with a yearly check and a weekly reminder until it's recorded.
+- [x] ST-I14: every tip and absorbed tip tagged with its shop and employer (the EIN's last 4 only).
+- [x] ST-I15: HTTPS return and refresh pages, with the staff app's universal links and App Links in the `.well-known` files.
+- [x] Tip date defaults to the sale date. Every rule is a brand setting (**Tip payout settings → Staff payouts**).
+- [x] Tests: `tests/staff-payouts.test.ts`, `tests/db/staff-payouts.test.ts`, `tests/db/tip-stripe.test.ts`, and the updated tip, onboarding and staff API tests.
+
+**Not done yet:**
+- [ ] ST-C11: the transfer path itself (a `MoneyMovement` implementation), once Charles signs off. Mobile (bc-645fbcc0) owns Connect charges; the request is in NOTES-SYNC.md.
+- [ ] Embedded components on the web: My banking still uses the Account Link, since `@stripe/connect-js` isn't installed. The staff app uses the Account Session.
+- [ ] A run against real Stripe test mode (recipient accounts, the Account Session, the webhooks); the tests use a stand-in client.
+
 ## Deferred by decision
 
-- I10 stays on destination charges for customers; `payment_transfers` isn't built, and tips aren't transferred to shops separately. Tip payouts to employees (sections 15 and 35) use separate charges and transfers from the shop's own Stripe account to the employee's.
+- I10 stays on destination charges for customers; `payment_transfers` isn't built, and tips aren't transferred to shops separately. Tip payouts to employees (sections 15, 35 and 40) don't move money yet: Stripe can't transfer from a shop's connected account to a barber's, and the redesign as separate charges and transfers (ST-C11) waits for Charles.
 - The Q11/C2 training flag stays off.
 - PR #8 isn't merged.
 - `DEMO_MODE` isn't turned on in production, because it would break the Vercel demo.
