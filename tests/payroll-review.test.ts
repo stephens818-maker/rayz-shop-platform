@@ -161,6 +161,13 @@ describe("C1: overtime on commission (the FLSA regular rate)", () => {
     expect((adj.get("e1|A") ?? 0) + (adj.get("e1|B") ?? 0)).toBeCloseTo(17.89, 2);
   });
 
+  it("I1: tips never change the greater-of, the top-up, Total Wages or the OT premium", () => {
+    const tipped = computeLine(line({ workedHours: 27, otHours: 3, serviceSales: 1200, productSales: 100, tips: 650 }), DEFAULT_PAYROLL_SETTINGS);
+    const pick = (l: typeof a) => [l.hourlyTotal, l.commission, l.serviceTotal, l.netComm, l.totalWages, l.laborCost];
+    expect(pick(tipped)).toEqual(pick(a));
+    expect(regularRateAdjustments([tipped, b], DEFAULT_PAYROLL_SETTINGS)).toEqual(regularRateAdjustments([a, b], DEFAULT_PAYROLL_SETTINGS));
+  });
+
   it("is nothing with no OT or no commission", () => {
     expect(regularRateAdjustments([computeLine(line({ serviceSales: 2000 }), DEFAULT_PAYROLL_SETTINGS)], DEFAULT_PAYROLL_SETTINGS).size).toBe(0);
     expect(regularRateAdjustments([computeLine(line({ workedHours: 45, otHours: 5 }), DEFAULT_PAYROLL_SETTINGS)], DEFAULT_PAYROLL_SETTINGS).size).toBe(0);

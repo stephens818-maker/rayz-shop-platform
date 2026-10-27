@@ -73,6 +73,8 @@ The per-employee drill-down shows each piece as a formula with the person's own 
 
 The workbook-shaped columns B to S keep the workbook's own definitions (N is still Total Wages without OT or training), so the report can be compared with the workbook column for column.
 
+**Business rule (N10): the greater-of uses regular hours only.** D and F use B (worked − OT) and leave training out, so commission tops up over regular pay alone. That's in the employee's favor and is how the workbook works; don't "fix" it to total hours. Tips are never in the greater-of, the top-up, Total Wages or the regular rate (I1; a test checks it). Minimum wage is checked per period against straight-time pay, never counting tips, and no tip credit is taken toward minimum wage (the 45B FICA credit is a separate report).
+
 ### 2.2 Refunds, card surcharge and loyalty in the commission base (I4, I10)
 
 - **Refunds come off first.** A refund counts in the period it's issued, at the rate the original sale earned (§11), and lowers that period's Service $ (E) or Product $ (J) **before** the greater-of in N. If refunds are bigger than the period's sales, commission (H or L) is $0.00, never negative, and the rest is written off: the shop absorbs it, it's never taken from a later check, and the line gets a `refund_written_off` anomaly with the amount.
