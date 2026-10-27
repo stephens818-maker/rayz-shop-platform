@@ -210,19 +210,19 @@ export function ViewToggle({
   date,
   staffId,
 }: {
-  view: "day" | "week";
+  view: "day" | "week" | "list";
   date: string;
   staffId?: string | null;
 }) {
-  const href = (v: "day" | "week") =>
-    `/admin/calendar?${new URLSearchParams({ ...(v === "week" ? { view: "week" } : {}), date, ...(staffId && v === "week" ? { staff: staffId } : {}) })}`;
+  const href = (v: "day" | "week" | "list") =>
+    `/admin/calendar?${new URLSearchParams({ ...(v !== "day" ? { view: v } : {}), date, ...(staffId && v !== "day" ? { staff: staffId } : {}) })}`;
   return (
     <div
       className="flex rounded-lg ring-1 ring-zinc-300"
       role="group"
       aria-label="Calendar view"
     >
-      {(["day", "week"] as const).map((v) => (
+      {(["day", "week", "list"] as const).map((v) => (
         <Link
           key={v}
           href={href(v)}
@@ -232,7 +232,7 @@ export function ViewToggle({
             view === v ? "bg-ink-900 text-white" : "hover:bg-zinc-100",
           )}
         >
-          {v === "day" ? "Day" : "Week"}
+          {v === "day" ? "Day" : v === "week" ? "Week" : "List"}
         </Link>
       ))}
     </div>

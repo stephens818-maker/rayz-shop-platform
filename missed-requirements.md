@@ -679,7 +679,7 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 
 **1. Squire shop-login features and ours:**
 - [x] Appointments side by side and week, block time, add appointment: the calendar's day and week views, blocks, quick walk-in.
-- [ ] Appointments **list view**: not built; the day calendar and Today's Up next cover it for now.
+- [x] Appointments **list view**: the calendar's **List** toggle (`/admin/calendar?view=list`), one day or seven, by barber and status (upcoming, completed, missed), names masked as on the calendar; a barber who can't see every column sees only their own (`tests/db/appointment-list.test.ts`).
 - [x] Waiting list: Walk-ins & waitlist.
 - [x] Clients list; locate duplicates (brand-only here, as merging changes every shop's records).
 - [x] Retention report (quarter; visits to qualify 1/2/3; existing and new retention; lost to another barber or shop): **Client retention**.

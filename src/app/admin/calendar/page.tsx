@@ -22,6 +22,9 @@ import { clientPolicy } from "@/server/client-privacy";
 import { shopCatalog } from "@/server/catalog";
 import { shopDay } from "@/server/milestones/day";
 import { entryFields } from "@/server/client-entry";
+import { isListStatus, loadAppointmentList } from "@/server/appointment-list";
+import { barbersAt } from "@/server/barbers";
+import { AppointmentList } from "./appointment-list";
 import { DayCalendar } from "./day-calendar";
 import { WeekCalendar } from "./week-calendar";
 
@@ -36,6 +39,8 @@ export default async function CalendarPage({
     appt?: string;
     view?: string;
     staff?: string;
+    days?: string;
+    status?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -69,6 +74,32 @@ export default async function CalendarPage({
       }
     />
   );
+
+  if (sp.view === "list") {
+    const days = sp.days === "7" ? 7 : 1;
+    const status = isListStatus(sp.status) ? sp.status : "all";
+    const staffId = seesAll ? (sp.staff ?? null) : ctx.staff.id;
+    const [list, barbers] = await Promise.all([
+      loadAppointmentList(shopId, date, days, { staffId, status, privacy: await clientPolicy(ctx) }),
+      seesAll ? barbersAt([shopId]) : null,
+    ]);
+    return (
+      <div className="space-y-3">
+        {header}
+        <AppointmentList
+          shop={list.shop}
+          rows={list.rows}
+          date={date}
+          days={days}
+          today={today}
+          status={status}
+          staffId={staffId}
+          barbers={barbers?.filter((b) => b.active !== false).map((b) => ({ id: b.id, name: b.name })) ?? null}
+          links={{ clients: can(ctx, "clients.view_all"), sales: can(ctx, "sales.view") }}
+        />
+      </div>
+    );
+  }
 
   if (sp.view === "week") {
     // Without "calendar.manage" or "calendar.view_all", people see only their own week.
