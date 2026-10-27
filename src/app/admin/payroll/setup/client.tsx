@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button, Input, Select } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { SyncMsg, useSettingSync } from "@/components/brand-sync";
-import { FT_BASIS_LABEL, type PayrollSettings, type TipDeclarationSettings, type TipTaxSettings } from "@/domain/payroll/calc";
+import { EXPORT_COLUMNS, EXPORT_FORMAT_LABEL, FT_BASIS_LABEL, HOURS_SOURCE_LABEL, type ExportFormat, type HoursSource, type PayrollSettings, type TipDeclarationSettings, type TipTaxSettings } from "@/domain/payroll/calc";
 import { calendarProblem, periodsAround, type PayCalendar } from "@/domain/payroll/calendar";
 import { formatDate, todayLocal } from "@/lib/time";
 import { removeEmployerStateAction, saveEmployerAction, saveEmployerStateAction, savePayGroupAction, saveProfileAction } from "../actions";
@@ -122,6 +122,7 @@ export function SettingsForm({ initial, memoRequired }: { initial: PayrollSettin
         {memoRequired &&
           " With tips paid straight to employees through Stripe, the column can't be turned off, and approve and lock checks it per employee against every payout in the period, to the cent (the Payroll tip report shows it)."}
       </p>
+      <IsolvedFileFields v={v} onChange={(x) => setV({ ...v, ...x })} />
       <BrandCalendarFields cal={v.calendar} onChange={(calendar) => setV({ ...v, calendar })} />
       <DeclarationFields d={v.declarations} header={v.cashTipsDeclaredHeader} onChange={(declarations) => setV({ ...v, declarations })} onHeader={(cashTipsDeclaredHeader) => setV({ ...v, cashTipsDeclaredHeader })} />
       <TipTaxFields t={v.tipTax} onChange={(tipTax) => setV({ ...v, tipTax })} />
@@ -135,6 +136,106 @@ export function SettingsForm({ initial, memoRequired }: { initial: PayrollSettin
       </div>
       {dialog}
     </div>
+  );
+}
+
+const EARNING_LABEL: Record<(typeof EXPORT_COLUMNS)[number]["from"], string> = {
+  hours: "Regular hours",
+  otHours: "Overtime hours",
+  tipsOutside: "Tips already received",
+  netComm: "Commission",
+  ptoHours: "Paid time",
+  trainingHours: "Training hours",
+};
+const orderText = (xs: string[]) => xs.join(", ");
+const orderOf = (s: string) =>
+  s
+    .split(",")
+    .map((x) => x.trim())
+    .filter(Boolean);
+
+/** The iSolved files and the Payroll Report: what Charles is still to confirm, each with today's behaviour as the default. */
+function IsolvedFileFields({ v, onChange }: { v: PayrollSettings; onChange: (x: Partial<PayrollSettings>) => void }) {
+  const [report, setReport] = useState(orderText(v.reportOrder));
+  const [sheets, setSheets] = useState(orderText(v.sheetOrder));
+  return (
+    <fieldset className="rounded-lg border border-zinc-200 p-3">
+      <legend className="px-1 text-sm font-medium">iSolved files and the Payroll Report</legend>
+      <p className="mb-2 text-xs text-zinc-500">
+        Names take {"{start}"} and {"{end}"} (MM.DD.YY), {"{startIso}"} and {"{endIso}"}, {"{shop}"} (the sheet name), {"{payGroup}"} and {"{period}"}; &quot;.xlsx&quot; is added. The earning
+        codes are the iSolved column headers, character for character. Pending Charles (Q2, Q4, Q9, Q10).
+      </p>
+      <div className="flex flex-wrap items-end gap-3 text-sm">
+        <label>
+          <span className="block text-xs text-zinc-500">Cell formats</span>
+          <Select value={v.exportFormat} onChange={(e) => onChange({ exportFormat: e.target.value as ExportFormat })} className="h-9 w-80">
+            {Object.entries(EXPORT_FORMAT_LABEL).map(([k, l]) => (
+              <option key={k} value={k}>
+                {l}
+              </option>
+            ))}
+          </Select>
+        </label>
+        <label>
+          <span className="block text-xs text-zinc-500">A shop&apos;s file name</span>
+          <Input value={v.exportFileName} onChange={(e) => onChange({ exportFileName: e.target.value })} className="h-9 w-64" />
+        </label>
+        <label>
+          <span className="block text-xs text-zinc-500">The all-shops workbook&apos;s name</span>
+          <Input value={v.exportWorkbookName} onChange={(e) => onChange({ exportWorkbookName: e.target.value })} className="h-9 w-64" />
+        </label>
+        {EXPORT_COLUMNS.map((c) => (
+          <label key={c.from}>
+            <span className="block text-xs text-zinc-500">{EARNING_LABEL[c.from]} column</span>
+            <Input aria-label={`iSolved earning code for ${c.header}`} value={v.earningCodes[c.from]} onChange={(e) => onChange({ earningCodes: { ...v.earningCodes, [c.from]: e.target.value } })} className="h-9 w-56" />
+          </label>
+        ))}
+        <label>
+          <span className="block text-xs text-zinc-500">Card tips paid outside payroll go under</span>
+          <Input aria-label="iSolved earning code for card tips" value={v.cardTipsHeader} onChange={(e) => onChange({ cardTipsHeader: e.target.value })} className="h-9 w-56" />
+        </label>
+        {(["ptoSource", "trainingSource"] as const).map((k) => (
+          <label key={k}>
+            <span className="block text-xs text-zinc-500">{k === "ptoSource" ? "PTO (Ray'z Paid Time) hours" : "Training hours"} come from</span>
+            <Select value={v[k]} onChange={(e) => onChange({ [k]: e.target.value as HoursSource })} className="h-9 w-80">
+              {Object.entries(HOURS_SOURCE_LABEL).map(([x, l]) => (
+                <option key={x} value={x}>
+                  {l}
+                </option>
+              ))}
+            </Select>
+          </label>
+        ))}
+      </div>
+      <div className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
+        <label>
+          <span className="block text-xs text-zinc-500">Payroll Report shop order</span>
+          <Input
+            value={report}
+            onChange={(e) => {
+              setReport(e.target.value);
+              onChange({ reportOrder: orderOf(e.target.value) });
+            }}
+            className="h-9 w-full"
+          />
+        </label>
+        <label>
+          <span className="block text-xs text-zinc-500">All-shops workbook sheet order</span>
+          <Input
+            value={sheets}
+            onChange={(e) => {
+              setSheets(e.target.value);
+              onChange({ sheetOrder: orderOf(e.target.value) });
+            }}
+            className="h-9 w-full"
+          />
+        </label>
+      </div>
+      <p className="mt-2 text-xs text-zinc-500">
+        Card tips under the same code as the tips column (the default) go to iSolved with cash tips as tips already received, as the workbook does; another code gives them their own column. Shops
+        not in an order list follow, by name.
+      </p>
+    </fieldset>
   );
 }
 
@@ -315,6 +416,7 @@ export interface ProfileRow {
   isolvedName: string;
   exportPosition: number | null;
   tippedOccupationCode: string;
+  zeroHourlyPay: boolean;
   hourlyRate: number;
   servicePct: number;
   productPct: number;
@@ -355,6 +457,15 @@ export function ProfileRowForm({ p }: { p: ProfileRow }) {
           className="h-8 w-20 text-xs"
         />
       </td>
+      <td className="px-2 py-1.5 text-center">
+        <input
+          type="checkbox"
+          aria-label="$0 hourly pay"
+          title="Hours still go to iSolved, but Hourly Total is $0 on the report (the owner's row in the workbook)."
+          checked={v.zeroHourlyPay}
+          onChange={(e) => setV({ ...v, zeroHourlyPay: e.target.checked })}
+        />
+      </td>
       <td className="px-2 py-1.5">
         <Input aria-label="Hourly wage" type="number" step="0.01" value={v.hourlyRate} onChange={(e) => setV({ ...v, hourlyRate: Number(e.target.value) })} className="h-8 w-20 text-xs" />
       </td>
@@ -389,6 +500,7 @@ export function ProfileRowForm({ p }: { p: ProfileRow }) {
                 isolvedName: v.isolvedName,
                 exportPosition: v.exportPosition,
                 tippedOccupationCode: v.tippedOccupationCode,
+                zeroHourlyPay: v.zeroHourlyPay,
                 shopId: null,
                 hourlyRate: v.hourlyRate,
                 servicePct: v.servicePct / 100,

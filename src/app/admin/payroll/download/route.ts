@@ -6,7 +6,7 @@ const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /** One shop's iSolved file once the pay period is approved (as locked, once it is). Charles uploads it by hand. */
 export async function GET(req: Request) {
-  const ctx = await routeStaff("payroll.run");
+  const ctx = await routeStaff(["payroll.run", "payroll.export"]);
   if (ctx instanceof Response) return ctx;
   const url = new URL(req.url);
   const group = url.searchParams.get("group") ?? "";

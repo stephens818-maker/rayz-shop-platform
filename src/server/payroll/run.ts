@@ -765,6 +765,21 @@ export async function approvalOf(view: Pick<PayrollView, "start" | "end" | "bloc
   return { id: a.a.id, approvedAt: a.a.approvedAt.toISOString(), approvedBy: a.by, note: a.a.note, totals: a.a.totals, current: !open.length || figuresHash(open) === a.a.figuresHash };
 }
 
+export type ApprovalStatus = "draft" | "approved" | "stale" | "locked";
+
+export function approvalStatus(view: Pick<PayrollView, "locked">, a: Pick<ApprovalView, "current"> | null): ApprovalStatus {
+  if (view.locked === "all") return "locked";
+  if (!a) return "draft";
+  return a.current ? "approved" : "stale";
+}
+
+/** Why the period can't be approved or locked right now, in a line, or null. */
+export function approvalBlocked(view: PayrollView): string | null {
+  if (view.mismatches.length) return `${view.mismatches.length} total${view.mismatches.length === 1 ? " doesn't" : "s don't"} reconcile`;
+  if (view.settings.hoursFromClock && view.hoursOpen.length) return `Hours aren't locked on the time clock at ${view.hoursOpen.length} shop${view.hoursOpen.length === 1 ? "" : "s"}`;
+  return null;
+}
+
 type Refusal = { error: string; mismatches?: Mismatch[] };
 
 /** What stops a period being approved or locked as it stands. */
@@ -945,7 +960,7 @@ export async function approvedExport(payGroupId: string, start: LocalDate, end: 
 /** Every payroll step recorded for the period, oldest first: runs, adjustments, approvals, revocations, locks and downloads. */
 export async function payrollTrail(start: LocalDate, end: LocalDate) {
   const list = await db
-    .select({ at: auditLog.at, action: auditLog.action, by: auditLog.actorLabel, details: auditLog.details, shopId: auditLog.shopId })
+    .select({ at: auditLog.at, action: auditLog.action, by: auditLog.actorLabel, details: auditLog.details, shopId: auditLog.shopId, entityId: auditLog.entityId })
     .from(auditLog)
     .where(and(sql`${auditLog.action} like 'payroll.%'`, sql`${auditLog.details}->>'periodStart' = ${start}`, sql`coalesce(${auditLog.details}->>'periodEnd', ${end}) = ${end}`))
     .orderBy(asc(auditLog.at));
@@ -989,20 +1004,34 @@ export async function savePayGroup(id: string, v: { label: string; legalEntity: 
 
 export async function saveProfile(
   staffId: string,
-  v: { employeeNumber: string | null; keyIsText: boolean; isolvedName: string | null; exportPosition: number | null; tippedOccupationCode?: string | null },
+  v: { employeeNumber: string | null; keyIsText: boolean; isolvedName: string | null; exportPosition: number | null; tippedOccupationCode?: string | null; zeroHourlyPay?: boolean },
   actor: Actor,
 ): Promise<string | null> {
   const num = v.employeeNumber?.trim() || null;
   if (num && num.length > 32) return "That employee number is too long.";
   const occ = v.tippedOccupationCode === undefined ? undefined : v.tippedOccupationCode?.trim().toUpperCase() || null;
   if (occ && !/^[A-Z0-9]{1,8}$/.test(occ)) return "The tipped occupation code is 1 to 8 letters or digits, from Treasury's list.";
-  const set = { employeeNumber: num, keyIsText: v.keyIsText, isolvedName: v.isolvedName?.trim() || null, exportPosition: v.exportPosition, ...(occ === undefined ? {} : { tippedOccupationCode: occ }) };
+  const set = {
+    employeeNumber: num,
+    keyIsText: v.keyIsText,
+    isolvedName: v.isolvedName?.trim() || null,
+    exportPosition: v.exportPosition,
+    ...(occ === undefined ? {} : { tippedOccupationCode: occ }),
+    ...(v.zeroHourlyPay === undefined ? {} : { zeroHourlyPay: v.zeroHourlyPay }),
+  };
   await db
     .insert(payrollProfiles)
     .values({ staffId, ...set })
     .onConflictDoUpdate({ target: payrollProfiles.staffId, set: { ...set, updatedAt: new Date() } });
   // The number itself stays out of the audit trail.
-  await audit(actor, "payroll.profile", "staff", staffId, { employeeNumberSet: !!num, keyIsText: v.keyIsText, exportPosition: v.exportPosition, ...(occ === undefined ? {} : { tippedOccupationCode: occ }) });
+  await audit(actor, "payroll.profile", "staff", staffId, {
+    employeeNumberSet: !!num,
+    isolvedNameSet: !!set.isolvedName,
+    keyIsText: v.keyIsText,
+    exportPosition: v.exportPosition,
+    ...(occ === undefined ? {} : { tippedOccupationCode: occ }),
+    ...(v.zeroHourlyPay === undefined ? {} : { zeroHourlyPay: v.zeroHourlyPay }),
+  });
   return null;
 }
 

@@ -6,8 +6,10 @@ import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, fmtHours, f
 import { formatDate, formatDateTime } from "@/lib/time";
 import { reportView } from "@/domain/permissions";
 import { can, guardPage } from "@/server/auth/staff";
-import { buildPayroll, hoursOpenMessage, periodChoices, periodKey, RECORD_LABEL, type BlockView, type PayrollView } from "@/server/payroll/run";
-import { LockButton, OverrideForm } from "./client";
+import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, hoursOpenMessage, payrollTrail, periodChoices, periodKey, RECORD_LABEL, type ApprovalStatus, type ApprovalView, type BlockView, type PayrollView } from "@/server/payroll/run";
+import { ApprovalControls } from "./approval";
+import { OverrideForm } from "./client";
+import { ApprovalNotice, PayrollTrailCard } from "./flow";
 
 export const metadata: Metadata = { title: "Payroll report" };
 
@@ -87,9 +89,12 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
   const current = choices.findIndex((c) => c.current);
   const chosen = choices.find((c) => c.key === sp.period) ?? choices[current + 1] ?? choices[0];
   const view = chosen ? await buildPayroll(chosen.start, chosen.end) : null;
+  const [approval, trail] = view ? await Promise.all([approvalOf(view), payrollTrail(view.start, view.end)]) : [null, []];
+  const status = view ? approvalStatus(view, approval) : "draft";
   const canRun = can(ctx, "payroll.run");
   const canApprove = can(ctx, "payroll.approve");
   const isolved = chosen && can(ctx, reportView("payroll_isolved")) ? `/admin/reports/payroll/isolved?preset=pp:${chosen.start}_${chosen.end}` : null;
+  const reportLink = chosen && can(ctx, reportView("payroll_report")) ? `/admin/reports/payroll/report?period=${chosen.key}` : null;
 
   return (
     <div className="mx-auto max-w-[1400px]">
@@ -104,17 +109,12 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
         }
         actions={
           view && view.locked === "none" && canApprove ? (
-            <LockButton
+            <ApprovalControls
               start={view.start}
               end={view.end}
               label={`${formatDate(view.start, "MMM d")} – ${formatDate(view.end, "MMM d")} for ${view.blocks.length} shop${view.blocks.length === 1 ? "" : "s"}`}
-              blocked={
-                view.mismatches.length
-                  ? `${view.mismatches.length} total${view.mismatches.length === 1 ? " doesn't" : "s don't"} reconcile`
-                  : view.settings.hoursFromClock && view.hoursOpen.length
-                    ? `Hours aren't locked on the time clock at ${view.hoursOpen.length} shop${view.hoursOpen.length === 1 ? "" : "s"}`
-                    : null
-              }
+              status={status}
+              blocked={approvalBlocked(view)}
             />
           ) : undefined
         }
@@ -131,8 +131,13 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
             {c.lockedGroups > 0 && (c.lockedGroups === c.groups.length ? " · locked" : ` · ${c.lockedGroups} locked`)}
           </Link>
         ))}
+        {reportLink && (
+          <Link href={reportLink} className="ml-auto self-center text-sm font-medium text-brand-700 underline-offset-2 hover:underline" data-testid="payroll-report-link">
+            Payroll Report (Locations) →
+          </Link>
+        )}
         {isolved && (
-          <Link href={isolved} className="ml-auto self-center text-sm font-medium text-brand-700 underline-offset-2 hover:underline" data-testid="payroll-isolved-link">
+          <Link href={isolved} className="self-center text-sm font-medium text-brand-700 underline-offset-2 hover:underline" data-testid="payroll-isolved-link">
             iSolved export and payroll reports →
           </Link>
         )}
@@ -140,7 +145,7 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
       {!view ? (
         <Notice>No shop has a pay period with those dates.</Notice>
       ) : (
-        <Report view={view} canRun={canRun} />
+        <Report view={view} canRun={canRun} canFiles={canRun || can(ctx, "payroll.export")} approval={approval} status={status} trail={trail} />
       )}
     </div>
   );
@@ -156,19 +161,28 @@ function periodNumbers(groups: { label: string; number: number; checkDate: strin
   return parts.length === 1 ? parts[0][0] : parts.map(([k, labels]) => `${labels.join(", ")}: ${k}`).join(" · ");
 }
 
-function Report({ view, canRun }: { view: PayrollView; canRun: boolean }) {
-  const lockedAt = view.blocks.find((b) => b.locked)?.locked;
+function Report({
+  view,
+  canRun,
+  canFiles,
+  approval,
+  status,
+  trail,
+}: {
+  view: PayrollView;
+  canRun: boolean;
+  canFiles: boolean;
+  approval: ApprovalView | null;
+  status: ApprovalStatus;
+  trail: Awaited<ReturnType<typeof payrollTrail>>;
+}) {
+  const filesReady = status === "approved" || status === "locked";
   return (
     <div className="space-y-4">
-      {view.locked === "all" && lockedAt ? (
-        <Notice tone="green">
-          Approved and locked {formatDateTime(lockedAt.at)}
-          {lockedAt.by && ` by ${lockedAt.by}`}. Everything below, and each shop&apos;s file, is exactly what was approved. Upload each file in iSolved (Timecard Import), picking that shop&apos;s pay
-          group.
-        </Notice>
-      ) : view.mismatches.length ? (
+      <ApprovalNotice view={view} approval={approval} status={status} />
+      {view.locked === "all" ? null : view.mismatches.length ? (
         <Card>
-          <CardHeader title="Totals don't reconcile: approve and lock is blocked" subtitle={`Every total has to equal the sum of its rows, each shop's export has to add up to the report, and the Locations totals to the shops.${view.tips.mismatches.length ? " Each employee's tips in the file have to match their tips and payouts (the W-2 tip check)." : ""} Tolerance: $0.00.`} />
+          <CardHeader title="Totals don't reconcile: approval is blocked" subtitle={`Every total has to equal the sum of its rows, each shop's export has to add up to the report, and the Locations totals to the shops.${view.tips.mismatches.length ? " Each employee's tips in the file have to match their tips and payouts (the W-2 tip check)." : ""} Tolerance: $0.00.`} />
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-red-50 text-left text-xs text-red-800">
@@ -233,8 +247,10 @@ function Report({ view, canRun }: { view: PayrollView; canRun: boolean }) {
       </Notice>
 
       {view.blocks.map((b) => (
-        <ShopBlockCard key={b.shopId} b={b} view={view} canRun={canRun} />
+        <ShopBlockCard key={b.shopId} b={b} view={view} canRun={canRun} downloadable={canFiles && filesReady} />
       ))}
+
+      <PayrollTrailCard trail={trail} names={new Map(view.blocks.flatMap((b) => b.lines.map((l) => [l.staffId, l.name] as const)))} />
     </div>
   );
 }
@@ -438,9 +454,8 @@ function EntityStates({ view }: { view: PayrollView }) {
   );
 }
 
-function ShopBlockCard({ b, view, canRun }: { b: BlockView; view: PayrollView; canRun: boolean }) {
+function ShopBlockCard({ b, view, canRun, downloadable }: { b: BlockView; view: PayrollView; canRun: boolean; downloadable: boolean }) {
   const s = view.settings;
-  const downloadable = !!b.locked && canRun;
   return (
     <Card>
       <CardHeader
@@ -458,7 +473,7 @@ function ShopBlockCard({ b, view, canRun }: { b: BlockView; view: PayrollView; c
               Download iSolved file
             </a>
           ) : (
-            <span className="text-xs text-zinc-500">The iSolved file downloads after approve and lock.</span>
+            <span className="text-xs text-zinc-500">The iSolved file downloads once the figures are approved.</span>
           )
         }
       />

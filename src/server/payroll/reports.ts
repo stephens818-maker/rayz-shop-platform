@@ -23,7 +23,7 @@ import { addIsolvedSheet, exportFileName } from "./export";
 import { loadSettings } from "./groups";
 import { locationBlocks, locationsRow, locationsTotals, type LocationsCell } from "./locations";
 import { MAX_REPORT_PERIODS, payPeriodPresets, periodLabel, periodsEnding, type PayPeriodRef } from "./periods";
-import { buildPayroll, type BlockView, type PayrollView } from "./run";
+import { approvalOf, buildPayroll, type BlockView, type PayrollView } from "./run";
 
 /**
  * The payroll reports (Reports → Payroll). iSolved is the payroll company and stays the system of
@@ -114,7 +114,7 @@ async function sendsOf(runs: readonly PeriodRun[]) {
   return new Map(list.map((x) => [`${x.s.periodStart}_${x.s.periodEnd}`, { ...x.s, by: x.by }]));
 }
 
-const statusOf = (view: Pick<PayrollView, "locked">, sent: boolean): ExportStatus => (sent ? "sent" : view.locked === "all" ? "approved" : "draft");
+const statusOf = (view: Pick<PayrollView, "locked">, sent: boolean, approved = false): ExportStatus => (sent ? "sent" : view.locked === "all" || approved ? "approved" : "draft");
 
 /** Tips in the tip ledger for a period, per employee and shop, by how they were paid. Gift card tips count with cash. */
 async function tipsByMethod(shopIds: string[], start: LocalDate, end: LocalDate, sel: string[] | null) {
@@ -1274,7 +1274,7 @@ export async function payrollIsolvedData(i: PayrollReportInput): Promise<ReportD
   let differences = 0;
   for (const r of runs) {
     const sent = sends.get(r.key);
-    const status = statusOf(r.view, !!sent);
+    const status = statusOf(r.view, !!sent, !!(await approvalOf(r.view))?.current);
     const checks = r.view.tips.rows.filter((x) => r.blocks.some((b) => b.shopId === x.shopId) && (!sel || sel.includes(x.staffId)));
     for (const b of r.blocks) {
       const from = extraFromOf(b);
@@ -1378,7 +1378,7 @@ export async function payrollIsolvedData(i: PayrollReportInput): Promise<ReportD
       listTable(combined(loc), {
         id: "periods",
         title: "iSolved file by pay period",
-        subtitle: "Draft until every shop in the period is approved and locked; approved after; sent once it's marked uploaded to iSolved.",
+        subtitle: "Draft until the period's figures are approved; approved after (and once locked); sent once it's marked uploaded to iSolved.",
         columns: [text("Pay period"), text("Check date"), int("Shops"), int("Rows"), text("Status"), text("Approved and locked"), text("Sent to iSolved"), int("Tip differences")],
         rows: periodRows,
         totals: false,
@@ -1428,7 +1428,7 @@ export async function payrollIsolvedData(i: PayrollReportInput): Promise<ReportD
     ],
     notes: [
       ...periodNotes(runs, capped),
-      "The iSolved export downloads one workbook per pay period with a tab for each shop, exactly as each shop's file would download from the Payroll Report. A file from a period that isn't approved and locked yet is marked DRAFT and can change.",
+      "The iSolved export downloads one workbook per pay period with a tab for each shop, exactly as each shop's file would download from the Payroll Report. A file from a period whose figures aren't approved yet is marked DRAFT and can change.",
       "Marking a period sent needs \"Approve and lock a pay period\". It's refused until every shop is locked and every employee's tips match their Stripe payouts to the cent.",
     ],
   };
@@ -1489,7 +1489,7 @@ export async function isolvedWorkbook(start: LocalDate, end: LocalDate, shopIds:
   const blocks = view.blocks.filter((b) => shopIds.includes(b.shopId));
   if (!blocks.length) return null;
   const [sent] = await db.select({ id: payrollExportSends.id }).from(payrollExportSends).where(and(eq(payrollExportSends.periodStart, start), eq(payrollExportSends.periodEnd, end)));
-  const status = statusOf(view, !!sent);
+  const status = statusOf(view, !!sent, !!(await approvalOf(view))?.current);
   const s = view.settings;
   const wb = new ExcelJS.Workbook();
   wb.creator = "Ray'z";

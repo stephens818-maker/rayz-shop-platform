@@ -949,7 +949,7 @@ export type AnomalyKind =
   | "mixed_rates"
   | "hours_source";
 
-const RATE_NAME: Record<MixedRate, string> = { wage: "hourly wage", servicePct: "service %", productPct: "product %" };
+export const MIXED_RATE_NAME: Record<MixedRate, string> = { wage: "hourly wage", servicePct: "service %", productPct: "product %" };
 
 /** Things to look at before locking. None of these block the lock, and none are "fixed" automatically. */
 export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Anomaly[] {
@@ -981,7 +981,7 @@ export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Ano
           staffId: l.staffId,
           shopId: b.shopId,
           kind: "mixed_rates",
-          message: `${who}: the ${mixed.map((k) => RATE_NAME[k]).join(" and ")} changed during the period, so each sale is paid at the rate in effect on its checkout date and each day's hours at that day's wage. The report shows "mixed".`,
+          message: `${who}: the ${mixed.map((k) => MIXED_RATE_NAME[k]).join(" and ")} changed during the period, so each sale is paid at the rate in effect on its checkout date and each day's hours at that day's wage. The report shows "mixed".`,
         });
       const late = l.lateTipRefunds ?? 0;
       if (late > 0) {

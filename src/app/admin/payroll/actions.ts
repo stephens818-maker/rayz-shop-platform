@@ -18,7 +18,10 @@ import { AppError } from "@/server/errors";
 import {
   addTimeEntries,
   approveAndLock,
+  approvePayroll,
   deleteTimeEntry,
+  lockPayroll,
+  revokeApproval,
   ensurePayGroups,
   savePayGroup,
   saveProfile,
@@ -33,28 +36,60 @@ const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 function refresh() {
   revalidatePath("/admin/payroll", "layout");
+  revalidatePath("/admin/reports/payroll", "layout");
 }
 
 const fail = (msg: string | null) => {
   if (msg) throw new AppError("bad_request", msg);
 };
 
+const refusal = (r: { error: string; mismatches?: Mismatch[] }) => {
+  const m = r.mismatches ?? [];
+  return new AppError(
+    "bad_request",
+    m.length
+      ? `${r.error} ${m.length} mismatch${m.length === 1 ? "" : "es"}: ${m
+          .slice(0, 3)
+          .map((x) => `${x.detail} (${x.column})`)
+          .join("; ")}`
+      : r.error,
+  );
+};
+
 export async function approveAndLockAction(start: string, end: string) {
   return safe(async () => {
     const ctx = await authorize("payroll.approve");
     const r = await approveAndLock(date.parse(start), date.parse(end), ctx.actor);
-    if ("error" in r) {
-      const m = (r.mismatches ?? []) as Mismatch[];
-      throw new AppError(
-        "bad_request",
-        m.length
-          ? `${r.error} ${m.length} mismatch${m.length === 1 ? "" : "es"}: ${m
-              .slice(0, 3)
-              .map((x) => `${x.detail} (${x.column})`)
-              .join("; ")}`
-          : r.error,
-      );
-    }
+    if ("error" in r) throw refusal(r);
+    refresh();
+    return r.locked;
+  });
+}
+
+export async function approvePayrollAction(start: string, end: string, note: string) {
+  return safe(async () => {
+    const ctx = await authorize("payroll.approve");
+    const r = await approvePayroll(date.parse(start), date.parse(end), ctx.actor, z.string().max(300).parse(note));
+    if ("error" in r) throw refusal(r);
+    refresh();
+    return r.approvalId;
+  });
+}
+
+export async function revokeApprovalAction(start: string, end: string, reason: string) {
+  return safe(async () => {
+    const ctx = await authorize("payroll.approve");
+    fail(await revokeApproval(date.parse(start), date.parse(end), z.string().max(300).parse(reason), ctx.actor));
+    refresh();
+    return null;
+  });
+}
+
+export async function lockPayrollAction(start: string, end: string) {
+  return safe(async () => {
+    const ctx = await authorize("payroll.approve");
+    const r = await lockPayroll(date.parse(start), date.parse(end), ctx.actor);
+    if ("error" in r) throw refusal(r);
     refresh();
     return r.locked;
   });
@@ -156,6 +191,7 @@ export async function saveProfileAction(input: {
   isolvedName: string;
   exportPosition: number | null;
   tippedOccupationCode?: string;
+  zeroHourlyPay?: boolean;
   shopId: string | null;
   hourlyRate: number;
   servicePct: number;
@@ -172,6 +208,7 @@ export async function saveProfileAction(input: {
         isolvedName: z.string().max(80),
         exportPosition: z.number().int().min(0).max(999).nullable(),
         tippedOccupationCode: z.string().max(8).optional(),
+        zeroHourlyPay: z.boolean().optional(),
         shopId: z.string().uuid().nullable(),
         hourlyRate: z.number(),
         servicePct: z.number(),
@@ -179,9 +216,23 @@ export async function saveProfileAction(input: {
         trainingRate: z.number().nullable(),
       })
       .parse(input);
-    fail(await saveProfile(v.staffId, { employeeNumber: v.employeeNumber, keyIsText: v.keyIsText, isolvedName: v.isolvedName, exportPosition: v.exportPosition, tippedOccupationCode: v.tippedOccupationCode }, ctx.actor));
+    fail(await saveProfile(v.staffId, { employeeNumber: v.employeeNumber, keyIsText: v.keyIsText, isolvedName: v.isolvedName, exportPosition: v.exportPosition, tippedOccupationCode: v.tippedOccupationCode, zeroHourlyPay: v.zeroHourlyPay }, ctx.actor));
     fail(await saveRate(v.staffId, v.shopId, { hourlyRate: v.hourlyRate, servicePct: v.servicePct, productPct: v.productPct, trainingRate: v.trainingRate }, ctx.actor));
     refresh();
+    return null;
+  });
+}
+
+/** The iSolved fields from the Staff page: the Key (and whether it's text), the iSolved name and the $0 hourly flag. Row order and rates stay on Payroll setup. */
+export async function saveIsolvedProfileAction(input: { staffId: string; employeeNumber: string; keyIsText: boolean; isolvedName: string; zeroHourlyPay: boolean }) {
+  return safe(async () => {
+    const ctx = await authorize("payroll.run");
+    if (!ctx.brandWide) throw new AppError("forbidden", "Payroll profiles are brand-wide, so they need access to all shops.");
+    const v = z.object({ staffId: z.string().uuid(), employeeNumber: z.string().max(32), keyIsText: z.boolean(), isolvedName: z.string().max(80), zeroHourlyPay: z.boolean() }).parse(input);
+    const [cur] = await db.select({ exportPosition: payrollProfiles.exportPosition }).from(payrollProfiles).where(eq(payrollProfiles.staffId, v.staffId));
+    fail(await saveProfile(v.staffId, { employeeNumber: v.employeeNumber, keyIsText: v.keyIsText, isolvedName: v.isolvedName, exportPosition: cur?.exportPosition ?? null, zeroHourlyPay: v.zeroHourlyPay }, ctx.actor));
+    refresh();
+    revalidatePath(`/admin/staff/${v.staffId}`);
     return null;
   });
 }

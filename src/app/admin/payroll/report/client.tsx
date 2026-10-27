@@ -4,33 +4,7 @@ import { useState } from "react";
 import { Button, Input, Select } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { OVERRIDABLE, OVERRIDE_LABEL, type Overridable } from "@/domain/payroll/calc";
-import { approveAndLockAction, setOverrideAction } from "../actions";
-
-export function LockButton({ start, end, blocked, label }: { start: string; end: string; blocked: string | null; label: string }) {
-  const { pending, error, run } = useAction();
-  const [sure, setSure] = useState(false);
-  return (
-    <div className="flex flex-col items-end gap-1">
-      {sure ? (
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-zinc-600">Lock {label}? Hours, sales and overrides in it can&apos;t change afterwards.</span>
-          <Button size="sm" disabled={pending} onClick={() => run(() => approveAndLockAction(start, end), () => setSure(false))}>
-            {pending ? "Locking…" : "Yes, approve and lock"}
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => setSure(false)}>
-            Cancel
-          </Button>
-        </div>
-      ) : (
-        <Button disabled={!!blocked} title={blocked ?? undefined} onClick={() => setSure(true)}>
-          Approve and lock
-        </Button>
-      )}
-      {blocked && <span className="text-xs text-red-700">{blocked}</span>}
-      {error && <span className="text-xs text-red-700">{error}</span>}
-    </div>
-  );
-}
+import { setOverrideAction } from "../actions";
 
 export function OverrideForm({ shopId, periodStart, staffId, current }: { shopId: string; periodStart: string; staffId: string; current: Partial<Record<Overridable, { value: number; reason: string }>> }) {
   const { pending, error, run } = useAction();

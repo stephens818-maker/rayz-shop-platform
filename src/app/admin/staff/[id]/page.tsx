@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { and, asc, eq, gt } from "drizzle-orm";
 import { db } from "@/db";
-import { roles, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
+import { payrollProfiles, roles, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
 import { Card, CardHeader, Notice, PageHeader } from "@/components/ui";
 import { TrophyCase } from "@/components/trophy-case";
 import { assignableRoles, staffEditDenied } from "@/domain/permissions";
@@ -22,6 +22,7 @@ import { futureBookings } from "@/server/offboarding";
 import { AffectedRow } from "../../time-off/client";
 import { OffboardCard, ProfileForm, ScheduleEditor, TimeOff } from "./editors";
 import { BookingOptionsCard, DaysOnCard, NotificationsCard } from "./settings";
+import { PayrollIsolvedCard } from "./payroll";
 import { dayHistory, loadBookingOptions, loadNotificationPrefs } from "@/server/staff-settings";
 import { loadBrandDefaults, shopDefaults } from "@/server/location-defaults";
 
@@ -70,6 +71,7 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
     ? await Promise.all([loadBookingOptions(ctx, person!.id), loadNotificationPrefs(person!.id), canSchedule ? dayHistory(person!.id, ctx.brandWide ? null : ctx.shopIds) : Promise.resolve([])])
     : [null, null, []];
   const ownOrManager = isPerson && (person!.id === ctx.staff.id || (can(ctx, "staff.manage") && !editDenied));
+  const isolved = isPerson && ctx.brandWide && can(ctx, "payroll.run") ? ((await db.select().from(payrollProfiles).where(eq(payrollProfiles.staffId, person!.id)))[0] ?? null) : undefined;
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
@@ -162,6 +164,12 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
         </>
       )}
       {bookingView && (can(ctx, "staff.manage") || person!.id === ctx.staff.id) && <BookingOptionsCard staffId={person!.id} view={bookingView} canEdit={can(ctx, "staff.manage") && !editDenied} />}
+      {isolved !== undefined && (
+        <PayrollIsolvedCard
+          staffId={person!.id}
+          initial={{ employeeNumber: isolved?.employeeNumber ?? "", keyIsText: isolved?.keyIsText ?? false, isolvedName: isolved?.isolvedName ?? "", zeroHourlyPay: isolved?.zeroHourlyPay ?? false }}
+        />
+      )}
       {prefs && ownOrManager && <NotificationsCard staffId={person!.id} prefs={prefs} canEdit={ownOrManager} self={person!.id === ctx.staff.id} />}
       {milestones && (
         <Card>
