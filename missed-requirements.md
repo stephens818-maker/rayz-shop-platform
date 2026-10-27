@@ -814,9 +814,29 @@ Charles's scope: a staff namespace at `/api/staff/v1`, apart from the customer `
 - [ ] Approved-device sign-in rules for the app (the app sends no device evidence yet, so a location needing an approved device or its Wi-Fi blocks the app off that network).
 - [ ] An app version gate for `/api/staff/v1`, like `/api/v1`'s 426.
 
+## 35. Staff app Stripe tip payouts (matches Squire Commander)
+
+Charles's scope: each employee gets their own Stripe Connect Express account, separate from the shops' accounts, set up on Stripe's hosted onboarding from the staff app. Stripe test mode only. README "Tip payouts" and "Staff app API", and NOTES-SYNC "Tip payouts", have the details.
+
+- [x] Staff API: start or resume onboarding (`POST /banking/onboarding-link`, with the step: start, resume, update or done), account status and requirements (`GET /banking`), the external accounts with last 4 only (`GET /banking/external-accounts`), and the Express dashboard link (`POST /banking/dashboard-link`).
+- [x] Onboarding covers identity, the bank account and a debit card for instant payouts, all on Stripe's pages.
+- [x] Manager-approved payouts move from the shop's connected account (or the brand's, for brand-account shops) to the employee's account with separate charges and transfers, then pay out on the shop's schedule.
+- [x] Standard payouts to the default bank or card, and optional instant payouts to the debit card. Without an instant-capable card it falls back to standard and says so in the audit log.
+- [x] Brand setting for the instant fee: passed on to the employee (default) or paid by the shop. Each payout records who paid it.
+- [x] Webhooks: `account.updated`, `payout.paid`, `payout.failed` (plus `account.external_account.*`, `payout.canceled` and `transfer.reversed`). A failure reverses the transfer, refunds the shop's debit and releases the tips.
+- [x] Paid tips marked in the iSolved export: a memo column (`M_Tips Paid Out_Dollars`), part of `E_Cash Tips Recd`, checked by the reconciliation, with an off switch.
+- [x] Test mode only: live keys are refused for employee accounts, onboarding, transfers and payouts until `MONEY_MOVEMENT_LIVE=true`.
+- [x] One money-movement module (`src/server/payments/money-movement.ts`) for debits, transfers, payouts and unwinding, offered to the mobile agent's Connect work through NOTES-SYNC.
+- [x] Never stored or returned: card, bank or routing numbers, SSNs or IDs. Migration `core_0100_staff_tip_stripe`. Tests: `tests/db/tip-stripe.test.ts`, `tests/db/staff-api.test.ts`, `tests/db/tips.test.ts`, `tests/payroll-engine.test.ts`.
+
+**Still open:**
+- [ ] Charles to confirm the iSolved code for the paid-out memo column, and that the platform keeping the instant fee when the shop pays it is right.
+- [ ] The mobile agent's answer on sharing (or taking over) the money-movement module.
+- [ ] A real run against a Stripe test account with Connect turned on (the tests use a stand-in for Stripe).
+
 ## Deferred by decision
 
-- I10 stays on destination charges; separate charges and `payment_transfers` aren't built, and tips aren't transferred to shops separately. Tip payouts to employees (section 15) transfer from the shop's own Stripe account to the employee's.
+- I10 stays on destination charges for customers; `payment_transfers` isn't built, and tips aren't transferred to shops separately. Tip payouts to employees (sections 15 and 35) use separate charges and transfers from the shop's own Stripe account to the employee's.
 - The Q11/C2 training flag stays off.
 - PR #8 isn't merged.
 - `DEMO_MODE` isn't turned on in production, because it would break the Vercel demo.
