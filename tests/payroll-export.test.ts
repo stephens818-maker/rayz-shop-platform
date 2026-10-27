@@ -12,7 +12,7 @@ const rows = (n: number): ExportRow[] =>
     staffId: `s${i}`,
     key: i % 3 === 1 ? `00${100 + i}` : 9000 + i,
     isolvedName: `PERSON, NUMBER ${i}`,
-    values: [80 - i, i === 0 ? 2.78 : 0, 412.5 + i, 224.43300000000005, 0, i === 2 ? 3.5 : 0],
+    values: [80 - i, i === 0 ? 2.78 : 0, 395.25 + i, 218.66700000000003, 0, i === 2 ? 3.5 : 0],
   }));
 
 async function read(buf: Buffer) {

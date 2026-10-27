@@ -10,7 +10,7 @@ export type Cell = string | number | boolean | null;
 /**
  * `hours` values are minutes, shown as hours; `decimal` is an average like 4.25 stars; `minutes` is
  * an average or median in minutes, to a tenth; `minutes_delta` is the same with a sign, like +11.0.
- * `pay_hours` is payroll hours: on screen in the brand's style (79.94 or 79h 56m), decimal in a CSV.
+ * `pay_hours` is payroll hours: on screen in the brand's style (78.25 or 78h 15m), decimal in a CSV.
  */
 export type ColumnKind = "text" | "int" | "money" | "pct" | "bool" | "hours" | "decimal" | "pay_hours" | "minutes" | "minutes_delta";
 export interface Column {

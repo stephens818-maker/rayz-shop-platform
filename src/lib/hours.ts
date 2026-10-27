@@ -1,4 +1,4 @@
-/** Payroll hours on screen: decimal like the payroll workbook (79.94), or hours and minutes (79h 56m). */
+/** Payroll hours on screen: decimal like the payroll workbook (78.25), or hours and minutes (78h 15m). */
 export type PayrollHoursStyle = "decimal" | "hm";
 
 const HOURS_KEY = "__rayzPayrollHours";
@@ -13,7 +13,7 @@ export function setPayrollHoursStyle(s: PayrollHoursStyle): void {
 }
 
 /**
- * Hours as the brand shows them: "79.94" (two decimals) or "79h 56m". `unit` adds " h" (or the
+ * Hours as the brand shows them: "78.25" (two decimals) or "78h 15m". `unit` adds " h" (or the
  * word given, "hours") to the decimal form; hours and minutes always carry their own units.
  */
 export function formatPayHours(hours: number, o: { unit?: boolean | string; style?: PayrollHoursStyle; decimals?: number } = {}): string {

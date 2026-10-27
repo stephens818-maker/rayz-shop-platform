@@ -317,7 +317,7 @@ const input = (over: Partial<LineInput> = {}): LineInput => ({
   employeeNumber: "1001",
   keyIsText: false,
   isolvedName: "ONE, BARBER",
-  hourlyRate: 15.5,
+  hourlyRate: 14.5,
   servicePct: 0.4,
   productPct: 0.15,
   trainingRate: null,
@@ -325,27 +325,27 @@ const input = (over: Partial<LineInput> = {}): LineInput => ({
   otHours: 0,
   ptoHours: 0,
   trainingHours: 0,
-  serviceSales: 2886.34,
-  productSales: 70.98,
-  tips: 412.5,
+  serviceSales: 2864.15,
+  productSales: 68.4,
+  tips: 395.25,
   ...over,
 });
 
 describe("workbook line math", () => {
   it("commission over hourly: NetComm is the top-up plus product, Total Wages = hourly + top-up + product", () => {
     const l = computeLine(input({ workedHours: 60 }), DEFAULT_PAYROLL_SETTINGS);
-    expect(l.hourlyTotal).toBe(60 * 15.5);
-    expect(l.commission).toBe(2886.34 * 0.4);
-    expect(l.serviceTotal).toBe(2886.34 * 0.4 - 930);
-    expect(l.netComm).toBe(2886.34 * 0.4 - 930 + 70.98 * 0.15);
-    expect(l.totalWages).toBe(930 + (2886.34 * 0.4 - 930) + 70.98 * 0.15);
+    expect(l.hourlyTotal).toBe(60 * 14.5);
+    expect(l.commission).toBe(2864.15 * 0.4);
+    expect(l.serviceTotal).toBe(2864.15 * 0.4 - 870);
+    expect(l.netComm).toBe(2864.15 * 0.4 - 870 + 68.4 * 0.15);
+    expect(l.totalWages).toBe(870 + (2864.15 * 0.4 - 870) + 68.4 * 0.15);
     expect(l.laborCost).toBe(l.totalWages);
   });
 
   it("hourly over commission: NetComm is product only; zero hours gives null Gross/Hr (the workbook's #DIV/0!)", () => {
     const l = computeLine(input({ serviceSales: 500 }), DEFAULT_PAYROLL_SETTINGS);
-    expect(l.netComm).toBe(70.98 * 0.15);
-    expect(l.totalWages).toBe(1240 + 70.98 * 0.15);
+    expect(l.netComm).toBe(68.4 * 0.15);
+    expect(l.totalWages).toBe(1160 + 68.4 * 0.15);
     const z = computeLine(input({ workedHours: 0, serviceSales: 0 }), DEFAULT_PAYROLL_SETTINGS);
     expect(z.grossPerHour).toBeNull();
     expect(z.pctOfGross).toBeNull();
@@ -354,8 +354,8 @@ describe("workbook line math", () => {
   it("OT pay = 1.5 × base rate × OT hours, in labor cost; regular hours are worked minus OT", () => {
     const l = computeLine(input({ workedHours: 85, otHours: 5 }), DEFAULT_PAYROLL_SETTINGS);
     expect(l.hours).toBe(80);
-    expect(l.otPay).toBe(1.5 * 15.5 * 5);
-    expect(l.laborCost).toBe(l.totalWages + 116.25);
+    expect(l.otPay).toBe(1.5 * 14.5 * 5);
+    expect(l.laborCost).toBe(l.totalWages + 108.75);
     expect(l.totalWages).toBe(computeLine(input(), DEFAULT_PAYROLL_SETTINGS).totalWages);
   });
 
@@ -365,20 +365,20 @@ describe("workbook line math", () => {
     expect(on.laborCost).toBe(on.totalWages + 42);
     const off = computeLine(input({ trainingHours: 3.5, trainingRate: 12 }), { ...DEFAULT_PAYROLL_SETTINGS, trainingPayInCost: false });
     expect(off.trainingPay).toBe(0);
-    expect(computeLine(input({ trainingHours: 2 }), DEFAULT_PAYROLL_SETTINGS).trainingPay).toBe(31);
+    expect(computeLine(input({ trainingHours: 2 }), DEFAULT_PAYROLL_SETTINGS).trainingPay).toBe(29);
   });
 
   it("a typed-over NetComm goes to the export but is flagged against the formula, never fixed", () => {
-    const l = computeLine(input({ serviceSales: 500, overrides: { netComm: { value: 130.66, reason: "carried over" } } }), DEFAULT_PAYROLL_SETTINGS);
-    expect(l.netComm).toBe(130.66);
+    const l = computeLine(input({ serviceSales: 500, overrides: { netComm: { value: 141.37, reason: "carried over" } } }), DEFAULT_PAYROLL_SETTINGS);
+    expect(l.netComm).toBe(141.37);
     const { blocks } = assemble([{ shopId: "A", shop: "Shop A", inputs: [l.input] }], DEFAULT_PAYROLL_SETTINGS);
-    expect(blocks[0].exportRows[0].values[3]).toBe(130.66);
+    expect(blocks[0].exportRows[0].values[3]).toBe(141.37);
     expect(anomalies(blocks, DEFAULT_PAYROLL_SETTINGS).map((a) => a.kind)).toContain("netcomm_gap");
   });
 
   it("owner rows are flagged, not guessed: hours at $0 cost and sales with no hours", () => {
     const owner = input({ staffId: "o", name: "Owner", hourlyRate: 0, servicePct: 0, productPct: 0, serviceSales: 0, productSales: 0, tips: 0 });
-    const sales = input({ staffId: "o2", name: "Owner", workedHours: 0, serviceSales: 20, productSales: 0 });
+    const sales = input({ staffId: "o2", name: "Owner", workedHours: 0, serviceSales: 35, productSales: 0 });
     const { blocks } = assemble([{ shopId: "A", shop: "Shop A", inputs: [owner, sales] }], DEFAULT_PAYROLL_SETTINGS);
     const kinds = anomalies(blocks, DEFAULT_PAYROLL_SETTINGS).map((a) => a.kind);
     expect(kinds).toContain("owner_case");
@@ -396,7 +396,7 @@ describe("totals come from line items", () => {
       DEFAULT_PAYROLL_SETTINGS,
     );
     expect(mismatches).toEqual([]);
-    expect(blocks[0].totals.service).toBe(2886.34 + 1000);
+    expect(blocks[0].totals.service).toBe(2864.15 + 1000);
     expect(blocks[0].totals.hours).toBe(120);
     expect(grand.laborCost).toBe(blocks[0].totals.laborCost + blocks[1].totals.laborCost);
     expect(grand.grossProfit).toBe(grand.service - grand.laborCost);
@@ -443,18 +443,18 @@ describe("iSolved export values", () => {
     const lines = [computeLine(input({ workedHours: 87.5, otHours: 7.5, tips: 0, productSales: 0, serviceSales: 0, trainingHours: 2 }), DEFAULT_PAYROLL_SETTINGS)];
     const [row] = exportRows(lines, DEFAULT_PAYROLL_SETTINGS);
     expect(row.values).toEqual([80, 7.5, 0, 0, 0, 2]);
-    expect(lines[0].otPay).toBe(174.375);
+    expect(lines[0].otPay).toBe(163.125);
     expect(row.values).not.toContain(lines[0].otPay);
     expect(row.values).not.toContain(lines[0].otPay / 1.5);
     expect(row.values).not.toContain(lines[0].trainingPay);
     // OT pay is in the report's labor cost, not in NetComm (Comm Sales) or tips
     expect(row.values[3]).toBe(lines[0].netComm);
-    expect(lines[0].laborCost - lines[0].totalWages).toBe(174.375 + lines[0].trainingPay);
+    expect(lines[0].laborCost - lines[0].totalWages).toBe(163.125 + lines[0].trainingPay);
   });
 
   it("goes out unrounded by default, exactly the computed value", () => {
-    const lines = [computeLine(input({ serviceSales: 2886.33, workedHours: 60 }), DEFAULT_PAYROLL_SETTINGS)];
-    expect(exportRows(lines, DEFAULT_PAYROLL_SETTINGS)[0].values[3]).toBe(2886.33 * 0.4 - 930 + 70.98 * 0.15);
+    const lines = [computeLine(input({ serviceSales: 2864.14, workedHours: 60 }), DEFAULT_PAYROLL_SETTINGS)];
+    expect(exportRows(lines, DEFAULT_PAYROLL_SETTINGS)[0].values[3]).toBe(2864.14 * 0.4 - 870 + 68.4 * 0.15);
   });
 
   it("keys keep their type: numeric keys are numbers, text keys (and leading zeros) stay text", () => {
@@ -532,33 +532,33 @@ describe("Payroll Report settings (Charles's open questions, configurable)", () 
 
 describe("tips already paid out", () => {
   it("tips paid outside payroll go to E_Cash Tips Recd; those already paid out are marked in a memo column, which can be turned off", () => {
-    const lines = [computeLine(input({ tips: 412.5, tipsPaidOut: 300 }), DEFAULT_PAYROLL_SETTINGS)];
-    expect(lines[0]).toMatchObject({ tips: 412.5, tipsInPayroll: 0, tipsOutside: 412.5, tipsPaidOut: 300 });
-    const { blocks, grand, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 412.5, tipsPaidOut: 300 })] }], DEFAULT_PAYROLL_SETTINGS);
+    const lines = [computeLine(input({ tips: 395.25, tipsPaidOut: 300 }), DEFAULT_PAYROLL_SETTINGS)];
+    expect(lines[0]).toMatchObject({ tips: 395.25, tipsInPayroll: 0, tipsOutside: 395.25, tipsPaidOut: 300 });
+    const { blocks, grand, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 395.25, tipsPaidOut: 300 })] }], DEFAULT_PAYROLL_SETTINGS);
     expect(blocks[0].exportHeaders).toEqual([...EXPORT_COLUMNS.map((c) => c.header), "M_Tips Paid Out_Dollars"]);
     expect(blocks[0].exportFrom).toEqual(["tipsPaidOut"]);
-    expect(blocks[0].exportRows[0].values.slice(2, 3).concat(blocks[0].exportRows[0].values.slice(6))).toEqual([412.5, 300]);
+    expect(blocks[0].exportRows[0].values.slice(2, 3).concat(blocks[0].exportRows[0].values.slice(6))).toEqual([395.25, 300]);
     expect(mismatches).toEqual([]);
     expect(reconcile([{ ...blocks[0], exportRows: blocks[0].exportRows.map((r) => ({ ...r, values: [...r.values.slice(0, 6), 250] })) }], grand).map((m) => m.column)).toContain("Tips paid out");
 
     const off = { ...DEFAULT_PAYROLL_SETTINGS, markPaidTips: false };
-    const plain = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 412.5, tipsPaidOut: 300 })] }], off);
+    const plain = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 395.25, tipsPaidOut: 300 })] }], off);
     expect(plain.blocks[0].exportHeaders).toEqual(EXPORT_COLUMNS.map((c) => c.header));
     expect(plain.blocks[0].exportRows[0].values).toHaveLength(EXPORT_COLUMNS.length);
     expect(plain.mismatches).toEqual([]);
-    const none = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 412.5 })] }], DEFAULT_PAYROLL_SETTINGS);
+    const none = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 395.25 })] }], DEFAULT_PAYROLL_SETTINGS);
     expect(none.blocks[0].exportHeaders).toEqual(EXPORT_COLUMNS.map((c) => c.header));
   });
 
   it("tips paid through payroll leave E_Cash Tips Recd and get their own column, so nobody is paid twice", () => {
-    const inputs = [input({ tips: 412.5, tipsInPayroll: 412.5 }), input({ staffId: "b2", employeeNumber: "1002", tips: 100, tipsPaidOut: 100 })];
+    const inputs = [input({ tips: 395.25, tipsInPayroll: 395.25 }), input({ staffId: "b2", employeeNumber: "1002", tips: 100, tipsPaidOut: 100 })];
     const { blocks, grand, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs }], DEFAULT_PAYROLL_SETTINGS);
     expect(blocks[0].exportHeaders).toEqual([...EXPORT_COLUMNS.map((c) => c.header), DEFAULT_PAYROLL_SETTINGS.tipsInPayrollHeader, DEFAULT_PAYROLL_SETTINGS.tipsPaidOutHeader]);
     expect(blocks[0].exportRows.map((r) => [r.values[2], r.values[6], r.values[7]])).toEqual([
-      [0, 412.5, 0],
+      [0, 395.25, 0],
       [100, 0, 100],
     ]);
-    expect(grand).toMatchObject({ tips: 512.5, tipsInPayroll: 412.5, tipsOutside: 100, tipsPaidOut: 100 });
+    expect(grand).toMatchObject({ tips: 495.25, tipsInPayroll: 395.25, tipsOutside: 100, tipsPaidOut: 100 });
     expect(mismatches).toEqual([]);
     expect(reconcile([{ ...blocks[0], exportRows: blocks[0].exportRows.map((r, i) => (i ? r : { ...r, values: [...r.values.slice(0, 6), 400] })) }], grand).map((m) => m.check)).toContain("export");
   });
@@ -607,15 +607,15 @@ describe("2-decimal half-up rounding (toggle, off by default)", () => {
     expect(roundHalfUp2(2.675)).toBe(2.68);
     expect(roundHalfUp2(1.005)).toBe(1.01);
     expect(roundHalfUp2(-1.005)).toBe(-1.01);
-    expect(roundHalfUp2(224.43300000000005)).toBe(224.43);
-    expect(roundHalfUp2(79.93999999999991)).toBe(79.94);
+    expect(roundHalfUp2(218.66700000000003)).toBe(218.67);
+    expect(roundHalfUp2(78.24999999999991)).toBe(78.25);
     expect(roundHalfUp2(7)).toBe(7);
   });
 
   it("applies to every export value when on", () => {
     const s = { ...DEFAULT_PAYROLL_SETTINGS, roundExport2dp: true };
-    const [row] = exportRows([computeLine(input({ tips: 6.315, workedHours: 79.935 }), s)], s);
-    expect(row.values.slice(0, 3)).toEqual([79.94, 0, 6.32]);
+    const [row] = exportRows([computeLine(input({ tips: 6.315, workedHours: 78.245 }), s)], s);
+    expect(row.values.slice(0, 3)).toEqual([78.25, 0, 6.32]);
   });
 });
 

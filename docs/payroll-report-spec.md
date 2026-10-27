@@ -69,7 +69,7 @@ The platform counts both as labor cost:
 - **Training Pay** (U) is a setting ("Training pay is labor cost on the Payroll Report"), **on** by default. Training is paid at the person's training rate, or at their hourly wage when none is set.
 - **Labor Cost** (V) = N + T + U. The Locations view's Employee Cost is Labor Cost, and its Gross Profit is Service − Labor Cost.
 
-The per-employee drill-down shows each piece as a formula with the person's own numbers (for example, "O.T. Pay = 1.5 × $15.50 base rate × 13.09 OT hours = $304.34").
+The per-employee drill-down shows each piece as a formula with the person's own numbers (for example, "O.T. Pay = 1.5 × $14.50 base rate × 6.40 OT hours = $139.20").
 
 The workbook-shaped columns B to S keep the workbook's own definitions (N is still Total Wages without OT or training), so the report can be compared with the workbook column for column.
 
@@ -79,7 +79,7 @@ The workbook-shaped columns B to S keep the workbook's own definitions (N is sti
 
 Hours are whole hundredths of an hour ("centi-hours"), the precision iSolved uses. Each time entry is split at local midnights in America/Chicago using real elapsed time, so a DST day is 23 or 25 hours long, and an overnight shift counts on both days. Per person, shop and local date, the minutes are added and then rounded half-up to hundredths once. Every later sum and split works in whole hundredths, so the parts always add back up exactly.
 
-On screen, hours read decimal like the workbook (`79.94`) or as hours and minutes (`79h 56m`), per the **Payroll hours** setting (decimal by default, until Charles's spec says otherwise). The math, the CSV downloads and the iSolved file always use decimal hours. Clock times read 12-hour (`9:05 AM`) unless the brand picks 24-hour.
+On screen, hours read decimal like the workbook (`78.25`) or as hours and minutes (`78h 15m`), per the **Payroll hours** setting (decimal by default, until Charles's spec says otherwise). The math, the CSV downloads and the iSolved file always use decimal hours. Clock times read 12-hour (`9:05 AM`) unless the brand picks 24-hour.
 
 ### 3.2 Cross-shop overtime (C4)
 
@@ -214,7 +214,7 @@ There's one row per employee from row 2. There are no totals, no blank rows and 
 
 ### 6.3 Rounding
 
-Values go out **unrounded**, exactly as the workbook has them (for example 79.9399999999999, or a NetComm of 224.433). iSolved's Timecard Import has "Implied Decimal Places" set to None by default, so it takes them as they are.
+Values go out **unrounded**, exactly as the workbook has them (for example 78.2499999999999, or a NetComm of 218.667). iSolved's Timecard Import has "Implied Decimal Places" set to None by default, so it takes them as they are.
 
 A brand setting rounds export values to 2 decimals half-up instead. It's **off**, pending Charles. Half-up works from the decimal value, not the binary float, and never uses banker's rounding: 6.315 becomes 6.32, and 2.675 becomes 2.68. On the sample data it changes 19 cells (18 NetComm and one hours value), and the total NetComm by under $0.03. The report and the gate use the same values as the file, so turning it on can't create a mismatch.
 
@@ -266,7 +266,7 @@ Anomalies never block the lock. They list what a person should look at before ap
 
 The time clock's flags cover shops not yet locked; a locked shop is history.
 
-The two workbook cases waiting on Q17 (the Coralville NetComm typed $123.46 above its formula, and the Moline owner row with 80 hours at $0 cost and $20 of service sales) are flagged and left exactly as entered. Nothing is guessed.
+The two workbook cases waiting on Q17 (the Coralville NetComm typed above its formula, and the Moline owner row with hours at $0 cost and service sales in the feed) are flagged and left exactly as entered. Nothing is guessed.
 
 ## 9. Approve and lock
 

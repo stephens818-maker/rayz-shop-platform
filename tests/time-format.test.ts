@@ -81,7 +81,7 @@ describe("time format", () => {
 describe("payroll hours", () => {
   it("are decimal by default, like the payroll workbook", () => {
     expect(payrollHoursStyle()).toBe("decimal");
-    expect(formatPayHours(79.94)).toBe("79.94");
+    expect(formatPayHours(78.25)).toBe("78.25");
     expect(formatPayHours(8)).toBe("8.00");
     expect(formatPayHours(1234.5)).toBe("1,234.50");
     expect(formatPayHours(8.5, { unit: true })).toBe("8.50 h");
@@ -90,7 +90,7 @@ describe("payroll hours", () => {
 
   it("or hours and minutes, which carry their own units", () => {
     setPayrollHoursStyle("hm");
-    expect(formatPayHours(79 + 56 / 60)).toBe("79h 56m");
+    expect(formatPayHours(78 + 15 / 60)).toBe("78h 15m");
     expect(formatPayHours(8)).toBe("8h");
     expect(formatPayHours(8.5, { unit: true })).toBe("8h 30m");
     expect(formatPayHours(0.05)).toBe("0h 03m");

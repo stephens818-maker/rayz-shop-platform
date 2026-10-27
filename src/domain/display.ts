@@ -10,8 +10,8 @@ export type { PayrollHoursStyle };
  */
 export const PAYROLL_HOURS_STYLES: readonly PayrollHoursStyle[] = ["decimal", "hm"];
 export const PAYROLL_HOURS_LABEL: Record<PayrollHoursStyle, string> = {
-  decimal: "Decimal hours (79.94), like the payroll workbook",
-  hm: "Hours and minutes (79h 56m)",
+  decimal: "Decimal hours (78.25), like the payroll workbook",
+  hm: "Hours and minutes (78h 15m)",
 };
 
 export interface DisplaySettings {
