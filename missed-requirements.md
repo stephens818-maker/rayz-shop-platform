@@ -818,7 +818,7 @@ Charles's scope: a staff namespace at `/api/staff/v1`, apart from the customer `
 
 Charles's scope: each employee gets their own Stripe Connect Express account, separate from the shops' accounts, set up on Stripe's hosted onboarding from the staff app. Stripe test mode only. README "Tip payouts" and "Staff app API", and NOTES-SYNC "Tip payouts", have the details.
 
-**On hold (2026-10-27), with section 36:** this is built but switched off behind `FEATURE_STAFF_STRIPE_PAYOUTS` until Charles decides how W-2 tips are withheld. Tips are paid through payroll meanwhile (section 37).
+**On (2026-10-27), with section 36:** Charles decided card tips go straight to employees' banks through Stripe, so `FEATURE_STAFF_STRIPE_PAYOUTS` defaults on (`false` switches it off). The W-2 safeguards are section 38.
 
 - [x] Staff API: start or resume onboarding (`POST /banking/onboarding-link`, with the step: start, resume, update or done), account status and requirements (`GET /banking`), the external accounts with last 4 only (`GET /banking/external-accounts`), and the Express dashboard link (`POST /banking/dashboard-link`).
 - [x] Onboarding covers identity, the bank account and a debit card for instant payouts, all on Stripe's pages.
@@ -826,7 +826,7 @@ Charles's scope: each employee gets their own Stripe Connect Express account, se
 - [x] Standard payouts to the default bank or card, and optional instant payouts to the debit card. Without an instant-capable card it falls back to standard and says so in the audit log.
 - [x] Brand setting for the instant fee: passed on to the employee (default) or paid by the shop. Each payout records who paid it.
 - [x] Webhooks: `account.updated`, `payout.paid`, `payout.failed` (plus `account.external_account.*`, `payout.canceled` and `transfer.reversed`). A failure reverses the transfer, refunds the shop's debit and releases the tips.
-- [x] Paid tips marked in the iSolved export: a memo column (`M_Tips Paid Out_Dollars`), part of `E_Cash Tips Recd`, checked by the reconciliation, with an off switch.
+- [x] Paid tips marked in the iSolved export: a memo column (`M_Tips Paid Out_Dollars`), part of `E_Cash Tips Recd`, checked by the reconciliation, required while Stripe payouts are on.
 - [x] Test mode only: live keys are refused for employee accounts, onboarding, transfers and payouts until `MONEY_MOVEMENT_LIVE=true`.
 - [x] One money-movement module (`src/server/payments/money-movement.ts`) for debits, transfers, payouts and unwinding, offered to the mobile agent's Connect work through NOTES-SYNC.
 - [x] Never stored or returned: card, bank or routing numbers, SSNs or IDs. Migration `core_0100_staff_tip_stripe`. Tests: `tests/db/tip-stripe.test.ts`, `tests/db/staff-api.test.ts`, `tests/db/tips.test.ts`, `tests/payroll-engine.test.ts`.
@@ -861,20 +861,37 @@ From the builder's `staff-api-gaps.md` and `staff-app-plan.md`. Every route goes
 - [x] ST-C4 client search and the client card as Client data protection shows it, reveal with a reason, no contact details and no export.
 - [x] ST-C5 their timecard and sign-off; managers' list, approval, punch fixes with reasons, and the iSolved CSV.
 - [x] ST-C6 earnings by pay period from the payroll run (to the cent), and year to date with the Squire import.
-- [x] ST-C7 a configurable payout model, **through payroll (iSolved) by default**. Direct Stripe payouts to employees sit behind `FEATURE_STAFF_STRIPE_PAYOUTS` (off) in `src/server/tips/payout-model.ts`, and no employee bank onboarding UI shows while it's off.
+- [x] ST-C7 a configurable payout model: **card tips straight to the employee's bank by Stripe** (Charles's decision), with **through payroll (iSolved)** as each shop's alternative setting. `FEATURE_STAFF_STRIPE_PAYOUTS=false` (`src/server/tips/payout-model.ts`) switches Stripe off for a deployment, hiding every employee bank onboarding screen.
 - [x] ST-C8 push for confirm, reschedule, cancel, arrived, running late, waitlist, clock-out reminders and schedule changes.
 - [x] ST-C9 the payout cutover report, each barber's confirmation or dispute, the manager's sign-off, the YTD import, and the runbook (SR1 to SR8).
 - [x] ST-C10 app invites by text or email from **Users**, the invite page that opens the app, sessions, and signing someone out of every phone.
 - [x] ST-I1 to I8 and I10: time off requests and decisions (I1), milestones (I2), walk-ins (I3), checkout with the shop's card fee (I4, Tap to Pay behind its flag), calls and texts through the shop line (I5), the front-desk kiosk (I6), the manager board (I7), `/config` with the version and switches (I8), and the staff privacy, terms and support pages (I10).
 - [x] OpenAPI for every path, with its permission and the 426 response. Migrations `core_0102_staff_app_gaps`, `core_0103_staff_app_invite_jobs` and `core_0104_staff_payout_confirm_scrub`. Tests: `tests/db/staff-app-api.test.ts`, `tests/db/staff-api.test.ts`, and the staff app section of `tests/db/tenant.test.ts` (outsiders, Coralville ids and canaries).
 
-**On hold, pending Charles's decision on W-2 tip withholding:**
-- [ ] ST-I9 (per-employee Stripe recipient accounts with Stripe-hosted onboarding, if Charles chooses them).
-- [ ] The employee Stripe Express payout work (sections 35 and 36): per-employee onboarding, instant payouts, the onboarding tracker and bulk invites. It's built, behind `FEATURE_STAFF_STRIPE_PAYOUTS`, which stays off.
+- [x] ST-I9 per-employee Stripe Express accounts with Stripe-hosted onboarding from the staff app (Charles's decision, 2026-10-27), with the rest of sections 35 and 36: standard and instant payouts, payout webhooks, the onboarding tracker, bulk invites with reminders, and tips held until onboarding is done. On by default.
 
 **Still open:**
 - [ ] Shop goals (ST-I2): the platform has no shop goals, so the app shows personal milestones only.
 - [ ] Tap to Pay (`FEATURE_STAFF_TAP_TO_PAY`) needs Apple's entitlement and a Terminal location per shop, when Charles says go.
+
+## 38. W-2 safeguards for tips paid straight to employees
+
+Charles's requirement with the Stripe decision: the tips stay W-2 wages, so payroll includes them and withholds on them from regular pay. README "Tip payouts" (W-2 safeguards) has the details.
+
+- [x] Every direct tip payout goes to iSolved as tips already paid: `E_Cash Tips Recd_Dollars` with the paid-out memo, which can't be turned off while Stripe payouts are on.
+- [x] Reconciled to the cent per employee, shop and pay period against the tip ledger and the payouts (`src/server/payroll/tip-reconcile.ts`); a difference blocks approve and lock while Stripe payouts are on.
+- [x] Each payout records the employee, pay period, shop, gross tips, adjustments and card fee per period (`tip_payout_periods`, migration `core_0105_tip_payout_periods`, backfilled), next to its Stripe transfer and payout ids. An adjustment never lands in a locked period.
+- [x] Payroll-period tip report (`/admin/payroll/tips`) by employee: tips earned, in payroll, paid direct, paid out, still owed and what the file carries, with every payout and its Stripe ids, and a CSV for payroll.
+- [x] No 1099s from Stripe: accounts made with the platform paying Stripe's fees (no 1099-K) and tagged as W-2 employees'; an account Stripe reports as paying its own fees has its payouts held; the Dashboard import setting every employee account's 1099 to not required.
+- [x] Pay through payroll stays as each shop's setting. Tests: `tests/db/tip-w2.test.ts`, `tests/db/tip-stripe.test.ts`, `tests/db/tips.test.ts`.
+
+**Needs Stripe or the CPA to confirm:**
+- [ ] Stripe: that W-2 employees' tip payouts to Express accounts are an approved use, and that platform-paid fees mean no 1099-K for them.
+- [ ] Stripe: the 1099 filing-requirement override (NOT_REQUIRED) for these accounts and turning off 1099 e-delivery to them.
+- [ ] CPA: tips reported in the pay period they were earned, including ones still held for Stripe setup, which are taxed before they're received.
+- [ ] CPA: card fee netting and the instant payout fee against gross tips as W-2 wages (the file reports gross).
+- [ ] Charles and iSolved: the memo code (`M_Tips Paid Out_Dollars`) and using `E_Cash Tips Recd_Dollars` for tips paid by Stripe.
+- [ ] Live money movement (`MONEY_MOVEMENT_LIVE`) only after all of the above.
 
 ## Deferred by decision
 
