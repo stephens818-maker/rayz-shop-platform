@@ -211,6 +211,7 @@ export const TABLES: Record<string, Coverage> = {
   timesheets: REC,
   tax_form_checks: LOG,
   tip_absorptions: PAY,
+  tip_declarations: is("record", "Cash tips an employee declared, with their attestation"),
   tip_ledger: PAY,
   tip_payout_batches: PAY,
   tip_payout_periods: PAY,

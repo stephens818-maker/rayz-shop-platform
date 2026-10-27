@@ -116,6 +116,15 @@ describe("tip reversals (ST-C15)", () => {
     expect(reversalOutcome({ ...d, reversalRule: "never" }, { saleDate: "2026-10-01", refundDate: "2026-10-01", fullyRefunded: true })).toBe("absorb_rule");
     expect(reversalOutcome({ ...d, reversalRule: "any_refund" }, { saleDate: "2026-10-01", refundDate: "2026-12-01", fullyRefunded: false })).toBe("reverse");
   });
+  it("a tip already paid is the shop's cost by default (SB-C2), whatever the rule; deducting it is the brand's choice", () => {
+    const paid = { saleDate: "2026-10-01", refundDate: "2026-10-02", fullyRefunded: true, afterPayout: true };
+    expect(d.afterPayoutRefunds).toBe("shop_cost");
+    expect(reversalOutcome(d, paid)).toBe("absorb_after_payout");
+    expect(reversalOutcome({ ...d, reversalRule: "any_refund" }, paid)).toBe("absorb_after_payout");
+    expect(reversalOutcome({ ...d, afterPayoutRefunds: undefined }, paid)).toBe("absorb_after_payout");
+    expect(reversalOutcome({ ...d, afterPayoutRefunds: "deduct" }, paid)).toBe("reverse");
+    expect(reversalOutcome({ ...d, afterPayoutRefunds: "deduct", reversalRule: "never" }, paid)).toBe("absorb_rule");
+  });
 });
 
 describe("tips paid identity (ST-C13)", () => {

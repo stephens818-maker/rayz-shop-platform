@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DateTime } from "luxon";
+import { payPeriodByIndex, payPeriodFor, payPeriodsBetween } from "@/domain/payroll";
 import { periodByIndex, periodOf, periodStarting, calendarProblem, type PayCalendar } from "@/domain/payroll/calendar";
 import { dailyHours, largestRemainder, overtimeSlices, sliceKey, splitByLocalDay, weekStartOf, type OtOptions, type TimeEntry } from "@/domain/payroll/overtime";
 import {
@@ -372,5 +373,49 @@ describe("full time / part time", () => {
   it("settings parse with safe defaults", () => {
     expect(payrollSettings(null)).toEqual(DEFAULT_PAYROLL_SETTINGS);
     expect(payrollSettings({ ftBasis: "nope", ftHoursPerWeek: -1, roundExport2dp: true })).toMatchObject({ ftBasis: "worked", ftHoursPerWeek: 32, roundExport2dp: true });
+  });
+});
+
+describe("payroll review (SB-C2, SB-C3, SB-I2)", () => {
+  it("brand pay periods follow the calendar in the payroll setting, not a hard-coded anchor", () => {
+    expect(payPeriodFor("2026-10-18")).toMatchObject({ start: "2026-10-18", end: "2026-10-31", index: 0 });
+    const cal = { anchorStart: "2026-10-04", periodDays: 7 };
+    expect(payPeriodFor("2026-10-18", cal)).toMatchObject({ start: "2026-10-18", end: "2026-10-24", index: 2 });
+    expect(payPeriodByIndex(-1, cal)).toMatchObject({ start: "2026-09-27", end: "2026-10-03" });
+    expect(payPeriodsBetween("2026-10-01", "2026-10-12", cal).map((p) => p.start)).toEqual(["2026-09-27", "2026-10-04", "2026-10-11"]);
+    expect(payrollSettings({ calendar: DUBUQUE }).calendar).toEqual(DUBUQUE);
+    expect(payrollSettings({ calendar: { ...DUBUQUE, anchorStart: "2026-10-05" } }).calendar).toEqual(MAIN);
+  });
+
+  it("declarations and the W-2 and 45B settings parse with safe defaults", () => {
+    expect(payrollSettings({ declarations: { lockDay: 40, remindUntilDay: 20, attestation: "  " } }).declarations).toMatchObject({ lockDay: 10, remindUntilDay: 10, attestation: DEFAULT_PAYROLL_SETTINGS.declarations.attestation });
+    expect(payrollSettings({ declarations: { lockDay: 5, enabled: false } }).declarations).toMatchObject({ lockDay: 5, remindUntilDay: 5, enabled: false, atClockOut: true });
+    expect(payrollSettings({ tipTax: { qualifiedTipsCode: "tp", overtimeCode: "not a code", ficaRate: 2, creditFrom: "soon" } }).tipTax).toEqual({ ...DEFAULT_PAYROLL_SETTINGS.tipTax, qualifiedTipsCode: "TP" });
+  });
+
+  it("declared cash tips get their own export column, are not labor cost, and the export must match the report", () => {
+    const inputs = [input({ declaredCashTips: 45 }), input({ staffId: "b2", employeeNumber: "1002" })];
+    const { blocks, grand, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs }], DEFAULT_PAYROLL_SETTINGS);
+    expect(blocks[0].exportHeaders).toContain(DEFAULT_PAYROLL_SETTINGS.cashTipsDeclaredHeader);
+    const j = blocks[0].exportHeaders!.indexOf(DEFAULT_PAYROLL_SETTINGS.cashTipsDeclaredHeader);
+    expect(blocks[0].exportRows.map((r) => r.values[j])).toEqual([45, 0]);
+    expect(blocks[0].lines[0].laborCost).toBe(blocks[0].lines[1].laborCost);
+    expect(grand.declaredCashTips).toBe(45);
+    expect(mismatches).toEqual([]);
+    const off = { ...blocks[0], exportRows: blocks[0].exportRows.map((r) => ({ ...r, values: r.values.map((v, k) => (k === j ? 40 : v)) })) };
+    expect(reconcile([off], grand).map((x) => x.column)).toContain("Cash tips declared");
+    expect(assemble([{ shopId: "A", shop: "Shop A", inputs: [input()] }], DEFAULT_PAYROLL_SETTINGS).blocks[0].exportHeaders).not.toContain(DEFAULT_PAYROLL_SETTINGS.cashTipsDeclaredHeader);
+  });
+
+  it("a refund of tips already paid is flagged; the shop's cost unless the brand deducted it", () => {
+    const shopCost = computeLine(input({ tips: 50, lateTipRefunds: 20 }), DEFAULT_PAYROLL_SETTINGS);
+    expect(shopCost).toMatchObject({ tips: 50, lateTipRefunds: 20, tipRefundsShopCost: 20 });
+    const deducted = computeLine(input({ tips: 30, lateTipRefunds: 20, lateTipRefundsDeducted: 20 }), DEFAULT_PAYROLL_SETTINGS);
+    expect(deducted.tipRefundsShopCost).toBe(0);
+    const { blocks } = assemble([{ shopId: "A", shop: "Shop A", inputs: [shopCost.input, { ...deducted.input, staffId: "b2" }, input({ staffId: "b3" })] }], DEFAULT_PAYROLL_SETTINGS);
+    const flags = anomalies(blocks, DEFAULT_PAYROLL_SETTINGS).filter((a) => a.kind === "late_tip_refund");
+    expect(flags.map((a) => a.staffId)).toEqual(["b1", "b2"]);
+    expect(flags[0].message).toMatch(/\$20\.00 is the shop's cost/);
+    expect(flags[1].message).toMatch(/comes off this period's tips .*written consent in IL and IA/);
   });
 });
