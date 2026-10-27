@@ -818,7 +818,7 @@ Charles's scope: a staff namespace at `/api/staff/v1`, apart from the customer `
 - [x] The Rayz App builder's gap list and the app version gate: see section 37.
 
 **Still open:**
-- [ ] Approved-device sign-in rules for the app (the app sends no device evidence yet, so a location needing an approved device or its Wi-Fi blocks the app off that network).
+- [x] L36: approved-device sign-in for the app. A blocked sign-in gets a 15-minute ticket to ask for approval (`POST /auth/device/request`); the app sends the device token as `X-Device-Token`, and it counts on sign-in and every request once a manager approves it under Sign-in security. `tests/db/staff-app-device.test.ts`. The app's screens are the Rayz App builder's.
 
 ## 35. Staff app Stripe tip payouts (matches Squire Commander)
 

@@ -13,7 +13,7 @@ import { requireInTenant } from "@/server/tenant";
 import { clockState } from "@/server/time-clock";
 import { declareCashTips, myDeclarations } from "@/server/tips/declarations";
 import { assertStripePayouts } from "@/server/tips/payout-model";
-import { recordStaffAppWipe, refreshStaffTokens, requestWhere, staffCodeLogin, staffLogout, staffPasswordLogin } from "./auth";
+import { appDeviceStatus, recordStaffAppWipe, refreshStaffTokens, requestAppDevice, requestWhere, staffAppSession, staffCodeLogin, staffLogout, staffPasswordLogin } from "./auth";
 import { block, book, move, myCalendar, openings, runningLate, seesEveryColumn, setStatus, unblock } from "./calendar";
 import { clientCard, contactForApp, findClientsFor, revealForApp } from "./clients";
 import { KioskCaller, appPunch, clockOverview, kioskHome, kioskPunch, kioskQr, kioskQueueView, kioskStatus, kioskTeam, pairKiosk, pairedKiosk, registerKiosk, setMyPin, signedInKiosk } from "./clock";
@@ -109,6 +109,15 @@ export const postWiped = signInRoute(async (req) => {
   await recordStaffAppWipe(v.refreshToken, v.wipe, requestWhere(req));
   return new Response(null, { status: 204 });
 });
+
+/** POST /auth/device/request: ask for this install to be approved at a location that takes approved devices. */
+export const postDeviceRequest = signInRoute(async (req) => {
+  const v = await body(req, S.DeviceRequestBody);
+  return json(await requestAppDevice(v, requestWhere(req), v.ticket ? null : await staffAppSession(req)));
+});
+
+/** GET /auth/device: this install's approvals. */
+export const getDeviceStatus = signInRoute(async (req) => json(await appDeviceStatus(requestWhere(req))));
 
 /** GET /config: minimum versions, switches and links, read at launch before sign-in. Not version-gated. */
 export const getConfig = route(async (req) => {

@@ -17,6 +17,11 @@ export const LoginCodeBody = z.object({ ticket: z.string().max(4000).describe("F
 export const RefreshBody = z.object({ refreshToken: z.string().min(10).max(200), deviceId: DeviceId });
 export const LogoutBody = z.object({ refreshToken: z.string().min(10).max(200) });
 export const WipedBody = z.object({ refreshToken: z.string().min(10).max(200), wipe: z.enum(["all", "cache"]).describe("What it deleted: details.wipe from the 401") });
+export const DeviceRequestBody = z.object({
+  ticket: z.string().max(4000).nullish().describe("details.deviceTicket from the blocked sign-in (15 minutes). Leave it out while signed in (Bearer) at a location blocked from here"),
+  shopId: z.uuid().describe("One of details.deviceShops"),
+  label: z.string().max(40).nullish().describe("What the manager sees, like \u201cMakenna's iPhone\u201d. The app's name when left out"),
+});
 
 const Who = { email: z.string().max(200).nullish(), phone: z.string().max(40).nullish() };
 export const CodeStartBody = z.object(Who).refine((v) => !!(v.email || v.phone), "Send email or phone").describe("Their email or mobile number on file. The answer is the same whether or not it matches anyone.");

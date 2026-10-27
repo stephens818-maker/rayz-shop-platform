@@ -93,7 +93,7 @@ describe("every route is guarded", () => {
   const src = readFileSync(join(process.cwd(), "src/server/staff-api/handlers.ts"), "utf8");
   const exported = [...src.matchAll(/^export const (\w+)\s*=\s*([\w.]+)/gm)].map((x) => ({ name: x[1], via: x[2] }));
   /** Before sign-in: the version gate only. GET /config is read before anything else, ungated. */
-  const PUBLIC = new Set(["postLogin", "postLoginCode", "postCodeStart", "postCodeVerify", "getInvite", "postInviteAccept", "postRefresh", "postLogout", "postWiped", "getConfig", "postKioskPair"]);
+  const PUBLIC = new Set(["postLogin", "postLoginCode", "postCodeStart", "postCodeVerify", "getInvite", "postInviteAccept", "postRefresh", "postLogout", "postWiped", "postDeviceRequest", "getDeviceStatus", "getConfig", "postKioskPair"]);
 
   it("each handler is staffRoute (authorize + assertShopAccess), a wrapper of it, or a named sign-in route", () => {
     const handlers = exported.filter((e) => e.name !== "OPTIONS");
@@ -122,7 +122,7 @@ describe("every route is guarded", () => {
     const doc = staffOpenApiDocument("http://x") as { paths: Record<string, Record<string, { security?: unknown[]; description: string }>> };
     const open = Object.entries(doc.paths).flatMap(([p, ops]) => Object.entries(ops).filter(([, o]) => Array.isArray(o.security) && !o.security.length).map(([meth]) => `${meth.toUpperCase()} ${p}`));
     expect(open.sort()).toEqual(
-      ["POST /auth/login", "POST /auth/login/code", "POST /auth/code/start", "POST /auth/code/verify", "GET /auth/invite", "POST /auth/invite/accept", "POST /auth/refresh", "POST /auth/logout", "POST /auth/wiped", "GET /config", "POST /clock/kiosk/pair"].sort(),
+      ["POST /auth/login", "POST /auth/login/code", "POST /auth/code/start", "POST /auth/code/verify", "GET /auth/invite", "POST /auth/invite/accept", "POST /auth/refresh", "POST /auth/logout", "POST /auth/wiped", "POST /auth/device/request", "GET /auth/device", "GET /config", "POST /clock/kiosk/pair"].sort(),
     );
     for (const p of ["/banking", "/banking/external-accounts", "/banking/onboarding-link", "/banking/dashboard-link", "/banking/method", "/banking/deposit-consent"])
       expect(Object.values(doc.paths[p])[0].description, p).toMatch(/403 .*FEATURE_STAFF_STRIPE_PAYOUTS=false/);

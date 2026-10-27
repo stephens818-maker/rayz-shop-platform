@@ -46,7 +46,7 @@ export const approvedShopIds = (d: { rows: TrustedDevice[] } | null) => (d ? d.r
 
 export const deviceCookieValue = (secret: string) => signToken({ k: secret }, "trusted_device", DEVICE_TTL);
 
-async function touchDevices(hash: string, ip: string | null) {
+export async function touchDevices(hash: string, ip: string | null) {
   await db
     .update(trustedDevices)
     .set({ lastSeenAt: new Date(), lastIp: ip })

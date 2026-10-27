@@ -33,7 +33,7 @@ const WINDOW_MS = 15 * 60_000;
 export const APP_INVITE_TTL_DAYS = 3;
 const PURPOSE = "staff_sign_in";
 
-type Where = { ip: string | null; userAgent: string | null };
+type Where = { ip: string | null; userAgent: string | null; deviceToken?: string | null };
 type Person = typeof staff.$inferSelect;
 
 /** The signed-up person a phone or email belongs to; null for anyone else (shop logins, invited-only, inactive). */

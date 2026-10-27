@@ -1,15 +1,15 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { and, eq, gt, isNotNull, isNull } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { staff, staffAppTokens, staffDevices } from "@/db/schema";
+import { shops, staff, staffAppTokens, staffDevices } from "@/db/schema";
 import { BLOCK_MESSAGE } from "@/domain/network-access";
 import { WIPE_FOR, type SessionEnd } from "@/domain/staff-device-policy";
 import { deviceLabel, idleTooLong } from "@/domain/staff-auth";
 import { clientIp } from "@/lib/client-ip";
 import { audit } from "@/server/audit";
 import { loadStaffAccess } from "@/server/auth/access";
-import { evaluateNetwork, recordBlocked } from "@/server/auth/network";
+import { approvedShopIds, deviceCookieValue, deviceTicket, devicesFromCookie, evaluateNetwork, readDeviceTicket, recordBlocked, touchDevices } from "@/server/auth/network";
 import { checkPassword, noteSignInDevice, signInFactorFor } from "@/server/auth/sign-in-guard";
 import { StaffContext, staffContextOf } from "@/server/auth/staff";
 import { randomToken, sha256, signToken, verifyToken } from "@/server/auth/tokens";
@@ -17,6 +17,7 @@ import { TwoFactorPrompt, finishTwoFactor, twoFactorPrompt } from "@/server/auth
 import { refreshDemoDay, staffReviewLoginOn } from "@/server/demo-shop";
 import { AppError } from "@/server/errors";
 import { rateLimit } from "@/server/rate-limit";
+import { requestDevice } from "@/server/sign-in-security";
 
 /**
  * The staff app's sign-in (/api/staff/v1): email and password, a code by text or email, or a staff
@@ -46,6 +47,8 @@ export type StaffLoginResult = { tokens: StaffTokens } | { twoFactor: TwoFactorP
 interface Where {
   ip: string | null;
   userAgent: string | null;
+  /** X-Device-Token: this install's approved-device token, from POST /auth/device/request. */
+  deviceToken?: string | null;
 }
 
 /** The install signing in: a name for their list of sign-ins, and the app's own random install id the refresh token is bound to. */
@@ -54,7 +57,7 @@ export interface Install {
   deviceId?: string | null;
 }
 
-export const requestWhere = (req: Request): Where => ({ ip: clientIp(req.headers), userAgent: req.headers.get("user-agent") });
+export const requestWhere = (req: Request): Where => ({ ip: clientIp(req.headers), userAgent: req.headers.get("user-agent"), deviceToken: req.headers.get("x-device-token")?.trim() || null });
 
 const cleanDevice = (name: string | null | undefined) => name?.trim().slice(0, 80) || null;
 const cleanDeviceId = (id: string | null | undefined) => id?.trim().slice(0, 100) || null;
@@ -90,11 +93,16 @@ export async function admit(user: typeof staff.$inferSelect, where: Where, insta
   const deviceName = cleanDevice(install.deviceName);
   const access = await loadStaffAccess(user.id);
   if (!access) throw new AppError("unauthorized", "Email or password is incorrect");
-  const verdict = await evaluateNetwork(access, { ip: where.ip, deviceShopIds: [] });
+  const device = await devicesFromCookie(where.deviceToken);
+  const verdict = await evaluateNetwork(access, { ip: where.ip, deviceShopIds: approvedShopIds(device) });
   if (verdict.blocked.length) {
-    await recordBlocked({ staff: user, roleName: access.role.name, verdict, ip: where.ip, via: "sign_in", outcome: verdict.full ? "blocked" : "limited", userAgent: where.userAgent, path: "/api/staff/v1/auth/login" });
+    await recordBlocked({ staff: user, roleName: access.role.name, verdict, ip: where.ip, via: "sign_in", outcome: verdict.full ? "blocked" : "limited", userAgent: where.userAgent, path: "/api/staff/v1/auth/login", deviceIds: device?.rows.map((d) => d.id) });
   }
-  if (verdict.full) throw new AppError("forbidden", BLOCK_MESSAGE, { networkBlocked: true });
+  if (verdict.full) {
+    const ticket = await deviceTicket(user.id, verdict);
+    throw new AppError("forbidden", BLOCK_MESSAGE, { networkBlocked: true, ...(ticket ? { deviceTicket: ticket, deviceShops: await shopNames(verdict.blocked.filter((b) => b.require !== "ip").map((b) => b.shopId)) } : {}) });
+  }
+  if (device) await touchDevices(device.hash, where.ip);
   const deviceId = cleanDeviceId(install.deviceId);
   const tokens = await issue(user.id, { deviceName, deviceId });
   await noteSignInDevice(user, "app", { deviceKey: deviceId, label: deviceName ?? deviceLabel(where.userAgent), ip: where.ip });
@@ -244,7 +252,10 @@ export async function requireStaffApp(req: Request): Promise<StaffContext & { se
     if (!s.end) throw new AppError("unauthorized", "Sign in required (Authorization: Bearer <accessToken> from /api/staff/v1/auth/login)");
     throw ended(s.end, END_MESSAGE[s.end]);
   }
-  const ctx = await staffContextOf(s.staffId, s.iat, { ip: clientIp(req.headers), deviceShopIds: [], shopPref: req.headers.get("x-shop-id")?.trim() || null });
+  const where = requestWhere(req);
+  const device = await devicesFromCookie(where.deviceToken);
+  if (device) await touchDevices(device.hash, where.ip);
+  const ctx = await staffContextOf(s.staffId, s.iat, { ip: where.ip, deviceShopIds: approvedShopIds(device), shopPref: req.headers.get("x-shop-id")?.trim() || null });
   if (!ctx) {
     const person = await db.query.staff.findFirst({ where: eq(staff.id, s.staffId), columns: { active: true, sessionsValidAfter: true } });
     const out = !person?.active || (person.sessionsValidAfter && s.iat < Math.floor(person.sessionsValidAfter.getTime() / 1000));
@@ -252,4 +263,51 @@ export async function requireStaffApp(req: Request): Promise<StaffContext & { se
     throw new AppError("forbidden", BLOCK_MESSAGE, { networkBlocked: true, wipe: "cache" });
   }
   return { ...ctx, sessionId: s.sessionId, session: { kind: "app", id: s.sessionId } };
+}
+
+async function shopNames(ids: readonly string[]) {
+  if (!ids.length) return [];
+  return db.select({ id: shops.id, name: shops.name }).from(shops).where(inArray(shops.id, [...ids])).orderBy(asc(shops.name));
+}
+
+/**
+ * Approved-device sign-in for the app, the same trusted devices as the web's: a location whose rule
+ * takes approved devices lets this install in once a manager approves it under Sign-in security.
+ * After a blocked sign-in (its details.deviceTicket, good for 15 minutes), or while signed in at a
+ * location that's blocked from here, the app asks for one of those shops. The answer's deviceToken
+ * is kept in the phone's secure storage and sent as X-Device-Token on sign-in and every request; it
+ * counts once approved. An install that already has one keeps it (null comes back).
+ */
+export async function requestAppDevice(input: { ticket?: string | null; shopId: string; label?: string | null }, where: Where, session: { staffId: string } | null) {
+  await rateLimit("staff_app_device_ip", where.ip, 20, LOGIN_WINDOW_MS, "Too many requests. Try again in 15 minutes.");
+  const existing = await devicesFromCookie(where.deviceToken);
+  let asker: { staffId: string; shopIds: string[] } | null = null;
+  if (input.ticket) asker = await readDeviceTicket(input.ticket);
+  else if (session) {
+    const access = await loadStaffAccess(session.staffId);
+    if (access) {
+      const verdict = await evaluateNetwork(access, { ip: where.ip, deviceShopIds: approvedShopIds(existing) });
+      asker = { staffId: session.staffId, shopIds: verdict.blocked.filter((b) => b.require !== "ip").map((b) => b.shopId) };
+    }
+  }
+  if (!asker) throw new AppError("unauthorized", "Sign in again from this phone first");
+  const d = await requestDevice({
+    staffId: asker.staffId,
+    allowedShopIds: asker.shopIds,
+    shopId: input.shopId,
+    label: input.label?.trim() || "Ray'z Staff app",
+    ip: where.ip,
+    userAgent: where.userAgent ?? "Ray'z Staff app",
+    existingHash: existing?.hash ?? null,
+  });
+  return { shop: d.shop, status: "pending" as const, deviceToken: d.secret ? await deviceCookieValue(d.secret) : null };
+}
+
+/** What this install's X-Device-Token stands for: each shop's approval, pending, approved, declined or revoked. */
+export async function appDeviceStatus(where: Where) {
+  await rateLimit("staff_app_device_ip", where.ip, 60, LOGIN_WINDOW_MS, "Too many requests. Try again in 15 minutes.");
+  const device = await devicesFromCookie(where.deviceToken);
+  if (!device) return { devices: [] };
+  const names = new Map((await shopNames(device.rows.map((r) => r.shopId))).map((s) => [s.id, s.name]));
+  return { devices: device.rows.map((r) => ({ shopId: r.shopId, shop: names.get(r.shopId) ?? null, label: r.label, status: r.status })) };
 }
