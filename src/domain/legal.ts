@@ -16,3 +16,6 @@ export const SMS_PROGRAM = {
   carriers: "Carriers are not liable for delayed or undelivered messages.",
   noSharing: "We don't share your mobile number or text-message consent with anyone for their own marketing.",
 };
+
+/** The staff app's own privacy notice and terms of use (/staff-app/privacy, /staff-app/terms): employee data, not clients'. */
+export const STAFF_LEGAL_VERSIONS = { privacy: "2026-10-27", terms: "2026-10-27", updated: "October 27, 2026" } as const;

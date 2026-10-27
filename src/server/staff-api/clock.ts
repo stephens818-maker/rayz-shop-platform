@@ -12,6 +12,7 @@ import { clockProofUrl, clockQrCode } from "@/server/clock-codes";
 import { forbidden, notFound } from "@/server/errors";
 import { clockInWelcome } from "@/server/milestones/day";
 import { PunchResult, checkPin, clockState, deviceFromToken, punch, registerDevice, setPin, shopClocks } from "@/server/time-clock";
+import { kioskQueue } from "./front";
 import type { StaffAppContext } from "./http";
 
 /**
@@ -182,4 +183,17 @@ export async function kioskPunch(ctx: StaffAppContext, req: Request, v: { staffI
     actor,
   });
   return resultView(r, r.kind === "done" && r.type === "in" ? await clockInWelcome(v.staffId, actor, "kiosk") : null);
+}
+
+/** The walk-in queue on the front-desk device: first names and waits only. */
+export async function kioskQueueView(ctx: StaffAppContext, req: Request) {
+  const device = await kiosk(ctx, req);
+  return kioskQueue(device.shopId);
+}
+
+/** Everything the front-desk screen draws in one call: the rotating QR, the PIN pad's team and the walk-in queue. */
+export async function kioskHome(ctx: StaffAppContext, req: Request) {
+  const device = await kiosk(ctx, req);
+  const [qr, team, queue] = await Promise.all([kioskQr(ctx, req), kioskTeam(ctx, req), kioskQueue(device.shopId)]);
+  return { shopId: device.shopId, shop: device.shop, device: device.label, qr: { url: qr.url, expiresAt: qr.expiresAt }, team: team.team, queue: can(ctx, "walkins.manage") || ctx.staff.kind === "shop" ? queue : null };
 }

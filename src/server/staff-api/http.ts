@@ -54,3 +54,7 @@ export function shopOf(ctx: StaffAppContext, shopId: string | null | undefined):
   assertShopAccess(ctx, id);
   return id;
 }
+
+/** Booked clients in the way of a block or time off, by first name only (the web shows a last initial). */
+export const conflictsView = (list: readonly { id: string; code: string; startsAt: string; endsAt: string; status: string; shopId: string; shopName: string; staffId: string; customerName: string }[]) =>
+  list.map((c) => ({ appointmentId: c.id, code: c.code, startsAt: c.startsAt, endsAt: c.endsAt, status: c.status, shopId: c.shopId, shop: c.shopName, staffId: c.staffId, firstName: c.customerName.split(" ")[0] ?? "" }));

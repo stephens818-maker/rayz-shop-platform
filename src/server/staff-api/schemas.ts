@@ -5,10 +5,23 @@ import { TIP_METHODS } from "@/domain/tips";
 /** Request bodies and queries for /api/staff/v1, shared by the handlers and the OpenAPI document. */
 
 const Device = z.string().max(80).nullish().describe("Shown on their sign-ins, e.g. Makenna's iPhone");
+const DeviceId = z
+  .string()
+  .max(128)
+  .nullish()
+  .describe("A stable id for this install (e.g. identifierForVendor, or one the app stores in the keychain). The refresh token then works only with it, so a copied token is useless on another phone.");
 
-export const LoginBody = z.object({ email: z.string().max(200), password: z.string().max(200), deviceName: Device });
-export const LoginCodeBody = z.object({ ticket: z.string().max(4000).describe("From the login response's twoFactor"), code: z.string().max(12), deviceName: Device });
-export const RefreshBody = z.object({ refreshToken: z.string().min(10).max(200) });
+export const LoginBody = z.object({ email: z.string().max(200), password: z.string().max(200), deviceName: Device, deviceId: DeviceId });
+export const LoginCodeBody = z.object({ ticket: z.string().max(4000).describe("From the login response's twoFactor"), code: z.string().max(12), deviceName: Device, deviceId: DeviceId });
+export const RefreshBody = z.object({ refreshToken: z.string().min(10).max(200), deviceId: DeviceId });
+export const LogoutBody = z.object({ refreshToken: z.string().min(10).max(200) });
+
+const Who = { email: z.string().max(200).nullish(), phone: z.string().max(40).nullish() };
+export const CodeStartBody = z.object(Who).refine((v) => !!(v.email || v.phone), "Send email or phone").describe("Their email or mobile number on file. The answer is the same whether or not it matches anyone.");
+export const CodeVerifyBody = z.object({ ...Who, code: z.string().max(12), deviceName: Device, deviceId: DeviceId });
+export const InviteQuery = z.object({ token: z.string().min(10).max(200).describe("From the invite link /staff-app/invite/{token}") });
+export const InviteAcceptBody = z.object({ token: z.string().min(10).max(200), password: z.string().max(200).nullish().describe("Required when the invite says setPassword"), deviceName: Device, deviceId: DeviceId });
+export const AppInviteBody = z.object({ channel: z.enum(["sms", "email"]).nullish().describe("Text when they have a mobile number, else email, when left out") });
 
 export const DateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "A date like 2026-10-27");
 
@@ -93,3 +106,95 @@ export const NotificationPrefsBody = z.object({
   firstHours: z.number().int().optional(),
   secondHours: z.number().int().optional(),
 });
+
+// ───────────────────────────── Calendar (ST-C3) ─────────────────────────────
+
+export const CalendarQuery = z.object({
+  date: DateStr.optional().describe("Today when left out"),
+  shopId: z.uuid().optional().describe("The X-Shop-Id shop when left out"),
+  all: z.enum(["0", "1", "true", "false"]).optional().describe("0 for only their own column, where they may see everyone's"),
+});
+export const StatusBody = z.object({ action: z.enum(["confirm", "check_in", "start", "finish", "complete", "no_show", "cancel", "undo"]) });
+export const BookBody = z.object({
+  shopId: z.uuid().optional(),
+  staffId: z.uuid().optional().describe("Their own column when left out; anyone's needs calendar.manage"),
+  date: DateStr,
+  startMin: z.number().int().min(0).max(24 * 60 - 1),
+  serviceId: z.uuid(),
+  addonIds: z.array(z.uuid()).max(10).optional(),
+  customerId: z.uuid().nullish().describe("A client from GET /clients; or send customer for a new one"),
+  customer: z.object({ firstName: z.string().max(60), lastName: z.string().max(60).optional(), phone: z.string().max(40).optional(), email: z.string().max(200).optional() }).nullish(),
+  notes: z.string().max(500).nullish(),
+  squeezeIn: z.boolean().optional().describe("Off the grid; needs calendar.squeeze_in"),
+});
+export const MoveBody = z.object({ staffId: z.uuid().nullish(), date: DateStr, startMin: z.number().int().min(0).max(24 * 60 - 1), squeezeIn: z.boolean().optional() });
+export const LateBody = z.object({ minutes: z.number().int().min(1).max(120) });
+export const OpeningsQuery = z.object({ shopId: z.uuid().optional(), staffId: z.uuid().optional(), date: DateStr, serviceId: z.uuid(), addonIds: z.string().max(400).optional().describe("Comma-separated add-on ids") });
+export const BlockBody = z.object({
+  shopId: z.uuid().nullish(),
+  staffId: z.uuid().nullish().describe("Their own when left out; anyone's needs blocks.others"),
+  date: DateStr,
+  startMin: z.number().int().min(0).max(24 * 60),
+  endMin: z.number().int().min(0).max(24 * 60),
+  reasonId: z.uuid(),
+  note: z.string().max(200).nullish(),
+  allShops: z.boolean().optional(),
+  confirm: z.boolean().optional().describe("Save even with clients booked in it (they stay booked)"),
+});
+
+// ───────────────────────────── Clients (ST-C4, ST-I5) ─────────────────────────────
+
+export const ClientSearchQuery = z.object({ q: z.string().min(2).max(80).describe("Name, client number or the last 4 of a phone"), limit: z.coerce.number().int().min(1).max(20).optional() });
+export const RevealBody = z.object({ field: z.string().max(80).describe("A masked field's key from the card (contact details are never revealed in the app)"), reason: z.string().min(3).max(200) });
+export const ContactBody = z.object({ channel: z.enum(["sms", "call"]), message: z.string().max(480).optional().describe("The text, for sms") });
+
+// ───────────────────────────── Timecards (ST-C5) ─────────────────────────────
+
+const PeriodQ = DateStr.optional().describe("A pay period's first day; the current period when left out");
+export const PeriodQuery = z.object({ period: PeriodQ });
+export const TeamTimecardsQuery = z.object({ period: PeriodQ, shopId: z.uuid().optional() });
+export const ExportQuery = z.object({ period: DateStr, format: z.enum(["isolved", "generic"]).optional(), shopId: z.uuid().optional() });
+export const SignOffBody = z.object({ shopId: z.uuid(), periodStart: DateStr });
+export const ApproveBody = SignOffBody.extend({ note: z.string().max(400).nullish().describe("Required when they haven't signed off") });
+const PunchKind = z.enum(["in", "out", "break_start", "break_end"]);
+const Reason = z.string().min(1).max(300).describe("Why; it goes in the edit log");
+export const AddPunchBody = z.object({ shopId: z.uuid(), type: PunchKind, at: z.iso.datetime({ offset: true }), reason: Reason });
+export const EditPunchBody = z.object({ at: z.iso.datetime({ offset: true }).optional(), type: PunchKind.optional(), shopId: z.uuid().optional(), reason: Reason });
+export const VoidPunchBody = z.object({ reason: Reason });
+
+// ───────────────────────────── Earnings and payouts (ST-C6, ST-C7, ST-C9) ─────────────────────────────
+
+export const PeriodEarningsQuery = z.object({ period: DateStr.optional().describe("Any day in the pay period; today when left out") });
+export const YtdQuery = z.object({ year: z.coerce.number().int().min(2020).max(2100).optional() });
+export const CutoverAnswerBody = z.object({ shopId: z.uuid(), status: z.enum(["confirmed", "disputed"]), note: z.string().max(500).nullish().describe("Required to dispute") });
+
+// ───────────────────────────── Time off (ST-I1) ─────────────────────────────
+
+export const TimeOffBody = z.object({
+  shopId: z.uuid().nullable().describe("null for every shop they work at"),
+  fromDate: DateStr,
+  toDate: DateStr,
+  allDay: z.boolean(),
+  startMin: z.number().int().min(0).max(24 * 60).optional(),
+  endMin: z.number().int().min(0).max(24 * 60).optional(),
+  reasonId: z.uuid().describe("From GET /me/time-off-requests reasons"),
+  note: z.string().max(200).nullish(),
+  confirm: z.boolean().optional(),
+});
+export const TeamTimeOffQuery = z.object({ shopId: z.uuid().optional(), status: z.enum(["pending", "all"]).optional() });
+export const DecisionBody = z.object({ decision: z.enum(["approve", "deny"]), note: z.string().max(400).nullish() });
+
+// ───────────────────────────── Walk-ins, checkout, manager (ST-I3, ST-I4, ST-I7) ─────────────────────────────
+
+export const WalkInBody = z.object({
+  serviceId: z.uuid(),
+  name: z.string().min(1).max(80),
+  phone: z.string().max(40).nullish().describe("For the 'you're up' text; needs Client data's add permission"),
+  preferredStaffId: z.uuid().nullish(),
+  customerId: z.uuid().nullish(),
+});
+export const SeatBody = z.object({ staffId: z.uuid() });
+export const EntryStatusBody = z.object({ status: z.enum(["left", "done"]) });
+export const SaleBody = z.object({ appointmentId: z.uuid(), tipCents: z.number().int().min(0).max(100_000).optional().describe("For the card fee quote") });
+export const TerminalTokenBody = z.object({ shopId: z.uuid().optional() });
+export const BoardQuery = z.object({ shopId: z.uuid().optional() });

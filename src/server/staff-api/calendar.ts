@@ -11,7 +11,7 @@ import { noteViewer } from "@/server/client-notes";
 import { clientPolicy } from "@/server/client-privacy";
 import { AppError } from "@/server/errors";
 import { queueStaffAlert } from "@/server/staff-alerts";
-import { StaffAppContext, shopOf } from "./http";
+import { StaffAppContext, conflictsView, shopOf } from "./http";
 import { myAppointment } from "./schedule";
 
 /**
@@ -86,7 +86,7 @@ export async function openings(ctx: StaffAppContext, q: { shopId?: string; staff
 /** POST /blocks: { done: false, conflicts } until confirmed when clients are booked in it; they stay booked. */
 export async function block(ctx: StaffAppContext, input: Omit<StaffBlockInput, "staffId" | "shopId"> & { staffId?: string | null; shopId?: string | null }) {
   const r = await blockForStaff(ctx, { ...input, shopId: shopOf(ctx, input.shopId), staffId: input.staffId ?? ctx.staff.id }, "staff_app");
-  return { saved: r.done, blockId: r.done ? r.blockId : null, conflicts: r.conflicts };
+  return { saved: r.done, blockId: r.done ? r.blockId : null, conflicts: conflictsView(r.conflicts) };
 }
 
 export async function unblock(ctx: StaffAppContext, id: string) {
