@@ -806,11 +806,13 @@ Optional pay plans for each employee, for when the brand wants them. Everything 
 
 Charles doesn't want military time, so every time on screen reads 12-hour with AM and PM (`9:05 AM`, `5:30 PM`), never `17:30` like Squire. That covers the time clock, timesheets and punch edits, the calendar, reports and their on-screen previews, emails and the staff app.
 
-- **Brand defaults → Time format** (`settings.brand`, the whole brand): 12-hour, the default, or 24-hour.
+- **Brand defaults → Time format** (`settings.brand`, the whole brand): 12-hour, the default, or 24-hour. It's `brand_settings.time_format` (`12h` | `24h`), shared with the customer app.
 - **Payroll → Setup → Payroll hours** (`payroll.run`): decimal hours (`79.94`), the default because the payroll workbook uses it, or hours and minutes (`79h 56m`). It changes how hours read on payroll, timesheet and report screens. The iSolved file and its preview are always decimal.
 - Time fields type and show `9:05 AM` (`ClockInput`, `TimeInput` and `DateTimeInput` in `src/components/time-input.tsx`), not the browser's native picker, which follows the computer's 24-hour setting.
 - Times are stored as UTC instants (`timestamptz`) and shown in the shop's time zone (`shops.timezone`, Central). APIs keep ISO times; the staff app reads the format from `GET /config` `display`.
-- Formatters: `formatTime`, `formatDateTime`, `minutesToLabel`, `hhmmLabel` and `localStampLabel` in `src/lib/time.ts`, and `formatPayHours` in `src/lib/hours.ts`.
+- One set of formatters, shared with the customer app: `formatTime`, `formatDateTime`, `minutesToLabel`, `hhmmLabel` and `localStampLabel` in `src/lib/time.ts` (an optional `"12h"` or `"24h"` argument), `brandTimeFormat`, `formatForHumans` and `formatClock` in `src/server/brand-time.ts` for receipts, texts and emails, and `formatPayHours` in `src/lib/hours.ts`.
+- Workweeks (Sunday to Saturday) and overtime run in America/Chicago by real elapsed time, so the fall-back night's extra hour counts and the spring-forward night's missing one doesn't (`src/domain/payroll/overtime.ts`).
+- Sales keep service, product, tax and tip as separate amounts, as sold. A refund is its own dated record (`refunds`, with its own business date and amounts) and never changes the sale's amounts.
 
 ### Time clock and timesheets
 
@@ -3002,7 +3004,7 @@ The Rayz App builder's second list, verified at c959576. Migrations `core_0112` 
   - Illinois and Iowa rules (I16, `src/domain/wage-hour.ts`): the work state comes from the shop's address. Each state has its minimum wage check, Illinois meal-period reminders during a shift of 7½ hours or more (an urgent alert) and missed-meal flags, and **Reports → Payroll → Illinois paid leave**. Payroll and tips paid split by entity and work state. The CPA confirms the rates each January.
 - **The staff app's phone:**
   - No biometrics (I17): `pnpm check:biometrics` runs on every pull request (`.github/workflows/no-biometrics.yml`) and bans face, fingerprint, voice and ID-verification SDKs. The phone's own unlock is allowed. Employee custom fields can't hold biometric data.
-  - Data on the phone (I18): `GET /config` `dataProtection` is the policy: an encrypted cache with a 24-hour TTL, app lock, snapshot blur, no copy or share, read-only offline. Every response says whether it may be cached (`X-Staff-Cache`). A refused session says what to wipe (`details.wipe`), and the app confirms with `POST /auth/wiped`. Punches tapped with no signal go in at their tapped time (up to 24 hours), flagged offline, once.
+  - Data on the phone (I18): `GET /config` `dataProtection` is the policy: an encrypted cache with a 24-hour TTL, app lock, snapshot blur, no copy or share, read-only offline. Every response says whether it may be cached (`X-Staff-Cache`). A refused session says what to wipe (`details.wipe`), and the app confirms with `POST /auth/wiped`. Punches tapped with no signal go in at their tapped time (up to 24 hours), flagged offline, once. Kiosk and QR punches are the exception: they always go in at the server's UTC time, never the device's.
   - Demo Shop for App Review (I19): one hidden shop and a reviewer login, set up by `pnpm staff:demo-shop` and able to sign in only while `FEATURE_STAFF_REVIEW_LOGIN=true`. It's left out of brand-wide access and payroll, and its clients are kept apart in search. It gets a fresh demo day at each sign-in and has no web sign-in. Nothing it does moves money or reaches a person.
   - Quiet hours (I20): off the clock or on a break, non-urgent texts and app alerts wait for clock-in, the break's end or the next shift (9 AM if none, skipping time off), and no later than two hours before the appointment. Client arrivals, running late, the waitlist, clock-out and meal reminders go at once, and email is never held.
 - **Privacy notice and pay questions (I10):**

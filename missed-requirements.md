@@ -998,14 +998,18 @@ Employees clock in and out at the shop, because the Payroll Report's hours come 
 
 ## 44. Times read 12-hour (Charles: no military time)
 
-README "Times read 12-hour" and DEPLOY step 46. Migration `core_0126_brand_display`.
+README "Times read 12-hour" and DEPLOY steps 46 and 47. Migrations `core_0126_brand_display` and `core_0127_time_format`.
 
 - [x] Every time on screen reads 12-hour with AM and PM (`9:05 AM`): the time clock, timesheets and punch edits, the calendar, reports and on-screen previews, emails and the staff app's config. Time fields show AM and PM instead of the browser's 24-hour picker.
-- [x] A brand setting, **Time format**, 12-hour by default; 24-hour only if the brand picks it.
+- [x] A brand setting, **Time format**, 12-hour by default; 24-hour only if the brand picks it. It's `brand_settings.time_format`, shared with the customer app, and core uses the customer app's formatter (`formatTime`/`formatDateTime`, `src/server/brand-time.ts`) rather than a second one.
+- [x] Kiosk and QR punches go in at the server's UTC time, never the device's; the QR code is checked against server time.
+- [x] Workweeks and overtime in America/Chicago, DST-safe by real elapsed time, with tests across both changes.
+- [x] Sales keep service, product, tax and tip separate, never netted; each refund is its own dated record.
 - [x] Times stay UTC instants in the database, shown in the shop's time zone.
 - [x] **Payroll hours** read decimal (the workbook's style, the default) or as hours and minutes; the iSolved file stays decimal.
 - [ ] Which payroll hours style Charles's spreadsheet spec wants: coming with the spec. Decimal until then.
-- [ ] The Ray'z Staff app formats times from `GET /config` `display` (NOTES-SYNC Requests).
+- [ ] The Ray'z Staff app formats times from `GET /config` `display.timeFormat` (NOTES-SYNC Requests).
+- [ ] The customer app (PR #2) drops its own `time_format` column add and keeps core's `brand-time.ts` when it rebases (NOTES-SYNC Requests).
 
 ## Deferred by decision
 

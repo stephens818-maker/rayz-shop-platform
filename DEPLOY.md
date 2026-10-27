@@ -356,6 +356,7 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - Each period, after it ends: managers fix missed punches (with a reason), approve every timesheet and lock the period on **Payroll → Timesheets**; then the Payroll Report can be approved and locked.
    - For a period whose hours were typed in or imported (before a shop clocks in on the platform), turn the setting off for that run; the report then flags the unlocked hours instead. Turn it back on afterwards.
 46. Times read 12-hour (Charles: no military time; migration `core_0126_brand_display`, which adds the `brand_settings.display` column). Every time on screen reads `9:05 AM` by default; nothing to set. **Brand defaults → Time format** can switch the brand to 24-hour, and **Payroll → Setup → Payroll hours** picks decimal hours (the default, like the payroll workbook) or hours and minutes once Charles's spreadsheet spec says which. The iSolved file stays decimal. Stored times don't change.
+47. The time format is a column shared with the customer app (migration `core_0127_time_format`, which adds `brand_settings.time_format`, `12h` by default, and carries over a 24-hour choice from step 46). Nothing to set. If the customer app's migration (`mobile_customer_app`) runs too, it must not add the column a second time (NOTES-SYNC Requests).
 
 ## Running the production build locally
 
