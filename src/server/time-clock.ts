@@ -396,7 +396,12 @@ function photoProblem(photo: string | null): string | null {
  * during time off asks first. Late, early and off-schedule punches are flagged, never refused.
  */
 export async function punch(req: PunchRequest): Promise<PunchResult> {
-  const now = req.now ?? new Date();
+  // Kiosk and QR punches go in at the server's time (a UTC instant), never a device's: one queued
+  // offline goes in when it arrives, and its QR code has to be good then.
+  const serverTime = req.source === "kiosk" || !!req.proof?.qr;
+  const offline = serverTime ? undefined : req.offline;
+  const deviceAt = serverTime && req.offline ? req.now : undefined;
+  const now = serverTime && req.offline ? req.offline.receivedAt : (req.now ?? new Date());
   const who = await db.query.staff.findFirst({ where: and(eq(staff.id, req.staffId), eq(staff.active, true)) });
   if (!who || who.kind !== "person") throw forbidden("Shop logins can't punch. Use the front-desk clock with your own PIN.");
   const access = await loadStaffAccess(req.staffId);
@@ -418,7 +423,7 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
     );
   }
   if (state.shift && state.shift.shopId !== req.shopId) throw bad(`You're clocked in at ${state.shift.shop}. Punch there.`);
-  if (req.offline) {
+  if (offline) {
     const [later] = await db
       .select({ id: timePunches.id })
       .from(timePunches)
@@ -450,7 +455,7 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
   const date = localDateOf(now);
   if (await hoursLockedOn(req.shopId, date)) throw new AppError("conflict", "This pay period is locked, so no more punches can go into it. Ask a manager.");
 
-  const flags: PunchFlag[] = req.offline ? ["offline"] : [];
+  const flags: PunchFlag[] = offline ? ["offline"] : [];
   const notes: string[] = [];
   if (req.type === "in") {
     const off = await db
@@ -531,18 +536,18 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
       "timeclock.punch",
       "time_punch",
       row.id,
-      { staffId: req.staffId, type: req.type, source: req.source, method, flags, distanceM, photo: !!req.photo, approvalsCleared: cleared, ...(req.type === "break_start" ? { reasonId: breakReasonId, plannedMin } : {}), ...(req.offline ? { offline: true, receivedAt: req.offline.receivedAt.toISOString() } : {}) },
+      { staffId: req.staffId, type: req.type, source: req.source, method, flags, distanceM, photo: !!req.photo, approvalsCleared: cleared, ...(req.type === "break_start" ? { reasonId: breakReasonId, plannedMin } : {}), ...(offline ? { offline: true, receivedAt: offline.receivedAt.toISOString() } : {}), ...(deviceAt ? { deviceTimeIgnored: deviceAt.toISOString() } : {}) },
       req.shopId,
       tx,
     );
     await syncClockBlocks([req.staffId], { from: now, to: now }, { tx, now, actor: req.actor });
-    if (req.type === "in" || req.type === "break_end") await releaseHeldStaffNotices(req.staffId, req.offline?.receivedAt ?? now, tx);
+    if (req.type === "in" || req.type === "break_end") await releaseHeldStaffNotices(req.staffId, offline?.receivedAt ?? now, tx);
     return row.id;
   });
   // Clients booked over a break or after an early clock-out: the managers hear now, not at the next cron run.
   if (req.type === "break_start" || req.type === "out") {
     try {
-      await sendClockFallout(req.offline?.receivedAt ?? now, { onlyStaffId: req.staffId, shopIds: [req.shopId] });
+      await sendClockFallout(offline?.receivedAt ?? now, { onlyStaffId: req.staffId, shopIds: [req.shopId] });
     } catch (e) {
       console.error("clock fallout after punch failed", e);
     }

@@ -59,7 +59,7 @@ const CashTips = z
 
 /** ST-I18: a punch tapped with no signal, sent when the phone is back online. */
 const Queued = {
-  queuedAt: z.iso.datetime({ offset: true }).optional().describe("When it was tapped with no signal (at most 24 hours ago); the punch goes in at that time, flagged offline"),
+  queuedAt: z.iso.datetime({ offset: true }).optional().describe("When it was tapped with no signal (at most 24 hours ago); the punch goes in at that time, flagged offline. Ignored with proof.qr (the front-desk QR code): a QR punch, like every kiosk punch, goes in at the server's time when it arrives, and the code has to be good then"),
   clientPunchId: z.uuid().optional().describe("The app's own random id for this punch: sending it again returns the first result instead of punching twice"),
 };
 

@@ -197,6 +197,39 @@ describe("punching", () => {
       await m.db.db.update(S().shops).set({ timeClock: saved }).where(eq(S().shops.id, cv.id));
     }
   });
+
+  it("kiosk and QR punches go in at the server's UTC time, not a device's", async () => {
+    const mk = await staffBy("makenna@rayz.test");
+    const cv = await shop("coralville");
+    const codes = await import("@/server/clock-codes");
+    const saved = cv.timeClock;
+    await m.db.db
+      .update(S().shops)
+      .set({ timeClock: { ...(await import("@/domain/time-clock")).shopClockSettings(saved), methods: ["qr"] } as unknown as Record<string, unknown> })
+      .where(eq(S().shops.id, cv.id));
+    try {
+      const day = m.time.addDays(period(13).start, 1);
+      const received = at(day, 9 * 60);
+      const deviceSaid = at(day, 6 * 60);
+      const kiosk = { staffId: mk.id, shopId: cv.id, source: "kiosk" as const, evidence: { deviceShopId: cv.id, ip: null, gps: null }, deviceId: null, photo: null, actor: actorOf(mk), confirmTimeOff: true };
+      const inn = await tc.punch({ ...kiosk, type: "in", now: deviceSaid, offline: { receivedAt: received } });
+      expect(inn).toMatchObject({ kind: "done", at: received });
+      expect((inn as { flags: string[] }).flags).not.toContain("offline");
+      const [p] = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.id, (inn as { punchId: string }).punchId));
+      expect(p.at.toISOString()).toBe(received.toISOString());
+
+      const later = at(day, 17 * 60);
+      const self = { staffId: mk.id, shopId: cv.id, source: "self" as const, evidence: { deviceShopId: null, ip: null, gps: null }, deviceId: null, photo: null, actor: actorOf(mk) };
+      // The phone says it scanned at 4 PM; the code is checked, and the punch put in, at the server's 5 PM.
+      await expect(tc.punch({ ...self, type: "out", now: at(day, 16 * 60), offline: { receivedAt: later }, proof: { qr: codes.clockQrCode(cv.id, at(day, 16 * 60)).code } })).rejects.toThrow();
+      const out = await tc.punch({ ...self, type: "out", now: at(day, 16 * 60), offline: { receivedAt: later }, proof: { qr: codes.clockQrCode(cv.id, later).code } });
+      expect(out).toMatchObject({ kind: "done", at: later });
+      const [log] = await m.db.db.select().from(S().auditLog).where(m.drizzle.and(eq(S().auditLog.action, "timeclock.punch"), eq(S().auditLog.entityId, (out as { punchId: string }).punchId)));
+      expect(log.details).toMatchObject({ deviceTimeIgnored: at(day, 16 * 60).toISOString() });
+    } finally {
+      await m.db.db.update(S().shops).set({ timeClock: saved }).where(eq(S().shops.id, cv.id));
+    }
+  });
 });
 
 describe("the front-desk clock", () => {

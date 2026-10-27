@@ -107,7 +107,8 @@ async function sentBefore(staffId: string, clientPunchId: string) {
 /**
  * A punch from their own phone. Clocking in returns their congratulations (milestones) to pop up.
  * ST-I18: one tapped with no signal comes with queuedAt and goes in at that time, flagged offline;
- * the shop's Wi-Fi can't prove it then (the phone has moved networks), QR, NFC and location can.
+ * the shop's Wi-Fi can't prove it then (the phone has moved networks), NFC and location can. A QR
+ * punch goes in at the server's time instead (see punch()).
  */
 export async function appPunch(ctx: StaffAppContext, req: Request, v: AppPunchInput, now = new Date()) {
   assertShopAccess(ctx, v.shopId);
