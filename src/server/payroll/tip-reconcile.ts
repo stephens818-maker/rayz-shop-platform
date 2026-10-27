@@ -12,7 +12,8 @@ export interface TipCheckBlock {
   shopId: string;
   shop: string;
   lines: readonly Pick<Line, "staffId" | "name">[];
-  exportRows: readonly ExportRow[];
+  /** A row with its own `from` was filed separately (a final pay, N9), with that file's columns. */
+  exportRows: readonly (ExportRow & { from?: ExtraFrom[] })[];
   exportHeaders?: string[];
   exportFrom?: ExtraFrom[];
   locked: { at: string } | null;
@@ -111,7 +112,7 @@ export async function checkPayrollTips(blocks: readonly TipCheckBlock[], start: 
   const mismatches: Mismatch[] = [];
   for (const b of blocks) {
     const from = extraFromOf(b);
-    const at = (r: ExportRow | undefined, ks: readonly ExtraFrom[]) => (r ? toCents(sumColumns(from, r.values, ks)) : 0);
+    const at = (r: TipCheckBlock["exportRows"][number] | undefined, ks: readonly ExtraFrom[]) => (r ? toCents(sumColumns(r.from ?? from, r.values, ks)) : 0);
     const lockedAt = b.locked ? new Date(b.locked.at) : null;
     for (const k of [...keys].filter((x) => x.endsWith(`|${b.shopId}`))) {
       const staffId = k.split("|")[0];
@@ -138,7 +139,7 @@ export async function checkPayrollTips(blocks: readonly TipCheckBlock[], start: 
         paidAtLockCents,
         inFlightCents,
         owedCents: directCents - paidCents - inFlightCents,
-        exportCashTipsCents: row ? toCents((row.values[CASH_TIPS] ?? 0) + sumColumns(from, row.values, ["cardTipsOutside"])) : null,
+        exportCashTipsCents: row ? toCents((row.values[CASH_TIPS] ?? 0) + sumColumns(row.from ?? from, row.values, ["cardTipsOutside"])) : null,
         exportPaidMemoCents: at(row, PAID_TIP_COLUMNS),
         exportPayrollTipsCents: at(row, PAYROLL_TIP_COLUMNS),
         payouts: mine.map((x) => ({

@@ -3605,6 +3605,35 @@ export const payrollApprovals = pgTable(
   ],
 );
 
+/**
+ * N9: one employee's final pay, run off-cycle for the pay period of their last day. The snapshot
+ * keeps each shop's row and iSolved line as approved (the payroll run's Line and ExportRow); the
+ * regular run for that period leaves them out. Never edited or deleted (a trigger refuses).
+ */
+export const payrollFinalPays = pgTable(
+  "payroll_final_pays",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    periodEnd: date("period_end", { mode: "string" }).notNull(),
+    lastDay: date("last_day", { mode: "string" }).notNull(),
+    snapshot: jsonb("snapshot").$type<{ shops: Record<string, unknown>[] }>().notNull(),
+    figuresHash: text("figures_hash").notNull(),
+    note: text("note"),
+    approvedBy: uuid("approved_by").references(() => staff.id),
+    approvedAt: ts("approved_at").notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("payroll_final_pays_staff_period_uq").on(t.staffId, t.periodStart),
+    index("payroll_final_pays_period_idx").on(t.periodStart),
+    check("payroll_final_pays_dates", sql`${t.periodEnd} >= ${t.periodStart} and ${t.lastDay} >= ${t.periodStart} and ${t.lastDay} <= ${t.periodEnd}`),
+    check("payroll_final_pays_note_len", sql`${t.note} is null or char_length(${t.note}) <= 300`),
+  ],
+);
+
 /** OT hours (hundredths) a locked period kept for one slice of a workweek, so a later period can't move them. */
 export const payrollLockedOt = pgTable(
   "payroll_locked_ot",

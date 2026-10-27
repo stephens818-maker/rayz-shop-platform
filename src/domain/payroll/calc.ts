@@ -1052,6 +1052,8 @@ export type AnomalyKind =
   | "no_rate"
   | "late_tip_refund"
   | "late_tip"
+  | "final_pay"
+  | "final_pay_changed"
   | "refund_written_off"
   | "late_commission"
   | "ot_regular_rate"

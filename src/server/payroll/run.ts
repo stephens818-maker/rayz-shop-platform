@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, payGroups, payrollApprovals, payrollCommissionAdjustments, payrollEmployers, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, sales as salesTable, staff, timeEntries, timePunches, type PayrollApprovalTotals } from "@/db/schema";
+import { auditLog, payGroups, payrollApprovals, payrollCommissionAdjustments, payrollEmployers, payrollFinalPays, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, sales as salesTable, staff, timeEntries, timePunches, type PayrollApprovalTotals } from "@/db/schema";
 import { calendarProblem, periodOf, periodStarting, periodsAround, sameCalendar, workweeksOf, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
 import {
   OVERRIDABLE,
   anomalies,
   assemble,
   computeLine,
+  extraFromOf,
   fmtHours,
   fmtMoney,
   ftStatus,
@@ -18,6 +19,8 @@ import {
   reconcile,
   totalsOf,
   type Anomaly,
+  type ExportRow,
+  type ExtraFrom,
   type FtStatus,
   type LateCommission,
   type Line,
@@ -45,7 +48,7 @@ import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { payrollHoursCheck, type PayrollHoursCheck } from "@/server/time-clock";
 import { isolvedTimecardExporter, type PayrollExporter } from "./export";
 import { tipPostingDate } from "./tip-posting";
-import { checkPayrollTips, type TipCheck } from "./tip-reconcile";
+import { checkPayrollTips, type TipCheck, type TipCheckBlock } from "./tip-reconcile";
 import { ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type LegalEntity, type PayGroup } from "./groups";
 import { groupCalendar, resyncPeriodDates, savePeriodDates as savePeriodDatesFor } from "./period-dates";
 
@@ -129,6 +132,8 @@ export interface PayrollView {
   /** The W-2 tip check: each employee's tips against the iSolved file and their payouts, to the cent. */
   tips: TipCheck;
   anomalies: Anomaly[];
+  /** Employees paid off-cycle for this period (final pay, N9): left out of its rows and files. */
+  finalPays: FinalPaid[];
   /** The period by legal entity and work state: what each FEIN files in each state. */
   byEntityState: EntityStateTotal[];
   ft: Record<string, FtStatus>;
@@ -200,7 +205,7 @@ export function inputsHash(lines: readonly Pick<Line, "staffId" | "input">[]): s
   return createHash("sha256").update(JSON.stringify(rows)).digest("hex");
 }
 
-export function driftOf(locked: readonly Line[], live: readonly Line[]): LockDrift[] {
+export function driftOf(locked: readonly Pick<Line, "staffId" | "name" | "input">[], live: readonly Pick<Line, "staffId" | "name" | "input">[]): LockDrift[] {
   const out: LockDrift[] = [];
   const liveOf = new Map(live.map((l) => [l.staffId, l]));
   const lockedOf = new Map(locked.map((l) => [l.staffId, l]));
@@ -276,6 +281,9 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
   const salesOf = new Map(sales.map((r) => [`${r.staffId}|${r.shopId}`, r]));
   const overrides = await db.select().from(payrollOverrides).where(and(eq(payrollOverrides.periodStart, start), inArray(payrollOverrides.shopId, [...runShops])));
   const lateOf = await lateCommissionsFor([...runShops], start, settings);
+  const finals = await db.select().from(payrollFinalPays).where(eq(payrollFinalPays.periodStart, start));
+  const finalIds = new Set(finals.map((f) => f.staffId));
+  const finalInputs: LineInput[] = [];
   const [tipSplit, declared] = await Promise.all([payrollTipSplit([...runShops], start, end), declaredTipsBetween([...runShops], start, end)]);
   const keys = new Set([
     ...hours.keys(),
@@ -361,6 +369,10 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       ...(lateOf.has(k) ? { lateCommissions: lateOf.get(k) } : {}),
       overrides: Object.keys(ov).length ? ov : undefined,
     };
+    if (finalIds.has(staffId)) {
+      finalInputs.push(input);
+      continue;
+    }
     inputsByShop.set(shopId, [...(inputsByShop.get(shopId) ?? []), input]);
   }
   if (plans) {
@@ -423,7 +435,8 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
   const openShops = o.clockChecks === false ? [] : blocks.filter((b) => !b.locked).map((b) => b.shopId);
   const [hoursCheck, serviceDays, typed] = await Promise.all([payrollHoursCheck(openShops, start, end), serviceDaysIn(openShops, start, end), typedHoursIn(openShops, start, end)]);
   const shopName = (id: string) => groupOf.get(id)?.shop ?? "Other shop";
-  const tips = await checkPayrollTips(blocks, start, end);
+  const finalPays = finalPaysOf(finals, finalInputs, person);
+  const tips = await checkPayrollTips(withFinalRows(blocks, finals), start, end);
   const tipGate = stripePayoutsOn() ? tips.mismatches.filter((m) => !blocks.find((b) => b.shopId === m.shopId)?.locked) : [];
 
   const ft: Record<string, FtStatus> = {};
@@ -457,10 +470,12 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       ...sourceFlags.filter((a) => !blocks.find((b) => b.shopId === a.shopId)?.locked),
       ...clockAnomalies(blocks, settings, hoursCheck, days, serviceDays, typed, start, end),
       ...lockAnomalies(blocks),
+      ...finalPayAnomalies(finalPays),
       ...(await lateTipsIn(blocks, start, end)),
       ...stateAnomalies(blocks, end, await missedMealsIn([...runShops], start, end)),
     ],
     byEntityState: byEntityState(blocks),
+    finalPays,
     ft,
     weeks: weekBreakdowns(slices, staffIds, weeks, start, runShops, (id) => groupOf.get(id)?.shop ?? "Other shop"),
     locked: runs.length === 0 ? "none" : runs.length === inRun.length ? "all" : "some",
@@ -641,6 +656,75 @@ async function importedAfterLock(runs: readonly (typeof payrollRuns.$inferSelect
     if (n) out.set(r.payGroupId, n);
   }
   return out;
+}
+
+/** One shop's part of a final pay as approved: the employee's row, and their line in that shop's iSolved file. */
+export interface FinalPayShop {
+  shopId: string;
+  shop: string;
+  payGroupId: string;
+  payGroup: string;
+  payGroupCode: string | null;
+  exportTab: string;
+  periodNumber: number;
+  line: Line;
+  exportRow: ExportRow;
+  exportHeaders?: string[];
+  exportFrom?: ExtraFrom[];
+}
+
+export interface FinalPaid {
+  id: string;
+  staffId: string;
+  name: string;
+  lastDay: LocalDate;
+  approvedAt: string;
+  shops: FinalPayShop[];
+  /** What's changed in the live data since the final pay was approved. */
+  drift: (LockDrift & { shop: string })[];
+}
+
+const finalShopsOf = (f: typeof payrollFinalPays.$inferSelect) => f.snapshot.shops as unknown as FinalPayShop[];
+
+function finalPaysOf(finals: readonly (typeof payrollFinalPays.$inferSelect)[], live: readonly LineInput[], person: Map<string, { label: string }>): FinalPaid[] {
+  return finals.map((f) => {
+    const shops = finalShopsOf(f);
+    const drift = [...new Set([...shops.map((x) => x.shopId), ...live.filter((i) => i.staffId === f.staffId).map((i) => i.shopId)])].flatMap((shopId) => {
+      const was = shops.filter((x) => x.shopId === shopId).map((x) => x.line);
+      const now = live.filter((i) => i.staffId === f.staffId && i.shopId === shopId).map((i) => ({ staffId: i.staffId, name: i.name, input: i }));
+      const shop = shops.find((x) => x.shopId === shopId)?.shop ?? "another shop";
+      return driftOf(was, now).map((d) => ({ ...d, shop }));
+    });
+    return { id: f.id, staffId: f.staffId, name: shops[0]?.line.name ?? person.get(f.staffId)?.label ?? "Unknown", lastDay: f.lastDay, approvedAt: f.approvedAt.toISOString(), shops, drift };
+  });
+}
+
+/** The tip check counts every tip of the period, so a final pay's rows are checked with the shop's file. */
+function withFinalRows<B extends TipCheckBlock>(blocks: readonly B[], finals: readonly (typeof payrollFinalPays.$inferSelect)[]): B[] {
+  if (!finals.length) return [...blocks];
+  return blocks.map((b) => {
+    const mine = finals.flatMap((f) => finalShopsOf(f).filter((x) => x.shopId === b.shopId));
+    return mine.length
+      ? { ...b, lines: [...b.lines, ...mine.map((x) => x.line)], exportRows: [...b.exportRows, ...mine.map((x) => ({ ...x.exportRow, from: x.exportFrom ?? extraFromOf({ exportHeaders: x.exportHeaders }) }))] }
+      : b;
+  });
+}
+
+function finalPayAnomalies(list: readonly FinalPaid[]): Anomaly[] {
+  return list.flatMap((f) => [
+    {
+      staffId: f.staffId,
+      shopId: null,
+      kind: "final_pay" as const,
+      message: `${f.name} was paid off-cycle for this period (final pay, last day ${formatDate(f.lastDay, "MMM d")}, approved ${formatDate(localDateOf(f.approvedAt), "MMM d")}), so they're not in its files.`,
+    },
+    ...f.drift.map((d) => ({
+      staffId: f.staffId,
+      shopId: f.shops.find((x) => x.shop === d.shop)?.shopId ?? null,
+      kind: "final_pay_changed" as const,
+      message: `${f.name} (${d.shop}): ${RECORD_LABEL[d.field]} was ${(d.field.endsWith("Hours") ? fmtHours : fmtMoney)(d.locked)} in their final pay and is ${(d.field.endsWith("Hours") ? fmtHours : fmtMoney)(d.now)} now. Pay or recover the difference in iSolved.`,
+    })),
+  ]);
 }
 
 /** Tips on tickets from an earlier, already-locked period that came in afterwards, so they're paid in this one (N7). */

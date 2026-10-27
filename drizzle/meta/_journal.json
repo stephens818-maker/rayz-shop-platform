@@ -918,6 +918,13 @@
       "when": 1796602920000,
       "tag": "core_0130_payroll_commission_adjustments",
       "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "7",
+      "when": 1796602980000,
+      "tag": "core_0131_payroll_final_pay",
+      "breakpoints": true
     }
   ]
 }

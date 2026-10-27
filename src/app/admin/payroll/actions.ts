@@ -34,6 +34,7 @@ import {
 } from "@/server/payroll/run";
 import { parseTimeCsv } from "@/domain/payroll/time-csv";
 import { removeEmployerState, saveEmployer, saveEmployerState } from "@/server/payroll/groups";
+import { approveFinalPay } from "@/server/payroll/final-pay";
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -76,6 +77,19 @@ export async function approvePayrollAction(start: string, end: string, note: str
     if ("error" in r) throw refusal(r);
     refresh();
     return r.approvalId;
+  });
+}
+
+/** Final pay off-cycle for someone who left (N9): brand-wide, by someone with Approve and lock. */
+export async function approveFinalPayAction(input: { staffId: string; lastDay: string; note: string }) {
+  return safe(async () => {
+    const ctx = await authorize("payroll.approve");
+    if (!ctx.brandWide) throw new AppError("forbidden", "Final pay covers every shop they worked at, so it needs access to all shops.");
+    const v = z.object({ staffId: z.string().uuid(), lastDay: date, note: z.string().max(300) }).parse(input);
+    const r = await approveFinalPay(v.staffId, v.lastDay, v.note, ctx.actor);
+    if ("error" in r) throw new AppError("bad_request", r.error);
+    refresh();
+    return r.id;
   });
 }
 
