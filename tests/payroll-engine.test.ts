@@ -67,6 +67,8 @@ describe("pay calendars are per pay group", () => {
     expect(periodStarting(MAIN, "2026-10-18")?.number).toBe(23);
     expect(periodStarting(MAIN, "2026-10-19")).toBeNull();
     expect(calendarProblem({ ...MAIN, anchorStart: "2026-10-19" })).toMatch(/Sunday/);
+    expect(calendarProblem({ ...MAIN, periodDays: 7, anchorStart: "2026-02-30" })).toMatch(/first day/);
+    expect(periodDatesProblem({ end: "2026-10-17", submitBy: "2026-10-21", checkDate: "2026-10-32" })).toMatch(/both dates/);
     expect(calendarProblem(MAIN)).toBeNull();
   });
 });

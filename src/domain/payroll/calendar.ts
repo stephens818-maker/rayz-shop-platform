@@ -1,5 +1,5 @@
 import { DateTime } from "luxon";
-import { LocalDate, SHOP_TZ, addDays, diffDays, endOfLocalDay, startOfLocalDay, weekdayOf } from "@/lib/time";
+import { LocalDate, SHOP_TZ, addDays, diffDays, endOfLocalDay, isValidLocalDate, startOfLocalDay, weekdayOf } from "@/lib/time";
 
 /**
  * One pay group's calendar. In iSolved each shop is a pay group with its own calendar: bi-weekly,
@@ -61,7 +61,7 @@ export const sameDates = (a: Pick<PayCalendar, "anchorStart" | "periodDays">, b:
   a.periodDays === b.periodDays && ((diffDays(a.anchorStart, b.anchorStart) % a.periodDays) + a.periodDays) % a.periodDays === 0;
 
 export function calendarProblem(c: PayCalendar): string | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(c.anchorStart)) return "Pick the first day of a known pay period.";
+  if (!isValidLocalDate(c.anchorStart)) return "Pick the first day of a known pay period.";
   if (c.periodDays !== 7 && c.periodDays !== 14) return "Pay periods are weekly or bi-weekly.";
   if (c.periodDays === 14 && weekdayOf(c.anchorStart) !== 0) return "Bi-weekly periods run Sunday to Saturday; the first day must be a Sunday.";
   if (!Number.isInteger(c.anchorNumber) || c.anchorNumber < 1) return "The period number is a whole number from 1.";
@@ -72,7 +72,7 @@ export function calendarProblem(c: PayCalendar): string | null {
 
 /** A period's own check and submit-by dates: due once the period has ended, no later than the check. */
 export function periodDatesProblem(p: { end: LocalDate; checkDate: LocalDate; submitBy: LocalDate }): string | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(p.checkDate) || !/^\d{4}-\d{2}-\d{2}$/.test(p.submitBy)) return "Pick both dates.";
+  if (!isValidLocalDate(p.checkDate) || !isValidLocalDate(p.submitBy)) return "Pick both dates.";
   if (p.submitBy < p.end) return "Hours can't be due in iSolved before the period's last day.";
   if (p.checkDate < p.submitBy) return "The check date can't be before the submit-by date.";
   if (diffDays(p.checkDate, p.end) > 31) return "The check date is at most 31 days after the period ends.";
@@ -81,11 +81,18 @@ export function periodDatesProblem(p: { end: LocalDate; checkDate: LocalDate; su
 
 const yearOf = (d: LocalDate) => Number(d.slice(0, 4));
 
+// Calendar dates as whole UTC days: periods are walked many times per page, and a date has no time zone.
+const DAY_MS = 86_400_000;
+const dayOf = (d: LocalDate) => Date.parse(`${d}T00:00:00Z`) / DAY_MS;
+const dateOf = (day: number): LocalDate => new Date(day * DAY_MS).toISOString().slice(0, 10);
+
 function raw(c: PayCalendar, index: number) {
-  const start = addDays(c.anchorStart, index * c.periodDays);
-  const end = addDays(start, c.periodDays - 1);
-  const checkDate = addDays(end, c.checkOffsetDays);
-  const submitBy = addDays(end, c.submitOffsetDays);
+  const startDay = dayOf(c.anchorStart) + index * c.periodDays;
+  const endDay = startDay + c.periodDays - 1;
+  const start = dateOf(startDay);
+  const end = dateOf(endDay);
+  const checkDate = dateOf(endDay + c.checkOffsetDays);
+  const submitBy = dateOf(endDay + c.submitOffsetDays);
   const stored = c.dates?.[start];
   const moved = !!stored && (stored.checkDate !== checkDate || stored.submitBy !== submitBy);
   return { start, end, checkDate: stored?.checkDate ?? checkDate, submitBy: stored?.submitBy ?? submitBy, datesMoved: moved };
@@ -97,7 +104,9 @@ function numberOf(c: PayCalendar, index: number, checkDate: LocalDate): number {
   const anchorYear = yearOf(raw(c, 0).checkDate);
   const year = yearOf(checkDate);
   if (year === anchorYear) return c.anchorNumber + index;
-  let first = index;
+  // Starts a few periods past the year's first check by the offsets, so a check moved across New Year's is still found.
+  const toFirstCheck = dayOf(`${year}-01-01`) - dayOf(c.anchorStart) - (c.periodDays - 1 + c.checkOffsetDays);
+  let first = Math.min(index, Math.ceil(toFirstCheck / c.periodDays) + 3);
   while (yearOf(raw(c, first - 1).checkDate) === year) first--;
   return index - first + 1;
 }
@@ -108,7 +117,7 @@ export function periodByIndex(c: PayCalendar, index: number): CalendarPeriod {
 }
 
 export function periodOf(c: PayCalendar, date: LocalDate): CalendarPeriod {
-  return periodByIndex(c, Math.floor(diffDays(date, c.anchorStart) / c.periodDays));
+  return periodByIndex(c, Math.floor((dayOf(date) - dayOf(c.anchorStart)) / c.periodDays));
 }
 
 export function periodStarting(c: PayCalendar, start: LocalDate): CalendarPeriod | null {

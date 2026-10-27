@@ -3,15 +3,15 @@ import { payPeriodByIndex, payPeriodFor, payPeriodsBetween } from "@/domain/payr
 import { DEFAULT_LOYALTY, accrue, progressExpired, reverseAccrual, rewardExpiry, usableRewards } from "@/domain/loyalty";
 import { weekdayOf } from "@/lib/time";
 
-describe("payroll periods (bi-weekly, ending Saturdays, on the default brand calendar: period 23 starts Sun 2026-10-18)", () => {
+describe("payroll periods (bi-weekly, ending Saturdays, on the default brand calendar: period 22 starts Sun 2026-10-04)", () => {
   it("the anchor Sunday starts period index 0; earlier periods count down", () => {
-    expect(payPeriodFor("2026-10-18")).toMatchObject({ start: "2026-10-18", end: "2026-10-31", index: 0 });
-    expect(payPeriodFor("2026-10-03")).toMatchObject({ start: "2026-09-20", end: "2026-10-03", index: -2 });
-    expect(payPeriodFor("2026-09-19")).toMatchObject({ start: "2026-09-06", end: "2026-09-19", index: -3 });
+    expect(payPeriodFor("2026-10-04")).toMatchObject({ start: "2026-10-04", end: "2026-10-17", index: 0 });
+    expect(payPeriodFor("2026-10-03")).toMatchObject({ start: "2026-09-20", end: "2026-10-03", index: -1 });
+    expect(payPeriodFor("2026-09-19")).toMatchObject({ start: "2026-09-06", end: "2026-09-19", index: -2 });
   });
 
   it("the periods run Sun 10/04 → Sat 10/17, then 10/18 → 10/31", () => {
-    expect(payPeriodFor("2026-10-04")).toMatchObject({ start: "2026-10-04", end: "2026-10-17", index: -1 });
+    expect(payPeriodFor("2026-10-18")).toMatchObject({ start: "2026-10-18", end: "2026-10-31", index: 1 });
     expect(payPeriodFor("2026-10-17").end).toBe("2026-10-17");
     expect(payPeriodFor("2026-10-20")).toMatchObject({ start: "2026-10-18", end: "2026-10-31" });
     expect(payPeriodByIndex(payPeriodFor("2026-10-20").index + 1).start).toBe("2026-11-01");
