@@ -17,7 +17,7 @@ import { morningSettings, parseMorningSettings } from "@/domain/morning-dashboar
 import { BrandNetworkSchema, brandNetworkSettings } from "@/domain/network-access";
 import { OpeningsSettingsSchema, openingsSettings, openingsTemplatesProblem } from "@/domain/openings";
 import { cleanOutreachRules, outreachRules, outreachRulesProblem } from "@/domain/outreach";
-import { EXPORT_COLUMNS, FT_BASIS_LABEL, payrollSettings } from "@/domain/payroll/calc";
+import { EXPORT_FORMAT_LABEL, FT_BASIS_LABEL, HOURS_SOURCE_LABEL, cardTipsSplit, earningHeaders, payrollSettings } from "@/domain/payroll/calc";
 import { calendarProblem, sameCalendar, sameDates, type PayCalendar } from "@/domain/payroll/calendar";
 import type { Permission } from "@/domain/permissions";
 import { ReviewRulesSchema, locationReviewRules, reviewRules } from "@/domain/reviews";
@@ -176,6 +176,9 @@ const LimitsInput = z.object({
   blockSearches: z.number().int().min(1).max(100_000),
 });
 
+const keysOf = <K extends string>(labels: Record<K, string>) => z.enum(Object.keys(labels) as [K, ...K[]]);
+const earning = (what: string) => z.string().trim().min(1, `Name the iSolved earning code for ${what}`).max(60);
+
 const PayrollInput = z.object({
   trainingCountsTowardOt: z.boolean(),
   trainingPayInCost: z.boolean(),
@@ -192,6 +195,22 @@ const PayrollInput = z.object({
   tipsPaidOutHeader: z.string().trim().min(1, "Name the iSolved memo column for tips already paid out").max(60),
   stripeTipsPaidHeader: z.string().trim().min(1, "Name the iSolved memo column for tips paid by Stripe").max(60),
   owedTipsInPayrollHeader: z.string().trim().min(1, "Name the iSolved earning for owed tips paid in payroll").max(60),
+  exportFormat: keysOf(EXPORT_FORMAT_LABEL),
+  exportFileName: z.string().trim().min(1, "Give the iSolved files a name pattern").max(120),
+  exportWorkbookName: z.string().trim().min(1, "Give the all-shops workbook a name pattern").max(120),
+  earningCodes: z.object({
+    hours: earning("regular hours"),
+    otHours: earning("overtime hours"),
+    tipsOutside: earning("tips the employee already received"),
+    netComm: earning("commission"),
+    ptoHours: earning("paid time off"),
+    trainingHours: earning("training hours"),
+  }),
+  cardTipsHeader: earning("card tips"),
+  ptoSource: keysOf(HOURS_SOURCE_LABEL),
+  trainingSource: keysOf(HOURS_SOURCE_LABEL),
+  reportOrder: z.array(z.string().trim().min(1).max(60)).max(100),
+  sheetOrder: z.array(z.string().trim().min(1).max(60)).max(100),
   calendar: z.object({
     anchorStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Pick the first day of a known pay period"),
     anchorNumber: z.number().int().min(1, "The period number is a whole number from 1").max(60),
@@ -491,16 +510,19 @@ export const SETTINGS: readonly SettingDef[] = [
     read: payrollSettings,
     parse: async (raw, before, _who, tx) => {
       const r = obj(raw);
-      const merged = { ...before, ...r, calendar: { ...before.calendar, ...obj(r.calendar) }, declarations: { ...before.declarations, ...obj(r.declarations) }, tipTax: { ...before.tipTax, ...obj(r.tipTax) } };
+      const merged = { ...before, ...r, earningCodes: { ...before.earningCodes, ...obj(r.earningCodes) }, calendar: { ...before.calendar, ...obj(r.calendar) }, declarations: { ...before.declarations, ...obj(r.declarations) }, tipTax: { ...before.tipTax, ...obj(r.tipTax) } };
       const parsed = zparse(PayrollInput, merged, "Check the payroll rules");
       const calProblem = await brandCalendarProblem(tx, before.calendar, parsed.calendar);
       if (calProblem) bad(calProblem);
       const v = payrollSettings(parsed);
-      const taken = [...EXPORT_COLUMNS.map((c) => c.header), v.tipsInPayrollHeader].map((h) => h.toLowerCase());
+      const taken: string[] = [];
       const own = (h: string, what: string) => {
         if (taken.includes(h.toLowerCase())) bad(`The column for ${what} needs its own name, not another column's.`);
         taken.push(h.toLowerCase());
       };
+      earningHeaders(v).forEach((h) => own(h, h));
+      own(v.tipsInPayrollHeader, "tips paid in payroll");
+      if (cardTipsSplit(v)) own(v.cardTipsHeader, "card tips");
       own(v.owedTipsInPayrollHeader, "owed tips paid in payroll");
       if (v.markPaidTips) own(v.tipsPaidOutHeader, "tips already paid out");
       if (v.markPaidTips) own(v.stripeTipsPaidHeader, "tips paid by Stripe");
@@ -551,7 +573,7 @@ export const SETTINGS: readonly SettingDef[] = [
       const clean = compensationSettings({ ...before, ...obj(raw) });
       const [b] = await tx.select({ p: brandSettings.payroll }).from(brandSettings).where(eq(brandSettings.id, 1));
       const ps = payrollSettings(b?.p);
-      const problem = compensationProblem(clean, [...EXPORT_COLUMNS.map((c) => c.header), ps.tipsInPayrollHeader, ps.owedTipsInPayrollHeader, ps.cashTipsDeclaredHeader, ...(ps.markPaidTips ? [ps.tipsPaidOutHeader, ps.stripeTipsPaidHeader] : [])]);
+      const problem = compensationProblem(clean, [...earningHeaders(ps), ...(cardTipsSplit(ps) ? [ps.cardTipsHeader] : []), ps.tipsInPayrollHeader, ps.owedTipsInPayrollHeader, ps.cashTipsDeclaredHeader, ...(ps.markPaidTips ? [ps.tipsPaidOutHeader, ps.stripeTipsPaidHeader] : [])]);
       if (problem) bad(problem);
       return clean;
     },

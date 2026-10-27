@@ -110,7 +110,7 @@ describe("payroll period", () => {
 
     const group = after.blocks.find((b) => b.shopId === moline.id)!.payGroupId;
     const f = (await run.lockedExport(group, START, END))!;
-    expect(f.fileName).toBe("Moline - period 01 (2026-12-13 to 2026-12-26).xlsx");
+    expect(f.fileName).toBe("12.13.26-12.26.26 Moline.xlsx");
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(f.body as unknown as ArrayBuffer);
     const ws = wb.getWorksheet("Moline")!;

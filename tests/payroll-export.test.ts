@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import ExcelJS from "exceljs";
 import { EXPORT_COLUMNS, type ExportRow } from "@/domain/payroll/calc";
-import { DEFAULT_TAB, EXPORTERS, TEMPLATE_TABS, dataRowStyles, isolvedTimecardExporter, renderIsolvedTab, tabTemplate } from "@/server/payroll/export";
+import { DEFAULT_TAB, EXPORTERS, TEMPLATE_TABS, exportFileName, dataRowStyles, isolvedTimecardExporter, renderIsolvedTab, tabTemplate } from "@/server/payroll/export";
 
 /** Order-insensitive, and an empty style object is the same as none. */
 const canon = (x: unknown): string =>
@@ -21,11 +21,11 @@ async function read(buf: Buffer) {
   return wb;
 }
 
-describe("iSolved per-shop export format", () => {
+describe("iSolved per-shop export, workbook format (each tab's own formatting)", () => {
   it.each(TEMPLATE_TABS)("%s: headers, cell types, number formats, fonts, fills, alignment, borders and widths match the workbook tab", async (tab) => {
     const t = tabTemplate(tab);
     const data = rows(t.rowStyles.length + 1);
-    const wb = await read(await renderIsolvedTab({ tab, payGroup: tab, periodNumber: 23, periodStart: "2026-10-18", periodEnd: "2026-10-31", rows: data }));
+    const wb = await read(await renderIsolvedTab({ format: "workbook", tab, payGroup: tab, periodNumber: 23, periodStart: "2026-10-18", periodEnd: "2026-10-31", rows: data }));
     expect(wb.worksheets.map((w) => w.name)).toEqual([tab]);
     const ws = wb.getWorksheet(tab)!;
     expect(ws.views[0]?.zoomScale).toBe(t.zoom);
@@ -64,7 +64,7 @@ describe("iSolved per-shop export format", () => {
   });
 
   it("carries no OT dollars: the OT column is hours and no column is OT pay", async () => {
-    const ws = (await read(await renderIsolvedTab({ tab: "Moline", payGroup: "Moline", periodNumber: 23, periodStart: "", periodEnd: "", rows: rows(2) }))).getWorksheet("Moline")!;
+    const ws = (await read(await renderIsolvedTab({ format: "workbook", tab: "Moline", payGroup: "Moline", periodNumber: 23, periodStart: "", periodEnd: "", rows: rows(2) }))).getWorksheet("Moline")!;
     const headers = (ws.getRow(1).values as unknown[]).filter((v) => typeof v === "string") as string[];
     expect(headers.filter((h) => /overtime|o\.?t\.?/i.test(h))).toEqual(["E_Overtime 1.5_Hours"]);
     expect(headers.filter((h) => h.endsWith("_Dollars"))).toEqual(["E_Cash Tips Recd_Dollars", "E_Comm Sales_Dollars"]);
@@ -77,22 +77,30 @@ describe("iSolved per-shop export format", () => {
     expect(textRow).toBeGreaterThanOrEqual(0);
     const data = rows(t.rowStyles.length);
     data[textRow] = { ...data[textRow], key: "0012345" };
-    const ws = (await read(await renderIsolvedTab({ tab: "Utica", payGroup: "Utica", periodNumber: 23, periodStart: "", periodEnd: "", rows: data }))).getWorksheet("Utica")!;
+    const ws = (await read(await renderIsolvedTab({ format: "workbook", tab: "Utica", payGroup: "Utica", periodNumber: 23, periodStart: "", periodEnd: "", rows: data }))).getWorksheet("Utica")!;
     const c = ws.getCell(textRow + 2, 1);
     expect(c.value).toBe("0012345");
     expect(c.numFmt).toBe("@");
   });
 
   it("Dubuque gets its own file in the same format, under its own sheet name", async () => {
-    const wb = await read(await renderIsolvedTab({ tab: "Dubuque", payGroup: "Dubuque", periodNumber: 1, periodStart: "2026-10-04", periodEnd: "2026-10-17", rows: rows(2) }));
+    const wb = await read(await renderIsolvedTab({ format: "workbook", tab: "Dubuque", payGroup: "Dubuque", periodNumber: 1, periodStart: "2026-10-04", periodEnd: "2026-10-17", rows: rows(2) }));
     const ws = wb.getWorksheet("Dubuque")!;
     expect(ws).toBeDefined();
     const t = tabTemplate(DEFAULT_TAB);
     expect(ws.getRow(1).getCell(3).value).toBe("E_Regular_Hours");
     expect(canon(ws.getCell("A1").font)).toBe(canon(t.headerStyles[0].font));
     expect(isolvedTimecardExporter.fileName({ tab: "Dubuque", payGroup: "Dubuque", periodNumber: 1, periodStart: "2026-10-04", periodEnd: "2026-10-17", rows: [] })).toBe(
-      "Dubuque - period 01 (2026-10-04 to 2026-10-17).xlsx",
+      "10.04.26-10.17.26 Dubuque.xlsx",
     );
+  });
+
+  it("file names follow the settings pattern; characters a file name can't hold become spaces", () => {
+    const f = { tab: "Le/Claire", payGroup: "LeClaire", periodNumber: 3, periodStart: "2026-10-04", periodEnd: "2026-10-17" };
+    expect(exportFileName("{payGroup} - period {period} ({startIso} to {endIso})", f)).toBe("LeClaire - period 03 (2026-10-04 to 2026-10-17).xlsx");
+    expect(exportFileName("{shop} {unknown}", f)).toBe("Le Claire {unknown}.xlsx");
+    expect(exportFileName("", f)).toBe("iSolved.xlsx");
+    expect(isolvedTimecardExporter.fileName({ ...f, tab: "Moline", rows: [], namePattern: "Payroll {end} {shop}" })).toBe("Payroll 10.17.26 Moline.xlsx");
   });
 
   it("the only exporter writes a file; nothing connects to iSolved", () => {

@@ -6,6 +6,10 @@ import { dailyHours, largestRemainder, overtimeSlices, sliceKey, splitByLocalDay
 import {
   DEFAULT_PAYROLL_SETTINGS,
   EXPORT_COLUMNS,
+  cardTipsSplit,
+  earningHeaders,
+  inNameOrder,
+  locationSummary,
   assemble,
   anomalies,
   computeLine,
@@ -380,6 +384,70 @@ describe("iSolved export values", () => {
       DEFAULT_PAYROLL_SETTINGS,
     );
     expect(rows.map((r) => r.key)).toEqual([1001, 1234, "1002", null]);
+  });
+});
+
+describe("Payroll Report settings (Charles's open questions, configurable)", () => {
+  it("defaults: unrounded, uniform 0.00 files, PTO and training from the clock or a manager, card tips under E_Cash Tips Recd", () => {
+    const d = payrollSettings({});
+    expect(d).toMatchObject({ roundExport2dp: false, exportFormat: "uniform", ptoSource: "both", trainingSource: "both", cardTipsHeader: "E_Cash Tips Recd_Dollars" });
+    expect(earningHeaders(d)).toEqual(EXPORT_COLUMNS.map((c) => c.header));
+    expect(cardTipsSplit(d)).toBe(false);
+    expect(payrollSettings({ exportFormat: "nope", ptoSource: "nope", reportOrder: "x" })).toMatchObject({ exportFormat: "uniform", ptoSource: "both", reportOrder: d.reportOrder });
+  });
+
+  it("earning codes rename the file's columns; card tips under their own code get their own column", () => {
+    const s = payrollSettings({ earningCodes: { hours: "E_Reg_Hours" }, cardTipsHeader: "E_Card Tips_Dollars" });
+    expect(cardTipsSplit(s)).toBe(true);
+    const lines = [input({ tips: 100, chargedTips: 70 }), input({ staffId: "b2", tips: 50, chargedTips: 0 })].map((i) => computeLine(i, s));
+    expect(lines.map((l) => l.cardTipsOutside)).toEqual([70, 0]);
+    const { blocks, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs: lines.map((l) => l.input) }], s);
+    expect(mismatches).toEqual([]);
+    expect(blocks[0].exportHeaders).toEqual(["E_Reg_Hours", ...EXPORT_COLUMNS.slice(1).map((c) => c.header), "E_Card Tips_Dollars"]);
+    expect(blocks[0].exportRows.map((r) => [r.values[2], r.values[6]])).toEqual([
+      [30, 70],
+      [50, 0],
+    ]);
+    const same = assemble([{ shopId: "A", shop: "Shop A", inputs: lines.map((l) => l.input) }], DEFAULT_PAYROLL_SETTINGS).blocks[0];
+    expect(same.exportHeaders).toHaveLength(EXPORT_COLUMNS.length);
+    expect(same.exportRows.map((r) => r.values[2])).toEqual([100, 50]);
+  });
+
+  it("the $0 hourly flag keeps the hours in the file with no hourly pay; a typed Hourly Total is an adjustment", () => {
+    const owner = computeLine(input({ zeroHourlyPay: true, workedHours: 42, otHours: 2, serviceSales: 0, productSales: 0 }), DEFAULT_PAYROLL_SETTINGS);
+    expect([owner.hours, owner.hourlyTotal, owner.otPay, owner.totalWages]).toEqual([40, 0, 0, 0]);
+    expect(exportRows([owner], DEFAULT_PAYROLL_SETTINGS)[0].values.slice(0, 2)).toEqual([40, 2]);
+    const typed = computeLine(input({ serviceSales: 0, productSales: 0, overrides: { hourlyTotal: { value: 100, reason: "agreed flat" } } }), DEFAULT_PAYROLL_SETTINGS);
+    expect([typed.hourlyTotal, typed.totalWages, typed.overridden]).toEqual([100, 100, ["hourlyTotal"]]);
+  });
+
+  it("shops in Charles's orders by name, spaces and case aside; shops not listed come after, by name", () => {
+    const shops = ["Dubuque", "Le Claire", "Moline", "Utica", "Rock Island"];
+    expect(inNameOrder(shops, DEFAULT_PAYROLL_SETTINGS.reportOrder, (s) => [s])).toEqual(["Utica", "Moline", "Rock Island", "Le Claire", "Dubuque"]);
+    expect(inNameOrder(shops, DEFAULT_PAYROLL_SETTINGS.sheetOrder, (s) => [s])).toEqual(["Rock Island", "Moline", "Utica", "Le Claire", "Dubuque"]);
+  });
+
+  it("the Locations summary: Employee Cost is Total Wages (not labor cost); Gross Profit is service less it", () => {
+    const { blocks } = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ workedHours: 85, otHours: 5 })] }, { shopId: "B", shop: "Shop B", inputs: [input({ staffId: "b2", shopId: "B" })] }], DEFAULT_PAYROLL_SETTINGS);
+    const { rows, total } = locationSummary(blocks);
+    expect(rows[0].employeeCost).toBe(blocks[0].totals.totalWages);
+    expect(rows[0].employeeCost).toBeLessThan(blocks[0].totals.laborCost);
+    expect(total).toEqual({ shopId: null, shop: "Total", service: rows[0].service + rows[1].service, employeeCost: rows[0].employeeCost + rows[1].employeeCost, grossProfit: rows[0].service + rows[1].service - (rows[0].employeeCost + rows[1].employeeCost) });
+  });
+
+  it("flags sales with no employee on them, and rates that changed mid-period", () => {
+    const { blocks } = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ mixedRates: ["servicePct"] })], unassigned: { serviceSales: 0, productSales: 42.5, salesTax: 3.19 } }], DEFAULT_PAYROLL_SETTINGS);
+    const a = anomalies(blocks, DEFAULT_PAYROLL_SETTINGS);
+    expect(a.find((x) => x.kind === "unassigned_sales")?.message).toContain("$42.50 of product sales");
+    expect(a.find((x) => x.kind === "mixed_rates")?.message).toContain("service %");
+  });
+
+  it("sales tax is carried for reference and never in pay", () => {
+    const a = computeLine(input(), DEFAULT_PAYROLL_SETTINGS);
+    const b = computeLine(input({ salesTax: 231.09 }), DEFAULT_PAYROLL_SETTINGS);
+    expect(b.salesTax).toBe(231.09);
+    expect({ ...b, input: null, salesTax: 0 }).toEqual({ ...a, input: null });
+    expect(exportRows([b], DEFAULT_PAYROLL_SETTINGS)).toEqual(exportRows([a], DEFAULT_PAYROLL_SETTINGS));
   });
 });
 

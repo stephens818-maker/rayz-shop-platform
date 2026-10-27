@@ -138,7 +138,7 @@ export async function checkPayrollTips(blocks: readonly TipCheckBlock[], start: 
         paidAtLockCents,
         inFlightCents,
         owedCents: directCents - paidCents - inFlightCents,
-        exportCashTipsCents: row ? toCents(row.values[CASH_TIPS] ?? 0) : null,
+        exportCashTipsCents: row ? toCents((row.values[CASH_TIPS] ?? 0) + sumColumns(from, row.values, ["cardTipsOutside"])) : null,
         exportPaidMemoCents: at(row, PAID_TIP_COLUMNS),
         exportPayrollTipsCents: at(row, PAYROLL_TIP_COLUMNS),
         payouts: mine.map((x) => ({

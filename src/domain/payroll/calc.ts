@@ -56,7 +56,54 @@ export interface PayrollSettings {
    * in turn needs each one manager-approved with no missed punches. Off: hours typed in or imported.
    */
   hoursFromClock: boolean;
+  /** How the iSolved files are formatted. The values are the same either way. */
+  exportFormat: ExportFormat;
+  /**
+   * A shop's file name, pending Charles (Q9): {start} and {end} as MM.DD.YY, {startIso} and {endIso},
+   * {shop} (its sheet name), {payGroup} and {period} (two digits). ".xlsx" is added.
+   */
+  exportFileName: string;
+  /** The all-shops workbook's name: the same placeholders but {shop} and {payGroup}. */
+  exportWorkbookName: string;
+  /** The six standard columns' iSolved earning codes, character for character as in iSolved's client setup. */
+  earningCodes: Record<EarningFrom, string>;
+  /**
+   * The earning code for card and gift card tips paid outside payroll. The same as the tips column
+   * (the default) sends them with cash tips under Cash Tips Recd, as the workbook does; a different
+   * one gives them their own column. Charles's and his CPA's to confirm (Q2).
+   */
+  cardTipsHeader: string;
+  /** Where PTO hours come from (Q10). */
+  ptoSource: HoursSource;
+  /** Where training hours come from (Q10). */
+  trainingSource: HoursSource;
+  /** The Payroll Report's shop order, by name (the workbook's Locations tab); shops not listed follow, by name. */
+  reportOrder: string[];
+  /** The all-shops workbook's sheet order, by name (the workbook's tabs); shops not listed follow, by name. */
+  sheetOrder: string[];
 }
+
+/**
+ * uniform: `0.00` on columns C to H of every sheet, Arial 8, bold grey headers (the reference file).
+ * workbook: each tab's own formatting, cell for cell as in Charles's workbook.
+ */
+export type ExportFormat = "uniform" | "workbook";
+export const EXPORT_FORMAT_LABEL: Record<ExportFormat, string> = {
+  uniform: "0.00 on every hours and dollars column (reference file)",
+  workbook: "Each tab's own formatting, as in the workbook",
+};
+
+/**
+ * clock: time entries only (clocked, added on Payroll → Hours, or imported); nobody types the value on the report.
+ * manager: typed on the report by a manager, with a reason; time entries of that kind are left out.
+ * both: time entries, and a manager can type over them with a reason.
+ */
+export type HoursSource = "clock" | "manager" | "both";
+export const HOURS_SOURCE_LABEL: Record<HoursSource, string> = {
+  clock: "Time entries only",
+  manager: "Entered by a manager on the report",
+  both: "Time entries, or a manager's entry with a reason",
+};
 
 /** Employees declaring the cash tips handed to them (IRS: monthly, by the 10th of the next month, when $20 or more). */
 export interface TipDeclarationSettings {
@@ -115,7 +162,27 @@ export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
   declarations: { enabled: true, atClockOut: true, remindUntilDay: 9, lockDay: 10, attestation: DEFAULT_ATTESTATION },
   tipTax: { qualifiedTipsCode: "TP", overtimeCode: "TT", creditFrom: "2025-01-01", creditWageCentsPerHour: 725, ficaRate: 0.0765 },
   hoursFromClock: true,
+  exportFormat: "uniform",
+  exportFileName: "{start}-{end} {shop}",
+  exportWorkbookName: "Rayz Payroll {start}-{end}",
+  earningCodes: {
+    hours: "E_Regular_Hours",
+    otHours: "E_Overtime 1.5_Hours",
+    tipsOutside: "E_Cash Tips Recd_Dollars",
+    netComm: "E_Comm Sales_Dollars",
+    ptoHours: "E_Ray'z Paid Time_Hours",
+    trainingHours: "E_Training_Hours",
+  },
+  cardTipsHeader: "E_Cash Tips Recd_Dollars",
+  ptoSource: "both",
+  trainingSource: "both",
+  reportOrder: ["Utica", "Moline", "Kimberly", "Rock Island", "Silvis", "Coralville", "LeClaire"],
+  sheetOrder: ["Rock Island", "Moline", "Silvis", "Coralville", "Utica", "Kimberly", "LeClaire"],
 };
+
+/** A file name pattern: printable, no path characters, at most 120 long. */
+const pattern = (v: unknown, d: string) => (typeof v === "string" && v.trim() && !/[\\/:*?"<>|\u0000-\u001f]/.test(v) ? v.trim().slice(0, 120) : d);
+const names = (v: unknown, d: string[]) => (Array.isArray(v) && v.every((x) => typeof x === "string") ? [...new Set(v.map((x) => x.trim()).filter(Boolean))].slice(0, 50) : d);
 
 const header = (v: unknown, d: string) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 60) : d);
 
@@ -173,11 +240,37 @@ export function payrollSettings(raw: unknown): PayrollSettings {
       ficaRate: num(tt.ficaRate, 0, 0.2, d.tipTax.ficaRate),
     },
     hoursFromClock: bool(r.hoursFromClock, d.hoursFromClock),
+    exportFormat: r.exportFormat && r.exportFormat in EXPORT_FORMAT_LABEL ? r.exportFormat : d.exportFormat,
+    exportFileName: pattern(r.exportFileName, d.exportFileName),
+    exportWorkbookName: pattern(r.exportWorkbookName, d.exportWorkbookName),
+    earningCodes: Object.fromEntries(EXPORT_COLUMNS.map((c) => [c.from, header((r.earningCodes as Partial<Record<EarningFrom, string>> | undefined)?.[c.from], d.earningCodes[c.from])])) as Record<EarningFrom, string>,
+    cardTipsHeader: header(r.cardTipsHeader, d.cardTipsHeader),
+    ptoSource: r.ptoSource && r.ptoSource in HOURS_SOURCE_LABEL ? r.ptoSource : d.ptoSource,
+    trainingSource: r.trainingSource && r.trainingSource in HOURS_SOURCE_LABEL ? r.trainingSource : d.trainingSource,
+    reportOrder: names(r.reportOrder, d.reportOrder),
+    sheetOrder: names(r.sheetOrder, d.sheetOrder),
   };
 }
 
+/** The six standard columns' headers as the brand set them. */
+export const earningHeaders = (s: Pick<PayrollSettings, "earningCodes">) => EXPORT_COLUMNS.map((c) => s.earningCodes?.[c.from] ?? c.header);
+
+/** Card tips get their own column only when their earning code isn't the tips column's. */
+export const cardTipsSplit = (s: Pick<PayrollSettings, "earningCodes" | "cardTipsHeader">) =>
+  !!s.cardTipsHeader && s.cardTipsHeader.trim().toLowerCase() !== (s.earningCodes?.tipsOutside ?? EXPORT_COLUMNS[2].header).trim().toLowerCase();
+
+const letters = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+/** Shops in a configured order by name (spaces and case aside, so "Le Claire" is "LeClaire"); the rest after, by name. */
+export function inNameOrder<T>(list: readonly T[], order: readonly string[], namesOf: (x: T) => string[]): T[] {
+  const at = (x: T) => {
+    const i = order.findIndex((o) => namesOf(x).some((n) => letters(n) === letters(o)));
+    return i < 0 ? order.length : i;
+  };
+  return [...list].sort((a, b) => at(a) - at(b) || namesOf(a)[0].localeCompare(namesOf(b)[0]));
+}
+
 /** Values a manager can type over, each with a reason. The workbook had these as hand-typed cells. */
-export const OVERRIDABLE = ["workedHours", "otHours", "serviceSales", "productSales", "tips", "netComm", "ptoHours", "trainingHours"] as const;
+export const OVERRIDABLE = ["workedHours", "otHours", "serviceSales", "productSales", "tips", "netComm", "ptoHours", "trainingHours", "hourlyTotal"] as const;
 export type Overridable = (typeof OVERRIDABLE)[number];
 export type Overrides = Partial<Record<Overridable, { value: number; reason: string }>>;
 
@@ -190,7 +283,11 @@ export const OVERRIDE_LABEL: Record<Overridable, string> = {
   netComm: "NetComm",
   ptoHours: "PTO hours",
   trainingHours: "Training hours",
+  hourlyTotal: "Hourly Total",
 };
+
+/** A rate that changed inside the period, so the line's rate is a blend of the versions in effect (shown as "mixed"). */
+export type MixedRate = "wage" | "servicePct" | "productPct";
 
 export interface LineInput {
   staffId: string;
@@ -230,6 +327,12 @@ export interface LineInput {
   chargedTips?: number;
   /** Tip refunds in the period of tickets from an earlier pay period, already paid: always the shop's cost. */
   lateTipRefunds?: number;
+  /** Sales tax collected on the employee's tickets. Reference only: never in any pay math or the export. */
+  salesTax?: number;
+  /** The profile's "export hours, $0 hourly pay" (the owner's row): hours go to iSolved, Hourly Total is $0. */
+  zeroHourlyPay?: boolean;
+  /** Rates blended from more than one effective-dated version in the period. */
+  mixedRates?: MixedRate[];
   overrides?: Overrides;
 }
 
@@ -278,6 +381,10 @@ export interface Line {
   tipsInPayroll: number;
   /** R, paid separately (cash or Stripe, already or by a later batch): E_Cash Tips Recd, tips the employee already received. */
   tipsOutside: number;
+  /** Of tipsOutside, card and gift card tips: their own column only when card tips have their own earning code. */
+  cardTipsOutside: number;
+  /** Sales tax on the employee's tickets. Reference only. */
+  salesTax: number;
   /** Of tipsOutside, what was already paid out when the report was built. Information only. */
   tipsPaidOut: number;
   /** tipsPaidOut by how it was paid (ST-C13): by Stripe, and any other way. Absent in periods locked before the split. */
@@ -314,7 +421,8 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
   const otHours = ov(i, "otHours", i.otHours);
   const hours = worked - otHours;
   const wage = i.hourlyRate;
-  const hourlyTotal = hours * wage;
+  const payWage = i.zeroHourlyPay ? 0 : wage;
+  const hourlyTotal = i.zeroHourlyPay ? 0 : ov(i, "hourlyTotal", hours * wage);
   const service = ov(i, "serviceSales", i.serviceSales);
   const commission = service * i.servicePct;
   const serviceTotal = commission - hourlyTotal;
@@ -324,15 +432,17 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
   const netComm = ov(i, "netComm", netCommComputed);
   const totalWages = (serviceTotal > 0 ? hourlyTotal + serviceTotal : hourlyTotal) + productTotal;
   const trainingHours = ov(i, "trainingHours", i.trainingHours);
-  const otPay = s.otMultiplier * wage * otHours;
+  const otPay = s.otMultiplier * payWage * otHours;
   const tips = ov(i, "tips", i.tips);
   const tipsInPayroll = i.tipsInPayroll ?? 0;
   const tipsPaidOut = i.tipsPaidOut ?? 0;
   const between = (x: number | undefined, max: number) => (max >= 0 ? Math.min(max, Math.max(0, x ?? 0)) : 0);
   const tipsInPayrollOwed = between(i.owedTipsInPayroll, tipsInPayroll);
   const tipsPaidOutStripe = between(i.tipsPaidByStripe, tipsPaidOut);
-  const trainingPay = s.trainingPayInCost ? (i.trainingRate ?? wage) * trainingHours : 0;
+  const trainingPay = s.trainingPayInCost ? (i.trainingRate ?? payWage) * trainingHours : 0;
   const guaranteeTopUp = i.guaranteeTopUp ?? 0;
+  const chargedTips = Math.min(tips, Math.max(0, i.chargedTips ?? 0));
+  const tipsOutside = tips - tipsInPayroll;
   return {
     input: i,
     staffId: i.staffId,
@@ -357,14 +467,16 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
     otHours,
     tips,
     tipsInPayroll,
-    tipsOutside: tips - tipsInPayroll,
+    tipsOutside,
+    cardTipsOutside: Math.max(0, Math.min(tipsOutside, chargedTips - tipsInPayroll)),
+    salesTax: i.salesTax ?? 0,
     tipsPaidOut,
     tipsPaidOutStripe,
     tipsPaidOutCash: tipsPaidOut - tipsPaidOutStripe,
     tipsInPayrollOwed,
     tipsInPayrollChosen: tipsInPayroll - tipsInPayrollOwed,
     declaredCashTips: i.declaredCashTips ?? 0,
-    chargedTips: Math.min(tips, Math.max(0, i.chargedTips ?? 0)),
+    chargedTips,
     lateTipRefunds: i.lateTipRefunds ?? 0,
     tipRefundsShopCost: i.lateTipRefunds ?? 0,
     trainingHours,
@@ -392,6 +504,7 @@ export const SUMMED = [
   "tips",
   "tipsInPayroll",
   "tipsOutside",
+  "cardTipsOutside",
   "tipsPaidOut",
   "declaredCashTips",
   "chargedTips",
@@ -402,6 +515,7 @@ export const SUMMED = [
   "trainingPay",
   "guaranteeTopUp",
   "laborCost",
+  "salesTax",
 ] as const;
 export type Summed = (typeof SUMMED)[number];
 export type Totals = Record<Summed, number> & { grossPerHour: number | null; pctOfGross: number | null; grossProfit: number };
@@ -426,6 +540,8 @@ export const COLUMN_LABEL: Record<Summed | "wage" | "grossPerHour" | "servicePct
   tips: "TIPS",
   tipsInPayroll: "Tips in payroll",
   tipsOutside: "Tips paid separately",
+  cardTipsOutside: "Card tips paid separately",
+  salesTax: "Sales tax (reference)",
   tipsPaidOut: "Tips paid out",
   declaredCashTips: "Cash tips declared",
   chargedTips: "Charged tips",
@@ -442,8 +558,57 @@ export const COLUMN_LABEL: Record<Summed | "wage" | "grossPerHour" | "servicePct
 export const HOUR_COLUMNS: ReadonlySet<string> = new Set(["hours", "ptoHours", "otHours", "trainingHours"]);
 
 export function totalsOf(rows: readonly Pick<Line, Summed>[]): Totals {
-  const t = Object.fromEntries(SUMMED.map((k) => [k, rows.reduce((a, r) => a + r[k], 0)])) as Record<Summed, number>;
+  const t = Object.fromEntries(SUMMED.map((k) => [k, rows.reduce((a, r) => a + (r[k] ?? 0), 0)])) as Record<Summed, number>;
   return { ...t, grossPerHour: t.hours ? t.service / t.hours : null, pctOfGross: t.service ? t.totalWages / t.service : null, grossProfit: t.service - t.laborCost };
+}
+
+/**
+ * The Locations tab's columns A to S, with its header text character for character (the trailing
+ * space after "Hourly Total" and the two spaces in "Training  Hours" are the workbook's). Rates (C, G,
+ * K) aren't totalled; Gross /Hr and Total % of Gross are worked out from the totals.
+ */
+export const LOCATIONS_COLUMNS = [
+  { key: "name", header: "Employee Name", kind: "text" },
+  { key: "hours", header: "Hours", kind: "hours" },
+  { key: "wage", header: "Hourly Wage", kind: "rate" },
+  { key: "hourlyTotal", header: "Hourly Total ", kind: "money" },
+  { key: "service", header: "Service$", kind: "money" },
+  { key: "grossPerHour", header: "Gross /Hr", kind: "ratio" },
+  { key: "servicePct", header: "Service%", kind: "pct" },
+  { key: "commission", header: "Commission$", kind: "money" },
+  { key: "serviceTotal", header: "Service Total", kind: "money" },
+  { key: "product", header: "Product$", kind: "money" },
+  { key: "productPct", header: "Prod%", kind: "pct" },
+  { key: "productTotal", header: "Product Total", kind: "money" },
+  { key: "netComm", header: "NetComm", kind: "money" },
+  { key: "totalWages", header: "Total Wages", kind: "money" },
+  { key: "pctOfGross", header: "Total % of Gross", kind: "pct" },
+  { key: "ptoHours", header: "PTO HRs.", kind: "hours" },
+  { key: "otHours", header: "O.T. HRS", kind: "hours" },
+  { key: "tips", header: "TIPS", kind: "money" },
+  { key: "trainingHours", header: "Training  Hours", kind: "hours" },
+] as const satisfies readonly { key: keyof Line | "name"; header: string; kind: "text" | "hours" | "rate" | "money" | "ratio" | "pct" }[];
+
+export interface LocationSummaryRow {
+  shopId: string | null;
+  shop: string;
+  /** ΣE */
+  service: number;
+  /** ΣN, the workbook's Employee Cost: Total Wages, without O.T. Pay or Training Pay. */
+  employeeCost: number;
+  /** ΣE − ΣN */
+  grossProfit: number;
+}
+
+/**
+ * The Locations tab's summary (rows 68–76): Service Sales, Employee Cost and Gross Profit per shop and
+ * in total, every one a sum of all of its shop's rows (the workbook's ranges skip some, §8).
+ */
+export function locationSummary(blocks: readonly { shopId: string; shop: string; totals: Pick<Totals, "service" | "totalWages"> }[]): { rows: LocationSummaryRow[]; total: LocationSummaryRow } {
+  const rows = blocks.map((b) => ({ shopId: b.shopId, shop: b.shop, service: b.totals.service, employeeCost: b.totals.totalWages, grossProfit: b.totals.service - b.totals.totalWages }));
+  const service = rows.reduce((a, r) => a + r.service, 0);
+  const employeeCost = rows.reduce((a, r) => a + r.employeeCost, 0);
+  return { rows, total: { shopId: null, shop: "Total", service, employeeCost, grossProfit: service - employeeCost } };
 }
 
 /** Half-up to 2 decimals from the decimal digits (6.315 → 6.32), never banker's rounding or binary drift. */
@@ -467,6 +632,8 @@ export const EXPORT_COLUMNS = [
   { header: "E_Ray'z Paid Time_Hours", from: "ptoHours" },
   { header: "E_Training_Hours", from: "trainingHours" },
 ] as const satisfies readonly { header: string; from: Summed }[];
+/** What a standard column carries; its header is the brand's earning code for it. */
+export type EarningFrom = (typeof EXPORT_COLUMNS)[number]["from"];
 
 export interface ExportRow {
   staffId: string;
@@ -482,7 +649,19 @@ const hasGuarantee = (lines: readonly Pick<Line, "guaranteeTopUp">[]) => lines.s
 export const hasDeclaredTips = (lines: readonly Pick<Line, "declaredCashTips">[]) => lines.some((l) => (l.declaredCashTips ?? 0) !== 0);
 
 /** What a column after the standard six carries. */
-export type ExtraFrom = "tipsInPayroll" | "tipsInPayrollChosen" | "tipsInPayrollOwed" | "tipsPaidOut" | "tipsPaidOutCash" | "tipsPaidOutStripe" | "declaredCashTips" | "guaranteeTopUp" | "commission" | "productTotal" | "wage";
+export type ExtraFrom =
+  | "cardTipsOutside"
+  | "tipsInPayroll"
+  | "tipsInPayrollChosen"
+  | "tipsInPayrollOwed"
+  | "tipsPaidOut"
+  | "tipsPaidOutCash"
+  | "tipsPaidOutStripe"
+  | "declaredCashTips"
+  | "guaranteeTopUp"
+  | "commission"
+  | "productTotal"
+  | "wage";
 
 export const SPLIT_LABEL: Record<"tipsInPayrollChosen" | "tipsInPayrollOwed" | "tipsPaidOutCash" | "tipsPaidOutStripe", string> = {
   tipsInPayrollChosen: "Tips in payroll by choice",
@@ -534,9 +713,10 @@ function tipColumns(lines: readonly Line[], s: PayrollSettings): ExtraColumn[] {
   return [...payroll, ...paid];
 }
 
-/** The columns after the standard six: tips in payroll, tips already paid out (where marked), declared cash tips and the guarantee top-up when someone in the file has them, then the brand's. */
+/** The columns after the standard six: card tips (with their own earning code), tips in payroll, tips already paid out (where marked), declared cash tips and the guarantee top-up when someone in the file has them, then the brand's. */
 export function exportExtraColumns(lines: readonly Line[], s: PayrollSettings, o: ExportOptions = {}): ExtraColumn[] {
   return [
+    ...(cardTipsSplit(s) && lines.some((l) => (l.cardTipsOutside ?? 0) !== 0) ? [{ header: s.cardTipsHeader, from: "cardTipsOutside" as const }] : []),
     ...tipColumns(lines, s),
     ...(hasDeclaredTips(lines) ? [{ header: s.cashTipsDeclaredHeader, from: "declaredCashTips" as const }] : []),
     ...(hasGuarantee(lines) ? [{ header: o.guaranteeHeader ?? COLUMN_LABEL.guaranteeTopUp, from: "guaranteeTopUp" as const }] : []),
@@ -545,17 +725,21 @@ export function exportExtraColumns(lines: readonly Line[], s: PayrollSettings, o
 }
 
 export function exportHeaders(lines: readonly Line[], s: PayrollSettings, o: ExportOptions = {}): string[] {
-  return [...EXPORT_COLUMNS.map((c) => c.header), ...exportExtraColumns(lines, s, o).map((c) => c.header)];
+  return [...earningHeaders(s), ...exportExtraColumns(lines, s, o).map((c) => c.header)];
 }
+
+/** A standard column's value: the tips column leaves out card tips when they have a column of their own. */
+const standardValue = (l: Line, from: EarningFrom, cardSplit: boolean) => (from === "tipsOutside" && cardSplit ? l.tipsOutside - (l.cardTipsOutside ?? 0) : l[from]);
 
 export function exportRows(lines: readonly Line[], s: PayrollSettings, o: ExportOptions = {}): ExportRow[] {
   const extra = exportExtraColumns(lines, s, o);
+  const cardSplit = extra.some((c) => c.from === "cardTipsOutside");
   const out = (x: number) => (s.roundExport2dp ? roundHalfUp2(x) : x);
   return lines.map((l) => ({
     staffId: l.staffId,
     key: l.input.employeeNumber === null ? null : l.input.keyIsText || !/^\d+$/.test(l.input.employeeNumber) ? l.input.employeeNumber : Number(l.input.employeeNumber),
     isolvedName: l.input.isolvedName,
-    values: [...EXPORT_COLUMNS.map((c) => out(l[c.from])), ...extra.map((c) => out(l[c.from] ?? 0))],
+    values: [...EXPORT_COLUMNS.map((c) => out(standardValue(l, c.from, cardSplit))), ...extra.map((c) => out(l[c.from] ?? 0))],
   }));
 }
 
@@ -583,6 +767,8 @@ export interface ShopBlock {
   exportHeaders?: string[];
   /** What each column after the standard six carries; absent in periods locked before there could be more than tips in payroll. */
   exportFrom?: ExtraFrom[];
+  /** Sales at the shop with no employee on them (Squire's "Unassigned sales"): credited to nobody, shown as a warning. */
+  unassigned?: { serviceSales: number; productSales: number; salesTax: number };
 }
 
 /** Locked before exportFrom existed, a seventh column could only be tips paid in payroll. */
@@ -601,6 +787,7 @@ const PAYSTUB_GROUP: Partial<Record<Summed | ExtraFrom, PaystubGroup>> = {
   ptoHours: "hours",
   trainingHours: "hours",
   tipsOutside: "tips",
+  cardTipsOutside: "tips",
   tipsInPayroll: "tips",
   tipsInPayrollChosen: "tips",
   tipsInPayrollOwed: "tips",
@@ -649,11 +836,14 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
       const sum = b.lines.reduce((a, l) => a + l[k], 0);
       if (!sameToTheCent(b.totals[k], sum)) out.push({ shopId: b.shopId, column: COLUMN_LABEL[k], check: "rows", report: b.totals[k], other: sum, detail: `${b.shop}: total isn't the sum of its rows` });
     }
-    EXPORT_COLUMNS.forEach((c, i) => {
-      const sum = b.exportRows.reduce((a, r) => a + r.values[i], 0);
-      if (!sameToTheCent(b.totals[c.from], sum)) out.push({ shopId: b.shopId, column: c.header, check: "export", report: b.totals[c.from], other: sum, detail: `${b.shop}: export ${c.header} adds up to a different total than the report's ${COLUMN_LABEL[c.from]}` });
-    });
     const from = extraFromOf(b);
+    const cardSplit = from.includes("cardTipsOutside");
+    EXPORT_COLUMNS.forEach((c, i) => {
+      const header = b.exportHeaders?.[i] ?? c.header;
+      const want = c.from === "tipsOutside" && cardSplit ? b.totals.tipsOutside - (b.totals.cardTipsOutside ?? 0) : b.totals[c.from];
+      const sum = b.exportRows.reduce((a, r) => a + r.values[i], 0);
+      if (!sameToTheCent(want, sum)) out.push({ shopId: b.shopId, column: header, check: "export", report: want, other: sum, detail: `${b.shop}: export ${header} adds up to a different total than the report's ${COLUMN_LABEL[c.from]}` });
+    });
     const exported = (k: ExtraFrom) => {
       const i = from.indexOf(k);
       return i < 0 ? 0 : b.exportRows.reduce((a, r) => a + (r.values[EXPORT_COLUMNS.length + i] ?? 0), 0);
@@ -667,7 +857,7 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
     const declared = exported("declaredCashTips");
     if (!sameToTheCent(b.totals.declaredCashTips ?? 0, declared))
       out.push({ shopId: b.shopId, column: COLUMN_LABEL.declaredCashTips, check: "export", report: b.totals.declaredCashTips ?? 0, other: declared, detail: `${b.shop}: the export's declared cash tips add up to a different total than the report's` });
-    for (const k of ["tipsPaidOut", "commission", "productTotal"] as const) {
+    for (const k of ["tipsPaidOut", "commission", "productTotal", "cardTipsOutside"] as const) {
       if (!from.includes(k)) continue;
       const sum = exported(k);
       if (!sameToTheCent(b.totals[k], sum)) out.push({ shopId: b.shopId, column: COLUMN_LABEL[k], check: "export", report: b.totals[k], other: sum, detail: `${b.shop}: the export's ${COLUMN_LABEL[k]} column adds up to a different total than the report's` });
@@ -693,11 +883,20 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
   return out;
 }
 
-export function assemble(shops: readonly { shopId: string; shop: string; inputs: readonly LineInput[] }[], s: PayrollSettings, o: ExportOptions = {}) {
+export function assemble(shops: readonly { shopId: string; shop: string; inputs: readonly LineInput[]; unassigned?: ShopBlock["unassigned"] }[], s: PayrollSettings, o: ExportOptions = {}) {
   const blocks: ShopBlock[] = shops.map((sh) => {
     const lines = sh.inputs.map((i) => computeLine(i, s));
     const exportFrom = exportExtraColumns(lines, s, o).map((c) => c.from);
-    return { shopId: sh.shopId, shop: sh.shop, lines, totals: totalsOf(lines), exportRows: exportRows(lines, s, o), exportHeaders: exportHeaders(lines, s, o), exportFrom };
+    return {
+      shopId: sh.shopId,
+      shop: sh.shop,
+      lines,
+      totals: totalsOf(lines),
+      exportRows: exportRows(lines, s, o),
+      exportHeaders: exportHeaders(lines, s, o),
+      exportFrom,
+      ...(sh.unassigned ? { unassigned: sh.unassigned } : {}),
+    };
   });
   const grand = totalsOf(blocks.map((b) => b.totals));
   return { blocks, grand, mismatches: reconcile(blocks, grand) };
@@ -745,12 +944,25 @@ export type AnomalyKind =
   | "timesheet_not_approved"
   | "hours_not_locked"
   | "sales_day_without_hours"
-  | "hours_not_from_clock";
+  | "hours_not_from_clock"
+  | "unassigned_sales"
+  | "mixed_rates"
+  | "hours_source";
+
+const RATE_NAME: Record<MixedRate, string> = { wage: "hourly wage", servicePct: "service %", productPct: "product %" };
 
 /** Things to look at before locking. None of these block the lock, and none are "fixed" automatically. */
 export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Anomaly[] {
   const out: Anomaly[] = [];
   for (const b of blocks) {
+    const u = b.unassigned;
+    if (u && (u.productSales || u.serviceSales))
+      out.push({
+        staffId: null,
+        shopId: b.shopId,
+        kind: "unassigned_sales",
+        message: `${b.shop}: ${[u.productSales ? `${fmtMoney(u.productSales)} of product sales` : "", u.serviceSales ? `${fmtMoney(u.serviceSales)} of service sales` : ""].filter(Boolean).join(" and ")} with no employee on the ticket, so no one is paid commission on them. Put the employee on the ticket to credit them.`,
+      });
     for (const l of b.lines) {
       const who = `${l.name} (${b.shop})`;
       if (l.input.employeeNumber === null) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "missing_key", message: `${who} has no iSolved Employee Number yet, so their Key cell would be blank.` });
@@ -763,6 +975,14 @@ export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Ano
       }
       if (l.trainingHours > 0 && !s.trainingCountsTowardOt) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "training_in_hours", message: `${who}: ${fmtHours(l.trainingHours)} training. If the clocked hours already include it, it's counted twice (Q11, C2 flag).` });
       if (l.wage === 0 && l.service > 0 && l.servicePct === 0) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "no_rate", message: `${who} has sales but no wage or commission rate.` });
+      const mixed = l.input.mixedRates ?? [];
+      if (mixed.length)
+        out.push({
+          staffId: l.staffId,
+          shopId: b.shopId,
+          kind: "mixed_rates",
+          message: `${who}: the ${mixed.map((k) => RATE_NAME[k]).join(" and ")} changed during the period, so each sale is paid at the rate in effect on its checkout date and each day's hours at that day's wage. The report shows "mixed".`,
+        });
       const late = l.lateTipRefunds ?? 0;
       if (late > 0) {
         out.push({

@@ -768,7 +768,8 @@ export async function lockedExport(payGroupId: string, start: LocalDate, end: Lo
     .where(and(eq(payrollRuns.payGroupId, payGroupId), eq(payrollRuns.periodStart, start), eq(payrollRuns.periodEnd, end)));
   if (!row) return null;
   const block = (row.run.snapshot as Snapshot).block;
-  const f = { tab: row.tab, payGroup: row.label, periodNumber: row.run.periodNumber, periodStart: start, periodEnd: end, rows: block.exportRows, headers: block.exportHeaders };
+  const s = await loadSettings();
+  const f = { tab: row.tab, payGroup: row.label, periodNumber: row.run.periodNumber, periodStart: start, periodEnd: end, rows: block.exportRows, headers: block.exportHeaders, format: s.exportFormat, namePattern: s.exportFileName };
   return { fileName: exporter.fileName(f), contentType: exporter.contentType, body: await exporter.render(f), runId: row.run.id, shopId: row.run.payGroupId };
 }
 

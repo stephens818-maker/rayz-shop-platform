@@ -3,7 +3,7 @@ import ExcelJS from "exceljs";
 import { db } from "@/db";
 import { payGroups, payrollEmployers, payrollExportSends, payrollProfiles, shops, staff, timeEntries, tipAbsorptions, tipLedger, tipPayouts, type PayrollSendShop } from "@/db/schema";
 import { paidLeaveYear, rulesFor, workStateOf } from "@/domain/wage-hour";
-import { EXPORT_COLUMNS, PAID_TIP_COLUMNS, PAYROLL_TIP_COLUMNS, extraFromOf, sumColumns, toCents, type Line } from "@/domain/payroll/calc";
+import { EXPORT_COLUMNS, PAID_TIP_COLUMNS, PAYROLL_TIP_COLUMNS, extraFromOf, inNameOrder, sumColumns, toCents, type Line } from "@/domain/payroll/calc";
 import { FLAG_LABEL, FT_LABEL, PUNCH_LABEL, csv, type PunchType } from "@/domain/time-clock";
 import type { Permission } from "@/domain/permissions";
 import type { BarChart } from "@/domain/report-charts";
@@ -19,7 +19,7 @@ import { PAID, rows as sqlRows, uuids } from "@/server/report-sql";
 import { itemMix, staffSelection, type ReportScope } from "@/server/reports";
 import { ftOverview, hoursSlices, periodFor, punchEditsBetween, scheduledMinutesLeft, shiftsBetween, timesheetList } from "@/server/time-clock";
 import { weekStartOf } from "@/domain/payroll/overtime";
-import { addIsolvedSheet } from "./export";
+import { addIsolvedSheet, exportFileName } from "./export";
 import { loadSettings } from "./groups";
 import { MAX_REPORT_PERIODS, payPeriodPresets, periodLabel, periodsEnding, type PayPeriodRef } from "./periods";
 import { buildPayroll, type BlockView, type PayrollView } from "./run";
@@ -1443,17 +1443,18 @@ export async function isolvedWorkbook(start: LocalDate, end: LocalDate, shopIds:
   if (!blocks.length) return null;
   const [sent] = await db.select({ id: payrollExportSends.id }).from(payrollExportSends).where(and(eq(payrollExportSends.periodStart, start), eq(payrollExportSends.periodEnd, end)));
   const status = statusOf(view, !!sent);
+  const s = view.settings;
   const wb = new ExcelJS.Workbook();
   wb.creator = "Ray'z";
   const used = new Set<string>();
-  for (const b of blocks) {
+  for (const b of inNameOrder(blocks, s.sheetOrder, (x) => [x.exportTab, x.shop])) {
     let tab = b.exportTab.slice(0, 31);
     for (let n = 2; used.has(tab); n++) tab = `${b.exportTab.slice(0, 27)} (${n})`;
     used.add(tab);
-    addIsolvedSheet(wb, { tab, payGroup: b.payGroup, periodNumber: b.period.number, periodStart: start, periodEnd: end, rows: b.exportRows, headers: b.exportHeaders });
+    addIsolvedSheet(wb, { tab, payGroup: b.payGroup, periodNumber: b.period.number, periodStart: start, periodEnd: end, rows: b.exportRows, headers: b.exportHeaders, format: s.exportFormat });
   }
   const number = blocks[0].period.number;
-  const fileName = `${status === "draft" ? "DRAFT - " : ""}iSolved - period ${String(number).padStart(2, "0")} (${start} to ${end}).xlsx`;
+  const fileName = `${status === "draft" ? "DRAFT - " : ""}${exportFileName(s.exportWorkbookName, { tab: "All shops", payGroup: "All shops", periodNumber: number, periodStart: start, periodEnd: end })}`;
   return { fileName, body: Buffer.from(await wb.xlsx.writeBuffer()), status, rows: sumOf(blocks, (b) => b.exportRows.length), shops: blocks.map((b) => b.shopId) };
 }
 

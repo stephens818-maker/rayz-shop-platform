@@ -361,7 +361,7 @@ describe("the iSolved export", () => {
 
     const res = await download();
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-disposition")).toMatch(/filename="DRAFT - iSolved - period \d+ /);
+    expect(res.headers.get("content-disposition")).toMatch(/filename="DRAFT - Rayz Payroll \d\d\.\d\d\.\d\d-\d\d\.\d\d\.\d\d\.xlsx"/);
   });
 
   it("goes approved once locked, then sent; can't be sent twice; undo needs a reason; every step audited", async () => {
@@ -394,7 +394,7 @@ describe("the iSolved export", () => {
   it("downloads one workbook with a tab per shop in the selection; refused without the permissions", async () => {
     const res = await download();
     expect(res.status).toBe(200);
-    expect(res.headers.get("content-disposition")).toMatch(/filename="iSolved - period \d+ \(.+\)\.xlsx"/);
+    expect(res.headers.get("content-disposition")).toMatch(/filename="Rayz Payroll \d\d\.\d\d\.\d\d-\d\d\.\d\d\.\d\d\.xlsx"/);
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(Buffer.from(await res.arrayBuffer()) as unknown as ExcelJS.Buffer);
     expect(wb.worksheets).toHaveLength(1);
