@@ -447,19 +447,37 @@ describe("earnings (ST-C6) and tip payouts (ST-C7)", () => {
 });
 
 describe("the Squire payout cutover (ST-C9)", () => {
-  it("Squire-owed tips per barber, the barber confirms or disputes their own line, and a dispute holds the manager's sign-off", async () => {
-    const { payoutCutoverReport, setPayoutCutoverDates, signOffPayoutReport } = await import("@/server/payout-cutover");
+  it("Squire-owed tips per barber, the barber confirms or disputes their own line, and a dispute holds the manager's sign-off; then the checklist: Saturday close, one owner per tip date, a three-way tie-out, the manager and then the CPA", async () => {
+    const { payoutCutoverReport, setPayoutCutoverDates, signOffPayoutReport, recordCpaSignOff } = await import("@/server/payout-cutover");
+    const { setSquireTipsEnd } = await import("@/server/tips/onboarding");
     const cv = shop.coralville;
-    const d = (n: number) => m.time.addDays(today, n);
-    await m.db.db.insert(S().shopCutovers).values({ shopId: cv, squireTipsEndOn: d(-2) }).onConflictDoUpdate({ target: S().shopCutovers.shopId, set: { squireTipsEndOn: d(-2) } });
-    const sale = (daysAgo: number, tipCents: number) => ({ shopId: cv, staffId: ids.makenna, businessDate: d(-daysAgo), status: "paid" as const, isImported: true, tipCents, totalCents: 4000 + tipCents });
-    await m.db.db.insert(S().sales).values([sale(10, 999), sale(4, 700), sale(3, 550), { ...sale(1, 5000) }]);
-    await setPayoutCutoverDates({ staffId: ids.michelle, label: "michelle" }, cv, { paidThrough: d(-5), lastPayoutOn: d(3) });
+    const michelle = { staffId: ids.michelle, label: "michelle" };
+    const back = m.time.addDays(today, -7);
+    const end = m.time.addDays(back, -((m.time.weekdayOf(back) + 1) % 7));
+    expect(m.time.weekdayOf(end)).toBe(6);
+    const d = (n: number) => m.time.addDays(end, n);
+    await expect(setSquireTipsEnd(michelle, cv, d(-1))).rejects.toThrow(/Saturday/);
+    await setSquireTipsEnd(michelle, cv, end);
+    const sale = (day: number, tipCents: number) => ({ shopId: cv, staffId: ids.makenna, businessDate: d(day), status: "paid" as const, isImported: true, tipCents, totalCents: 4000 + tipCents });
+    const [, , , after] = await m.db.db.insert(S().sales).values([sale(-8, 999), sale(-2, 700), sale(-1, 550), sale(1, 5000)]).returning({ id: S().sales.id });
+    await setPayoutCutoverDates(michelle, cv, { paidThrough: d(-3), lastPayoutOn: d(5) });
     const report = await payoutCutoverReport(cv);
     const line = report.lines.find((l) => l.staffId === ids.makenna)!;
     expect(line).toMatchObject({ squireOwedCents: 1250, tickets: 2, confirmation: null });
     expect(report.firstRayzPayout).toMatchObject({ via: "stripe" });
     expect(report.ready).toBe(true);
+    expect(report.saturdayClose).toBe(true);
+    expect(report.owners.squireAfterEnd).toEqual({ tickets: 1, tipCents: 5000 });
+    expect(report.checklist.map((x) => [x.key, x.done])).toEqual([
+      ["saturday_close", true],
+      ["squire_dates", true],
+      ["one_owner", false],
+      ["tie_out", false],
+      ["barbers", false],
+      ["manager", false],
+      ["cpa", false],
+      ["ytd", expect.any(Boolean)],
+    ]);
 
     const t = await login("makenna@rayz.test");
     const mine = await call("GET", "me/payout-cutover", { token: t.accessToken });
@@ -469,14 +487,36 @@ describe("the Squire payout cutover (ST-C9)", () => {
     expect((await call("POST", "me/payout-cutover/confirm", { token: t.accessToken, body: { shopId: shop.moline, status: "confirmed" } })).status).toBe(403);
     const disp = await call("POST", "me/payout-cutover/confirm", { token: t.accessToken, body: { shopId: cv, status: "disputed", note: "I had a $20 cash tip on the 3rd" } });
     expect(disp.status, disp.text).toBe(200);
-    await expect(signOffPayoutReport({ staffId: ids.michelle, label: "michelle" }, cv)).rejects.toThrow(/dispute/);
+    await expect(signOffPayoutReport(michelle, cv)).rejects.toThrow(/dispute/);
     await call("POST", "me/payout-cutover/confirm", { token: t.accessToken, body: { shopId: cv, status: "confirmed" } });
     const others = (await payoutCutoverReport(cv)).lines.filter((l) => l.staffId !== ids.makenna);
     for (const o of others) await m.db.db.insert(S().staffPayoutConfirmations).values({ shopId: cv, staffId: o.staffId, status: "confirmed", squireOwedCents: o.squireOwedCents, decidedAt: new Date() }).onConflictDoNothing();
-    const signed = await signOffPayoutReport({ staffId: ids.michelle, label: "michelle" }, cv);
+
+    // A Squire ticket after Squire stops has nobody to pay it; the statement has to agree with the tickets.
+    await expect(signOffPayoutReport(michelle, cv)).rejects.toThrow(/after Squire stops/);
+    await m.db.db.delete(S().sales).where(eq(S().sales.id, after.id));
+    await expect(signOffPayoutReport(michelle, cv)).rejects.toThrow(/final statement/);
+    await setPayoutCutoverDates(michelle, cv, { paidThrough: d(-3), lastPayoutOn: d(5), statementCents: 1200 });
+    await expect(signOffPayoutReport(michelle, cv)).rejects.toThrow(/\$12\.00 but its tickets say \$12\.50/);
+    await setPayoutCutoverDates(michelle, cv, { paidThrough: d(-3), lastPayoutOn: d(5), statementCents: 1250 });
+    expect((await payoutCutoverReport(cv)).tieOut).toEqual({ ticketsCents: 1250, statementCents: 1250, confirmedCents: 1250, matched: true });
+
+    const owner = { staffId: null, label: "owner" };
+    await expect(recordCpaSignOff(owner, cv, { name: "Pat Lee, CPA", signedOn: today })).rejects.toThrow(/manager signs the tie-out first/);
+    const signed = await signOffPayoutReport(michelle, cv);
     expect(signed.signedOff).toMatchObject({ current: true });
-    await m.db.db.insert(S().sales).values(sale(3, 100));
-    expect((await payoutCutoverReport(cv)).signedOff?.current).toBe(false);
+    await expect(recordCpaSignOff(owner, cv, { name: "Pat Lee, CPA", signedOn: m.time.addDays(today, 1) })).rejects.toThrow(/today or earlier/);
+    const cpa = await recordCpaSignOff(owner, cv, { name: "Pat Lee, CPA", signedOn: today });
+    expect(cpa.cpa).toMatchObject({ name: "Pat Lee, CPA", signedOn: today, current: true });
+    expect(cpa.checklist.filter((x) => !x.done).map((x) => x.key)).toEqual(cpa.checklist.find((x) => x.key === "ytd")!.done ? [] : ["ytd"]);
+    const [trail] = await m.db.db.select().from(S().auditLog).where(and(eq(S().auditLog.action, "cutover.cpa_sign_off"), eq(S().auditLog.entityId, cv)));
+    expect(trail.details).toMatchObject({ cpa: "Pat Lee, CPA", statementCents: 1250 });
+
+    await m.db.db.insert(S().sales).values(sale(-1, 100));
+    const changed = await payoutCutoverReport(cv);
+    expect(changed.signedOff?.current).toBe(false);
+    expect(changed.cpa?.current).toBe(false);
+    expect(changed.tieOut.matched).toBe(false);
   });
 });
 

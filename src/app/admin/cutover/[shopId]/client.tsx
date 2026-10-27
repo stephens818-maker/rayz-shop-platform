@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button, Field, Input, Notice } from "@/components/ui";
 import { useAction } from "@/components/use-action";
-import { handBackAction, payoutDatesAction, payoutReportSignOffAction, reconcileAction, recordFreezeAction, signOffAction, squireTipsEndAction, ytdImportAction } from "../actions";
+import { cpaSignOffAction, handBackAction, payoutDatesAction, payoutReportSignOffAction, reconcileAction, recordFreezeAction, signOffAction, squireTipsEndAction, ytdImportAction } from "../actions";
 
 const FILES = [
   { id: "bookings", label: "Appointments (upcoming)" },
@@ -93,7 +93,7 @@ export function SquireTipsEndForm({ shopId, current }: { shopId: string; current
   const [date, setDate] = useState(current ?? "");
   return (
     <div className="flex flex-wrap items-end gap-3">
-      <Field label="Last day Squire pays this shop's tips">
+      <Field label="Last day Squire pays this shop's tips (a Saturday, at close)">
         <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-44" />
       </Field>
       <Button variant="secondary" disabled={pending || date === (current ?? "")} onClick={() => run(() => squireTipsEndAction(shopId, date))}>
@@ -120,10 +120,12 @@ export function HandBackForm({ shopId, current }: { shopId: string; current: str
   );
 }
 
-export function PayoutDatesForm({ shopId, paidThrough, lastPayoutOn }: { shopId: string; paidThrough: string | null; lastPayoutOn: string | null }) {
+export function PayoutDatesForm({ shopId, paidThrough, lastPayoutOn, statementCents }: { shopId: string; paidThrough: string | null; lastPayoutOn: string | null; statementCents: number | null }) {
   const { pending, error, run } = useAction();
   const [through, setThrough] = useState(paidThrough ?? "");
   const [last, setLast] = useState(lastPayoutOn ?? "");
+  const was = statementCents === null ? "" : (statementCents / 100).toFixed(2);
+  const [statement, setStatement] = useState(was);
   return (
     <div className="flex flex-wrap items-end gap-3">
       <Field label="Squire's last payout statement covers tips through">
@@ -132,8 +134,15 @@ export function PayoutDatesForm({ shopId, paidThrough, lastPayoutOn }: { shopId:
       <Field label="Squire's last payout day">
         <Input type="date" value={last} onChange={(e) => setLast(e.target.value)} className="w-44" />
       </Field>
-      <Button variant="secondary" disabled={pending || (through === (paidThrough ?? "") && last === (lastPayoutOn ?? ""))} onClick={() => run(() => payoutDatesAction(shopId, { paidThrough: through, lastPayoutOn: last }))}>
-        Save dates
+      <Field label="Squire's final statement: total still owed ($)">
+        <Input inputMode="decimal" value={statement} onChange={(e) => setStatement(e.target.value)} className="w-36" placeholder="0.00" />
+      </Field>
+      <Button
+        variant="secondary"
+        disabled={pending || (through === (paidThrough ?? "") && last === (lastPayoutOn ?? "") && statement === was)}
+        onClick={() => run(() => payoutDatesAction(shopId, { paidThrough: through, lastPayoutOn: last, statement }))}
+      >
+        Save
       </Button>
       {error && <Notice tone="red">{error}</Notice>}
     </div>
@@ -146,6 +155,26 @@ export function PayoutSignOffButton({ shopId, ready }: { shopId: string; ready: 
     <div className="flex flex-wrap items-center gap-3">
       <Button disabled={pending || !ready} onClick={() => run(() => payoutReportSignOffAction(shopId))}>
         Sign off the payout report
+      </Button>
+      {error && <Notice tone="red">{error}</Notice>}
+    </div>
+  );
+}
+
+export function CpaSignOffForm({ shopId }: { shopId: string }) {
+  const { pending, error, run } = useAction();
+  const [name, setName] = useState("");
+  const [on, setOn] = useState("");
+  return (
+    <div className="flex flex-wrap items-end gap-3">
+      <Field label="CPA who signed">
+        <Input value={name} onChange={(e) => setName(e.target.value)} className="w-56" />
+      </Field>
+      <Field label="Day they signed">
+        <Input type="date" value={on} onChange={(e) => setOn(e.target.value)} className="w-44" />
+      </Field>
+      <Button variant="secondary" disabled={pending || !name.trim() || !on} onClick={() => run(() => cpaSignOffAction(shopId, { name, signedOn: on }))}>
+        Record the CPA&rsquo;s sign-off
       </Button>
       {error && <Notice tone="red">{error}</Notice>}
     </div>

@@ -10,7 +10,7 @@ import { safe } from "@/server/action";
 import { assertShopAccess, authorize } from "@/server/auth/staff";
 import { CUTOVER_FILES, handBack, reconcileShop, recordFreeze, signOffAndSwitch } from "@/server/cutover";
 import { AppError } from "@/server/errors";
-import { importYtd, setPayoutCutoverDates, signOffPayoutReport } from "@/server/payout-cutover";
+import { importYtd, recordCpaSignOff, setPayoutCutoverDates, signOffPayoutReport } from "@/server/payout-cutover";
 import { setSquireTipsEnd } from "@/server/tips/onboarding";
 import { isValidLocalDate } from "@/lib/time";
 
@@ -94,12 +94,23 @@ const DateOrNull = z.string().trim().transform((d, c) => {
   return d;
 });
 
-/** Squire's last payout statement (tips covered through) and its last payout day for this shop. */
-export async function payoutDatesAction(shopId: string, v: { paidThrough: string; lastPayoutOn: string }) {
+const StatementCents = z.string().trim().transform((v, c) => {
+  if (!v) return null;
+  const x = v.replace(/[$,\s]/g, "");
+  if (!/^\d+(\.\d{1,2})?$/.test(x)) {
+    c.addIssue({ code: "custom", message: "Enter the statement's total in dollars and cents" });
+    return z.NEVER;
+  }
+  return Math.round(Number(x) * 100);
+});
+
+/** Squire's last payout statement (tips covered through, and its total still owed) and its last payout day for this shop. */
+export async function payoutDatesAction(shopId: string, v: { paidThrough: string; lastPayoutOn: string; statement?: string }) {
   return safe(async () => {
     const ctx = await authorize(["import.run", "tips.approve"]);
     assertShopAccess(ctx, Shop.parse(shopId));
-    await setPayoutCutoverDates(ctx.actor, shopId, { paidThrough: DateOrNull.parse(v.paidThrough), lastPayoutOn: DateOrNull.parse(v.lastPayoutOn) });
+    const statementCents = v.statement === undefined ? undefined : StatementCents.parse(v.statement);
+    await setPayoutCutoverDates(ctx.actor, shopId, { paidThrough: DateOrNull.parse(v.paidThrough), lastPayoutOn: DateOrNull.parse(v.lastPayoutOn), statementCents });
     refresh(shopId);
     return null;
   });
@@ -111,6 +122,17 @@ export async function payoutReportSignOffAction(shopId: string) {
     const ctx = await authorize("tips.approve");
     assertShopAccess(ctx, Shop.parse(shopId));
     await signOffPayoutReport(ctx.actor, shopId);
+    refresh(shopId);
+    return null;
+  });
+}
+
+/** An owner records the CPA's sign-off of the tie-out the manager signed. */
+export async function cpaSignOffAction(shopId: string, v: { name: string; signedOn: string }) {
+  return safe(async () => {
+    const ctx = await authorize("settings.brand");
+    assertShopAccess(ctx, Shop.parse(shopId));
+    await recordCpaSignOff(ctx.actor, shopId, { name: z.string().parse(v.name), signedOn: z.string().parse(v.signedOn) });
     refresh(shopId);
     return null;
   });

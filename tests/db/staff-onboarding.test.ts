@@ -141,7 +141,8 @@ describe("bulk invites", () => {
   it("go by the channel asked for or the one they have; done people, people elsewhere and people with no contact are skipped; a quick second send is skipped", async () => {
     const coralville = await shop("coralville");
     const [michelle, makenna, delaney, jessica, beth] = await Promise.all(["Michelle", "Makenna", "Delaney", "Jessica", "Beth"].map(who));
-    await ob.setSquireTipsEnd(actor, coralville.id, m.time.addDays(today, 10));
+    const ten = m.time.addDays(today, 10);
+    await ob.setSquireTipsEnd(actor, coralville.id, m.time.addDays(ten, (6 - m.time.weekdayOf(ten) + 7) % 7));
 
     const r = await ob.sendOnboardingInvites({ actor, staffIds: [delaney, michelle, makenna, jessica, beth], choice: "sms", allowedShopIds: [coralville.id], now: t0 });
     expect(r.sent).toBe(2);

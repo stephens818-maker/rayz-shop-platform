@@ -820,6 +820,13 @@
       "when": 1796595000000,
       "tag": "core_0116_45b_beauty_defaults",
       "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "7",
+      "when": 1796595060000,
+      "tag": "core_0117_cutover_tie_out",
+      "breakpoints": true
     }
   ]
 }

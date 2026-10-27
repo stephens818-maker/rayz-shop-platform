@@ -20,7 +20,7 @@ import {
 import { reminderPolicy } from "@/domain/tips";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatCents } from "@/lib/money";
-import { formatDate, todayLocal, toZoned, type LocalDate } from "@/lib/time";
+import { formatDate, todayLocal, toZoned, weekdayOf, type LocalDate } from "@/lib/time";
 import { Actor, SYSTEM, audit } from "@/server/audit";
 import { AppError } from "@/server/errors";
 import { enqueueRaw } from "@/server/notifications/queue";
@@ -354,6 +354,7 @@ export async function onboardingReminderCron(now = new Date(), limit = 300) {
 export async function setSquireTipsEnd(actor: Actor, shopId: string, end: LocalDate | null, now = new Date()) {
   const shop = await db.query.shops.findFirst({ where: eq(shops.id, shopId), columns: { id: true } });
   if (!shop) throw new AppError("not_found", "No such shop");
+  if (end && weekdayOf(end) !== 6) throw new AppError("bad_request", "Squire stops at a Saturday close, so the first Ray'z week starts on a Sunday: pick a Saturday.", { field: "end" });
   await db.insert(shopCutovers).values({ shopId, squireTipsEndOn: end, updatedAt: now }).onConflictDoUpdate({ target: shopCutovers.shopId, set: { squireTipsEndOn: end, updatedAt: now } });
   await audit(actor, "cutover.squire_tips_end", "shop", shopId, { squireTipsEndOn: end }, shopId);
 }

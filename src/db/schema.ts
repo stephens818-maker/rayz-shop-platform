@@ -3124,9 +3124,20 @@ export const shopCutovers = pgTable("shop_cutovers", {
   payoutReport: jsonb("payout_report").$type<Record<string, unknown>>(),
   payoutReportSignedBy: uuid("payout_report_signed_by").references(() => staff.id, { onDelete: "set null" }),
   payoutReportSignedAt: ts("payout_report_signed_at"),
+  /** The total of Squire's final payout statement for what it still owes this shop's barbers, tied out against Squire's tickets and the barbers' answers (ST-C9). */
+  squireStatementCents: integer("squire_statement_cents"),
+  /** The CPA's sign-off of the tie-out after the manager's, recorded by an owner: their name, the day they signed, and the report they signed. */
+  cpaSignedName: text("cpa_signed_name"),
+  cpaSignedOn: date("cpa_signed_on"),
+  cpaReport: jsonb("cpa_report").$type<Record<string, unknown>>(),
+  cpaRecordedBy: uuid("cpa_recorded_by").references(() => staff.id, { onDelete: "set null" }),
+  cpaRecordedAt: ts("cpa_recorded_at"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: createdAt(),
-});
+}, (t) => [
+  check("shop_cutovers_statement", sql`${t.squireStatementCents} is null or ${t.squireStatementCents} >= 0`),
+  check("shop_cutovers_cpa", sql`(${t.cpaSignedName} is null) = (${t.cpaRecordedAt} is null) and (${t.cpaSignedOn} is null) = (${t.cpaRecordedAt} is null) and (${t.cpaReport} is null) = (${t.cpaRecordedAt} is null)`),
+]);
 
 /** Each barber's answer, in the staff app, to what the cutover report says Squire still owes them. */
 export const staffPayoutConfirmations = pgTable(

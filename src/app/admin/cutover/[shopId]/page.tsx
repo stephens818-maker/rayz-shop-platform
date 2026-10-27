@@ -13,7 +13,7 @@ import { shopOnboardingCounts } from "@/server/tips/onboarding";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { Importer } from "../../import/importer";
 import { STAGE } from "../stages";
-import { FreezeForm, HandBackForm, PayoutDatesForm, PayoutSignOffButton, ReconcileForm, SignOffButton, SquireTipsEndForm, YtdImportForm } from "./client";
+import { CpaSignOffForm, FreezeForm, HandBackForm, PayoutDatesForm, PayoutSignOffButton, ReconcileForm, SignOffButton, SquireTipsEndForm, YtdImportForm } from "./client";
 
 export const metadata: Metadata = { title: "Squire cutover" };
 
@@ -103,7 +103,8 @@ export default async function ShopCutoverPage({ params }: { params: Promise<{ sh
         </Card>
       )}
 
-      <PayoutReconciliation report={payout} canDates={can(ctx, "import.run") || can(ctx, "tips.approve")} canSign={can(ctx, "tips.approve")} />
+      <CutoverChecklist report={payout} />
+      <PayoutReconciliation report={payout} canDates={can(ctx, "import.run") || can(ctx, "tips.approve")} canSign={can(ctx, "tips.approve")} canCpa={owner} />
 
       <Card>
         <CardHeader
@@ -305,7 +306,31 @@ function SectionView({ title, s }: { title: string; s: CutoverSection }) {
   );
 }
 
-function PayoutReconciliation({ report: r, canDates, canSign }: { report: Awaited<ReturnType<typeof payoutCutoverReport>>; canDates: boolean; canSign: boolean }) {
+function CutoverChecklist({ report: r }: { report: Awaited<ReturnType<typeof payoutCutoverReport>> }) {
+  const done = r.checklist.filter((x) => x.done).length;
+  return (
+    <Card>
+      <CardHeader
+        title="Tips cutover checklist"
+        subtitle="Squire stops at a Saturday close; every tip date has one owner; Squire's tickets, its final statement and the barbers agree; the manager and then the CPA sign."
+        action={<Badge tone={done === r.checklist.length ? "green" : "amber"}>{`${done} of ${r.checklist.length} done`}</Badge>}
+      />
+      <ol className="space-y-2 p-4 text-sm">
+        {r.checklist.map((x) => (
+          <li key={x.key} className="flex gap-3">
+            <Badge tone={x.done ? "green" : "gray"}>{x.done ? "Done" : "To do"}</Badge>
+            <div>
+              <div className="font-medium">{x.label}</div>
+              <div className="text-zinc-600">{x.detail}</div>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </Card>
+  );
+}
+
+function PayoutReconciliation({ report: r, canDates, canSign, canCpa }: { report: Awaited<ReturnType<typeof payoutCutoverReport>>; canDates: boolean; canSign: boolean; canCpa: boolean }) {
   return (
     <Card>
       <CardHeader
@@ -333,7 +358,7 @@ function PayoutReconciliation({ report: r, canDates, canSign }: { report: Awaite
             <dd>{r.firstRayzPayout ? `${formatDate(r.firstRayzPayout.checkDate)} (${r.firstRayzPayout.via === "payroll" ? "paycheck" : "Stripe"}, tips from ${formatDate(r.firstRayzPayout.periodStart, "MMM d")})` : "—"}</dd>
           </div>
         </dl>
-        {canDates && <PayoutDatesForm shopId={r.shopId} paidThrough={r.squirePaidThrough} lastPayoutOn={r.squireLastPayoutOn} />}
+        {canDates && <PayoutDatesForm shopId={r.shopId} paidThrough={r.squirePaidThrough} lastPayoutOn={r.squireLastPayoutOn} statementCents={r.tieOut.statementCents} />}
         {r.lines.length > 0 && (
           <Table>
             <thead>
@@ -371,6 +396,13 @@ function PayoutReconciliation({ report: r, canDates, canSign }: { report: Awaite
           {r.signedOff && ` Signed off ${formatDateTime(r.signedOff.at)}${r.signedOff.by ? ` by ${r.signedOff.by}` : ""}.`}
         </div>
         {canSign && <PayoutSignOffButton shopId={r.shopId} ready={r.ready && !r.totals.disputed && !r.signedOff?.current} />}
+        {r.cpa && (
+          <div className="text-zinc-600">
+            CPA: {r.cpa.name} signed {formatDate(r.cpa.signedOn)}
+            {r.cpa.by ? `, recorded by ${r.cpa.by}` : ""}.{!r.cpa.current && " The report changed since; ask them to sign again."}
+          </div>
+        )}
+        {canCpa && r.signedOff?.current && !r.cpa?.current && <CpaSignOffForm shopId={r.shopId} />}
       </div>
     </Card>
   );
