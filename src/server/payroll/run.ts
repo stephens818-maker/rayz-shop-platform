@@ -32,7 +32,6 @@ import { guaranteeTopUps, exportExtras } from "@/domain/compensation";
 import { loadCompensationSettings, payrollPlans, setupRates } from "@/server/compensation";
 import { payrollSalesBetween } from "@/server/reports";
 import { declaredTipsBetween } from "@/server/tips/declarations";
-import { staffPayoutConfig } from "@/server/tips/ledger";
 import { lockPayrollTips, payrollTipSplit } from "@/server/tips/payouts";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { isolvedTimecardExporter, type PayrollExporter } from "./export";
@@ -239,7 +238,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
   const sales = await payrollSalesBetween({ shopIds: [...runShops] }, start, end);
   const salesOf = new Map(sales.map((r) => [`${r.staffId}|${r.shopId}`, r]));
   const overrides = await db.select().from(payrollOverrides).where(and(eq(payrollOverrides.periodStart, start), inArray(payrollOverrides.shopId, [...runShops])));
-  const [tipSplit, declared, payoutCfg] = await Promise.all([payrollTipSplit([...runShops], start, end), declaredTipsBetween([...runShops], start, end), staffPayoutConfig()]);
+  const [tipSplit, declared] = await Promise.all([payrollTipSplit([...runShops], start, end), declaredTipsBetween([...runShops], start, end)]);
   const keys = new Set([
     ...hours.keys(),
     ...salesOf.keys(),
@@ -279,8 +278,8 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
     const charged = (s?.cardTipsCents ?? 0) + (s?.giftCardTipsCents ?? 0);
     const raw = charged + (s?.cashTipsCents ?? 0) + (split?.adjustCents ?? 0) + (split?.absorbedCents ?? 0);
     const late = s?.lateTipRefundsCents ?? 0;
-    // Refunds of tips already paid are never netted unless the brand deducts them, and the tips never go below zero (SB-C2).
-    const deductible = payoutCfg.afterPayoutRefunds === "deduct" ? Math.max(0, late - (split?.lateAbsorbedCents ?? 0)) : 0;
+    // A refund of tips already paid comes off only when the ledger took it back (the brand deducts them); the shop absorbs the rest, and tips never go below zero (SB-C2).
+    const deductible = Math.max(0, late - (split?.lateAbsorbedCents ?? 0));
     const tipsCents = Math.max(0, raw - deductible);
     const input: LineInput = {
       staffId,

@@ -371,7 +371,7 @@ describe("P1#9–10 payroll and reports are net of refunds", () => {
   }
   const at = (d: string) => new Date(`${d}T18:00:00Z`);
 
-  it("a card tip refunded in a later pay period nets out there, with its own row", async () => {
+  it("a card tip refunded in a later pay period is flagged there as the shop's cost, never taken below zero", async () => {
     const s = await shop();
     const staffId = await coralvilleBarber(s.id);
     const sale = await m.checkout.openBlankSale(s.id, actor, staffId);
@@ -387,7 +387,7 @@ describe("P1#9–10 payroll and reports are net of refunds", () => {
     expect(sept2.rows.find((r) => r.staffId === staffId)!.cardTipsCents).toBe(1000);
     const june = await m.reports.payrollTips({ ...scope, from: "2027-06-06", to: "2027-06-19" });
     const j = june.rows.find((r) => r.staffId === staffId)!;
-    expect(j).toMatchObject({ tickets: 0, cardTipsCents: -1000, cashTipsCents: 0, tipRefundsCents: 1000, totalTipsCents: -1000, serviceSalesCents: 0 });
+    expect(j).toMatchObject({ tickets: 0, cardTipsCents: 0, cashTipsCents: 0, tipRefundsCents: 0, lateTipRefundsCents: 1000, lateTipRefundsDeductedCents: 0, totalTipsCents: 0, serviceSalesCents: 0 });
   });
 
   it("a service refund in the same period nets service sales and the tender column that took the tip", async () => {

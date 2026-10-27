@@ -922,6 +922,7 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     const r = await payrollTips(scope);
     // By barber, the barber is the row group, so the Barber column would repeat it.
     const named = !loc.byBarber;
+    const deducts = r.rows.some((x) => x.lateTipRefundsDeductedCents);
     const columns = [
       text("Period start"),
       text("Period end"),
@@ -934,7 +935,8 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
       money("Cash tips"),
       money("Gift card tips"),
       money("Tip refunds (already subtracted)"),
-      money(r.lateRefunds === "deduct" ? "Post-payout tip refunds (deducted)" : "Post-payout tip refunds (shop cost, not subtracted)"),
+      money("Post-payout tip refunds (shop cost, not subtracted)"),
+      ...(deducts ? [money("Post-payout tip refunds deducted")] : []),
       money("Total tips"),
       money("Cash tips declared"),
     ];
@@ -954,7 +956,8 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
         x.cashTipsCents,
         x.giftCardTipsCents,
         x.tipRefundsCents,
-        x.lateTipRefundsCents,
+        x.lateTipRefundsCents - x.lateTipRefundsDeductedCents,
+        ...(deducts ? [x.lateTipRefundsDeductedCents] : []),
         x.totalTipsCents,
         x.declaredCashTipsCents,
       ],

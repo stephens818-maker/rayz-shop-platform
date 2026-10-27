@@ -123,7 +123,8 @@ export async function checkPayrollTips(blocks: readonly TipCheckBlock[], start: 
       const cents = (x: (typeof mine)[number]) => x.r.tipsCents + x.r.adjustCents;
       const earnedCents = earned.find((e) => e.staffId === staffId && e.shopId === b.shopId)?.cents ?? 0;
       const inPayrollCents = split.get(k)?.inPayrollCents ?? 0;
-      const directCents = earnedCents - inPayrollCents;
+      // Payroll never takes tips below zero (SB-C2); a deducted refund bigger than the period's tips is the shop's cost past that.
+      const directCents = Math.max(0, earnedCents) - inPayrollCents;
       const paid = mine.filter((x) => x.p.status === "paid");
       const paidCents = paid.reduce((a, x) => a + cents(x), 0);
       const paidAtLockCents = lockedAt ? paid.filter((x) => x.p.paidAt && x.p.paidAt <= lockedAt).reduce((a, x) => a + cents(x), 0) : paidCents;
