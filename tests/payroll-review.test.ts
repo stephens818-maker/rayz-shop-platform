@@ -173,7 +173,7 @@ describe("C1: overtime on commission (the FLSA regular rate)", () => {
     expect(l.laborCost).toBeCloseTo(l.totalWages + l.otPay + l.trainingPay + 10.73, 10);
     expect(exportHeaders([l], DEFAULT_PAYROLL_SETTINGS)).toEqual(EXPORT_COLUMNS.map((c) => c.header));
     const blocks = assemble([{ shopId: "A", shop: "Alpha", inputs: [i] }], DEFAULT_PAYROLL_SETTINGS).blocks;
-    expect(anomalies(blocks, DEFAULT_PAYROLL_SETTINGS).find((x) => x.kind === "ot_regular_rate")?.message).toMatch(/\$10\.73 more is owed\. Enter it in iSolved by hand/);
+    expect(anomalies(blocks, DEFAULT_PAYROLL_SETTINGS).find((x) => x.kind === "ot_regular_rate")?.message).toMatch(/by \$10\.73 of half-time\. Unless iSolved's Overtime 1\.5 counts Comm Sales in the rate, enter it in iSolved by hand/);
   });
 
   it("switched on, the file gets the adjustment column (a format change, Needs Charles)", () => {

@@ -80,10 +80,11 @@ export interface PayrollSettings {
   /** I10: what Service$ and Product$ count. The defaults are how it's always worked: the card surcharge left out, a loyalty reward taken off the sale (Q15). */
   commissionBase: CommissionBase;
   /**
-   * C1, the FLSA regular rate: iSolved pays OT hours at 1.5 × the base wage, but commission is part of
-   * the regular rate, so half-time is owed on it too. "base": the file is unchanged and the report
-   * shows what's owed for someone to enter in iSolved by hand. "adjust": the file gets an OT premium
-   * adjustment column (a format change: Needs Charles, Q16).
+   * C1, the FLSA regular rate: commission is part of the regular rate, so half-time is owed on it for
+   * OT hours. The file carries OT hours only, and whether iSolved's Overtime 1.5 counts Comm Sales in
+   * the rate is an iSolved setting nobody has confirmed. "base": the file is unchanged and the report
+   * shows what's owed, to check in iSolved or enter by hand. "adjust": the file gets an OT premium
+   * adjustment column (a format change: Needs Charles).
    */
   otRegularRate: OtRegularRate;
   /** That column's header, Charles's to confirm in iSolved. Added only when someone in the file has an adjustment. */
@@ -109,7 +110,7 @@ export const LOYALTY_BASE_LABEL: Record<CommissionBase["loyalty"], string> = {
 
 export type OtRegularRate = "base" | "adjust";
 export const OT_REGULAR_RATE_LABEL: Record<OtRegularRate, string> = {
-  base: "iSolved pays OT at 1.5 × base; the report shows what commission adds, to enter by hand",
+  base: "OT hours only, as today; the report shows what commission adds to OT, to check in iSolved",
   adjust: "Add an OT premium adjustment column to the iSolved file (format change)",
 };
 
@@ -1131,7 +1132,7 @@ export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Ano
           staffId: l.staffId,
           shopId: b.shopId,
           kind: "ot_regular_rate",
-          message: `${who}: commission raises their regular rate for overtime, and iSolved pays OT at 1.5 × the base wage only, so ${fmtMoney(owed)} more is owed. Enter it in iSolved by hand until the file carries it (C1, Needs Charles).`,
+          message: `${who}: commission raises their regular rate for overtime by ${fmtMoney(owed)} of half-time. Unless iSolved's Overtime 1.5 counts Comm Sales in the rate, enter it in iSolved by hand (C1, Needs Charles).`,
         });
       const off = l.commissionWrittenOff ?? 0;
       if (off > 0.000001)

@@ -731,7 +731,7 @@ Replaces Charles's payroll workbook. The full rules are in [docs/payroll-report-
   The Locations view shows Employee Cost as Labor Cost. A drill-down per person shows each formula with their numbers, their FT/PT status and their week-by-week hours at every shop.
 - **Cross-shop overtime:** hours over 40 in a Sun–Sat workweek, across every shop of the same FEIN (default Ray'z Inc.), split between shops by share of hours. It works across pay periods, across Dubuque's separate calendar and through DST weeks.
 - **Pay groups:** one per shop, each with its own calendar. The main shops are on period 23 = 10/18–10/31 (check Fri 11/6). Dubuque's period 01 was 10/4–10/17 (check 10/23).
-- **Reconciliation gate:** approve-and-lock is blocked while any total is a cent off the sum of its rows, or off the export's column sums, and the mismatch is shown on screen. Anomalies (owner rows, typed values, missing Employee Numbers, training hours while Q11 is open) are listed but never block.
+- **Reconciliation gate:** approve-and-lock is blocked while any total is a cent off the sum of its rows, or off the export's column sums, and the mismatch is shown on screen. Anomalies (owner rows, typed values, missing Employee Numbers, training inside clocked hours, adjustments below the punches, OT premium owed on commission, refunds written off, late commission) are listed but never block.
 - **Hours from the time clock** (Charles's decision; the setting **Hours come from the time clock**, on by default): approve-and-lock also waits until every shop's [timesheets](#time-clock-and-timesheets) are locked for the period, which needs each one manager-approved with its missed punches fixed. Until a shop is locked, the report flags, per employee and shop:
   - missed punches (no clock-out, a clock-out with no clock-in, a second clock-in), whose shift has no hours until a manager fixes it with a reason;
   - timesheets no manager has approved;
@@ -772,6 +772,26 @@ From the Claude bot payroll review. Migrations `core_0110_payroll_review` and `c
 - **W-2 tip and overtime codes (SB-C7).** Reports → Payroll → **W-2 tip and overtime codes** (year to date by default): per employer and employee, the tipped occupation code (per employee under **Payroll → Setup → Barbers**, from Treasury's list), charged and cash tips, declared cash tips, qualified tips for box 12 code TP, overtime hours, and the overtime premium for box 12 code TT at the base rate and at the blended regular rate, with a workweek breakdown. The codes are settings, for the CPA and iSolved to confirm, as is which premium to report.
 - **45B FICA tip credit (SB-C6).** Reports → Payroll → **FICA tip credit (45B)**: per pay period and employee, hours, cash wages, charged, rung-up and declared cash tips, what's needed to bring pay up to $5.15 an hour, the tips that count, and the estimated credit at 7.65%, totalled per employer. It's an estimate for the CPA, not a filing.
 - **Tests:** `tests/db/payroll-review.test.ts`, the W-2 and 45B cases in `tests/db/payroll-reports.test.ts`, the declarations and clock-out cases in `tests/db/staff-api.test.ts`, `tests/tip-declarations.test.ts`, and new cases in `tests/payroll-engine.test.ts` and `tests/staff-payouts.test.ts`.
+
+### Payroll spec review (C1 to C6, I2, I4, I10, I12)
+
+From the Claude bot review of the Payroll Report spec ([docs/payroll-report-spec.md](docs/payroll-report-spec.md)). The iSolved file's columns, headers, order and codes are unchanged; anything that would change them is a setting, off.
+
+- **Overtime from punches (C6).** An hours or OT adjustment can't go below what the punches show: it's refused, and an older one is paid at the punches' value and flagged. Adjustments are brand-only (`payroll.run`) and audited; managers fix punches on the timesheet.
+- **Cross-shop OT (C4)** adds hours at every shop of one legal entity (Ray'z Inc. by default, a field per pay group) before the 40.
+- **Training toward OT (C2)**, on by default: training on top of clocked hours counts toward the 40, and training inside a clocked shift is never counted twice (it's flagged instead).
+- **Squire-era sales (C5)** stay out of sales, refunds and tips.
+- **Pay periods** start on a Sunday, so they're whole workweeks.
+- **Late commission (I2):** commission for a locked period is paid in the next open one from the drill-down (migration `core_0130_payroll_commission_adjustments`), with the retro half-time it adds to that period's OT.
+- **Refunds (I4)** lower the period's commission before the greater-of. Commission never goes below $0; the rest is written off and flagged.
+- **Commission base (I10)**, on **Payroll → Setup**: card surcharge left out, loyalty rewards off the sale. Both are as today, and each is a setting.
+- **Regular-rate OT (C1, Needs Charles):** the half-time owed on commission for OT hours is in Labor Cost and flagged to check in iSolved. **OT regular rate → adjust** adds an `E_OT Premium Adj_Dollars` column (off).
+- **Card tips (C3, Needs Charles):** the card tips column setting is still Cash Tips Recd, so the file is unchanged.
+- **Workbook check (I12):** the golden check flags circular, out-of-block and row-skipping totals formulas and never compares a circular one.
+- **Tests:**
+  - `tests/payroll-independent.test.ts` works the numbers out by hand from punches and pay-plan versions: breaks, cross-shop and cross-employer OT, training, DST nights, effective-dated rates and refunds.
+  - `tests/payroll-review.test.ts` covers each fix.
+  - `tests/payroll-privacy.test.ts` fails if a tracked file carries a real name, key or amount from the private golden data.
 
 ### Compensation fields
 
@@ -3221,7 +3241,7 @@ samples/squire/      example Squire CSV exports for the importer
 - Try Resend or Postmark against a real account with a verified domain, and real push (Expo, and Web Push for the booking site, both the mobile workstream's).
 - Shops outside Central time: today a shop in another zone can be saved but not opened.
 - More custom report sources: sales, appointments, staff, inventory, tips and campaigns are listed in the builder but not yet built. Each needs its whitelisted fields and their SQL in `src/server/report-builder/engine.ts`; the definitions, sharing, schedules and exports already take any source.
-- Deferred by decision: separate charges and tip transfers instead of destination charges (I10); the Q11/C2 training flag stays off; merging PR #8. `DEMO_MODE` in production is now refused at startup (see Deployment).
+- Deferred by decision: separate charges and tip transfers instead of destination charges (I10); the Q11/C2 training setting stays a setting (on by default since the payroll spec review); merging PR #8. `DEMO_MODE` in production is now refused at startup (see Deployment).
 - Deposits or no-show fees on the saved card, if the shop wants them (Squire had none). Saved cards and 3-D Secure are in place (API 1.2).
 - Barber photos and bios on booking pages, using first-name image files.
 - Barcode scanning for counts and receiving, and vendor price lists by upload.

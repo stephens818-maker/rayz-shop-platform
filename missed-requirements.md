@@ -1029,9 +1029,27 @@ README "Times read 12-hour" and DEPLOY steps 46 and 47. Migrations `core_0126_br
 - [ ] The other shops' iSolved pay group codes, entered on Payroll → Setup once iSolved confirms them.
 - [ ] Dubuque's numbering: the seed has 10/4–10/17 as Dubuque's period 01, and iSolved gives it as period 22. Unchanged until confirmed.
 
+## 46. Payroll spec review (Claude bot: 6 Critical, 13 Important, 10 Nit)
+
+The iSolved file's columns, headers, order and codes stay exactly as in Charles's workbook. Anything that would change them is a switch, off, and listed under "Needs Charles" on PR #1.
+
+- [x] C4: overtime adds hours at every shop of one legal entity per Sun–Sat workweek (Ray'z Inc. is one entity, a field per pay group).
+- [x] C5: Squire-era sales (`is_imported`, `squire_import`) stay out of sales, refunds and tips.
+- [x] C6: overtime comes from punches. Adjustments can't go below the punches, are brand-only (`payroll.run`) and audited.
+- [x] C2: training on top of clocked hours counts toward OT (a setting, on), never counted twice.
+- [x] I2: pay periods start on Sunday. Late commission for a locked period is paid in the next one, with retro OT (`core_0130`).
+- [x] I4: refunds lower commission before the greater-of; the rest is written off and flagged.
+- [x] I10: card surcharge and loyalty in the commission base are settings, defaulting to today's behavior.
+- [x] I12: the golden check flags circular, out-of-block and row-skipping totals.
+- [x] Hand-worked tests: OT from punches, effective-dated rates, cross-shop totals, DST and refund order.
+- [x] Privacy: the docs and tests carry only made-up figures, and a test guards it.
+- [ ] C1 (Needs Charles): regular-rate OT on commission is computed and flagged; the file column is a switch, off.
+- [ ] C3 (Needs Charles and his CPA): card tips off Cash Tips Recd; the column setting is unchanged.
+- [ ] Q11 (training inside clocked hours) and Q15 (loyalty in the commission base).
+
 ## Deferred by decision
 
 - I10 stays on destination charges for customers; `payment_transfers` isn't built, and tips aren't transferred to shops separately. Tip payouts to employees (sections 15, 35 and 40) don't move money yet: Stripe can't transfer from a shop's connected account to a barber's, and the redesign as separate charges and transfers (ST-C11) waits for Charles.
-- The Q11/C2 training flag stays off.
+- The Q11/C2 training setting stays a setting until Charles answers Q11 (on by default since section 46).
 - PR #8 isn't merged.
 - `DEMO_MODE` isn't turned on in production, because it would break the Vercel demo.

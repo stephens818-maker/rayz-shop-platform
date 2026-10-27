@@ -2,7 +2,7 @@
 
 How the platform builds the bi-weekly Payroll Report and the per-shop iSolved timecard files, replacing Charles's payroll workbook. Section numbers follow the original review (§2.1 Total Wages, §3.2 overtime, §6 export), so the findings that refer to them still line up.
 
-**Status:** built. Code in `src/domain/payroll/` (pure math), `src/server/payroll/` (loading, locking, export) and `src/app/admin/payroll/` (pages). The Payroll Report page is `src/app/admin/reports/payroll/report/`. Migrations `core_0022_payroll`, `core_0128_payroll_approvals` and `core_0129_pay_calendar`. Tests: `tests/payroll-engine.test.ts`, `tests/payroll-export.test.ts`, `tests/payroll-golden.test.ts` (all 33 golden rows and the iSolved file, cell for cell), `tests/payroll-time-csv.test.ts`, `tests/db/payroll.test.ts`, `tests/db/payroll-approval.test.ts`, `tests/db/payroll-reports.test.ts`, `tests/db/pay-calendar.test.ts`. Workbook problems are in [payroll-workbook-discrepancies.md](payroll-workbook-discrepancies.md).
+**Status:** built. Code in `src/domain/payroll/` (pure math), `src/server/payroll/` (loading, locking, export) and `src/app/admin/payroll/` (pages). The Payroll Report page is `src/app/admin/reports/payroll/report/`. Migrations `core_0022_payroll`, `core_0128_payroll_approvals`, `core_0129_pay_calendar` and `core_0130_payroll_commission_adjustments`. Tests: `tests/payroll-engine.test.ts`, `tests/payroll-independent.test.ts` (hand-worked numbers from punches and pay-plan versions, not from the workbook), `tests/payroll-review.test.ts`, `tests/payroll-privacy.test.ts`, `tests/payroll-export.test.ts`, `tests/payroll-golden.test.ts` (all 33 golden rows and the iSolved file, cell for cell), `tests/payroll-time-csv.test.ts`, `tests/db/payroll.test.ts`, `tests/db/payroll-approval.test.ts`, `tests/db/payroll-reports.test.ts`, `tests/db/pay-calendar.test.ts`. Workbook problems are in [payroll-workbook-discrepancies.md](payroll-workbook-discrepancies.md).
 
 **No iSolved connection.** There's no API, sync, credentials or automated upload. The only output is a downloadable xlsx per shop, in exactly the workbook's format, which Charles uploads by hand after approve-and-lock (§6.4). The export sits behind a `PayrollExporter` interface so a direct integration can be added later (§10).
 
@@ -14,7 +14,7 @@ How the platform builds the bi-weekly Payroll Report and the per-shop iSolved ti
 | --- | --- | --- |
 | Hours worked, training, PTO | `time_entries`: added on Payroll → Hours, or imported from a shift CSV (§1.1). Each entry has a kind: `worked`, `training` or `pto`. | Squire "Hours Worked" feed (column B); training and PTO typed |
 | Service $ and product $ | POS tickets rung up at that shop, paid in the period, less refunds issued in it (`payrollSalesBetween`). Service and product net of discounts, no tax, no tips. | Feed column J (card + cash + gift card used) and the product block |
-| Tips | All tips on those tickets (card, cash and gift card), less tip refunds | Feed column P |
+| Tips | All tips on those tickets (card, cash and gift card), less tip refunds. Sales imported from Squire (`is_imported`, or a `squire_import` payment) are left out of sales, refunds and tips (C5): Squire paid those already. | Feed column P |
 | Sales tax | Tax on the employee's tickets (service and product, less refunds). Reference only: shown on the report, never used in pay math or the export. | Feed column R |
 | Wage, service %, product %, training rate | `payroll_rates`, per person, either for one shop or as their default at every shop. A change applies to periods that aren't locked yet. With compensation plans driving payroll, rates are effective-dated instead (§11). | Columns C, G, K |
 | Employee Number, iSolved name, Key type, row order | `payroll_profiles` | iSolved tab columns A and B |
@@ -57,7 +57,7 @@ The platform adds three columns to the right. The export never contains them.
 | --- | --- | --- |
 | T | O.T. Pay | 1.5 × C × Q (base rate) |
 | U | Training Pay | (training rate, or C when there's none) × S, when "Training pay is labor cost" is on; else 0 |
-| V | Labor Cost | N + T + U |
+| V | Labor Cost | N + T + U + the regular-rate OT premium owed (§3.4) |
 
 ### 2.1 What Total Wages leaves out
 
@@ -67,11 +67,23 @@ The platform counts both as labor cost:
 
 - **O.T. Pay** (T) is real labor cost on the report: in each person's and each shop's Labor Cost, in the Locations view, in every total and in the reconciliation gate. It uses the base rate after the cross-shop split, so it follows the same share-of-hours rule as the OT hours. iSolved's "Overtime 1.5" earning is blended OT from its accumulators and includes commission in the regular rate, so the real figure can be higher. The drill-down says "iSolved may compute blended OT higher."
 - **Training Pay** (U) is a setting ("Training pay is labor cost on the Payroll Report"), **on** by default. Training is paid at the person's training rate, or at their hourly wage when none is set.
-- **Labor Cost** (V) = N + T + U. The Locations view's Employee Cost is Labor Cost, and its Gross Profit is Service − Labor Cost.
+- **Labor Cost** (V) = N + T + U, plus the regular-rate OT premium commission adds (§3.4). The Locations view's Employee Cost is Labor Cost, and its Gross Profit is Service − Labor Cost.
 
 The per-employee drill-down shows each piece as a formula with the person's own numbers (for example, "O.T. Pay = 1.5 × $14.50 base rate × 6.40 OT hours = $139.20").
 
 The workbook-shaped columns B to S keep the workbook's own definitions (N is still Total Wages without OT or training), so the report can be compared with the workbook column for column.
+
+### 2.2 Refunds, card surcharge and loyalty in the commission base (I4, I10)
+
+- **Refunds come off first.** A refund counts in the period it's issued, at the rate the original sale earned (§11), and lowers that period's Service $ (E) or Product $ (J) **before** the greater-of in N. If refunds are bigger than the period's sales, commission (H or L) is $0.00, never negative, and the rest is written off: the shop absorbs it, it's never taken from a later check, and the line gets a `refund_written_off` anomaly with the amount.
+- **Card surcharge** (Payroll setup → Commission base). Default: left out of the sale commission is paid on, because the surcharge is the shop's (today's behavior). Option: part of it. When included, a ticket's surcharge is split between service and product by their net.
+- **Loyalty rewards.** Default: a redeemed reward comes off the sale commission is paid on (today's behavior). Option: the shop absorbs it, so commission is paid on the price before the reward. The reward is split between service and product by gross. Pending Charles (Q15).
+
+### 2.3 Late commission for a locked period (I2)
+
+A locked period never changes. Commission found later for a locked period (a missed ticket, a fixed rate) is paid in the next open period instead: Payroll → Report → the person's drill-down → "Late commission", with the earned dates (a locked, earlier period), the amount and a required reason. It's stored in `payroll_commission_adjustments`, audited (`payroll.late_commission`, `payroll.late_commission_remove`), added to this period's NetComm (M, so the Comm Sales column) and Total Wages, and flagged (`late_commission`).
+
+If the earned period had overtime, the late commission raises that period's regular rate too, so half-time is owed on it: retro OT = 0.5 × the locked OT hours × the amount ÷ the locked hours worked, from the locked snapshot. It's in this period's Labor Cost and shown in the anomaly, to enter in iSolved by hand (§3.4).
 
 ## 3. Hours
 
@@ -86,12 +98,13 @@ On screen, hours read decimal like the workbook (`78.25`) or as hours and minute
 Ray'z Inc. is one legal company with one FEIN, and each shop is a pay group of it, so overtime is worked out across **all** shops by default.
 
 1. **Workweek:** Sunday 00:00 to Saturday 24:00, America/Chicago.
-2. **Basis:** for each person and legal entity (FEIN), add up their worked hours at every shop of that entity in the workweek. Training hours count too only when the C2 setting is on (§3.3). PTO never counts.
+2. **Basis:** for each person and legal entity (FEIN), add up their worked hours at every shop of that entity in the workweek. Training on top of clocked hours counts too (C2, a setting, on by default, §3.3). PTO never counts.
 3. **OT hours** = basis − 40 (the threshold is a setting), or 0.
 4. **Split by share of hours.** The week is cut into slices, one per shop and per pay period that shop's calendar puts those days in. Each slice gets OT in proportion to its share of the week's basis. Shares are rounded to hundredths by largest remainder (ties go to the earlier slice), so the slices add up to the week's OT exactly, and no slice gets more OT than its own hours.
 5. **Weeks that span two pay periods**, or two pay calendars (Dubuque's periods start on different Sundays from the other shops'): the whole week is still one week. OT is computed once for the whole week and each period gets its slices' share.
 6. **Locked periods keep their OT.** If part of a workweek is in a period that's already approved and locked, those slices keep the OT they were locked with (`payroll_locked_ot`), and only the remainder is shared out among the open slices. A locked file never changes after the fact.
-7. **The legal entity** is a field on each pay group (default "Ray'z Inc."). Shops under a different FEIN get their own weekly 40.
+7. **The legal entity** is a field on each pay group (default "Ray'z Inc.", which iSolved reports as one entity). Shops under a different FEIN get their own weekly 40.
+8. **From punches.** Worked hours are the closed shifts' paid time (unpaid breaks and any automatic meal taken out), by real elapsed time. Overtime is always worked out from them; nobody types it (§3.5).
 
 Example (tested): 25 h at shop A and 20 h at shop B in one week makes 45 h, so 5 OT hours: 2.78 to A (25/45) and 2.22 to B (20/45). Shop A's file gets 22.22 regular + 2.78 OT; shop B's gets 17.78 + 2.22.
 
@@ -99,11 +112,24 @@ The per-shop export columns don't change; only the hour values do. The Payroll R
 
 ### 3.3 Training and the C2 flag (Q11)
 
-C2 is the "training counts toward overtime" setting: when on, training hours are added to the weekly basis in §3.2. It's **off** until Charles answers Q11. This reading of C2 is mine; the original C2 wording wasn't available.
+C2 is the "training counts toward overtime" setting. It's **on** by default: FLSA counts training as hours worked, so training on top of clocked hours adds to the weekly basis in §3.2 and carries its share of the OT. It stays a setting until Charles answers Q11.
 
-The workbook exports training hours as their own earning next to regular hours. If the clocked hours already include the training time, it's paid twice. Until Q11 is answered, every line with training hours gets a "training_in_hours" anomaly.
+Training is never counted twice. Where a training entry falls inside the same person's clocked worked time (at any shop), that part is already in their worked hours, so it's left out of the basis and the line gets a "training_in_hours" anomaly: it's exported as both regular and training hours, so it's paid twice unless the entry is fixed. With the setting off, every line with training gets the anomaly instead.
 
-### 3.4 Full time and part time
+### 3.4 Regular rate for overtime (C1)
+
+Under FLSA (29 CFR 778.117–778.120), commission is part of the regular rate, so overtime owes half-time on it, not just 1.5 × the base wage. Charles says iSolved computes blended OT, but whether its "Overtime 1.5" earning counts the Comm Sales dollars in the regular rate is an iSolved setting nobody has confirmed. The export format can't change without Charles, so:
+
+- The platform works out what's owed for each line: 0.5 × that line's OT hours × (the person's commission top-up I, where positive, + product commission L + any guarantee top-up, across all their shops) ÷ their hours worked across all their shops. That's the equal-per-hour allocation of 778.120. The multiplier is the OT multiplier setting, so 0.5 is (1.5 − 1).
+- It's always in Labor Cost (V).
+- **Default (`base`):** it isn't in the file. The line gets an `ot_regular_rate` anomaly with the amount, to check against iSolved's OT or enter by hand.
+- **Option (`adjust`), Needs Charles:** the file gets one more column, `E_OT Premium Adj_Dollars` (the header is a setting), only when some line has an amount. This is a format change, so it's off until Charles and iSolved agree.
+
+### 3.5 Overtime and hours can't be lowered (C6)
+
+Overtime comes from the punches (§3.2), and hours worked from the timesheets. An adjustment to hours worked or OT hours can't go below what the punches show: it's refused ("The punches show 41.50 of overtime, and an adjustment can't go below that. If the punches are wrong, fix them on the timesheet."). A lower value already on record (from before this rule, or an import) is floored at the punches' value and flagged `below_punches`. Adjustments need `payroll.run`, which only brand roles have (brand payroll admins: Brand Owner, Brand Admin, Bookkeeper), so shop managers can't change payroll figures at all. They fix punches on the timesheet, which is audited separately. Every adjustment is audited (`payroll.override`) with its reason.
+
+### 3.6 Full time and part time
 
 Full time means averaging **more than** 32 hours a week, so exactly 32.0 is part time. Brand settings, all pending Charles:
 
@@ -126,7 +152,7 @@ Ray'z Inc. is one legal entity (one FEIN). In iSolved each shop is its own pay g
 | Legal entity | The FEIN it belongs to, for §3.2. Default "Ray'z Inc." |
 | Export tab | The workbook tab whose layout and formatting the file copies (§6.2). |
 | Anchor start, anchor number | A known period's first Sunday and its number |
-| Period length | 7 or 14 days, Sunday to Saturday |
+| Period length | 7 or 14 days, Sunday to Saturday. The first day must be a Sunday, so every period is whole OT workweeks (I2). |
 | Check offset | Days from the period's last day to the check date (6 = the Friday after) |
 | Submit-by offset | Days from the period's last day to iSolved's submission deadline (4 = the Wednesday after). 0 up to the check offset. |
 | Numbers reset yearly | The first check date in a new year is period 1 |
@@ -253,7 +279,11 @@ Anomalies never block the lock. They list what a person should look at before ap
 | `netcomm_gap` | NetComm typed over the formula, so the report's Total Wages and the export's Comm Sales disagree. Q17. |
 | `override` | Any hand-entered value, with its reason |
 | `missing_key` | No iSolved Employee Number yet |
-| `training_in_hours` | Training hours while Q11 is open (§3.3) |
+| `training_in_hours` | Training inside the person's clocked hours, so it's paid twice unless fixed; or, with C2 off, any training (§3.3) |
+| `below_punches` | An hours or OT adjustment below what the punches show; the report pays the punches (§3.5) |
+| `ot_regular_rate` | Half-time owed on commission for the period's OT, which the file doesn't carry (§3.4) |
+| `late_commission` | Commission for a locked period paid in this one, with its retro OT (§2.3) |
+| `refund_written_off` | Refunds bigger than the period's commission: commission is $0.00 and the rest is written off (§2.2) |
 | `no_rate` | Sales but no wage and no commission rate |
 | `missed_punch` | A clock-out with no clock-in, no clock-out, or a clock-in again without clocking out, in the period. That shift has no hours until a manager fixes the punch. |
 | `timesheet_not_approved` | A timesheet with hours or missed punches that no manager has approved |
@@ -304,7 +334,11 @@ Payroll → Setup (`payroll.run`).
 | --- | --- | --- |
 | OT threshold | 40 h per workweek | |
 | OT multiplier (for O.T. Pay on the report only) | 1.5 | |
-| Training counts toward OT (C2) | Off | Pending Q11 |
+| Training counts toward OT (C2) | On (only training on top of clocked hours) | Pending Q11 |
+| Commission base: card surcharge | Left out (the shop's) | |
+| Commission base: loyalty rewards | Come off the sale | Pending Charles (Q15) |
+| OT regular rate (C1) | `base`: the premium owed is flagged, not in the file | Needs Charles: `adjust` adds the premium column |
+| OT premium column header | `E_OT Premium Adj_Dollars` | Used only with `adjust` |
 | Training pay is labor cost | On | |
 | Round export to 2 decimals, half-up | Off (unrounded, as today) | Pending Charles (Q4) |
 | iSolved file cell formats | 0.00 on every hours and dollars column (the reference file) | |
@@ -330,7 +364,7 @@ Charles's golden data (33 employee rows, the seven iSolved tabs) holds real name
 
 - every row's Hourly Total, Gross /Hr, Commission$, Service Total, Product Total, NetComm, Total Wages and Total % of Gross;
 - every typed workbook cell as an adjustment with a reason;
-- the workbook's cached totals as known bugs, and the corrected all-rows totals;
+- the workbook's cached totals as known bugs, and the corrected all-rows totals. Each total's formula is checked first (`totalsFormulaProblems`): a range that includes its own cell (circular), runs outside the shop's block or skips rows is flagged, and a circular total's cached value is never compared, because Excel's value for it is stale (I12);
 - the summary;
 - the Payroll Report download's headers, values and formats;
 - the iSolved export, cell for cell against `expected_isolved_export.xlsx`.
@@ -339,9 +373,10 @@ Charles's golden data (33 employee rows, the seven iSolved tabs) holds real name
 
 | Item | Status |
 | --- | --- |
-| C1 blended-rate OT | **Declined by Charles: keep iSolved as-is.** iSolved computes blended OT itself. |
-| C3 moving card tips off Cash Tips Recd | **Declined by Charles: keep iSolved as-is.** |
-| Q11 training inside clocked hours | Open. C2 off; training flagged. |
+| C1 regular-rate OT | **Needs Charles.** The premium owed on commission is computed, in Labor Cost and flagged for hand entry (§3.4). The file column is a switch, off. |
+| C3 card tips off Cash Tips Recd | **Needs Charles and his CPA.** `cardTipsHeader` gives card tips their own column; it's set to Cash Tips Recd, so the file is unchanged (§11). |
+| Q11 training inside clocked hours | Open. C2 on, training inside a clocked shift isn't counted twice and is flagged. |
+| Q15 loyalty in the commission base | Open. Rewards come off the sale, as today; a setting (§2.2). |
 | Q16 Dubuque export | Resolved: Dubuque has its own pay calendar and its own file in the same format. |
 | Q17 owner row and the Coralville NetComm gap | Open. Flagged, not fixed. |
 | FT/PT basis and window, 2-decimal rounding, file names, PTO and training source, card tips code | Pending Charles; configurable, defaults above (§11). |

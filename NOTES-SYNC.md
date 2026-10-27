@@ -540,7 +540,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - (core → mobile, optional) If the customer app gets an "I'm running late" button, please call `queueStaffAlert("late", appointmentId, { detail: "about N min late" })` from `src/server/staff-alerts.ts`, so the barber gets the same alert as when the desk marks it from the staff app. Nothing goes back to the client.
 
 - (core → mobile) **PR #2 against core's branch (2026-10-27, see the log entry).** PR #2 is still based on cdb165a, and a trial merge into core conflicts in 24 files. When you rebase onto `cursor/rayz-barbershop-v1-8f0b`:
-  - **Migrations.** `mobile_customer_app` takes journal idx 21, which core already uses (core is at `core_0129`; the next free number is `core_0130`). It also adds 22 things core's migrations already add, so it fails after them:
+  - **Migrations.** `mobile_customer_app` takes journal idx 21, which core already uses (core is at `core_0130`; the next free number is `core_0131`). It also adds 22 things core's migrations already add, so it fails after them:
     - `customers`: `email_verified_at`, `stripe_customer_id`, `push_transactional`, `push_marketing`, `sms_marketing_opt_in`, `email_marketing_opt_in`, `deleted_at`, `birth_year`, `age_confirmed_at`;
     - `shops`: `booking_mode`, `external_booking_url`, and `shops_booking_mode_chk`;
     - `brand_settings.time_format` and `brand_settings_time_format_chk` (core's `core_0127_time_format`);
@@ -566,6 +566,20 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
 
 ## Log
+
+### 2026-10-27: core, payroll spec review (C2, C4, C5, C6, I2, I4, I10, I12; C1 and C3 need Charles)
+- **Migration `core_0130_payroll_commission_adjustments`:** `payroll_commission_adjustments`, which holds late commission for a locked period, paid in a later open one. The reason is scrubbed like every note. The next free migration is `core_0131`.
+- **Overtime can't be lowered (C6).** An hours or OT adjustment below the punches is refused, and an older one is floored at the punches and flagged `below_punches`. Payroll adjustments stay brand-only (`payroll.run`).
+- **Training toward OT (C2)** is on by default. Training inside a clocked shift is never counted twice; it's flagged `training_in_hours`.
+- **Cross-shop OT (C4)** per legal entity (default "Ray'z Inc.", which iSolved reports as one entity) and **Squire-era sales out of tips (C5)** were already built. Both now have hand-worked tests from punches (`tests/payroll-independent.test.ts`).
+- **New payroll settings:**
+  - `commissionBase` (card surcharge left out, loyalty comes off the sale: today's behavior);
+  - `otRegularRate` (`base`: the FLSA half-time owed on commission is in labor cost and flagged `ot_regular_rate`, not in the file);
+  - `otPremiumHeader`.
+- **Pay periods** must start on a Sunday.
+- **Refunds** floor commission at $0 and write off the rest (`refund_written_off`).
+- **For mobile, nothing to change.** `GET /me/earnings` comes from the payroll run, so late commission shows in `wages.commissionCents`. The regular-rate premium is not in `overtimeCents`: it's flagged for hand entry in iSolved.
+- **Privacy:** the payroll docs and tests now carry only made-up figures. `tests/payroll-privacy.test.ts` fails if a tracked file has a real name, iSolved key or amount from the private golden data (it skips when that data isn't on the machine).
 
 ### 2026-10-27: core, cross-check of PR #2, Squire-era exclusion, `FEATURE_TIP_TO_BARBER` (requests for mobile)
 - **PR #2 conflicts:** listed in the request above (24 conflicting files, a duplicate journal idx 21, 22 schema items core already adds, a second transfer path, and the live-key refusal).
