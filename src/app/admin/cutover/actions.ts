@@ -10,6 +10,8 @@ import { safe } from "@/server/action";
 import { assertShopAccess, authorize } from "@/server/auth/staff";
 import { CUTOVER_FILES, handBack, reconcileShop, recordFreeze, signOffAndSwitch } from "@/server/cutover";
 import { AppError } from "@/server/errors";
+import { setSquireTipsEnd } from "@/server/tips/onboarding";
+import { isValidLocalDate } from "@/lib/time";
 
 const Shop = z.string().uuid();
 
@@ -49,13 +51,27 @@ export async function reconcileAction(shopId: string, files: z.input<typeof File
   });
 }
 
-export async function signOffAction(shopId: string) {
+/** `staffWaiver`: the owner's reason to switch before everyone has finished Stripe payout setup. */
+export async function signOffAction(shopId: string, staffWaiver?: string) {
   return safe(async () => {
     const ctx = await authorize("settings.brand");
     assertShopAccess(ctx, Shop.parse(shopId));
-    await signOffAndSwitch(ctx.actor, shopId);
+    await signOffAndSwitch(ctx.actor, shopId, new Date(), { staffWaiver: z.string().max(500).optional().parse(staffWaiver) });
     refresh(shopId);
     revalidatePath("/admin/settings");
+    return null;
+  });
+}
+
+/** The last day Squire pays this shop's tips; empty clears it. */
+export async function squireTipsEndAction(shopId: string, date: string) {
+  return safe(async () => {
+    const ctx = await authorize("import.run");
+    assertShopAccess(ctx, Shop.parse(shopId));
+    const end = date.trim() ? z.string().refine(isValidLocalDate, "Enter a date").parse(date.trim()) : null;
+    await setSquireTipsEnd(ctx.actor, shopId, end);
+    refresh(shopId);
+    revalidatePath("/admin/tips/onboarding");
     return null;
   });
 }

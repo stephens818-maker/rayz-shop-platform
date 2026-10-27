@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button, Field, Input, Notice } from "@/components/ui";
 import { useAction } from "@/components/use-action";
-import { handBackAction, reconcileAction, recordFreezeAction, signOffAction } from "../actions";
+import { handBackAction, reconcileAction, recordFreezeAction, signOffAction, squireTipsEndAction } from "../actions";
 
 const FILES = [
   { id: "bookings", label: "Appointments (upcoming)" },
@@ -60,19 +60,45 @@ export function ReconcileForm({ shopId }: { shopId: string }) {
   );
 }
 
-export function SignOffButton({ shopId, ready }: { shopId: string; ready: boolean }) {
+export function SignOffButton({ shopId, ready, notOnboarded }: { shopId: string; ready: boolean; notOnboarded: number }) {
   const { pending, error, run } = useAction();
   const [sure, setSure] = useState(false);
+  const [waiver, setWaiver] = useState("");
+  const needsWaiver = notOnboarded > 0;
   return (
     <div className="space-y-2 text-sm">
       <label className="flex items-center gap-2">
         <input type="checkbox" checked={sure} disabled={!ready} onChange={(e) => setSure(e.target.checked)} />
         I&apos;ve checked the reconciliation and Squire booking is off for this shop.
       </label>
-      <Button disabled={!ready || !sure || pending} onClick={() => run(() => signOffAction(shopId))}>
+      {needsWaiver && (
+        <Field
+          label={`${notOnboarded} ${notOnboarded === 1 ? "person hasn't" : "people haven't"} finished Stripe payout setup. To switch anyway, say why (goes in the audit log)`}
+          hint="Their tips wait for them in held payouts and go out once they finish."
+        >
+          <Input value={waiver} maxLength={500} disabled={!ready} onChange={(e) => setWaiver(e.target.value)} placeholder="e.g. on leave until next month" />
+        </Field>
+      )}
+      <Button disabled={!ready || !sure || pending || (needsWaiver && !waiver.trim())} onClick={() => run(() => signOffAction(shopId, needsWaiver ? waiver : undefined))}>
         Sign off and book here
       </Button>
       {!ready && <div className="text-xs text-zinc-500">Available once the latest reconciliation matches to the cent.</div>}
+      {error && <Notice tone="red">{error}</Notice>}
+    </div>
+  );
+}
+
+export function SquireTipsEndForm({ shopId, current }: { shopId: string; current: string | null }) {
+  const { pending, error, run } = useAction();
+  const [date, setDate] = useState(current ?? "");
+  return (
+    <div className="flex flex-wrap items-end gap-3">
+      <Field label="Last day Squire pays this shop's tips">
+        <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-44" />
+      </Field>
+      <Button variant="secondary" disabled={pending || date === (current ?? "")} onClick={() => run(() => squireTipsEndAction(shopId, date))}>
+        {date ? "Save date" : "Clear date"}
+      </Button>
       {error && <Notice tone="red">{error}</Notice>}
     </div>
   );

@@ -3,13 +3,15 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Badge, Card, CardHeader, Notice, PageHeader, Table, Td, Th } from "@/components/ui";
 import type { CutoverSection } from "@/db/schema";
-import { formatDateTime } from "@/lib/time";
+import { ONBOARDING_LABEL } from "@/domain/staff-onboarding";
+import { formatDate, formatDateTime } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { handBackReport, listCutovers, REQUIRED_FILES } from "@/server/cutover";
 import { inTenant } from "@/server/tenant";
+import { shopOnboardingCounts } from "@/server/tips/onboarding";
 import { Importer } from "../../import/importer";
 import { STAGE } from "../stages";
-import { FreezeForm, HandBackForm, ReconcileForm, SignOffButton } from "./client";
+import { FreezeForm, HandBackForm, ReconcileForm, SignOffButton, SquireTipsEndForm } from "./client";
 
 export const metadata: Metadata = { title: "Squire cutover" };
 
@@ -27,6 +29,9 @@ export default async function ShopCutoverPage({ params }: { params: Promise<{ sh
   const owner = can(ctx, "settings.brand");
   const rec = c?.reconciliation && c.squireFrozenAt && c.reconciledAt && c.reconciledAt > c.squireFrozenAt ? c.reconciliation : null;
   const report = stage === "live" ? await handBackReport(shopId) : null;
+  const team = (await shopOnboardingCounts([shopId])).get(shopId)!;
+  const allSet = team.notDone.length === 0;
+  const ends = c?.squireTipsEndOn ?? null;
 
   return (
     <div className="mx-auto max-w-5xl space-y-4">
@@ -41,6 +46,39 @@ export default async function ShopCutoverPage({ params }: { params: Promise<{ sh
           </>
         }
       />
+
+      <Card>
+        <CardHeader
+          title="Staff payout onboarding: everyone set up before Squire's payouts stop"
+          subtitle="No Squire Stripe account carries over: everyone sets up a new Stripe payout account under Ray'z. Squire stops paying this shop's tips when it moves here, so signing off needs everyone done, or an owner's reason to go ahead. Tips for anyone not done wait for them."
+          action={<Badge tone={allSet ? "green" : "amber"}>{`${team.done} of ${team.total} set up`}</Badge>}
+        />
+        <div className="space-y-3 p-4 text-sm">
+          {ends && (
+            <div>
+              Squire pays this shop&rsquo;s tips through <b>{formatDate(ends, "EEEE, MMM d")}</b>.
+            </div>
+          )}
+          {allSet ? (
+            <Notice tone="green">{team.total ? "Everyone on the team can be paid through Stripe." : "No one on the team yet."}</Notice>
+          ) : (
+            <ul className="list-disc pl-5 text-zinc-700">
+              {team.notDone.slice(0, 30).map((p) => (
+                <li key={p.staffId}>
+                  {p.name}: {ONBOARDING_LABEL[p.progress]}
+                </li>
+              ))}
+              {team.notDone.length > 30 && <li>and {team.notDone.length - 30} more</li>}
+            </ul>
+          )}
+          {!allSet && can(ctx, "tips.approve") && (
+            <Link className="inline-block underline" href={`/admin/tips/onboarding?shop=${shopId}`}>
+              Invite or remind them in Payout onboarding
+            </Link>
+          )}
+          <SquireTipsEndForm shopId={shopId} current={ends} />
+        </div>
+      </Card>
 
       {stage !== "live" && (
         <>
@@ -101,9 +139,9 @@ export default async function ShopCutoverPage({ params }: { params: Promise<{ sh
               <Card>
                 <CardHeader
                   title="4. Sign off and switch"
-                  subtitle="An owner signs off on the reconciliation above. Online booking for this shop then moves here: the website and app book it here, and the Squire link stops showing."
+                  subtitle="An owner signs off on the reconciliation above and on staff payout onboarding. Online booking for this shop then moves here: the website and app book it here, and the Squire link stops showing."
                 />
-                <div className="p-4">{owner ? <SignOffButton shopId={shopId} ready={stage === "reconciled"} /> : <div className="text-sm text-zinc-600">An owner signs off and switches.</div>}</div>
+                <div className="p-4">{owner ? <SignOffButton shopId={shopId} ready={stage === "reconciled"} notOnboarded={team.notDone.length} /> : <div className="text-sm text-zinc-600">An owner signs off and switches.</div>}</div>
               </Card>
             </>
           )}
