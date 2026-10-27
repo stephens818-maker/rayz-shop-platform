@@ -34,7 +34,7 @@ const fx = { a: "", b: "", aLabel: "", bLabel: "", moline: "", start: "", end: "
 const cash = { method: "cash" as const, cashTenderedCents: null };
 const at = (d: string, h = 12) => new Date(new Date(`${d}T00:00:00-05:00`).getTime() + h * 3_600_000);
 const day = (n: number) => m.time.addDays(fx.start, n);
-const PAGES = ["summary", "timesheets", "tips", "commission", "full-time", "labor-cost", "overtime", "isolved", "tips-paid", "w2-codes", "fica-tip-credit", "paid-leave"];
+const PAGES = ["summary", "report", "timesheets", "tips", "commission", "full-time", "labor-cost", "overtime", "isolved", "tips-paid", "w2-codes", "fica-tip-credit", "paid-leave"];
 const OTHER_SHOPS = ["Rock Island", "Coralville", "Dubuque", "Kimberly", "Le Claire", "Silvis", "Utica"];
 
 async function sell(staffId: string, d: string, o: { product?: boolean; tipCents?: number; with?: string } = {}) {

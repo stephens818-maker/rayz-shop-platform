@@ -1,4 +1,5 @@
 import { reportExport, reportView } from "@/domain/permissions";
+import { isValidLocalDate } from "@/lib/time";
 import { audit } from "@/server/audit";
 import { can, routeStaff } from "@/server/auth/staff";
 import { locationBlocks, locationsCsv, locationsFileName, locationsWorkbook } from "@/server/payroll/locations";
@@ -15,7 +16,7 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const m = PERIOD.exec(url.searchParams.get("period") ?? "");
   const format = url.searchParams.get("format") === "csv" ? "csv" : "xlsx";
-  if (!m || m[1] > m[2]) return new Response("Bad request", { status: 400 });
+  if (!m || !isValidLocalDate(m[1]) || !isValidLocalDate(m[2]) || m[1] > m[2]) return new Response("Bad request", { status: 400 });
   const [, start, end] = m;
   const view = await buildPayroll(start, end, { clockChecks: false });
   const shop = url.searchParams.get("shop");

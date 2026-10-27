@@ -3,10 +3,10 @@ import Link from "next/link";
 import { Badge, Card, CardHeader, Notice, PageHeader, cx } from "@/components/ui";
 import { LOCATIONS_COLUMNS, MIXED_RATE_NAME, locationSummary, type Line, type Overridable } from "@/domain/payroll/calc";
 import { reportExport } from "@/domain/permissions";
-import { formatDate } from "@/lib/time";
+import { formatDate, isValidLocalDate } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { NO_VALUE, locationBlocks, locationsRow, locationsTotals, titleFill, type LocationsCell, type LocationsColumnKey } from "@/server/payroll/locations";
-import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, payrollTrail, periodChoices, type ApprovalStatus, type BlockView } from "@/server/payroll/run";
+import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, payrollTrail, periodChoices, type ApprovalStatus, type BlockView, type PeriodChoice } from "@/server/payroll/run";
 import { ApprovalControls } from "../../../payroll/report/approval";
 import { ApprovalNotice, PayrollTrailCard } from "../../../payroll/report/flow";
 
@@ -45,12 +45,17 @@ const STATUS: Record<ApprovalStatus, { label: string; tone: "amber" | "blue" | "
   locked: { label: "Approved and locked", tone: "green" },
 };
 
-export default async function Page({ searchParams }: { searchParams: Promise<{ period?: string; shop?: string }> }) {
+const PERIOD = /^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/;
+
+export default async function Page({ searchParams }: { searchParams: Promise<{ period?: string; preset?: string; shop?: string }> }) {
   const sp = await searchParams;
   const ctx = await guardPage(HREF);
   const choices = await periodChoices();
   const current = choices.findIndex((c) => c.current);
-  const chosen = choices.find((c) => c.key === sp.period) ?? choices[current + 1] ?? choices[0];
+  const asked = PERIOD.exec(sp.period ?? sp.preset?.replace(/^pp:/, "") ?? "");
+  const chosen: PeriodChoice | undefined =
+    choices.find((c) => c.key === asked?.[0]) ??
+    (asked && isValidLocalDate(asked[1]) && isValidLocalDate(asked[2]) && asked[1] <= asked[2] ? { key: asked[0], start: asked[1], end: asked[2], groups: [], lockedGroups: 0, current: false } : (choices[current + 1] ?? choices[0]));
   const view = chosen ? await buildPayroll(chosen.start, chosen.end) : null;
   const rates = can(ctx, "payroll.rates");
   const mine = view ? view.blocks.filter((b) => ctx.shopIds.includes(b.shopId)) : [];

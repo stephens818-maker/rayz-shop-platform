@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import ExcelJS from "exceljs";
 import { DEFAULT_PAYROLL_SETTINGS, LOCATIONS_COLUMNS, assemble, computeLine, inNameOrder, locationSummary, totalsOf, type LineInput, type Line, type Overrides } from "@/domain/payroll/calc";
 import { renderIsolvedWorkbook } from "@/server/payroll/export";
+import { ACCOUNTING, NO_VALUE, locationsCsv, locationsWorkbook } from "@/server/payroll/locations";
+import type { BlockView } from "@/server/payroll/run";
 
 /**
  * Charles's payroll workbook, reproduced. `anon` is committed: fictional names, keys, rates, hours and
@@ -288,6 +290,59 @@ for (const fx of FIXTURES) {
           }
       }
       expect(diffs).toEqual([]);
+    });
+
+    it("the Payroll Report download is the Locations tab: blocks in Charles's order, headers character for character, every row's values and formats, totals and the summary", async () => {
+      const { golden, blocks } = g();
+      const ordered = inNameOrder(blocks, DEFAULT_PAYROLL_SETTINGS.reportOrder, (b) => [b.shop]) as unknown as BlockView[];
+      const wb = new ExcelJS.Workbook();
+      await wb.xlsx.load((await locationsWorkbook({ blocks: ordered, settings: DEFAULT_PAYROLL_SETTINGS, start: "2026-10-04", end: "2026-10-17" }, ordered)) as unknown as ArrayBuffer);
+      const ws = wb.getWorksheet("Locations")!;
+      // ExcelJS reads the Accounting format back without its backslashes; the file has them (styles.xml).
+      const unescaped = (f: string | undefined) => f?.replace(/\\/g, "");
+      const FMT = { hours: "0.00", rate: unescaped(ACCOUNTING), money: unescaped(ACCOUNTING), ratio: unescaped(ACCOUNTING), pct: "0%" } as const;
+      const diffs: string[] = [];
+      let r = 1;
+      for (const b of ordered) {
+        expect(ws.getCell(r, 1).value).toBe(b.shop);
+        const fill = { Utica: "FFFFFF00", "Rock Island": "FF00B0F0", Silvis: "FF92D050" }[b.shop];
+        expect((ws.getCell(r, 1).fill as ExcelJS.FillPattern | undefined)?.fgColor?.argb, b.shop).toBe(fill);
+        expect(LOCATIONS_COLUMNS.map((_, j) => ws.getCell(r + 1, j + 1).value)).toEqual(LOCATIONS_COLUMNS.map((c) => c.header));
+        r += 2;
+        b.lines.forEach((l, n) => {
+          const want = golden.rows.filter((x) => x.inputs.location === b.shop)[n];
+          LOCATIONS_COLUMNS.forEach((c, j) => {
+            const cell = ws.getCell(r, j + 1);
+            const v = c.key === "name" ? l.name : (l[c.key] as number | null);
+            if (v === null) {
+              if (cell.value !== NO_VALUE) diffs.push(`${b.shop} ${l.name} ${c.header}: ${String(cell.value)} for #DIV/0!`);
+            } else if (cell.value !== v) diffs.push(`${b.shop} ${l.name} ${c.header}: ${String(cell.value)} vs ${v}`);
+            if (c.kind !== "text" && v !== null && unescaped(cell.numFmt) !== FMT[c.kind]) diffs.push(`${b.shop} ${c.header} format ${cell.numFmt}`);
+          });
+          for (const [k, j] of [["total_wages", 14], ["net_comm", 13], ["hourly_total", 4]] as const) if (!near(ws.getCell(r, j).value as number, cached(want.expected_raw[k]))) diffs.push(`${b.shop} ${l.name} ${k} vs the workbook`);
+          r++;
+        });
+        expect(ws.getCell(r, 1).value).toBe("Total");
+        expect(ws.getCell(r, 15).numFmt).toBe(b.totals.pctOfGross === null ? undefined : "0.00%");
+        expect(near(ws.getCell(r, 5).value as number, golden.corrected_location_totals_all_rows[b.shop].service)).toBe(true);
+        expect(ws.getCell(r, 3).value).toBeNull();
+        expect([ws.getCell(r + 1, 1).value, ws.getCell(r + 1, 14).value]).toEqual(["Gross Profit", b.totals.service - b.totals.totalWages]);
+        r += 3;
+      }
+      expect(diffs).toEqual([]);
+      r++;
+      expect([2, 3, 4, 5, 6, 7].map((c) => ws.getCell(r, c).value)).toEqual(["Location", "Service Sales", "Location", "Employee Cost", "Location", "Gross Profit"]);
+      for (const b of ordered) {
+        r++;
+        const want = golden.corrected_location_totals_all_rows[b.shop];
+        expect(ws.getCell(r, 2).value).toBe(b.shop);
+        expect(near(ws.getCell(r, 3).value as number, want.service) && near(ws.getCell(r, 5).value as number, want.total_wages) && near(ws.getCell(r, 7).value as number, want.gross_profit), b.shop).toBe(true);
+        expect(unescaped(ws.getCell(r, 7).numFmt)).toBe(unescaped(ACCOUNTING));
+      }
+      expect(ws.getCell(r + 1, 2).value).toBe("Total");
+      const csv = locationsCsv(ordered).split("\r\n");
+      expect(csv[0]).toBe(["Location", ...LOCATIONS_COLUMNS.map((c) => c.header.trim())].join(","));
+      expect(csv.filter((x) => x.includes(",Total,")).length).toBe(ordered.length);
     });
 
     it("the export's values are the golden export's, and each Key keeps its cell type", () => {

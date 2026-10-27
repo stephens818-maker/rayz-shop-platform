@@ -12,6 +12,7 @@ import {
   guaranteeForDays,
   guaranteeTopUps,
   lineRate,
+  mixedRates,
   monthEnd,
   monthsBetween,
   sensitiveLabel,
@@ -391,5 +392,33 @@ describe("describing a plan", () => {
       "Guaranteed minimum: $1,000.00 a pay period",
       "Tips paid by: PAYROLL",
     ]);
+  });
+});
+
+describe("mixed rates (a rate changed inside the pay period)", () => {
+  const sorted = sortVersions([
+    version({ effectiveFrom: "2026-01-01", hourlyRateCents: 1500, servicePct: 0.4, productPct: 0.1 }),
+    version({ effectiveFrom: "2026-03-08", createdAt: "2026-03-01T00:00:00Z", hourlyRateCents: 1600, servicePct: 0.4, productPct: 0.15 }),
+  ]);
+  const day = (date: string, centi = 800) => ({ date, centi });
+  const sale = (date: string, kind: "service" | "product", saleDate = date) => ({ date, saleDate, shopId: A, kind });
+
+  it("flags the wage when the period's hours fall on both sides of a change, and each % by the checkout date of its sales", () => {
+    expect(mixedRates(sorted, A, setup, [day("2026-03-02"), day("2026-03-09")], [sale("2026-03-03", "service"), sale("2026-03-10", "service"), sale("2026-03-03", "product"), sale("2026-03-10", "product")], "2026-03-01", "2026-03-14")).toEqual([
+      "wage",
+      "productPct",
+    ]);
+  });
+
+  it("isn't mixed when everything in the period is under one version, or a day has no hours", () => {
+    expect(mixedRates(sorted, A, setup, [day("2026-03-09"), day("2026-03-02", 0)], [sale("2026-03-10", "product"), sale("2026-03-12", "product")], "2026-03-01", "2026-03-14")).toEqual([]);
+  });
+
+  it("prices a refund at the original sale's checkout date", () => {
+    expect(mixedRates(sorted, A, setup, [], [sale("2026-03-10", "product"), sale("2026-03-11", "product", "2026-02-20")], "2026-03-01", "2026-03-14")).toEqual(["productPct"]);
+  });
+
+  it("only looks at the shop and the period asked about", () => {
+    expect(mixedRates(sorted, B, setup, [day("2026-03-02"), day("2026-03-09")], [sale("2026-03-03", "product"), sale("2026-03-10", "product")], "2026-03-08", "2026-03-14")).toEqual([]);
   });
 });

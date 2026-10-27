@@ -964,7 +964,12 @@ export async function payrollTrail(start: LocalDate, end: LocalDate) {
     .from(auditLog)
     .where(and(sql`${auditLog.action} like 'payroll.%'`, sql`${auditLog.details}->>'periodStart' = ${start}`, sql`coalesce(${auditLog.details}->>'periodEnd', ${end}) = ${end}`))
     .orderBy(asc(auditLog.at));
-  return list.map((r) => ({ ...r, details: (r.details ?? {}) as Record<string, unknown> }));
+  // Steps written in one transaction share a timestamp: a replaced approval is taken back before the new one, and both come before a lock.
+  const rank = (a: string) => ({ "payroll.approval_revoked": 0, "payroll.approve": 1, "payroll.lock": 2 })[a] ?? 1;
+  return list
+    .map((r, i) => ({ r, i }))
+    .sort((x, y) => x.r.at.getTime() - y.r.at.getTime() || rank(x.r.action) - rank(y.r.action) || x.i - y.i)
+    .map(({ r }) => ({ ...r, details: (r.details ?? {}) as Record<string, unknown> }));
 }
 
 export async function savePayGroup(id: string, v: { label: string; legalEntity: string; exportTab: string; calendar: PayCalendar }, actor: Actor): Promise<string | null> {
