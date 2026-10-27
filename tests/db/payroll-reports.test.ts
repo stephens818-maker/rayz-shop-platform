@@ -258,7 +258,7 @@ describe("tips", () => {
 });
 
 describe("the iSolved export", () => {
-  const periodOf = async () => ((await report("payroll_isolved")).data as { periods: IsolvedPeriod[] }).periods.find((p) => p.start === fx.start)!;
+  const periodOf = async () => ((await report("payroll_isolved")).data as unknown as { periods: IsolvedPeriod[] }).periods.find((p) => p.start === fx.start)!;
   const download = async (start = fx.start, end = fx.end) => fileRoute.GET(new Request(`http://localhost/admin/reports/payroll/isolved/file?start=${start}&end=${end}&shop=${fx.moline}`));
   const sends = () => m.db.db.select().from(m.schema.payrollExportSends).where(eq(m.schema.payrollExportSends.periodStart, fx.start));
   const audits = (action: string) => m.db.db.select().from(m.schema.auditLog).where(m.drizzle.and(eq(m.schema.auditLog.action, action), eq(m.schema.auditLog.entityId, `${fx.start}_${fx.end}`)));

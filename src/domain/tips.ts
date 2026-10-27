@@ -40,7 +40,7 @@ export interface BrandTipPolicy {
   methods: TipMethod[];
   /** Employees pick their own method (from the allowed ones); otherwise the shop's default applies to everyone. */
   employeeChooses: boolean;
-  /** Stripe instant payouts to an eligible debit card, for Stripe's fee. */
+  /** Stripe instant payouts to an eligible debit card, for Stripe's fee. Off until the brand turns it on (ST-I12). */
   instantAllowed: boolean;
   /** Stripe's instant payout fee comes out of the employee's payout; off, the shop pays it on top. */
   instantFeePassedOn: boolean;
@@ -54,7 +54,7 @@ export interface BrandTipPolicy {
 export const DEFAULT_BRAND_TIP_POLICY: BrandTipPolicy = {
   methods: ["cash", "stripe", "payroll"],
   employeeChooses: true,
-  instantAllowed: true,
+  instantAllowed: false,
   instantFeePassedOn: true,
   reminderEveryDays: DEFAULT_REMINDERS.everyDays,
   reminderMax: DEFAULT_REMINDERS.max,

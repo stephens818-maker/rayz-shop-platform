@@ -21,6 +21,25 @@ import { EXPORT_COLUMNS, FT_BASIS_LABEL, payrollSettings } from "@/domain/payrol
 import type { Permission } from "@/domain/permissions";
 import { ReviewRulesSchema, locationReviewRules, reviewRules } from "@/domain/reviews";
 import { FILING_LABEL, cleanTaxFiling } from "@/domain/sales-tax";
+import {
+  ACCOUNT_DASHBOARDS,
+  DASHBOARD_LABEL,
+  ONBOARDING_LABEL,
+  ONBOARDING_MODES,
+  OWED_VIA,
+  OWED_VIA_LABEL,
+  REVERSAL_RULES,
+  REVERSAL_RULE_LABEL,
+  REVERSAL_WINDOW_DAYS,
+  SERVICE_AGREEMENTS,
+  SERVICE_AGREEMENT_LABEL,
+  TAX_FORMS_LABEL,
+  TAX_FORM_FILING,
+  TIP_DATE_LABEL,
+  TIP_DATE_RULES,
+  type StaffPayoutSettings,
+  staffPayoutSettings,
+} from "@/domain/staff-payouts";
 import { cleanRules, rulesProblem, shopRules } from "@/domain/staff-time";
 import { clockRules, parseColumnMapping } from "@/domain/time-clock";
 import { intervalProblem } from "@/domain/timing";
@@ -192,6 +211,23 @@ const TipPolicyInput = z.object({
     .max(500)
     .refine((v) => !v || portalUrl(v) !== null, "The iSolved self-service link starts with https://")
     .nullish(),
+});
+
+const StaffPayoutsInput = z.object({
+  dashboard: z.enum(ACCOUNT_DASHBOARDS),
+  serviceAgreement: z.enum(SERVICE_AGREEMENTS),
+  onboarding: z.enum(ONBOARDING_MODES),
+  owedVia: z.enum(OWED_VIA),
+  reversalRule: z.enum(REVERSAL_RULES),
+  reversalWindowDays: z
+    .number()
+    .int()
+    .min(REVERSAL_WINDOW_DAYS.min, `The reversal window is ${REVERSAL_WINDOW_DAYS.min} to ${REVERSAL_WINDOW_DAYS.max} days`)
+    .max(REVERSAL_WINDOW_DAYS.max, `The reversal window is ${REVERSAL_WINDOW_DAYS.min} to ${REVERSAL_WINDOW_DAYS.max} days`),
+  tipDate: z.enum(TIP_DATE_RULES),
+  taxForms: z.enum(TAX_FORM_FILING),
+  taxCheckMonth: z.number().int().min(1).max(12),
+  instantFeeAck: z.boolean(),
 });
 
 const messageSetting = (kind: TemplateKind) => {
@@ -415,6 +451,42 @@ export const SETTINGS: readonly SettingDef[] = [
     read: brandTipPolicy,
     parse: (raw, before) => brandTipPolicy(TipPolicyInput.parse({ ...before, ...obj(raw) })),
     audit: "tips.policy",
+  }),
+  def({
+    key: "staff_payouts",
+    label: "Staff payouts",
+    area: "payroll",
+    column: "staffPayouts",
+    perms: ["tips.settings"],
+    paths: ["/admin/tips/settings", "/admin/payouts"],
+    wholeBrand: "Tips that can't be paid directly go through the brand's one payroll export, and the tips-paid export reports every shop by the same rules, so these settings are the same at every shop.",
+    read: staffPayoutSettings,
+    parse: (raw, before) => staffPayoutSettings(StaffPayoutsInput.parse({ ...before, ...obj(raw) })),
+    labels: {
+      dashboard: "Barber's Stripe dashboard",
+      serviceAgreement: "Stripe service agreement",
+      onboarding: "Payout setup",
+      owedVia: "Tips nobody can pay directly yet",
+      reversalRule: "Refunds take the tip back",
+      reversalWindowDays: "Reversal window (days)",
+      tipDate: "A tip's date",
+      taxForms: "1099 tax forms",
+      taxCheckMonth: "Yearly tax form check (month)",
+      instantFeeAck: "Instant payouts need the fee accepted first",
+    },
+    describe: (v: StaffPayoutSettings) => ({
+      "Barber's Stripe dashboard": DASHBOARD_LABEL[v.dashboard],
+      "Stripe service agreement": SERVICE_AGREEMENT_LABEL[v.serviceAgreement],
+      "Payout setup": ONBOARDING_LABEL[v.onboarding],
+      "Tips nobody can pay directly yet": OWED_VIA_LABEL[v.owedVia],
+      "Refunds take the tip back": REVERSAL_RULE_LABEL[v.reversalRule],
+      "Reversal window": `${v.reversalWindowDays} days`,
+      "A tip's date": TIP_DATE_LABEL[v.tipDate],
+      "1099 tax forms": TAX_FORMS_LABEL[v.taxForms],
+      "Yearly tax form check": `From month ${v.taxCheckMonth}`,
+      "Instant payouts need the fee accepted first": onOff(v.instantFeeAck),
+    }),
+    audit: "tips.staff_payouts",
   }),
   def({
     key: "outreach",

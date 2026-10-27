@@ -77,6 +77,8 @@ export const brandSettings = pgTable("brand_settings", {
   timeClock: jsonb("time_clock").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Tip payout policy for the brand (BrandTipPolicy in src/domain/tips.ts): allowed methods, employee choice, instant payouts. */
   tipPayouts: jsonb("tip_payouts").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** Staff payouts (StaffPayoutSettings in src/domain/staff-payouts.ts): the barbers' Stripe accounts, owed tips, refunds, the tip date, tax forms. */
+  staffPayouts: jsonb("staff_payouts").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Sign-in restriction settings for the brand (BrandNetworkSettings in src/domain/network-access.ts): the blocked sign-in alert. */
   networkAccess: jsonb("network_access").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** The brand's tip presets for the customer screen (BrandHandoff in src/domain/handoff.ts); missing keys use the defaults. */
@@ -2495,7 +2497,7 @@ export type TipBatchKind = "end_of_night" | "daily_delay" | "weekly" | "manual" 
 export type TipBatchStatus = "draft" | "approved" | "completed" | "cancelled";
 export type TipPayoutMethod = "cash" | "stripe" | "payroll" | "prior";
 export type TipPayoutStatus = "pending" | "held" | "approved" | "processing" | "paid" | "failed" | "cancelled";
-export type TipHoldKind = "manager" | "stripe_setup";
+export type TipHoldKind = "manager" | "stripe_setup" | "transfers_pending";
 export type TipLedgerKind = "tip" | "refund" | "adjust";
 
 /** A manager reviews and approves each batch: one shop, everything available up to the cutoff date. One draft per shop at a time. */
@@ -2564,7 +2566,7 @@ export const tipPayouts = pgTable(
     ackMethod: text("ack_method").$type<"pin" | "name">(),
     ackName: text("ack_name"),
     holdReason: text("hold_reason"),
-    /** manager = held by hand; stripe_setup = waiting for the employee to finish Stripe payout setup, released on its own when they do. */
+    /** manager = held by hand; stripe_setup = waiting for the employee to finish Stripe payout setup, released on its own when they do; transfers_pending = no transfer path yet (owed, paid through payroll at the cutoff). */
     holdKind: text("hold_kind").$type<TipHoldKind>(),
     heldBy: uuid("held_by"),
     heldAt: ts("held_at"),
@@ -2582,7 +2584,7 @@ export const tipPayouts = pgTable(
     check("tip_payouts_held", sql`${t.status} <> 'held' or ${t.holdReason} is not null`),
     check("tip_payouts_instant_fee_paid_by", sql`${t.instantFeePaidBy} in ('employee', 'shop')`),
     check("tip_payouts_destination", sql`(${t.destinationType} is null or ${t.destinationType} in ('bank_account', 'card')) and (${t.destinationLast4} is null or ${t.destinationLast4} ~ '^[0-9]{4}$')`),
-    check("tip_payouts_hold_kind", sql`${t.holdKind} is null or ${t.holdKind} in ('manager', 'stripe_setup')`),
+    check("tip_payouts_hold_kind", sql`${t.holdKind} is null or ${t.holdKind} in ('manager', 'stripe_setup', 'transfers_pending')`),
     index("tip_payouts_stripe_setup").on(t.staffId).where(sql`${t.status} = 'held' and ${t.holdKind} = 'stripe_setup'`),
     uniqueIndex("tip_payouts_batch_staff_uq").on(t.batchId, t.staffId),
     uniqueIndex("tip_payouts_transfer_uq").on(t.stripeTransferId),
@@ -2613,6 +2615,8 @@ export const tipLedger = pgTable(
     feeCents: integer("fee_cents").notNull().default(0),
     businessDate: date("business_date").notNull(),
     payoutId: uuid("payout_id").references(() => tipPayouts.id),
+    /** The employer (one FEIN) of the shop's pay group when the entry was written; a trigger sets it and it never changes. */
+    employerId: uuid("employer_id").references(() => payrollEmployers.id),
     reason: text("reason"),
     createdBy: uuid("created_by"),
     createdAt: createdAt(),
@@ -2631,7 +2635,63 @@ export const tipLedger = pgTable(
     index("tip_ledger_shop_date_idx").on(t.shopId, t.businessDate),
     index("tip_ledger_payout_idx").on(t.payoutId),
     index("tip_ledger_unpaid_idx").on(t.shopId, t.staffId).where(sql`${t.payoutId} is null`),
+    index("tip_ledger_employer_idx").on(t.employerId, t.businessDate),
   ],
+);
+
+/** As src/domain/staff-payouts.ts names them. */
+export type StaffAccountState = "not_started" | "in_progress" | "pending_verification" | "requirements_due" | "restricted" | "active" | "rejected";
+export type StaffAccountDashboard = "none" | "express";
+export type StaffServiceAgreement = "recipient" | "full";
+export type StaffTaxForms = "will_not_file";
+
+export type TipAbsorptionKind = "partial_refund" | "outside_window" | "rule" | "dispute";
+
+/**
+ * A refunded or disputed tip the barber keeps because the shop absorbs it: a partial refund, a
+ * refund after the reversal window, a brand that never reverses tips, or a card dispute. The tip
+ * ledger is untouched; these flow into the tips-paid export. Append-only.
+ */
+export const tipAbsorptions = pgTable(
+  "tip_absorptions",
+  {
+    id: id(),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    staffId: uuid("staff_id").notNull().references(() => staff.id),
+    employerId: uuid("employer_id").references(() => payrollEmployers.id),
+    saleId: uuid("sale_id").references(() => sales.id),
+    paymentId: uuid("payment_id").references(() => payments.id),
+    refundId: uuid("refund_id").references(() => refunds.id),
+    stripeDisputeId: text("stripe_dispute_id"),
+    kind: text("kind").$type<TipAbsorptionKind>().notNull(),
+    /** The tip the shop absorbed, positive. */
+    amountCents: integer("amount_cents").notNull(),
+    businessDate: date("business_date").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check("tip_absorptions_kind", sql`${t.kind} in ('partial_refund', 'outside_window', 'rule', 'dispute')`),
+    check("tip_absorptions_source", sql`(${t.kind} = 'dispute' and ${t.stripeDisputeId} is not null) or (${t.kind} <> 'dispute' and ${t.refundId} is not null)`),
+    check("tip_absorptions_dispute_id", sql`${t.stripeDisputeId} is null or ${t.stripeDisputeId} ~ '^(dp|du|sim)_[A-Za-z0-9_]{1,80}$'`),
+    uniqueIndex("tip_absorptions_refund_uq").on(t.refundId, t.staffId).where(sql`${t.refundId} is not null`),
+    uniqueIndex("tip_absorptions_dispute_uq").on(t.stripeDisputeId, t.staffId).where(sql`${t.stripeDisputeId} is not null`),
+    index("tip_absorptions_shop_date_idx").on(t.shopId, t.businessDate),
+  ],
+);
+
+/** The yearly check that Stripe won't file 1099s for the barbers' accounts: one row per tax year, with what it found. */
+export const taxFormChecks = pgTable(
+  "tax_form_checks",
+  {
+    id: id(),
+    taxYear: integer("tax_year").notNull().unique(),
+    accounts: integer("accounts").notNull(),
+    untagged: integer("untagged").notNull(),
+    feesOnAccount: integer("fees_on_account").notNull(),
+    checkedBy: uuid("checked_by").references(() => staff.id),
+    checkedAt: ts("checked_at").notNull().defaultNow(),
+  },
+  (t) => [check("tax_form_checks_year", sql`${t.taxYear} between 2020 and 2100`)],
 );
 
 /**
@@ -2712,6 +2772,23 @@ export const staffPayoutAccounts = pgTable(
     feesPayer: text("fees_payer"),
     /** When Stripe confirmed the account is tagged as a W-2 employee's (metadata worker_type, tax_forms), so nobody treats it as a contractor's. */
     w2TaggedAt: ts("w2_tagged_at"),
+    /** The Stripe Dashboard the account was made with: none (embedded components in the app) or express. Null: no account yet. */
+    dashboard: text("dashboard").$type<StaffAccountDashboard>(),
+    /** Stripe's service agreement on the account: recipient (transfers only) or full. */
+    serviceAgreement: text("service_agreement").$type<StaffServiceAgreement>(),
+    /** One of seven (accountState in src/domain/staff-payouts.ts), saved on every Stripe event and audited when it changes. */
+    state: text("state").$type<StaffAccountState>().notNull().default("not_started"),
+    stateChangedAt: ts("state_changed_at"),
+    /** Stripe's transfers capability: active, inactive, pending, unrequested or disabled. */
+    transfersCapability: text("transfers_capability"),
+    requirementsPastDue: jsonb("requirements_past_due").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    /** The account was disconnected from the platform (account.application.deauthorized). */
+    deauthorizedAt: ts("deauthorized_at"),
+    /** What Stripe does with 1099s for the account: never file (tips are W-2 wages through payroll). */
+    taxForms: text("tax_forms").$type<StaffTaxForms>().notNull().default("will_not_file"),
+    /** The instant payout fee, in words, the employee accepted before instant payouts turned on; a new fee needs accepting again. */
+    instantFeeTerms: text("instant_fee_terms"),
+    instantFeeAcceptedAt: ts("instant_fee_accepted_at"),
     createdAt: createdAt(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
@@ -2720,6 +2797,10 @@ export const staffPayoutAccounts = pgTable(
     check("staff_payout_accounts_destination_type", sql`${t.destinationType} is null or ${t.destinationType} in ('bank_account', 'card')`),
     check("staff_payout_accounts_last4", sql`${t.destinationLast4} is null or ${t.destinationLast4} ~ '^[0-9]{4}$'`),
     check("staff_payout_accounts_external_accounts", sql`jsonb_typeof(${t.externalAccounts}) = 'array'`),
+    check("staff_payout_accounts_state", sql`${t.state} in ('not_started', 'in_progress', 'pending_verification', 'requirements_due', 'restricted', 'active', 'rejected')`),
+    check("staff_payout_accounts_dashboard", sql`${t.dashboard} is null or ${t.dashboard} in ('none', 'express')`),
+    check("staff_payout_accounts_service_agreement", sql`${t.serviceAgreement} is null or ${t.serviceAgreement} in ('recipient', 'full')`),
+    check("staff_payout_accounts_tax_forms", sql`${t.taxForms} in ('will_not_file')`),
   ],
 );
 
@@ -3033,6 +3114,24 @@ export type Sale = typeof sales.$inferSelect;
 // ───────────────────────────── Payroll ─────────────────────────────
 
 /**
+ * An employer: one legal entity (one FEIN) its shops' pay groups belong to, and every tip is tagged
+ * with. Only the last four digits of its EIN are kept; the full number stays in iSolved and Stripe.
+ */
+export const payrollEmployers = pgTable(
+  "payroll_employers",
+  {
+    id: id(),
+    legalName: text("legal_name").notNull().unique(),
+    /** The company code in iSolved, for the tips-paid export. */
+    isolvedCompanyCode: text("isolved_company_code"),
+    taxIdLast4: text("tax_id_last4"),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [check("payroll_employers_tax_id_last4", sql`${t.taxIdLast4} is null or ${t.taxIdLast4} ~ '^[0-9]{4}$'`)],
+);
+
+/**
  * Each shop is an iSolved pay group with its own pay calendar (Dubuque's differs from the rest).
  * The label is whatever Charles calls the pay group; no iSolved IDs are stored in the repo.
  * Shops of the same legal entity (one FEIN) share overtime across shops.
@@ -3047,6 +3146,8 @@ export const payGroups = pgTable(
       .references(() => shops.id, { onDelete: "cascade" }),
     label: text("label").notNull(),
     legalEntity: text("legal_entity").notNull().default("Ray'z Inc."),
+    /** The employer for the legal entity; a trigger keeps it in step with legal_entity. */
+    employerId: uuid("employer_id").references(() => payrollEmployers.id),
     /** The workbook tab this shop's export copies: its sheet name and formatting. */
     exportTab: text("export_tab").notNull(),
     /** First day of a known period, and that period's number in iSolved. */
