@@ -10,6 +10,7 @@ import {
   shops,
   staff,
   staffSchedules,
+  staffShops,
   timeBlocks,
   timeEntries,
   timePunchEdits,
@@ -194,7 +195,7 @@ export async function registerDevice(shopId: string, label: string, actor: Actor
 export async function listDevices(shopIds: readonly string[]) {
   if (!shopIds.length) return [];
   return db
-    .select({ id: clockDevices.id, shopId: clockDevices.shopId, shop: shops.name, label: clockDevices.label, lastSeenAt: clockDevices.lastSeenAt, createdAt: clockDevices.createdAt })
+    .select({ id: clockDevices.id, shopId: clockDevices.shopId, shop: shops.name, label: clockDevices.label, lastSeenAt: clockDevices.lastSeenAt, createdAt: clockDevices.createdAt, pairedAt: clockDevices.pairedAt })
     .from(clockDevices)
     .innerJoin(shops, eq(shops.id, clockDevices.shopId))
     .where(and(inArray(clockDevices.shopId, [...shopIds]), isNull(clockDevices.revokedAt)))
@@ -206,6 +207,17 @@ export async function revokeDevice(id: string, shopIds: readonly string[], actor
   if (!d || !shopIds.includes(d.shopId)) throw notFound("Device");
   await db.update(clockDevices).set({ revokedAt: new Date() }).where(eq(clockDevices.id, id));
   await audit(actor, "timeclock.device_revoke", "clock_device", id, { label: d.label }, d.shopId);
+}
+
+/** Only the shop's own team punches on its front-desk clock; anyone else is not found, so ids can't be probed. */
+export async function onShopTeam(shopId: string, staffId: string) {
+  const [r] = await db
+    .select({ id: staff.id })
+    .from(staffShops)
+    .innerJoin(staff, eq(staff.id, staffShops.staffId))
+    .where(and(eq(staffShops.shopId, shopId), eq(staffShops.staffId, staffId), eq(staff.active, true), eq(staff.kind, "person")))
+    .limit(1);
+  if (!r) throw notFound("Team member");
 }
 
 // ───────────────────────────── PINs ─────────────────────────────

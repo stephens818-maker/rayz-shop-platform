@@ -11,10 +11,12 @@ import { GO_TO } from "@/domain/shortcuts";
 import { THEME_SCRIPT } from "@/domain/theme";
 import { assistantAccess } from "@/server/assistant";
 import { requireStaff } from "@/server/auth/staff";
+import { stepUpFactor } from "@/server/auth/sign-in-guard";
 import { milestoneSettingsAt } from "@/server/milestones/engine";
 import { logout } from "../login/actions";
 import { AssistantPanel } from "./assistant/panel";
 import { BfcacheGuard } from "./bfcache-guard";
+import { StepUpHost } from "./step-up";
 import { ClientQuickSearch } from "./client-quick-search";
 import { CommandPalette, CommandPaletteButton } from "./command-palette";
 import { AdminNav, BackToBrand, ShopSwitcher } from "./nav";
@@ -29,9 +31,10 @@ export default async function AdminLayout({
   children: React.ReactNode;
 }) {
   const ctx = await requireStaff();
-  const [assistant, milestones] = await Promise.all([
+  const [assistant, milestones, factor] = await Promise.all([
     assistantAccess(ctx),
     milestoneSettingsAt(ctx.currentShopId ?? (ctx.shopIds.length === 1 ? ctx.shopIds[0] : null)),
+    stepUpFactor(ctx.staff.id),
   ]);
   const here = ctx.shops.find((s) => s.id === ctx.currentShopId) ?? null;
   const address = here
@@ -97,11 +100,16 @@ export default async function AdminLayout({
               : ctx.staff.roleName}
           </div>
           <div className="mt-2 flex items-center justify-between gap-2">
-            <form action={logout}>
-              <button className="text-zinc-400 underline hover:text-white">
-                Sign out
-              </button>
-            </form>
+            <div className="flex items-center gap-3">
+              <form action={logout}>
+                <button className="text-zinc-400 underline hover:text-white">
+                  Sign out
+                </button>
+              </form>
+              <Link href="/admin/my-security" className="text-zinc-400 underline hover:text-white">
+                Security
+              </Link>
+            </div>
             <ThemeSwitch />
           </div>
         </div>
@@ -110,6 +118,7 @@ export default async function AdminLayout({
         {children}
       </main>
       <Toaster />
+      <StepUpHost factor={factor} />
       <CommandPalette
         sections={sections}
         reports={reports}

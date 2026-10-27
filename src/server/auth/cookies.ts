@@ -7,3 +7,5 @@ export const TRUSTED_DEVICE_COOKIE = "rayz_trusted_device";
 export const DEVICE_REQUEST_COOKIE = "rayz_device_request";
 /** This browser is handed to a client for one ticket (checkout_handoffs): staff screens stay locked until a PIN takes it back. */
 export const HANDOFF_COOKIE = "rayz_handoff";
+/** A random id for this browser, so a sign-in on a new one emails the person (ST-C0c). Only its hash is stored. */
+export const BROWSER_ID_COOKIE = "rayz_browser";

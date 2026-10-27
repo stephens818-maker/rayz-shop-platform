@@ -494,6 +494,9 @@ export const staff = pgTable("staff", {
   totpLastStep: integer("totp_last_step"),
   totpFailures: smallint("totp_failures").notNull().default(0),
   totpLockedUntil: ts("totp_locked_until"),
+  /** Wrong passwords in a row (web and staff app); every 10 locks the account for longer (src/domain/staff-auth.ts). */
+  passwordFailures: smallint("password_failures").notNull().default(0),
+  passwordLockedUntil: ts("password_locked_until"),
   /** Invited by email and not signed up yet while there's no password. */
   invitedAt: ts("invited_at"),
   /** Removed from the brand portal: kept for history, never signs in again. */
@@ -1668,9 +1671,53 @@ export const staffAppTokens = pgTable(
     expiresAt: ts("expires_at").notNull(),
     revokedAt: ts("revoked_at"),
     replacedBy: uuid("replaced_by"),
+    /** On the session's first row: when they last proved it's them (sign-in or step-up), for reveal, export and refund. */
+    stepUpAt: ts("step_up_at"),
     createdAt: createdAt(),
   },
   (t) => [index("staff_app_tokens_session_idx").on(t.sessionId).where(sql`${t.revokedAt} is null`), index("staff_app_tokens_staff_live_idx").on(t.staffId).where(sql`${t.revokedAt} is null`)],
+);
+
+/**
+ * One web sign-in per browser (ST-C0c): the session cookie names its row, so each can be listed and
+ * signed out on its own. The browser is known by the hash of a long-lived random cookie, never the id.
+ */
+export const staffWebSessions = pgTable(
+  "staff_web_sessions",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    deviceHash: text("device_hash"),
+    /** The browser and system, from its user agent ("Chrome on Windows"). */
+    deviceLabel: text("device_label"),
+    ip: text("ip"),
+    lastSeenAt: ts("last_seen_at").notNull().defaultNow(),
+    expiresAt: ts("expires_at").notNull(),
+    revokedAt: ts("revoked_at"),
+    /** When they last proved it's them (sign-in or step-up), for reveal, export and refund. */
+    stepUpAt: ts("step_up_at"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("staff_web_sessions_staff_live_idx").on(t.staffId).where(sql`${t.revokedAt} is null`)],
+);
+
+/** Every browser and app install someone has signed in on, so a sign-in anywhere new emails them (ST-C0c). */
+export const staffKnownDevices = pgTable(
+  "staff_known_devices",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    via: text("via").$type<"web" | "app">().notNull(),
+    deviceHash: text("device_hash").notNull(),
+    deviceLabel: text("device_label"),
+    firstSeenAt: ts("first_seen_at").notNull().defaultNow(),
+    lastSeenAt: ts("last_seen_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("staff_known_devices_uq").on(t.staffId, t.deviceHash), check("staff_known_devices_via", sql`${t.via} in ('web', 'app')`)],
 );
 
 /** The staff app's phones, for booking pushes. Signing out of the app revokes its device. */
@@ -3435,8 +3482,29 @@ export const clockDevices = pgTable("clock_devices", {
   label: text("label").notNull(),
   tokenHash: text("token_hash").notNull().unique(),
   registeredBy: uuid("registered_by").references(() => staff.id),
+  /** Paired by a manager's QR code (ST-C0c): it runs the clock on its own token, no shop login. */
+  pairedAt: ts("paired_at"),
+  /** A paired app install's own id, hashed: the token works only from that install. */
+  installHash: text("install_hash"),
   lastSeenAt: ts("last_seen_at"),
   revokedAt: ts("revoked_at"),
+  createdAt: createdAt(),
+});
+
+/** A manager's one-time pairing code for a front-desk clock, shown as a QR code; good for 10 minutes. */
+export const clockPairings = pgTable("clock_pairings", {
+  id: id(),
+  shopId: uuid("shop_id")
+    .notNull()
+    .references(() => shops.id, { onDelete: "cascade" }),
+  label: text("label").notNull(),
+  codeHash: text("code_hash").notNull().unique(),
+  createdBy: uuid("created_by")
+    .notNull()
+    .references(() => staff.id),
+  expiresAt: ts("expires_at").notNull(),
+  usedAt: ts("used_at"),
+  deviceId: uuid("device_id").references(() => clockDevices.id),
   createdAt: createdAt(),
 });
 

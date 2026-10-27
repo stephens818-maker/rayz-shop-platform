@@ -4,12 +4,13 @@ import { and, eq, gt, isNull } from "drizzle-orm";
 import { db } from "@/db";
 import { staff, staffAppTokens, staffDevices } from "@/db/schema";
 import { BLOCK_MESSAGE } from "@/domain/network-access";
-import { twoFactorStep } from "@/domain/users";
+import { deviceLabel, idleTooLong } from "@/domain/staff-auth";
 import { clientIp } from "@/lib/client-ip";
 import { audit } from "@/server/audit";
 import { loadStaffAccess } from "@/server/auth/access";
 import { evaluateNetwork, recordBlocked } from "@/server/auth/network";
-import { StaffContext, staffContextOf, verifyPassword } from "@/server/auth/staff";
+import { checkPassword, noteSignInDevice, signInFactorFor } from "@/server/auth/sign-in-guard";
+import { StaffContext, staffContextOf } from "@/server/auth/staff";
 import { randomToken, sha256, signToken, verifyToken } from "@/server/auth/tokens";
 import { TwoFactorPrompt, finishTwoFactor, twoFactorPrompt } from "@/server/auth/two-factor";
 import { AppError } from "@/server/errors";
@@ -78,6 +79,8 @@ export type SignInVia = "password" | "code" | "invite";
 /** The first step was right (and the authenticator code, if they have one): held to the location sign-in rules, then a new session. */
 export async function admit(user: typeof staff.$inferSelect, where: Where, install: Install, twoStep: boolean, via: SignInVia = "password"): Promise<StaffTokens> {
   if (!user.active || user.removedAt || (user.kind !== "person" && via !== "password")) throw new AppError("unauthorized", "Email or password is incorrect");
+  // Whatever the way in, someone who needs two-step sign-in only gets tokens after their code (ST-C0c).
+  if (!twoStep && (await signInFactorFor(user))) throw new AppError("unauthorized", "Two-step sign-in is required. Sign in again.");
   const deviceName = cleanDevice(install.deviceName);
   const access = await loadStaffAccess(user.id);
   if (!access) throw new AppError("unauthorized", "Email or password is incorrect");
@@ -86,7 +89,9 @@ export async function admit(user: typeof staff.$inferSelect, where: Where, insta
     await recordBlocked({ staff: user, roleName: access.role.name, verdict, ip: where.ip, via: "sign_in", outcome: verdict.full ? "blocked" : "limited", userAgent: where.userAgent, path: "/api/staff/v1/auth/login" });
   }
   if (verdict.full) throw new AppError("forbidden", BLOCK_MESSAGE, { networkBlocked: true });
-  const tokens = await issue(user.id, { deviceName, deviceId: cleanDeviceId(install.deviceId) });
+  const deviceId = cleanDeviceId(install.deviceId);
+  const tokens = await issue(user.id, { deviceName, deviceId });
+  await noteSignInDevice(user, "app", { deviceKey: deviceId, label: deviceName ?? deviceLabel(where.userAgent), ip: where.ip });
   await db.update(staff).set({ lastSignInAt: new Date() }).where(eq(staff.id, user.id));
   await audit(
     { staffId: user.id, label: `${access.role.name}:${user.displayLabel}` },
@@ -101,12 +106,8 @@ export async function admit(user: typeof staff.$inferSelect, where: Where, insta
 
 /** Step one: email and password. Someone with two-step sign-in gets a ticket for their code (or for setting it up). */
 export async function staffPasswordLogin(input: { email: string; password: string } & Install, where: Where): Promise<StaffLoginResult> {
-  const email = input.email.trim().toLowerCase();
-  await rateLimit("staff_app_login_ip", where.ip, 30, LOGIN_WINDOW_MS, "Too many sign-in attempts. Try again in 15 minutes.");
-  await rateLimit("staff_app_login_email", email || null, 10, LOGIN_WINDOW_MS, "Too many sign-in attempts. Try again in 15 minutes.");
-  const user = await verifyPassword(email, input.password);
-  if (!user) throw new AppError("unauthorized", "Email or password is incorrect");
-  const step = twoFactorStep(user);
+  const user = await checkPassword(input.email, input.password, { ip: where.ip, via: "app" });
+  const step = await signInFactorFor(user);
   if (step) return { twoFactor: await twoFactorPrompt(user, step) };
   return { tokens: await admit(user, where, input, false) };
 }
@@ -148,7 +149,7 @@ export async function refreshStaffTokens(refreshToken: string, deviceId?: string
     if (row.replacedBy) await endAllStaffAppSessions(row.staffId);
     throw new AppError("unauthorized", "Refresh token was already used; please sign in again");
   }
-  if (row.expiresAt < new Date()) throw new AppError("unauthorized", "Session expired; please sign in again");
+  if (row.expiresAt < new Date() || idleTooLong(row.lastUsedAt, new Date())) throw new AppError("unauthorized", "Session expired; please sign in again");
   const person = await db.query.staff.findFirst({ where: eq(staff.id, row.staffId), columns: { active: true, removedAt: true, sessionsValidAfter: true } });
   const started = await db.query.staffAppTokens.findFirst({ where: eq(staffAppTokens.id, row.sessionId), columns: { createdAt: true } });
   const since = (started ?? row).createdAt;
@@ -203,5 +204,5 @@ export async function requireStaffApp(req: Request): Promise<StaffContext & { se
   if (!s) throw new AppError("unauthorized", "Sign in required (Authorization: Bearer <accessToken> from /api/staff/v1/auth/login)");
   const ctx = await staffContextOf(s.staffId, s.iat, { ip: clientIp(req.headers), deviceShopIds: [], shopPref: req.headers.get("x-shop-id")?.trim() || null });
   if (!ctx) throw new AppError("unauthorized", "Please sign in again");
-  return { ...ctx, sessionId: s.sessionId };
+  return { ...ctx, sessionId: s.sessionId, session: { kind: "app", id: s.sessionId } };
 }

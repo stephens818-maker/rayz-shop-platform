@@ -73,6 +73,8 @@ export type NotificationKind =
   | "staff_invite"
   /** The staff app's sign-in link, by text or email; the outbox keeps it without the link. */
   | "staff_app_invite"
+  /** A staff sign-in on a browser or phone they hadn't used before, to them. */
+  | "new_sign_in"
   /** A staff milestone, to the brand and the person's managers. */
   | "milestone";
 

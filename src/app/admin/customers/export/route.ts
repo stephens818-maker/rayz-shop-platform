@@ -4,6 +4,7 @@ import { customers, shops, staff } from "@/db/schema";
 import { compactSegment } from "@/domain/client-filters";
 import { BUILTIN_FIELDS, customFieldKey } from "@/domain/client-privacy";
 import { audit } from "@/server/audit";
+import { isSteppedUp, stepUpRedirect } from "@/server/auth/sessions";
 import { routeStaff } from "@/server/auth/staff";
 import { clientListDenied, clientPolicy, recordClientAccess } from "@/server/client-privacy";
 import { clientListQuery } from "@/server/client-list";
@@ -21,6 +22,7 @@ import { VISIT_STATUS_LABEL } from "@/domain/visit-cadence";
 export async function GET(req: Request) {
   const ctx = await routeStaff("clients.export");
   if (ctx instanceof Response) return ctx;
+  if (!(await isSteppedUp(ctx))) return stepUpRedirect(req, "export");
   const refused = clientListDenied(ctx);
   if (refused) return new Response(refused, { status: 403 });
   const policy = await clientPolicy(ctx);

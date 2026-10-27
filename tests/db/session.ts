@@ -3,7 +3,7 @@
  * staff member. Test files mock next/headers with `headersMock` and sign in with `signInAs`.
  * `jar.ip` is the address the hosting proxy reports, as on a deployment with one trusted proxy.
  */
-export const jar: { token?: string; shop?: string; device?: string; ip?: string; trusted?: string; deviceRequest?: string; userAgent?: string; handoff?: string } = {};
+export const jar: { token?: string; shop?: string; device?: string; ip?: string; trusted?: string; deviceRequest?: string; userAgent?: string; handoff?: string; browser?: string; sid?: string } = {};
 
 process.env.TRUSTED_PROXY_HOPS ??= "1";
 
@@ -14,6 +14,7 @@ const COOKIES = {
   rayz_trusted_device: "trusted",
   rayz_device_request: "deviceRequest",
   rayz_handoff: "handoff",
+  rayz_browser: "browser",
 } as const;
 
 export const headersMock = {
@@ -36,10 +37,21 @@ export const headersMock = {
   headers: async () => new Headers({ ...(jar.ip ? { "x-forwarded-for": jar.ip } : {}), ...(jar.userAgent ? { "user-agent": jar.userAgent } : {}) }),
 };
 
+/** Signs in as they would on the web: a session row (stepped up just now) and its cookie. */
 export async function signInAs(staffId: string | null, shop?: string) {
   const { signToken } = await import("@/server/auth/tokens");
-  jar.token = staffId ? await signToken({ sub: staffId }, "staff_session", 600) : undefined;
+  const { openWebSession } = await import("@/server/auth/sessions");
+  jar.sid = staffId ? await openWebSession(staffId, { ip: jar.ip ?? null, userAgent: jar.userAgent ?? null, deviceKey: jar.browser ?? null }) : undefined;
+  jar.token = staffId ? await signToken({ sub: staffId, sid: jar.sid }, "staff_session", 600) : undefined;
   jar.shop = shop;
+}
+
+/** Moves this session's last sign-in or step-up back, so reveal, export and refund ask again. */
+export async function staleStepUp(minutes = 16) {
+  const { db } = await import("@/db");
+  const { staffWebSessions } = await import("@/db/schema");
+  const { eq } = await import("drizzle-orm");
+  if (jar.sid) await db.update(staffWebSessions).set({ stepUpAt: new Date(Date.now() - minutes * 60_000) }).where(eq(staffWebSessions.id, jar.sid));
 }
 
 /** Where a Next redirect() was going, or null if this wasn't one. */

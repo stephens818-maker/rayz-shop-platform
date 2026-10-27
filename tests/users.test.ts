@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Grantor, effectiveAccess, templateFor } from "@/domain/permissions";
-import { AccountTarget, accountChangeDenied, accountStatus, passwordProblem, twoFactorStep } from "@/domain/users";
+import { AccountTarget, accountChangeDenied, accountStatus, passwordProblem } from "@/domain/users";
 import { open, seal } from "@/lib/secret-box";
 import { base32Decode, base32Encode, hotp, newTotpSecret, otpauthUri, totpCode, verifyTotp } from "@/lib/totp";
 
@@ -72,12 +72,6 @@ describe("account status and sign-in steps", () => {
     expect(accountStatus({ active: true, hasPassword: true, invitedAt: at, removedAt: null })).toBe("active");
     expect(accountStatus({ active: false, hasPassword: true, invitedAt: null, removedAt: null })).toBe("deactivated");
     expect(accountStatus({ active: false, hasPassword: false, invitedAt: at, removedAt: at })).toBe("removed");
-  });
-
-  it("a code once set up; setting one up first when it's required", () => {
-    expect(twoFactorStep({ twoFactorRequired: false, totpEnabledAt: null })).toBeNull();
-    expect(twoFactorStep({ twoFactorRequired: true, totpEnabledAt: null })).toBe("enroll");
-    expect(twoFactorStep({ twoFactorRequired: false, totpEnabledAt: new Date() })).toBe("code");
   });
 
   it("passwords are long enough and not the email", () => {

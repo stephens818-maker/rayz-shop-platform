@@ -6,8 +6,9 @@ import { z } from "zod";
 import QRCode from "qrcode";
 import { clientIp } from "@/lib/client-ip";
 import { safe } from "@/server/action";
-import { authorize, can } from "@/server/auth/staff";
+import { authorize, can, getStaffContext } from "@/server/auth/staff";
 import { clockProofUrl, clockQrCode } from "@/server/clock-codes";
+import { pairedDevice, startPairing } from "@/server/clock-pairing";
 import { type Actor } from "@/server/audit";
 import { forbidden } from "@/server/errors";
 import { type Welcome, clockInWelcome } from "@/server/milestones/day";
@@ -18,6 +19,7 @@ import {
   clearPin,
   clockState,
   deviceFromToken,
+  onShopTeam,
   punch,
   registerDevice,
   revokeDevice,
@@ -129,14 +131,18 @@ export async function punchAction(
   });
 }
 
+/** The front-desk clock this browser is: a paired one on its own, or a registered one under a signed-in login with the clock permission. */
 async function kioskDevice() {
+  const paired = await pairedDevice((await cookies()).get(DEVICE_COOKIE)?.value, null);
+  if (paired) return { device: paired, by: `kiosk:${paired.label}` };
+  if (!(await getStaffContext())) throw forbidden("This device isn't a front-desk clock. Ask a manager to pair it.");
   const ctx = await authorize("timeclock.kiosk");
   const device = await thisDevice();
   if (!device || !ctx.shopIds.includes(device.shopId))
     throw forbidden(
       "This browser isn't registered as one of your shops' time clock devices.",
     );
-  return { ctx, device };
+  return { device, by: `kiosk:${device.label} (${ctx.staff.displayLabel})` };
 }
 
 /** P1: the QR code the front-desk clock shows, for phones to scan. It changes every 30 seconds. */
@@ -155,10 +161,11 @@ export async function kioskStatusAction(input: {
   pin: string;
 }) {
   return safe(async () => {
-    await kioskDevice();
+    const { device } = await kioskDevice();
     const v = z
       .object({ staffId: z.uuid(), pin: z.string().max(12) })
       .parse(input);
+    await onShopTeam(device.shopId, v.staffId);
     await checkPin(v.staffId, v.pin);
     const s = await clockState(v.staffId);
     return {
@@ -181,7 +188,7 @@ export async function kioskPunchAction(
   } & BreakPlanInput,
 ) {
   return safe<PunchReply>(async () => {
-    const { ctx, device } = await kioskDevice();
+    const { device, by } = await kioskDevice();
     const v = z
       .object({
         staffId: z.uuid(),
@@ -192,11 +199,9 @@ export async function kioskPunchAction(
         ...BreakPlan,
       })
       .parse(input);
+    await onShopTeam(device.shopId, v.staffId);
     await checkPin(v.staffId, v.pin);
-    const actor = {
-      staffId: v.staffId,
-      label: `kiosk:${device.label} (${ctx.staff.displayLabel})`,
-    };
+    const actor = { staffId: v.staffId, label: by };
     const r = await punch({
       staffId: v.staffId,
       shopId: device.shopId,
@@ -271,6 +276,15 @@ export async function registerDeviceAction(input: {
     refresh();
     revalidatePath("/admin/time-clock");
     return d.id;
+  });
+}
+
+/** A one-time code (and its QR code) that pairs a tablet as this shop's front-desk clock, with no shop login on it. */
+export async function startPairingAction(input: { shopId: string; label: string }) {
+  return safe(async () => {
+    const ctx = await authorize("settings.shop");
+    const v = z.object({ shopId: z.uuid(), label: z.string().max(60) }).parse(input);
+    return startPairing({ actor: ctx.actor, shopIds: ctx.shopIds }, v.shopId, v.label);
   });
 }
 

@@ -1,6 +1,5 @@
 import "server-only";
-import bcrypt from "bcryptjs";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
@@ -21,10 +20,10 @@ import { HANDOFF_COOKIE, SESSION_COOKIE, SHOP_COOKIE, TRUSTED_DEVICE_COOKIE } fr
 import { lockedHandoff } from "./handoff-lock";
 import { approvedShopIds, devicesFromCookie, evaluateNetwork } from "./network";
 import type { Caller } from "./policy";
+import { SessionRef, WEB_SESSION_TTL_SECONDS, endWebSession, liveWebSession, openWebSession } from "./sessions";
 import { signToken, verifyToken } from "./tokens";
 
 export { SESSION_COOKIE, SHOP_COOKIE };
-const SESSION_TTL = 60 * 60 * 12;
 
 export interface StaffContext {
   staff: { id: string; firstName: string; displayLabel: string; roleId: string; roleKey: string | null; roleName: string; kind: "person" | "shop" };
@@ -49,28 +48,30 @@ export interface StaffContext {
   isOwner: boolean;
   permissions: ReadonlySet<Permission>;
   maxDiscountPct: number;
+  /** The sign-in this request belongs to: a web session (one per browser) or a staff app session. */
+  session?: SessionRef | null;
 }
 
-export async function verifyPassword(email: string, password: string) {
-  const row = await db.query.staff.findFirst({ where: and(eq(staff.email, email.trim().toLowerCase()), eq(staff.active, true), isNull(staff.removedAt)) });
-  if (!row?.passwordHash) return null;
-  return (await bcrypt.compare(password, row.passwordHash)) ? row : null;
-}
-
-export async function startSession(staffId: string) {
-  const token = await signToken({ sub: staffId }, "staff_session", SESSION_TTL);
+/** A web session for this browser: its own row (listed and signed out on its own), named by the cookie. */
+export async function startSession(staffId: string, o: { ip: string | null; userAgent: string | null; browserId: string | null }) {
+  const sid = await openWebSession(staffId, { ip: o.ip, userAgent: o.userAgent, deviceKey: o.browserId });
+  const token = await signToken({ sub: staffId, sid }, "staff_session", WEB_SESSION_TTL_SECONDS);
   const jar = await cookies();
   jar.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: SESSION_TTL,
+    maxAge: WEB_SESSION_TTL_SECONDS,
   });
+  return sid;
 }
 
 export async function endSession() {
   const jar = await cookies();
+  const token = jar.get(SESSION_COOKIE)?.value;
+  const p = token ? await verifyToken<{ sub: string; sid?: string }>(token, "staff_session") : null;
+  if (p?.sid) await endWebSession(p.sub, p.sid);
   jar.delete(SESSION_COOKIE);
   jar.delete(SHOP_COOKIE);
 }
@@ -86,10 +87,12 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
   if (!token) return null;
   // A device handed to a client has no staff session until a PIN takes it back, whatever the middleware let through.
   if (await lockedHandoff(jar.get(HANDOFF_COOKIE)?.value)) return null;
-  const payload = await verifyToken<{ sub: string; iat?: number }>(token, "staff_session");
-  if (!payload) return null;
+  const payload = await verifyToken<{ sub: string; sid?: string; iat?: number }>(token, "staff_session");
+  // Every web sign-in has its session row; one that was signed out, or a cookie from before them, is no session.
+  if (!payload?.sid || !(await liveWebSession(payload.sid, payload.sub))) return null;
   const device = await devicesFromCookie(jar.get(TRUSTED_DEVICE_COOKIE)?.value);
-  return staffContextOf(payload.sub, payload.iat, { ip: clientIp(await headers()), deviceShopIds: approvedShopIds(device), shopPref: jar.get(SHOP_COOKIE)?.value ?? null });
+  const ctx = await staffContextOf(payload.sub, payload.iat, { ip: clientIp(await headers()), deviceShopIds: approvedShopIds(device), shopPref: jar.get(SHOP_COOKIE)?.value ?? null });
+  return ctx && { ...ctx, session: { kind: "web", id: payload.sid } };
 });
 
 /**

@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { staff, staffShops } from "@/db/schema";
 import { Empty, Notice, PageHeader } from "@/components/ui";
 import { can, guardPage, openShops } from "@/server/auth/staff";
 import { breakReasons } from "@/server/block-reasons";
+import { pairedDevice } from "@/server/clock-pairing";
 import { DEVICE_COOKIE, deviceFromToken, shopClocks } from "@/server/time-clock";
 import { ClockQr, Kiosk, RegisterDevice } from "../clock";
 
@@ -14,6 +16,7 @@ export const metadata: Metadata = { title: "Front-desk clock" };
 export default async function KioskPage() {
   const ctx = await guardPage("/admin/clock/kiosk");
   const device = await deviceFromToken((await cookies()).get(DEVICE_COOKIE)?.value);
+  if (device && (await pairedDevice((await cookies()).get(DEVICE_COOKIE)?.value, null))) redirect("/clock");
   const register = can(ctx, "settings.shop") ? openShops(ctx).map((s) => ({ id: s.id, name: s.name })) : [];
   if (!device || !ctx.shopIds.includes(device.shopId)) {
     return (

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { body, json, options, query, route } from "@/server/api";
 import { addDays, todayLocal } from "@/lib/time";
 import { assertShopAccess, can, canAny } from "@/server/auth/staff";
+import { stepUp } from "@/server/auth/sign-in-guard";
 import { AppError } from "@/server/errors";
 import { answerPayoutCutover, myPayoutCutover } from "@/server/payout-cutover";
 import { loadNotificationPrefs, saveNotificationPrefs } from "@/server/staff-settings";
@@ -13,7 +14,7 @@ import { assertStripePayouts } from "@/server/tips/payout-model";
 import { refreshStaffTokens, requestWhere, staffCodeLogin, staffLogout, staffPasswordLogin } from "./auth";
 import { block, book, move, myCalendar, openings, runningLate, seesEveryColumn, setStatus, unblock } from "./calendar";
 import { clientCard, contactForApp, findClientsFor, revealForApp } from "./clients";
-import { appPunch, clockOverview, kioskHome, kioskPunch, kioskQr, kioskQueueView, kioskStatus, kioskTeam, registerKiosk, setMyPin } from "./clock";
+import { KioskCaller, appPunch, clockOverview, kioskHome, kioskPunch, kioskQr, kioskQueueView, kioskStatus, kioskTeam, pairKiosk, pairedKiosk, registerKiosk, setMyPin, signedInKiosk } from "./clock";
 import { assertClockOn, staffAppConfig, staffSwitches } from "./config";
 import { listStaffDevices, registerStaffDevice, revokeStaffDevice, updateStaffDevice } from "./devices";
 import {
@@ -32,7 +33,7 @@ import {
   terminalConnectionToken,
   withdrawTimeOff,
 } from "./front";
-import { StaffAppContext, shopOf, signInRoute, staffRoute } from "./http";
+import { StaffAppContext, guardedStaff, shopOf, signInRoute, staffRoute } from "./http";
 import { accountSession, bankingView, dashboardLink, earningsRange, myEarnings, myExternalAccounts, myPayouts, myTipsView, onboardingLink, setMyPayoutMethod } from "./money";
 import { myPeriodEarnings, myYearToDate, payoutSetup } from "./pay";
 import { markPopupsSeen, popupsFor } from "./popups";
@@ -171,6 +172,12 @@ export const deleteSession = staffRoute<{ id: string }>({ perms: null }, async (
 
 /** POST /me/sessions/sign-out-others */
 export const postSignOutOthers = staffRoute({ perms: null }, async (_req, ctx) => json({ ended: await endMyOtherSessions(ctx.staff.id, ctx.sessionId) }));
+
+/** POST /me/step-up: confirm it's them (password, or their authenticator code) before reveal; good for 15 minutes on this session. */
+export const postStepUp = staffRoute({ perms: null }, async (req, ctx) => {
+  const v = await body(req, S.StepUpBody);
+  return json(await stepUp(ctx, v));
+});
 
 /** GET /me/calendar?date=&shopId=&all= */
 export const getCalendar = staffRoute({ perms: null }, async (req, ctx) => {
@@ -409,29 +416,43 @@ export const postKioskRegister = staffRoute({ perms: "settings.shop", message: "
   return json(await registerKiosk(ctx, v.shopId, v.label), 201);
 });
 
+/** POST /clock/kiosk/pair: a manager's pairing code makes this install a front-desk clock, with no staff sign-in. */
+export const postKioskPair = signInRoute(async (req) => {
+  const v = await body(req, S.KioskPairBody);
+  return json(await pairKiosk(req, v), 201);
+});
+
+/** A front-desk clock call: a paired install on its own, else a signed-in login with the clock permission on a registered device. */
+const kioskRoute = (fn: (req: Request, k: KioskCaller) => Promise<Response>) =>
+  signInRoute(async (req) => {
+    const paired = await pairedKiosk(req);
+    if (paired) return fn(req, paired);
+    return fn(req, await signedInKiosk(await guardedStaff(req, KIOSK), req));
+  });
+
 /** GET /clock/kiosk/team */
-export const getKioskTeam = staffRoute(KIOSK, async (req, ctx) => json(await kioskTeam(ctx, req)));
+export const getKioskTeam = kioskRoute(async (_req, k) => json(await kioskTeam(k)));
 
 /** GET /clock/kiosk/qr */
-export const getKioskQr = staffRoute(KIOSK, async (req, ctx) => json(await kioskQr(ctx, req)));
+export const getKioskQr = kioskRoute(async (_req, k) => json(await kioskQr(k)));
 
 /** POST /clock/kiosk/status */
-export const postKioskStatus = staffRoute(KIOSK, async (req, ctx) => {
+export const postKioskStatus = kioskRoute(async (req, k) => {
   const v = await body(req, S.KioskStatusBody);
-  return json(await kioskStatus(ctx, req, v));
+  return json(await kioskStatus(k, v));
 });
 
 /** POST /clock/kiosk/punch */
-export const postKioskPunch = staffRoute(KIOSK, async (req, ctx) => {
+export const postKioskPunch = kioskRoute(async (req, k) => {
   const v = await body(req, S.KioskPunchBody);
-  return json(await kioskPunch(ctx, req, v));
+  return json(await kioskPunch(k, req, v));
 });
 
 /** GET /clock/kiosk: the front-desk screen in one call (QR, team, walk-in queue). */
-export const getKioskHome = staffRoute(KIOSK, async (req, ctx) => json(await kioskHome(ctx, req)));
+export const getKioskHome = kioskRoute(async (_req, k) => json(await kioskHome(k)));
 
 /** GET /clock/kiosk/queue */
-export const getKioskQueue = staffRoute(KIOSK, async (req, ctx) => json(await kioskQueueView(ctx, req)));
+export const getKioskQueue = kioskRoute(async (_req, k) => json(await kioskQueueView(k)));
 
 // ───────────────────────────── Tips, earnings, payouts and banking ─────────────────────────────
 

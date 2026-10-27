@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { refunds, sales } from "@/db/schema";
 import { safe } from "@/server/action";
+import { assertSteppedUp } from "@/server/auth/sessions";
 import { canAny, requireStaff } from "@/server/auth/staff";
 import { assignRefundLines, refundSale, voidSale } from "@/server/checkout";
 import { forbidden, notFound } from "@/server/errors";
@@ -62,7 +63,9 @@ export async function refundAction(
   approval?: Approval | null,
 ) {
   return safe(async () => {
-    const { actor, limitCents } = await guard(input.saleId, "sales.refund", approval);
+    const { ctx, actor, limitCents } = await guard(input.saleId, "sales.refund", approval);
+    // A manager's PIN typed for this refund is its own fresh check; without one, the person refunding confirms it's them.
+    if (!actor.approvedBy) await assertSteppedUp(ctx, "refund");
     const r = await refundSale({ ...input, actor, maxCents: limitCents });
     revalidatePath(`/admin/sales/${input.saleId}`);
     return { refundedCents: r.refundedCents, giftCardsVoided: r.giftCardsVoided };

@@ -8,7 +8,7 @@ import { formatDateTime } from "@/lib/time";
 import { can, guardPage, openShops } from "@/server/auth/staff";
 import { loadSettings } from "@/server/payroll/run";
 import { listDevices, loadClockRules, shopClocks } from "@/server/time-clock";
-import { RevokeDevice, RulesForm, ShopClockForm } from "./client";
+import { PairDevice, RevokeDevice, RulesForm, ShopClockForm } from "./client";
 
 export const metadata: Metadata = { title: "Time clock setup" };
 
@@ -58,20 +58,16 @@ export default async function TimeClockSetupPage() {
         <Card>
           <CardHeader
             title="Front-desk clock devices"
-            subtitle="A registered device can run the front-desk clock and counts as the shop's device for phone punches."
-            action={
-              <Link href="/admin/clock/kiosk" className="text-sm underline">
-                Register this device
-              </Link>
-            }
+            subtitle="Pair the shop's tablet with a one-time QR code: it runs the front-desk clock on its own, each person with their own PIN, and no shop login is signed in on it. A paired device counts as the shop's device for phone punches."
           />
+          <PairDevice shops={openShops(ctx).map((s) => ({ id: s.id, name: s.name }))} />
           {devices.length ? (
             <Table>
               <thead>
                 <tr>
                   <Th>Device</Th>
                   <Th>Shop</Th>
-                  <Th>Registered</Th>
+                  <Th>Added</Th>
                   <Th>Last used</Th>
                   <Th />
                 </tr>
@@ -81,7 +77,10 @@ export default async function TimeClockSetupPage() {
                   <tr key={d.id}>
                     <Td>{d.label}</Td>
                     <Td>{d.shop}</Td>
-                    <Td>{formatDateTime(d.createdAt)}</Td>
+                    <Td>
+                      {formatDateTime(d.createdAt)}
+                      {!d.pairedAt && <span className="ml-1 text-xs text-amber-700">(needs a shop login; pair it again)</span>}
+                    </Td>
                     <Td>{d.lastSeenAt ? formatDateTime(d.lastSeenAt) : "Never"}</Td>
                     <Td>
                       <RevokeDevice id={d.id} />
@@ -92,7 +91,7 @@ export default async function TimeClockSetupPage() {
             </Table>
           ) : (
             <div className="p-4">
-              <Empty title="No devices registered yet">Open the front-desk clock on the shop&apos;s tablet or computer and register it there.</Empty>
+              <Empty title="No front-desk clocks yet">Pair the shop&apos;s tablet above.</Empty>
             </div>
           )}
         </Card>

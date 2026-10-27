@@ -2,6 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { customers, marketingCampaigns, marketingSends, shops } from "@/db/schema";
 import { audit } from "@/server/audit";
+import { isSteppedUp, stepUpRedirect } from "@/server/auth/sessions";
 import { routeStaff } from "@/server/auth/staff";
 import { clientListDenied, clientPolicy, recordClientAccess } from "@/server/client-privacy";
 import { guardian, householdContact } from "@/server/household-contact";
@@ -19,6 +20,7 @@ const MAX_ROWS = 50_000;
 export async function GET(req: Request) {
   const ctx = await routeStaff("campaign_center.export");
   if (ctx instanceof Response) return ctx;
+  if (!(await isSteppedUp(ctx))) return stepUpRedirect(req, "export");
   const refused = clientListDenied(ctx);
   if (refused) return new Response(refused, { status: 403 });
   const campaignId = new URL(req.url).searchParams.get("campaign");

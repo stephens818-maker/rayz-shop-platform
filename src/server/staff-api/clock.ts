@@ -9,9 +9,10 @@ import { workShopIds } from "@/server/auth/access";
 import { assertShopAccess, can, openShops } from "@/server/auth/staff";
 import { breakReasons } from "@/server/block-reasons";
 import { clockProofUrl, clockQrCode } from "@/server/clock-codes";
-import { forbidden, notFound } from "@/server/errors";
+import { forbidden } from "@/server/errors";
 import { clockInWelcome } from "@/server/milestones/day";
-import { PunchResult, checkPin, clockState, deviceFromToken, punch, registerDevice, setPin, shopClocks } from "@/server/time-clock";
+import { redeemPairing, pairedDevice } from "@/server/clock-pairing";
+import { PunchResult, checkPin, clockState, deviceFromToken, onShopTeam, punch, registerDevice, setPin, shopClocks } from "@/server/time-clock";
 import { declarationRules, declareAtClockOut } from "@/server/tips/declarations";
 import { kioskQueue } from "./front";
 import type { StaffAppContext } from "./http";
@@ -126,24 +127,44 @@ export async function registerKiosk(ctx: StaffAppContext, shopId: string, label:
   return registerDevice(shopId, label, ctx.actor);
 }
 
+/**
+ * POST /clock/kiosk/pair, with no staff sign-in: a manager's pairing code makes this install a
+ * front-desk clock. The token works only with this install's id (X-Device-Id on each kiosk call).
+ */
+export async function pairKiosk(req: Request, v: { code: string; deviceId: string }) {
+  const r = await redeemPairing({ code: v.code, installId: v.deviceId, ip: clientIp(req.headers) });
+  return { token: r.token, device: r.device };
+}
+
+/** Who is running the front-desk clock: the paired device on its own, or a signed-in login with the clock permission on a registered one. */
+export interface KioskCaller {
+  device: { id: string; shopId: string; label: string; shop: string };
+  by: string;
+  queue: boolean;
+}
+
+/** A paired install's X-Clock-Device and X-Device-Id: the clock runs with no staff token. */
+export async function pairedKiosk(req: Request): Promise<KioskCaller | null> {
+  const device = await pairedDevice(deviceToken(req), req.headers.get("x-device-id"));
+  return device && { device, by: `kiosk:${device.label} (staff app)`, queue: true };
+}
+
 /** The registered front-desk clock this request comes from, at one of the signed-in login's shops. */
-async function kiosk(ctx: StaffAppContext, req: Request) {
+export async function signedInKiosk(ctx: StaffAppContext, req: Request): Promise<KioskCaller> {
   const device = await deviceFromToken(deviceToken(req));
   if (!device || !ctx.shopIds.includes(device.shopId)) throw forbidden("This device isn't registered as one of your shops' time clocks.");
   assertShopAccess(ctx, device.shopId);
-  return device;
+  return { device, by: `kiosk:${device.label} (${ctx.staff.displayLabel}, staff app)`, queue: can(ctx, "walkins.manage") || ctx.staff.kind === "shop" };
 }
 
 /** The QR code the front-desk clock shows for phones to scan: the link to draw, good for about a minute. */
-export async function kioskQr(ctx: StaffAppContext, req: Request) {
-  const device = await kiosk(ctx, req);
+export async function kioskQr({ device }: KioskCaller) {
   const { code, expiresAt } = clockQrCode(device.shopId);
   return { shopId: device.shopId, url: clockProofUrl(device.shopId, { qr: code }), expiresAt: expiresAt.toISOString() };
 }
 
 /** Who can punch on this clock: the shop's active team, by the name they go by. */
-export async function kioskTeam(ctx: StaffAppContext, req: Request) {
-  const device = await kiosk(ctx, req);
+export async function kioskTeam({ device }: KioskCaller) {
   const team = await db
     .select({ id: staff.id, name: staff.displayLabel })
     .from(staffShops)
@@ -153,30 +174,18 @@ export async function kioskTeam(ctx: StaffAppContext, req: Request) {
   return { shopId: device.shopId, shop: device.shop, device: device.label, team };
 }
 
-/** Only the shop's own team punches on its clock; anyone else is not found, so ids can't be probed. */
-async function onTeam(shopId: string, staffId: string) {
-  const [r] = await db
-    .select({ id: staff.id })
-    .from(staffShops)
-    .innerJoin(staff, eq(staff.id, staffShops.staffId))
-    .where(and(eq(staffShops.shopId, shopId), eq(staffShops.staffId, staffId), eq(staff.active, true), eq(staff.kind, "person")))
-    .limit(1);
-  if (!r) throw notFound("Team member");
-}
-
 /** Their PIN, then what they can punch next. Five wrong PINs lock theirs for five minutes. */
-export async function kioskStatus(ctx: StaffAppContext, req: Request, v: { staffId: string; pin: string }) {
-  const device = await kiosk(ctx, req);
-  await onTeam(device.shopId, v.staffId);
+export async function kioskStatus({ device }: KioskCaller, v: { staffId: string; pin: string }) {
+  await onShopTeam(device.shopId, v.staffId);
   await checkPin(v.staffId, v.pin);
   return stateView(await clockState(v.staffId));
 }
 
-export async function kioskPunch(ctx: StaffAppContext, req: Request, v: { staffId: string; pin: string; type: PunchType; photo?: string | null; confirmTimeOff?: boolean; breakReasonId?: string | null; plannedMin?: number | null }) {
-  const device = await kiosk(ctx, req);
-  await onTeam(device.shopId, v.staffId);
+export async function kioskPunch(k: KioskCaller, req: Request, v: { staffId: string; pin: string; type: PunchType; photo?: string | null; confirmTimeOff?: boolean; breakReasonId?: string | null; plannedMin?: number | null }) {
+  const { device } = k;
+  await onShopTeam(device.shopId, v.staffId);
   await checkPin(v.staffId, v.pin);
-  const actor = { staffId: v.staffId, label: `kiosk:${device.label} (${ctx.staff.displayLabel}, staff app)` };
+  const actor = { staffId: v.staffId, label: k.by };
   const r = await punch({
     staffId: v.staffId,
     shopId: device.shopId,
@@ -194,17 +203,13 @@ export async function kioskPunch(ctx: StaffAppContext, req: Request, v: { staffI
 }
 
 /** The walk-in queue on the front-desk device: first names and waits only. */
-export async function kioskQueueView(ctx: StaffAppContext, req: Request) {
-  const device = await kiosk(ctx, req);
-  if (!showsQueue(ctx)) throw forbidden("The walk-in queue needs a shop login or walk-in management");
-  return kioskQueue(device.shopId);
+export async function kioskQueueView(k: KioskCaller) {
+  if (!k.queue) throw forbidden("The walk-in queue needs a shop login or walk-in management");
+  return kioskQueue(k.device.shopId);
 }
 
-const showsQueue = (ctx: StaffAppContext) => can(ctx, "walkins.manage") || ctx.staff.kind === "shop";
-
 /** Everything the front-desk screen draws in one call: the rotating QR, the PIN pad's team and the walk-in queue. */
-export async function kioskHome(ctx: StaffAppContext, req: Request) {
-  const device = await kiosk(ctx, req);
-  const [qr, team, queue] = await Promise.all([kioskQr(ctx, req), kioskTeam(ctx, req), showsQueue(ctx) ? kioskQueue(device.shopId) : null]);
-  return { shopId: device.shopId, shop: device.shop, device: device.label, qr: { url: qr.url, expiresAt: qr.expiresAt }, team: team.team, queue };
+export async function kioskHome(k: KioskCaller) {
+  const [qr, team, queue] = await Promise.all([kioskQr(k), kioskTeam(k), k.queue ? kioskQueue(k.device.shopId) : null]);
+  return { shopId: k.device.shopId, shop: k.device.shop, device: k.device.label, qr: { url: qr.url, expiresAt: qr.expiresAt }, team: team.team, queue };
 }

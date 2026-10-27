@@ -81,6 +81,14 @@ export const BreakEndBody = z.object({ shopId: z.uuid().optional(), proof: Proof
 export const PinBody = z.object({ pin: z.string().max(12).describe("4 to 6 digits, not one digit repeated or a run like 1234") });
 
 export const KioskRegisterBody = z.object({ shopId: z.uuid(), label: z.string().max(60).describe("e.g. Front desk iPad") });
+export const StepUpBody = z.object({
+  password: z.string().max(200).optional().describe("Their password, when they have no authenticator set up"),
+  code: z.string().max(12).optional().describe("The 6-digit code from their authenticator app, once set up"),
+});
+export const KioskPairBody = z.object({
+  code: z.string().max(20).describe("The pairing code from the manager's QR code (its `code` query value), e.g. K7QD-M3XP"),
+  deviceId: z.string().min(8).max(128).describe("This install's own random id; send it as X-Device-Id on every kiosk call"),
+});
 export const KioskStatusBody = z.object({ staffId: z.uuid(), pin: z.string().max(12) });
 export const KioskPunchBody = KioskStatusBody.extend({
   type: z.enum(["in", "out", "break_start", "break_end"]),

@@ -41,12 +41,17 @@ export function assertShopHeader(req: Request, ctx: StaffAppContext) {
 export function staffRoute<P = Record<string, string>>(guard: Guard, fn: (req: Request, ctx: StaffAppContext, params: P) => Promise<Response>) {
   return route<P>(async (req, params) => {
     assertSupportedStaffClient(req);
-    const ctx = await requireStaffApp(req);
-    assertShopHeader(req, ctx);
-    authorizeContext(ctx, guard.perms ?? [], guard.message);
-    if (guard.person && ctx.staff.kind !== "person") throw new AppError("forbidden", "A shop login can't do that. Sign in to the app as yourself.");
-    return fn(req, ctx, params);
+    return fn(req, await guardedStaff(req, guard), params);
   });
+}
+
+/** The Bearer token's staff member, held to the guard and X-Shop-Id. */
+export async function guardedStaff(req: Request, guard: Guard): Promise<StaffAppContext> {
+  const ctx = await requireStaffApp(req);
+  assertShopHeader(req, ctx);
+  authorizeContext(ctx, guard.perms ?? [], guard.message);
+  if (guard.person && ctx.staff.kind !== "person") throw new AppError("forbidden", "A shop login can't do that. Sign in to the app as yourself.");
+  return ctx;
 }
 
 /** A sign-in route (no token yet): only the version gate. GET /config and the spec use plain route(). */

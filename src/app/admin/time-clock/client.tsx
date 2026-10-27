@@ -5,7 +5,7 @@ import { Button, Field, Input, Select, Textarea } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import { CLOCK_METHODS, METHOD_LABEL, type ClockMethod, type ShopClockSettings } from "@/domain/time-clock";
-import { revokeDeviceAction } from "../clock/actions";
+import { revokeDeviceAction, startPairingAction } from "../clock/actions";
 import { nfcTagAction, saveShopClockAction } from "./actions";
 
 type RulesInput = { unpaidBreakFromMinutes: number; autoMealMinutes: number; autoMealAfterHours: number; forgotOutAfterMinutes: number; maxShiftHours: number; graceMinutes: number; mapping: string };
@@ -242,5 +242,59 @@ export function RevokeDevice({ id }: { id: string }) {
       </Button>
       {error && <span className="text-xs text-red-700">{error}</span>}
     </span>
+  );
+}
+
+/** A one-time QR code (and code to type) that pairs the shop's tablet as its front-desk clock, so no shop login is signed in on it. */
+export function PairDevice({ shops }: { shops: { id: string; name: string }[] }) {
+  const [shopId, setShopId] = useState(shops[0]?.id ?? "");
+  const [label, setLabel] = useState("Front desk");
+  const [pairing, setPairing] = useState<{ code: string; url: string; svg: string; expiresAt: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const start = async () => {
+    setPending(true);
+    setError(null);
+    const r = await startPairingAction({ shopId, label });
+    setPending(false);
+    if (r.ok) setPairing(r.data);
+    else setError(r.error);
+  };
+  if (pairing)
+    return (
+      <div className="space-y-3 p-4" data-testid="clock-pairing">
+        <p className="text-sm">
+          On the tablet, scan this code with the camera, or open <span className="font-mono">/clock/pair</span> and type <span className="font-mono text-base font-semibold tracking-wider">{pairing.code}</span>. It works once, until{" "}
+          {new Date(pairing.expiresAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/Chicago" })}.
+        </p>
+        <div className="h-48 w-48" dangerouslySetInnerHTML={{ __html: pairing.svg }} />
+        <Button size="sm" variant="secondary" onClick={() => setPairing(null)}>
+          Done
+        </Button>
+      </div>
+    );
+  return (
+    <form
+      className="flex flex-wrap items-end gap-3 p-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        start();
+      }}
+    >
+      {shops.length > 1 && (
+        <Select value={shopId} onChange={(e) => setShopId(e.target.value)} aria-label="Shop" className="w-48">
+          {shops.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </Select>
+      )}
+      <Input value={label} onChange={(e) => setLabel(e.target.value)} maxLength={60} aria-label="Device name" className="w-48" />
+      <Button size="sm" disabled={pending || !shopId || !label.trim()}>
+        Pair a clock
+      </Button>
+      {error && <span className="text-xs text-red-700">{error}</span>}
+    </form>
   );
 }

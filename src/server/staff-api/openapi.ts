@@ -14,7 +14,14 @@ const queryParams = (s: z.ZodObject) =>
   });
 const idParam = { name: "id", in: "path", required: true, schema: { type: "string", format: "uuid" } };
 const shopHeader = { name: "X-Shop-Id", in: "header", required: false, description: 'A shop id to work in, or "all" for all their shops (where their role allows it). Their first shop when left out.', schema: { type: "string" } };
-const deviceHeader = { name: "X-Clock-Device", in: "header", required: true, description: "This install's front-desk clock token, from POST /clock/kiosk/register", schema: { type: "string" } };
+const deviceHeader = { name: "X-Clock-Device", in: "header", required: true, description: "This install's front-desk clock token, from POST /clock/kiosk/pair (or the older /clock/kiosk/register)", schema: { type: "string" } };
+const installHeader = {
+  name: "X-Device-Id",
+  in: "header",
+  required: false,
+  description: "A paired clock's install id, the deviceId it sent to POST /clock/kiosk/pair. With it a paired clock needs no Bearer token; its token works from no other install.",
+  schema: { type: "string" },
+};
 
 interface Op {
   method: "get" | "post" | "put" | "patch" | "delete";
@@ -50,6 +57,15 @@ const MORE: Op[] = [
   },
   { method: "get", path: "/me/sessions", tag: "Me", summary: "Every phone signed in as them: the name it gave, when it signed in and was last used, and which is this one. Never an IP or token.", permission: "Signed in" },
   { method: "delete", path: "/me/sessions/{id}", tag: "Me", summary: "Sign one of their phones out (a lost phone); its tokens and pushes stop at once.", permission: "Their own", params: true },
+  {
+    method: "post",
+    path: "/me/step-up",
+    tag: "Me",
+    summary:
+      "Confirm it's them before a sensitive action (ST-C0c): their authenticator code once set up, else their password. Revealing a client detail answers 403 with error.details.stepUpRequired (\"reveal\") when this session hasn't signed in or stepped up in the last 15 minutes; call this, then retry. Wrong passwords count toward the account lock.",
+    permission: "Signed in",
+    body: S.StepUpBody,
+  },
   { method: "post", path: "/me/sessions/sign-out-others", tag: "Me", summary: "Sign out every phone but this one. { ended }.", permission: "Their own" },
   // ST-C3
   { method: "get", path: "/me/calendar", tag: "Calendar", summary: "One day at one shop: their own column, or every barber's with calendar.view_all or calendar.manage (all=0 for just theirs). Blocks, clock state, appointments with names as Client data shows them. Never a client phone.", permission: "Signed in", query: S.CalendarQuery },
@@ -122,8 +138,8 @@ const MORE: Op[] = [
   { method: "post", path: "/sales", tag: "Checkout", summary: "The ticket for an appointment (theirs, or anyone's with checkout.any), priced by the server, with the credit card fee from the shop's policy (computeCardFee). Paying is at the front desk until Tap to Pay is switched on.", permission: "Their own; checkout.any for others'", body: S.SaleBody },
   { method: "post", path: "/terminal/connection-token", tag: "Checkout", summary: "A Stripe Terminal connection token for the shop's Terminal location (Tap to Pay). 403 with details.feature = tap_to_pay until FEATURE_STAFF_TAP_TO_PAY is on.", permission: "timeclock.punch, checkout.any or pos.custom_charge", body: S.TerminalTokenBody },
   // ST-I6, ST-I7
-  { method: "get", path: "/clock/kiosk", tag: "Front-desk clock", summary: "The front-desk screen in one call: the rotating QR, the PIN pad's team and the walk-in queue (first names and waits; for a shop login or walkins.manage).", permission: "timeclock.kiosk", kiosk: true },
-  { method: "get", path: "/clock/kiosk/queue", tag: "Front-desk clock", summary: "The walk-in queue alone: first names, positions and waits.", permission: "timeclock.kiosk, and a shop login or walkins.manage", kiosk: true },
+  { method: "get", path: "/clock/kiosk", tag: "Front-desk clock", summary: "The front-desk screen in one call: the rotating QR, the PIN pad's team and the walk-in queue (first names and waits; for a shop login or walkins.manage).", permission: "A paired clock (X-Device-Id), or timeclock.kiosk on a registered one", kiosk: true },
+  { method: "get", path: "/clock/kiosk/queue", tag: "Front-desk clock", summary: "The walk-in queue alone: first names, positions and waits.", permission: "A paired clock; or timeclock.kiosk, and a shop login or walkins.manage", kiosk: true },
   { method: "get", path: "/manager/board", tag: "Manager", summary: "Today at one shop in the parts they may see (sees): each barber's clock and chair, the waitlist, time off to decide, timecards to approve, products running low.", permission: "Any manager permission", query: S.BoardQuery },
   { method: "post", path: "/staff/{id}/app-invite", tag: "Manager", summary: "Send someone the staff app's sign-in link by text or email; a new link cancels the last. link comes back only when it couldn't be sent.", permission: "permissions.manage", body: S.AppInviteBody, params: true },
   { method: "post", path: "/staff/{id}/sign-out", tag: "Manager", summary: "Sign someone out of the staff app on every phone (a lost or shared phone) without deactivating them. Deactivating does this too. 204.", permission: "permissions.manage", params: true, empty: true },
@@ -149,11 +165,21 @@ const OPS: Op[] = [
   { method: "post", path: "/clock/breaks/start", tag: "Breaks", summary: "Start a break, with a reason and planned length; the calendar blocks it.", permission: "timeclock.punch", body: S.BreakStartBody },
   { method: "post", path: "/clock/breaks/end", tag: "Breaks", summary: "End the break.", permission: "timeclock.punch", body: S.BreakEndBody },
   { method: "put", path: "/clock/pin", tag: "Time clock", summary: "Set their own PIN for the front-desk clock.", permission: "timeclock.punch", body: S.PinBody },
+  {
+    method: "post",
+    path: "/clock/kiosk/pair",
+    tag: "Front-desk clock",
+    summary:
+      "Pair this install as a shop's front-desk clock with a manager's one-time code (ST-C0c), no staff sign-in: scan the manager's QR code (a link ending ?code=…) or type the code. 201 { token, device }; send the token as X-Clock-Device and the same deviceId as X-Device-Id on every kiosk call, with no Bearer token. Codes last 10 minutes and work once; 20 tries per address per 15 minutes.",
+    permission: "A manager's pairing code (made in Time clock setup by someone with settings.shop)",
+    body: S.KioskPairBody,
+    public: true,
+  },
   { method: "post", path: "/clock/kiosk/register", tag: "Front-desk clock", summary: "Make this install one of a shop's front-desk clocks. The token is returned once; send it as X-Clock-Device.", permission: "settings.shop", body: S.KioskRegisterBody },
-  { method: "get", path: "/clock/kiosk/team", tag: "Front-desk clock", summary: "Who can punch here.", permission: "timeclock.kiosk", kiosk: true },
-  { method: "get", path: "/clock/kiosk/qr", tag: "Front-desk clock", summary: "The link to draw as the QR code phones scan. It changes every 30 seconds.", permission: "timeclock.kiosk", kiosk: true },
-  { method: "post", path: "/clock/kiosk/status", tag: "Front-desk clock", summary: "Their PIN, then what they can punch next. Five wrong PINs lock theirs for five minutes.", permission: "timeclock.kiosk", body: S.KioskStatusBody, kiosk: true },
-  { method: "post", path: "/clock/kiosk/punch", tag: "Front-desk clock", summary: "Punch (in, out, break start or end) as the person whose PIN was typed.", permission: "timeclock.kiosk", body: S.KioskPunchBody, kiosk: true },
+  { method: "get", path: "/clock/kiosk/team", tag: "Front-desk clock", summary: "Who can punch here.", permission: "A paired clock (X-Device-Id), or timeclock.kiosk on a registered one", kiosk: true },
+  { method: "get", path: "/clock/kiosk/qr", tag: "Front-desk clock", summary: "The link to draw as the QR code phones scan. It changes every 30 seconds.", permission: "A paired clock (X-Device-Id), or timeclock.kiosk on a registered one", kiosk: true },
+  { method: "post", path: "/clock/kiosk/status", tag: "Front-desk clock", summary: "Their PIN, then what they can punch next. Five wrong PINs lock theirs for five minutes.", permission: "A paired clock (X-Device-Id), or timeclock.kiosk on a registered one", body: S.KioskStatusBody, kiosk: true },
+  { method: "post", path: "/clock/kiosk/punch", tag: "Front-desk clock", summary: "Punch (in, out, break start or end) as the person whose PIN was typed.", permission: "A paired clock (X-Device-Id), or timeclock.kiosk on a registered one", body: S.KioskPunchBody, kiosk: true },
   { method: "get", path: "/tips", tag: "Tips and pay", summary: "Their tips (S3): today, settling, ready, in a payout, paid out; how each shop pays them; history by ticket.", permission: "tips.own", query: S.TipsQuery },
   {
     method: "get",
@@ -230,12 +256,12 @@ const OPS: Op[] = [
 export function staffOpenApiDocument(baseUrl: string) {
   const paths: Record<string, Record<string, unknown>> = {};
   for (const op of OPS) {
-    const parameters = [...(op.params ? [idParam] : []), ...(op.query ? queryParams(op.query) : []), ...(op.public ? [] : [shopHeader]), ...(op.kiosk ? [deviceHeader] : [])];
+    const parameters = [...(op.params ? [idParam] : []), ...(op.query ? queryParams(op.query) : []), ...(op.public ? [] : [shopHeader]), ...(op.kiosk ? [deviceHeader, installHeader] : [])];
     (paths[op.path] ??= {})[op.method] = {
       tags: [op.tag],
       summary: op.summary,
       description: `Permission: ${op.permission}.${op.tag === "Banking" ? RAIL_OFF : ""}`,
-      ...(op.public ? { security: [] } : {}),
+      ...(op.public ? { security: [] } : op.kiosk ? { security: [{}, { bearer: [] }] } : {}),
       ...(parameters.length ? { parameters } : {}),
       ...(op.body ? { requestBody: { required: true, content: { "application/json": { schema: schema(op.body) } } } } : {}),
       responses: {

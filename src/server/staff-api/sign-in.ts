@@ -4,7 +4,7 @@ import { randomInt } from "node:crypto";
 import { and, desc, eq, gt, isNull, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { otpCodes, staff, staffAppTokens, staffInvites } from "@/db/schema";
-import { passwordProblem, twoFactorStep } from "@/domain/users";
+import { passwordProblem } from "@/domain/users";
 import { appBaseUrl } from "@/lib/deployment";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { audit } from "@/server/audit";
@@ -12,6 +12,7 @@ import { devCodesEnabled } from "@/server/auth/customer";
 import { smsOtpProvider, verifyCheck, verifySend } from "@/server/auth/otp-provider";
 import type { StaffContext } from "@/server/auth/staff";
 import { randomToken, sha256 } from "@/server/auth/tokens";
+import { signInFactorFor } from "@/server/auth/sign-in-guard";
 import { twoFactorPrompt } from "@/server/auth/two-factor";
 import { AppError, notFound } from "@/server/errors";
 import { sendNow } from "@/server/notifications/queue";
@@ -98,7 +99,7 @@ export async function verifyStaffCode(input: { email?: string | null; phone?: st
     .where(and(eq(otpCodes.id, otp.id), isNull(otpCodes.consumedAt)))
     .returning({ id: otpCodes.id });
   if (!used) throw wrong;
-  const step = twoFactorStep(person);
+  const step = await signInFactorFor(person);
   if (step) return { twoFactor: await twoFactorPrompt(person, step) };
   return { tokens: await admit(person, where, input, false, "code") };
 }
@@ -159,7 +160,7 @@ async function openAppInvite(token: string, now = new Date()) {
 export async function appInviteView(token: string) {
   const r = await openAppInvite(token);
   if (!r) throw notFound("Invite");
-  return { firstName: r.person.firstName, setPassword: !r.person.passwordHash, twoStep: !!twoFactorStep(r.person), expiresAt: r.invite.expiresAt.toISOString() };
+  return { firstName: r.person.firstName, setPassword: !r.person.passwordHash, twoStep: !!(await signInFactorFor(r.person)), expiresAt: r.invite.expiresAt.toISOString() };
 }
 
 /**
@@ -192,7 +193,7 @@ export async function acceptAppInvite(input: { token: string; password?: string 
     }
   });
   const fresh = (await db.query.staff.findFirst({ where: eq(staff.id, person.id) }))!;
-  const step = twoFactorStep(fresh);
+  const step = await signInFactorFor(fresh);
   if (step) return { twoFactor: await twoFactorPrompt(fresh, step) };
   return { tokens: await admit(fresh, where, input, false, "invite") };
 }

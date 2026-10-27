@@ -6,6 +6,7 @@ import { Button, Card, CardHeader, Field, Input, Notice, Select, Suggestions } f
 import { unitsShare } from "@/domain/refunds";
 import { formatCents } from "@/lib/money";
 import { assignRefundLinesAction, reassignAction, refundAction, voidAction } from "../actions";
+import { withStepUp } from "../../step-up";
 import { ApprovalValue, ManagerPin, approvalReady } from "./manager-pin";
 
 export function PrintButton() {
@@ -289,7 +290,9 @@ export function SaleActions({
             disabled={pending || !reason || total <= 0 || (refundNeedsPin && !pinOk)}
             onClick={() =>
               run(() =>
-                refundAction({ saleId, items: picked.map(([saleItemId, n]) => ({ saleItemId, qty: n })), tipCents, refundCardFee: fee || "proportional", reason, restock }, refundNeedsPin ? given : null),
+                withStepUp(() =>
+                  refundAction({ saleId, items: picked.map(([saleItemId, n]) => ({ saleItemId, qty: n })), tipCents, refundCardFee: fee || "proportional", reason, restock }, refundNeedsPin ? given : null),
+                ),
               )
             }
             className={status !== "paid" ? "col-span-2" : ""}

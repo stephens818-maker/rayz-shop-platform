@@ -6,16 +6,18 @@ import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { shops, staff } from "@/db/schema";
 import { BLOCK_MESSAGE } from "@/domain/network-access";
-import { twoFactorStep } from "@/domain/users";
+import { deviceLabel } from "@/domain/staff-auth";
 import { clientIp } from "@/lib/client-ip";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { loadStaffAccess } from "@/server/auth/access";
-import { DEVICE_REQUEST_COOKIE, TRUSTED_DEVICE_COOKIE } from "@/server/auth/cookies";
+import { BROWSER_ID_COOKIE, DEVICE_REQUEST_COOKIE, TRUSTED_DEVICE_COOKIE } from "@/server/auth/cookies";
 import { DEVICE_TTL, approvedShopIds, deviceCookieValue, deviceTicket, devicesFromCookie, evaluateNetwork, readDeviceTicket, recordBlocked } from "@/server/auth/network";
-import { endSession, startSession, verifyPassword } from "@/server/auth/staff";
+import { checkPassword, noteSignInDevice, signInFactorFor } from "@/server/auth/sign-in-guard";
+import { endSession, startSession } from "@/server/auth/staff";
+import { randomToken } from "@/server/auth/tokens";
 import { TwoFactorPrompt, finishTwoFactor, twoFactorPrompt } from "@/server/auth/two-factor";
-import { forbidden } from "@/server/errors";
+import { AppError, forbidden } from "@/server/errors";
 import { requestDevice } from "@/server/sign-in-security";
 
 export interface LoginState {
@@ -30,23 +32,28 @@ const cookieOpts = (maxAge: number, path = "/") => ({ httpOnly: true, sameSite: 
 
 export async function login(_prev: LoginState | null, form: FormData): Promise<LoginState | null> {
   const ticket = String(form.get("ticket") ?? "");
+  const h = await headers();
+  const jar = await cookies();
+  const ip = clientIp(h);
   let user: typeof staff.$inferSelect;
   if (ticket) {
     const r = await finishTwoFactor(ticket, String(form.get("code") ?? ""));
     if (!("user" in r)) return r;
     user = r.user;
   } else {
-    const found = await verifyPassword(String(form.get("email") ?? ""), String(form.get("password") ?? ""));
-    if (!found) return { error: "Email or password is incorrect" };
-    const step = twoFactorStep(found);
+    let found: typeof staff.$inferSelect;
+    try {
+      found = await checkPassword(String(form.get("email") ?? ""), String(form.get("password") ?? ""), { ip, via: "web" });
+    } catch (e) {
+      if (e instanceof AppError) return { error: e.message };
+      throw e;
+    }
+    const step = await signInFactorFor(found);
     if (step) return { error: "", twoFactor: await twoFactorPrompt(found, step) };
     user = found;
   }
   const access = await loadStaffAccess(user.id);
   if (!access) return { error: "Email or password is incorrect" };
-  const h = await headers();
-  const jar = await cookies();
-  const ip = clientIp(h);
   const device = await devicesFromCookie(jar.get(TRUSTED_DEVICE_COOKIE)?.value);
   const verdict = await evaluateNetwork(access, { ip, deviceShopIds: approvedShopIds(device) });
   if (verdict.blocked.length) {
@@ -66,7 +73,14 @@ export async function login(_prev: LoginState | null, form: FormData): Promise<L
     if (ticket) jar.set(DEVICE_REQUEST_COOKIE, ticket, cookieOpts(15 * 60, "/login"));
     return { error: BLOCK_MESSAGE, blocked: { deviceShops: ticket ? await deviceShopsOf(verdict.blocked.filter((b) => b.require !== "ip").map((b) => b.shopId)) : [] } };
   }
-  await startSession(user.id);
+  let browserId = jar.get(BROWSER_ID_COOKIE)?.value ?? null;
+  if (!browserId || !/^[A-Za-z0-9_-]{20,100}$/.test(browserId)) {
+    browserId = randomToken(24);
+    jar.set(BROWSER_ID_COOKIE, browserId, cookieOpts(400 * 86_400));
+  }
+  const userAgent = h.get("user-agent");
+  await startSession(user.id, { ip, userAgent, browserId });
+  await noteSignInDevice(user, "web", { deviceKey: browserId, label: deviceLabel(userAgent), ip });
   await db.update(staff).set({ lastSignInAt: new Date() }).where(eq(staff.id, user.id));
   await audit({ staffId: user.id, label: `${access.role.name}:${user.displayLabel}` }, "staff.login", "staff", user.id, { ip, ...(ticket ? { twoStep: true } : {}) }, access.scope === "all" ? null : (access.shopIds[0] ?? null));
   const next = String(form.get("next") ?? "");

@@ -2,9 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import type { StepUpAction } from "@/domain/staff-auth";
 import { toast } from "./toast";
 
-type Result<T> = { ok: true; data: T } | { ok: false; error: string };
+type Result<T> = { ok: true; data: T } | { ok: false; error: string; stepUp?: StepUpAction };
 
 /** Runs a server action, keeps its error to show inline, and refreshes the page when it succeeds (with an optional toast). */
 export function useAction() {

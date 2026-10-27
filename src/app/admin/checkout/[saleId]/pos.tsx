@@ -1,5 +1,6 @@
 "use client";
 
+import type { StepUpAction } from "@/domain/staff-auth";
 import { ClientEntryFields, entryPayload, type EntryField, type EntryValues } from "@/components/client-entry-fields";
 import { useRouter } from "next/navigation";
 import {
@@ -690,7 +691,7 @@ export function Pos(props: {
   };
 
   const act = <T,>(
-    fn: () => Promise<{ ok: true; data: T } | { ok: false; error: string }>,
+    fn: () => Promise<{ ok: true; data: T } | { ok: false; error: string; stepUp?: StepUpAction }>,
     ok: (d: T) => void,
   ) =>
     start(async () => {

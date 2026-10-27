@@ -93,19 +93,22 @@ describe("every route is guarded", () => {
   const src = readFileSync(join(process.cwd(), "src/server/staff-api/handlers.ts"), "utf8");
   const exported = [...src.matchAll(/^export const (\w+)\s*=\s*([\w.]+)/gm)].map((x) => ({ name: x[1], via: x[2] }));
   /** Before sign-in: the version gate only. GET /config is read before anything else, ungated. */
-  const PUBLIC = new Set(["postLogin", "postLoginCode", "postCodeStart", "postCodeVerify", "getInvite", "postInviteAccept", "postRefresh", "postLogout", "getConfig"]);
+  const PUBLIC = new Set(["postLogin", "postLoginCode", "postCodeStart", "postCodeVerify", "getInvite", "postInviteAccept", "postRefresh", "postLogout", "getConfig", "postKioskPair"]);
 
   it("each handler is staffRoute (authorize + assertShopAccess), a wrapper of it, or a named sign-in route", () => {
     const handlers = exported.filter((e) => e.name !== "OPTIONS");
     expect(handlers.length).toBeGreaterThan(80);
     for (const h of handlers) {
       if (PUBLIC.has(h.name)) expect(["signInRoute", "route"], h.name).toContain(h.via);
-      else expect(["staffRoute", "banking", "punchAs"], h.name).toContain(h.via);
+      else expect(["staffRoute", "banking", "punchAs", "kioskRoute"], h.name).toContain(h.via);
     }
     expect(src).toMatch(/const banking = [^]*?staffRoute<P>\(TIPS/);
     expect(src).toMatch(/const punchAs = [^]*?staffRoute\(CLOCK/);
+    // The front-desk clock: a paired install's own token, else the same guard as staffRoute.
+    expect(src).toMatch(/const kioskRoute = [^]*?pairedKiosk\(req\);\s*if \(paired\) return fn\(req, paired\);\s*return fn\(req, await signedInKiosk\(await guardedStaff\(req, KIOSK\), req\)\)/);
     const http = readFileSync(join(process.cwd(), "src/server/staff-api/http.ts"), "utf8");
-    expect(http).toMatch(/assertSupportedStaffClient\(req\);\s*const ctx = await requireStaffApp\(req\);\s*assertShopHeader\(req, ctx\);\s*authorizeContext\(ctx/);
+    expect(http).toMatch(/assertSupportedStaffClient\(req\);\s*return fn\(req, await guardedStaff\(req, guard\), params\)/);
+    expect(http).toMatch(/const ctx = await requireStaffApp\(req\);\s*assertShopHeader\(req, ctx\);\s*authorizeContext\(ctx/);
   });
 
   it("route files only re-export handlers, and the spec's sign-in routes are exactly the public ones", async () => {
@@ -119,7 +122,7 @@ describe("every route is guarded", () => {
     const doc = staffOpenApiDocument("http://x") as { paths: Record<string, Record<string, { security?: unknown[]; description: string }>> };
     const open = Object.entries(doc.paths).flatMap(([p, ops]) => Object.entries(ops).filter(([, o]) => Array.isArray(o.security) && !o.security.length).map(([meth]) => `${meth.toUpperCase()} ${p}`));
     expect(open.sort()).toEqual(
-      ["POST /auth/login", "POST /auth/login/code", "POST /auth/code/start", "POST /auth/code/verify", "GET /auth/invite", "POST /auth/invite/accept", "POST /auth/refresh", "POST /auth/logout", "GET /config"].sort(),
+      ["POST /auth/login", "POST /auth/login/code", "POST /auth/code/start", "POST /auth/code/verify", "GET /auth/invite", "POST /auth/invite/accept", "POST /auth/refresh", "POST /auth/logout", "GET /config", "POST /clock/kiosk/pair"].sort(),
     );
     for (const p of ["/banking", "/banking/external-accounts", "/banking/onboarding-link", "/banking/dashboard-link", "/banking/method"])
       expect(Object.values(doc.paths[p])[0].description, p).toMatch(/403 .*FEATURE_STAFF_STRIPE_PAYOUTS=false/);

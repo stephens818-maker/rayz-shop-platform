@@ -5,6 +5,7 @@ import { db } from "@/db";
 import { customers, staff } from "@/db/schema";
 import { FieldKey, customFieldId, isBuiltinField, isContactField, isRevealable } from "@/domain/client-privacy";
 import { audit } from "./audit";
+import { assertSteppedUp } from "./auth/sessions";
 import { StaffContext, assertCan, can } from "./auth/staff";
 import { clientPolicy, displayFull, recordClientAccess } from "./client-privacy";
 import { customerAccess } from "./customers";
@@ -42,6 +43,7 @@ export async function revealClientField(ctx: StaffContext, raw: z.input<typeof R
   else if (isBuiltinField(field)) stored = (c as Record<string, unknown>)[field] as string | null;
   else stored = c.customFields[customFieldId(field)!] ?? null;
   if (level === "full") return { value: displayFull(field, stored) };
+  await assertSteppedUp(ctx, "reveal");
   await recordClientAccess(ctx, { kind: "reveal", customerId: c.id, field, reason: p.reason, ...(via === "web" ? {} : { detail: { via } }) });
   await audit(ctx.actor, "client.reveal", "customer", c.id, { field, reason: p.reason, ...(via === "web" ? {} : { via }) }, ctx.currentShopId);
   return { value: displayFull(field, stored) };

@@ -79,7 +79,3 @@ export function passwordProblem(password: string, email: string | null): string 
   if (new Set(password).size < 4) return "Use a less predictable password";
   return null;
 }
-
-/** Whether a sign-in must pass an authenticator code, and whether they set one up first. */
-export const twoFactorStep = (s: { twoFactorRequired: boolean; totpEnabledAt: Date | null }): "code" | "enroll" | null =>
-  s.totpEnabledAt ? "code" : s.twoFactorRequired ? "enroll" : null;

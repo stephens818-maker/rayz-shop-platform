@@ -24,6 +24,8 @@ export const PAGE_ACCESS = {
   "/admin/customers/duplicates": ["clients.merge"],
   "/admin/customers/sign-in-help": ["clients.merge"],
   "/admin/my-time": ["blocks.own", "timeoff.request"],
+  "/admin/my-security": null,
+  "/admin/verify": null,
   "/admin/time-off": ["timeoff.approve", "blocks.others", "schedules.edit"],
   "/admin/call-ins": CALL_INS,
   "/admin/call-ins/[id]": CALL_INS,

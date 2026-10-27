@@ -3,6 +3,7 @@
 import { useState, useTransition, type ReactNode, type SyntheticEvent } from "react";
 import { Button, Input, Textarea } from "@/components/ui";
 import type { Level } from "@/domain/client-privacy";
+import { withStepUp } from "../step-up";
 import { contactClientAction, revealClientFieldAction } from "./actions";
 
 const stop = (e: SyntheticEvent) => e.preventDefault();
@@ -76,7 +77,7 @@ export function Masked({
             disabled={pending || reason.trim().length < 4}
             onClick={() =>
               start(async () => {
-                const r = await revealClientFieldAction({ customerId, field, reason });
+                const r = await withStepUp(() => revealClientFieldAction({ customerId, field, reason }));
                 if (!r.ok) return setError(r.error);
                 setShown(r.data.value ?? "—");
                 setOpen(false);
