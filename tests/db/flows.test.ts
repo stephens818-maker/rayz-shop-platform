@@ -71,7 +71,10 @@ describe("booking", () => {
     // Confirmation + 24h + 2h reminders queued (SMS), and suppressed when providers are disabled.
     const jobs = await m.db.db.select().from(m.schema.notificationJobs).where(m.drizzle.eq(m.schema.notificationJobs.appointmentId, a.id));
     expect(jobs.map((j) => j.kind).sort()).toEqual(["confirmation", "reminder_24h", "reminder_2h"]);
-    const stats = await m.queue.processDueJobs();
+    // Only this booking's jobs, at 11:30 pm: other files' pending marketing jobs are deferred in quiet hours, not suppressed, and can fill the batch.
+    const { todayLocal, zonedWallTime } = await import("@/lib/time");
+    const late = new Date(Math.max(Date.now() + 60_000, zonedWallTime(todayLocal(), 23 * 60 + 30).toMillis()));
+    const stats = await m.queue.processDueJobs({ now: late, ids: jobs.map((j) => j.id) });
     expect(stats.suppressed).toBeGreaterThan(0);
   });
 

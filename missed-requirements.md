@@ -711,7 +711,7 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 **Still open:**
 - [ ] The phone operator is a keypad menu (book link, hours, ring the shop), not a conversational voice AI like Squire's Operator. It doesn't take bookings by voice.
 - [ ] Existing shop logins have to be moved to the Shop Login role by hand (DEPLOY.md step 18).
-- [ ] `tests/db/flows.test.ts` "books, then refuses the same barber/time again" fails when run during SMS quiet hours (the confirmation waits instead of being suppressed). It fails the same way on the previous commit; it depends on the time of day, not on this work.
+- [x] `tests/db/flows.test.ts` "books, then refuses the same barber/time again" no longer depends on the time of day: it processes only its own booking's messages, at 11:30 pm, so other pending marketing jobs (which quiet hours defer instead of suppressing) can't fill the batch.
 
 ## 28. Client contact details stay in the system (owner's hard rule)
 
