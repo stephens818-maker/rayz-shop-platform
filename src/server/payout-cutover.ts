@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, gt, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, lte, sql, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { sales, shopCutovers, shops, staff, staffPayoutConfirmations, staffShops, staffYtdImports } from "@/db/schema";
 import { same } from "@/domain/brand-sync";
@@ -8,6 +8,7 @@ import Papa from "papaparse";
 import { addDays, formatDate, isValidLocalDate, localDateOf, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "./audit";
 import { AppError, notFound } from "./errors";
+import { notSquireEra, squireEra } from "./squire-era";
 import { DEFAULT_CALENDAR, ensurePayGroups } from "./payroll/groups";
 import { stripePayoutsOn } from "./tips/payout-model";
 
@@ -75,11 +76,11 @@ async function squireOwed(shopId: string, paidThrough: LocalDate | null, endOn: 
   return db
     .select({ staffId: sales.staffId, cents: sql<number>`coalesce(sum(${sales.tipCents}), 0)::int`, tickets: sql<number>`count(*)::int` })
     .from(sales)
-    .where(and(eq(sales.shopId, shopId), eq(sales.isImported, true), inArray(sales.status, ["paid", "refunded", "partially_refunded"]), lte(sales.businessDate, endOn), paidThrough ? gt(sales.businessDate, paidThrough) : undefined))
+    .where(and(eq(sales.shopId, shopId), squireEra("sales"), inArray(sales.status, ["paid", "refunded", "partially_refunded"]), lte(sales.businessDate, endOn), paidThrough ? gt(sales.businessDate, paidThrough) : undefined))
     .groupBy(sales.staffId);
 }
 
-const tipTickets = (shopId: string, ...where: (ReturnType<typeof and> | undefined)[]) =>
+const tipTickets = (shopId: string, ...where: (SQL | undefined)[]) =>
   db
     .select({ tickets: sql<number>`count(*)::int`, tipCents: sql<number>`coalesce(sum(${sales.tipCents}), 0)::int` })
     .from(sales)
@@ -89,8 +90,8 @@ const tipTickets = (shopId: string, ...where: (ReturnType<typeof and> | undefine
 /** Who pays each tip date: Squire through its last tips day, Ray'z after. Anything on the wrong side would be paid twice or never. */
 async function ownerConflicts(shopId: string, paidThrough: LocalDate | null, endOn: LocalDate) {
   const [rayzInSquireDays, squireAfterEnd] = await Promise.all([
-    tipTickets(shopId, eq(sales.isImported, false), lte(sales.businessDate, endOn), paidThrough ? gt(sales.businessDate, paidThrough) : undefined),
-    tipTickets(shopId, eq(sales.isImported, true), gt(sales.businessDate, endOn)),
+    tipTickets(shopId, notSquireEra("sales"), lte(sales.businessDate, endOn), paidThrough ? gt(sales.businessDate, paidThrough) : undefined),
+    tipTickets(shopId, squireEra("sales"), gt(sales.businessDate, endOn)),
   ]);
   return { rayzInSquireDays, squireAfterEnd };
 }

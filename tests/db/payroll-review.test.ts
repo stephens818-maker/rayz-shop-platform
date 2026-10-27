@@ -123,12 +123,36 @@ describe("SB-C1: Squire-era tips never reach payroll", () => {
     const before = await lineFor();
     const ticket = await tipSale(sh.id, b.id, 1200);
     await asImported(ticket, "ticket");
+    const payment = await tipSale(sh.id, b.id, 800);
+    await asImported(payment, "payment");
     await tl.syncTipLedger();
     expect(await lineFor()).toEqual(before);
     const batch = await tp.buildBatch({ shopId: sh.id, kind: "manual", cutoff: today, actor });
-    const claimed = await m.db.db.select().from(s().tipLedger).innerJoin(s().tipPayouts, eq(s().tipPayouts.id, s().tipLedger.payoutId)).where(and(eq(s().tipPayouts.batchId, batch.batchId), eq(s().tipLedger.saleId, ticket)));
+    const claimed = await m.db.db
+      .select()
+      .from(s().tipLedger)
+      .innerJoin(s().tipPayouts, eq(s().tipPayouts.id, s().tipLedger.payoutId))
+      .where(and(eq(s().tipPayouts.batchId, batch.batchId), m.drizzle.inArray(s().tipLedger.saleId, [ticket, payment])));
     expect(claimed).toEqual([]);
     await tp.cancelBatch(batch.batchId, "Test batch", actor);
+  });
+
+  it("nor commission: an imported ticket's lines and a squire_import payment's ticket aren't commissionable", async () => {
+    const comp = await import("@/server/compensation");
+    const { shop: sh, b } = await barberAt("silvis", 2);
+    const net = async () => ((await comp.commissionLines([b.id], today, today)).get(b.id) ?? []).reduce((t, l) => t + l.netCents, 0);
+    await tipSale(sh.id, b.id, 100);
+    const before = await net();
+    expect(before).toBeGreaterThan(0);
+    const ticket = await tipSale(sh.id, b.id, 0);
+    const counted = await net();
+    expect(counted).toBeGreaterThan(before);
+    await asImported(ticket, "ticket");
+    expect(await net()).toBe(before);
+    const payment = await tipSale(sh.id, b.id, 0);
+    expect(await net()).toBe(counted);
+    await asImported(payment, "payment");
+    expect(await net()).toBe(before);
   });
 });
 

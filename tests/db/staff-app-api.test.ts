@@ -535,6 +535,17 @@ describe("the Squire payout cutover (ST-C9)", () => {
     expect(report.ready).toBe(true);
     expect(report.saturdayClose).toBe(true);
     expect(report.owners.squireAfterEnd).toEqual({ tickets: 1, tipCents: 5000 });
+    expect(report.owners.rayzInSquireDays).toEqual({ tickets: 0, tipCents: 0 });
+
+    // A ticket paid with a payment the import wrote is Squire's too, not one Ray'z owes.
+    const [paidInSquire] = await m.db.db.insert(S().sales).values({ ...sale(-2, 300), isImported: false }).returning({ id: S().sales.id });
+    await m.db.db.insert(S().payments).values({ saleId: paidInSquire.id, shopId: cv, businessDate: d(-2), method: "card", amountCents: 4300, tipCents: 300, processor: "squire_import" });
+    const withPayment = await payoutCutoverReport(cv);
+    expect(withPayment.lines.find((l) => l.staffId === ids.makenna)).toMatchObject({ squireOwedCents: 1550, tickets: 3 });
+    expect(withPayment.owners.rayzInSquireDays).toEqual({ tickets: 0, tipCents: 0 });
+    await m.db.db.delete(S().payments).where(eq(S().payments.saleId, paidInSquire.id));
+    await m.db.db.delete(S().sales).where(eq(S().sales.id, paidInSquire.id));
+
     expect(report.checklist.map((x) => [x.key, x.done])).toEqual([
       ["saturday_close", true],
       ["squire_dates", true],

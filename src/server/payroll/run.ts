@@ -31,6 +31,7 @@ import { dailyHours, overtimeSlices, sliceKey, weekStartOf, type DayHours, type 
 import { addDays, endOfLocalDay, formatDate, localDateOf, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
 import { AppError } from "@/server/errors";
+import { notSquireEra } from "@/server/squire-era";
 import { guaranteeTopUps, exportExtras } from "@/domain/compensation";
 import { loadCompensationSettings, payrollPlans, setupRates } from "@/server/compensation";
 import { payrollSalesBetween, unassignedSalesBetween } from "@/server/reports";
@@ -469,9 +470,8 @@ async function serviceDaysIn(shopIds: string[], start: LocalDate, end: LocalDate
         gte(salesTable.businessDate, start),
         lte(salesTable.businessDate, end),
         inArray(salesTable.status, [...PAID_SALE]),
-        eq(salesTable.isImported, false),
         isNotNull(salesTable.staffId),
-        sql`not exists (select 1 from payments sq where sq.sale_id = ${salesTable.id} and sq.processor = 'squire_import')`,
+        notSquireEra("sales"),
       ),
     )
     .groupBy(salesTable.staffId, salesTable.shopId, salesTable.businessDate)

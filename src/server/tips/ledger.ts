@@ -19,6 +19,7 @@ import { noteShopSetting } from "../brand-sync/shop-settings";
 import { Actor, audit } from "@/server/audit";
 import { tipOverrides } from "@/server/compensation";
 import { AppError, notFound } from "@/server/errors";
+import { notSquireEra } from "@/server/squire-era";
 import { recordMissingPayoutPeriods } from "./pay-periods";
 import { railed } from "./payout-model";
 
@@ -51,7 +52,7 @@ export async function syncTipLedger(tx: DBorTx = db, o: { saleId?: string; shopI
     from payments p join sales s on s.id = p.sale_id
     left join tip_split_shares sh on sh.source = 'payment' and sh.source_id = p.id
     where p.tip_cents <> 0 and coalesce(sh.staff_id, s.staff_id) is not null and coalesce(sh.tip_cents, 1) <> 0
-      and not s.is_imported and not exists (select 1 from payments sq where sq.sale_id = s.id and sq.processor = 'squire_import') and s.status <> 'open' ${only}
+      and ${notSquireEra()} and s.status <> 'open' ${only}
     on conflict (payment_id, staff_id) where kind = 'tip' do nothing`);
   // A refund that gave tip back either takes it from the barber (a reversal in the ledger) or the shop
   // absorbs it (tip_absorptions), by the brand's reversal rule; never both.
@@ -74,8 +75,7 @@ export async function syncTipLedger(tx: DBorTx = db, o: { saleId?: string; shopI
     left join tip_ledger t on t.payment_id = r.payment_id and t.kind = 'tip' and t.staff_id = coalesce(sh.staff_id, s.staff_id)
     left join tip_payouts tp on tp.id = t.payout_id
     left join pay_groups g on g.shop_id = r.shop_id
-    where r.tip_cents <> 0 and coalesce(sh.staff_id, s.staff_id) is not null and coalesce(sh.tip_cents, 1) <> 0 and not s.is_imported
-      and not exists (select 1 from payments sq where sq.sale_id = s.id and sq.processor = 'squire_import') ${only}`;
+    where r.tip_cents <> 0 and coalesce(sh.staff_id, s.staff_id) is not null and coalesce(sh.tip_cents, 1) <> 0 and ${notSquireEra()} ${only}`;
   await tx.execute(sql`
     insert into tip_ledger (shop_id, staff_id, sale_id, payment_id, refund_id, kind, method, amount_cents, fee_cents, business_date)
     select r.shop_id, coalesce(sh.staff_id, s.staff_id), s.id, r.payment_id, r.id, 'refund', r.method::text, -coalesce(sh.tip_cents, r.tip_cents),

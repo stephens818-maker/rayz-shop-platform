@@ -3,6 +3,7 @@ import { payPeriodsBetween, PayPeriod } from "@/domain/payroll";
 import { TOTAL, segKey } from "@/domain/report-views";
 import { LocalDate, addDays, diffDays, endOfLocalDay, startOfLocalDay } from "@/lib/time";
 import { ByShop, PAID, ReportScope, Grain, atGrains, grp, ids, keyOf, rows, same, sgrp, staffFilter, uuids } from "./report-sql";
+import { notSquireEra } from "./squire-era";
 
 export { staffSelection } from "./report-sql";
 export type { ByShop, Grain, ReportScope } from "./report-sql";
@@ -480,8 +481,7 @@ export type PayrollSalesRow = Omit<PayrollRow, "periodStart" | "periodEnd" | "to
   salesTaxCents: number;
 };
 
-/** Not a Squire-era ticket: imported, or paid with a payment the import wrote. */
-const NOT_SQUIRE = sql`not s.is_imported and not exists (select 1 from payments sq where sq.sale_id = s.id and sq.processor = 'squire_import')`;
+const NOT_SQUIRE = notSquireEra();
 
 /**
  * Sales at each shop paid in [start, end] with no employee on the ticket (Squire's "Unassigned

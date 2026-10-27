@@ -9,6 +9,7 @@ import { commissionLines, loadCompensationSettings, setupRates, versionsFor } fr
 import type { ReportData } from "./report-data";
 import { ReportScope, ZERO_SALES, ZERO_TENDER, salesTotalsAt, staffSelection, tenderAt } from "./reports";
 import { PAID, ids, rows, staffFilter } from "./report-sql";
+import { notSquireEra } from "./squire-era";
 import { laborRows } from "./time-clock-export";
 
 const text = (label: string): Column => ({ label });
@@ -109,7 +110,7 @@ async function tipSources(scope: ReportScope) {
     from sales s
     left join appointments a on a.id = s.appointment_id
     left join lateral (select sum(p.tip_cents)::int gc from payments p where p.sale_id = s.id and p.method = 'gift_card' and p.status <> 'voided') g on true
-    where s.shop_id in ${ids(scope)} and s.business_date between ${scope.from} and ${scope.to} and s.status in ${PAID} and s.is_imported = false
+    where s.shop_id in ${ids(scope)} and s.business_date between ${scope.from} and ${scope.to} and s.status in ${PAID} and ${notSquireEra()}
     ${staffFilter(sql`s.staff_id`, scope)}
     group by 1, 2`);
   return new Map(r.filter((x) => x.staff_id).map((x) => [`${x.shop_id}|${x.staff_id}`, { gc: x.gc, online: x.online }]));

@@ -32,6 +32,7 @@ import { diffDays, todayLocal, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { PAID, rows, uuids } from "@/server/report-sql";
+import { notSquireEra } from "@/server/squire-era";
 import type { StaffContext } from "@/server/auth/staff";
 
 // ───────────────────────────── Settings ─────────────────────────────
@@ -185,7 +186,7 @@ export async function commissionLines(staffIds: readonly string[] | null, from: 
       i.gross_cents gross, i.discount_cents disc, 0 refund, i.net_cents net
     from sale_items i join sales s on s.id = i.sale_id
       left join services sv on sv.id = i.ref_id and i.kind in ('service', 'addon')
-    where i.kind in ('service', 'addon', 'product') and s.status in ${PAID} and not s.is_imported and s.staff_id is not null
+    where i.kind in ('service', 'addon', 'product') and s.status in ${PAID} and ${notSquireEra()} and s.staff_id is not null
       and s.business_date between ${from} and ${to} ${who(sql`coalesce(i.staff_id, s.staff_id)`)}
     union all
     select coalesce(i.staff_id, s.staff_id), r.business_date::text, s.business_date::text, r.shop_id,
@@ -194,7 +195,7 @@ export async function commissionLines(staffIds: readonly string[] | null, from: 
       cross join lateral jsonb_array_elements(${items}) e
       join sale_items i on i.id::text = e.value->>'saleItemId'
       left join services sv on sv.id = i.ref_id and i.kind in ('service', 'addon')
-    where r.kind = 'refund' and not s.is_imported and s.staff_id is not null and i.kind in ('service', 'addon', 'product')
+    where r.kind = 'refund' and ${notSquireEra()} and s.staff_id is not null and i.kind in ('service', 'addon', 'product')
       and r.business_date between ${from} and ${to} ${who(sql`coalesce(i.staff_id, s.staff_id)`)}
     union all
     select s.staff_id, r.business_date::text, s.business_date::text, r.shop_id, k.kind, null, null, 0, 0, k.net, -k.net
@@ -204,7 +205,7 @@ export async function commissionLines(staffIds: readonly string[] | null, from: 
         from jsonb_array_elements(${items}) e join sale_items i on i.id::text = e.value->>'saleItemId'
       ) itm
       cross join lateral (values ('service', r.service_net_cents - itm.svc), ('product', r.product_net_cents - itm.prod)) k(kind, net)
-    where r.kind = 'refund' and not s.is_imported and s.staff_id is not null and k.net <> 0
+    where r.kind = 'refund' and ${notSquireEra()} and s.staff_id is not null and k.net <> 0
       and r.business_date between ${from} and ${to} ${who(sql`s.staff_id`)}`);
   const out = new Map<string, CommissionLine[]>();
   for (const r of list) {
