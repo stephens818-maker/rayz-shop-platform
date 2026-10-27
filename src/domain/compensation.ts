@@ -9,7 +9,7 @@ import { formatCents } from "@/lib/money";
 import { findSensitive, isForbiddenKey } from "@/lib/sensitive";
 import { addDays, diffDays, isValidLocalDate, type LocalDate } from "@/lib/time";
 import { BIOMETRIC_LABEL } from "./biometrics";
-import { roundHalfUp2 } from "./payroll/calc";
+import { roundHalfUp2, type MixedRate } from "./payroll/calc";
 import { TIP_METHODS, type TipMethod } from "./tips";
 
 // ───────────────────────────── Settings ─────────────────────────────
@@ -241,6 +241,37 @@ export function blendedHourly(days: readonly { date: LocalDate; centi: number }[
   const rated = days.filter((d) => d.centi).map((d) => ({ ...d, rate: hourlyOn(versionOn(sorted, d.date), shopId, fb) }));
   if (!rated.length || rated.every((d) => d.rate === rated[0].rate)) return rated[0]?.rate ?? hourlyOn(versionOn(sorted, end), shopId, fb);
   return rated.reduce((a, d) => a + d.centi * d.rate, 0) / rated.reduce((a, d) => a + d.centi, 0);
+}
+
+/**
+ * The rates that changed inside the period at a shop, so the report shows "mixed": the wage when
+ * days' hours fall under versions with different wages, a commission % when sales checked out (by
+ * the original sale's date, for refunds) under versions with different flat rates.
+ */
+export function mixedRates(
+  sorted: readonly CompVersion[],
+  shopId: string,
+  fb: Fallback,
+  days: readonly { date: LocalDate; centi: number }[],
+  lines: readonly Pick<CommissionLine, "date" | "saleDate" | "shopId" | "kind">[],
+  start: LocalDate,
+  end: LocalDate,
+): MixedRate[] {
+  const differ = (xs: (number | string)[]) => new Set(xs).size > 1;
+  const inPeriod = lines.filter((l) => l.shopId === shopId && l.date >= start && l.date <= end);
+  const pctOf = (kind: "service" | "product") =>
+    inPeriod
+      .filter((l) => l.kind === kind)
+      .map((l) => {
+        const v = versionOn(sorted, l.saleDate);
+        const r = lineRate(v, { kind, refId: null, category: null, shopId }, fb);
+        return r.source === "tier" ? `tiers from ${v?.effectiveFrom}` : String(r.pct);
+      });
+  return [
+    ...(differ(days.filter((d) => d.centi && d.date >= start && d.date <= end).map((d) => hourlyOn(versionOn(sorted, d.date), shopId, fb))) ? (["wage"] as const) : []),
+    ...(differ(pctOf("service")) ? (["servicePct"] as const) : []),
+    ...(differ(pctOf("product")) ? (["productPct"] as const) : []),
+  ];
 }
 
 /** Commission on a month's sales to date under a tier table. Below the first tier: the base rate. */

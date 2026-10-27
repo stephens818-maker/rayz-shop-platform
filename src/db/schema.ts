@@ -3335,6 +3335,8 @@ export const payrollProfiles = pgTable("payroll_profiles", {
   exportPosition: integer("export_position"),
   /** Treasury tipped occupation code for the 2026 W-2 (barber versus front desk). Null: not set, so their tips can't be reported as qualified. */
   tippedOccupationCode: text("tipped_occupation_code"),
+  /** Hours go to iSolved but Hourly Total is $0 (the owner's row in the workbook). */
+  zeroHourlyPay: boolean("zero_hourly_pay").notNull().default(false),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });
 
@@ -3501,6 +3503,40 @@ export const payrollRuns = pgTable(
     lockedBy: uuid("locked_by").references(() => staff.id),
   },
   (t) => [unique("payroll_runs_uq").on(t.payGroupId, t.periodStart)],
+);
+
+export interface PayrollApprovalTotals {
+  shops: { shopId: string; shop: string; rows: number; service: number; totalWages: number; laborCost: number }[];
+  service: number;
+  employeeCost: number;
+  grossProfit: number;
+}
+
+/**
+ * A pay period's figures as someone with payroll.approve approved them, before the lock. Never
+ * edited or deleted (a trigger refuses): only revoked once, with a reason. One active per period.
+ */
+export const payrollApprovals = pgTable(
+  "payroll_approvals",
+  {
+    id: id(),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    periodEnd: date("period_end", { mode: "string" }).notNull(),
+    /** Every shop's rows, totals and iSolved file as approved: a lock or download needs the live figures to hash the same. */
+    figuresHash: text("figures_hash").notNull(),
+    totals: jsonb("totals").$type<PayrollApprovalTotals>().notNull(),
+    note: text("note"),
+    approvedAt: ts("approved_at").notNull().defaultNow(),
+    approvedBy: uuid("approved_by").references(() => staff.id),
+    revokedAt: ts("revoked_at"),
+    revokedBy: uuid("revoked_by").references(() => staff.id),
+    revokeReason: text("revoke_reason"),
+  },
+  (t) => [
+    uniqueIndex("payroll_approvals_active_uq").on(t.periodStart, t.periodEnd).where(sql`${t.revokedAt} is null`),
+    index("payroll_approvals_period_idx").on(t.periodStart, t.periodEnd, t.approvedAt),
+    check("payroll_approvals_dates", sql`${t.periodEnd} >= ${t.periodStart}`),
+  ],
 );
 
 /** OT hours (hundredths) a locked period kept for one slice of a workweek, so a later period can't move them. */

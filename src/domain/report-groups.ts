@@ -33,6 +33,7 @@ export const REPORT_GROUP: Record<ReportKey, ReportGroupId> = {
   leaderboard: "staff",
   labor: "staff",
   payroll_summary: "payroll",
+  payroll_report: "payroll",
   payroll_timesheets: "payroll",
   payroll_tips: "payroll",
   payroll_commission: "payroll",

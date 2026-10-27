@@ -79,6 +79,7 @@ import {
   payrollCommissionData,
   payrollFullTimeData,
   payrollIsolvedData,
+  payrollReportData,
   payrollTipsPaidData,
   payrollPaidLeaveData,
   payrollW2CodesData,
@@ -856,6 +857,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async payroll_paid_leave({ scope, loc, viewer }) {
     return payrollPaidLeaveData({ scope, loc, perms: viewer.permissions });
+  },
+
+  async payroll_report({ scope, loc, viewer }) {
+    return payrollReportData({ scope, loc, perms: viewer.permissions });
   },
 
   async payroll_isolved({ scope, loc, viewer }) {

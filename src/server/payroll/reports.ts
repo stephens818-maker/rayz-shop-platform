@@ -3,7 +3,7 @@ import ExcelJS from "exceljs";
 import { db } from "@/db";
 import { payGroups, payrollEmployers, payrollExportSends, payrollProfiles, shops, staff, timeEntries, tipAbsorptions, tipLedger, tipPayouts, type PayrollSendShop } from "@/db/schema";
 import { paidLeaveYear, rulesFor, workStateOf } from "@/domain/wage-hour";
-import { EXPORT_COLUMNS, PAID_TIP_COLUMNS, PAYROLL_TIP_COLUMNS, extraFromOf, inNameOrder, sumColumns, toCents, type Line } from "@/domain/payroll/calc";
+import { EXPORT_COLUMNS, LOCATIONS_COLUMNS, PAID_TIP_COLUMNS, PAYROLL_TIP_COLUMNS, extraFromOf, inNameOrder, locationSummary, sumColumns, toCents, type Line } from "@/domain/payroll/calc";
 import { FLAG_LABEL, FT_LABEL, PUNCH_LABEL, csv, type PunchType } from "@/domain/time-clock";
 import type { Permission } from "@/domain/permissions";
 import type { BarChart } from "@/domain/report-charts";
@@ -21,6 +21,7 @@ import { ftOverview, hoursSlices, periodFor, punchEditsBetween, scheduledMinutes
 import { weekStartOf } from "@/domain/payroll/overtime";
 import { addIsolvedSheet, exportFileName } from "./export";
 import { loadSettings } from "./groups";
+import { locationBlocks, locationsRow, locationsTotals, type LocationsCell } from "./locations";
 import { MAX_REPORT_PERIODS, payPeriodPresets, periodLabel, periodsEnding, type PayPeriodRef } from "./periods";
 import { buildPayroll, type BlockView, type PayrollView } from "./run";
 
@@ -1430,6 +1431,52 @@ export async function payrollIsolvedData(i: PayrollReportInput): Promise<ReportD
       "The iSolved export downloads one workbook per pay period with a tab for each shop, exactly as each shop's file would download from the Payroll Report. A file from a period that isn't approved and locked yet is marked DRAFT and can change.",
       "Marking a period sent needs \"Approve and lock a pay period\". It's refused until every shop is locked and every employee's tips match their Stripe payouts to the cent.",
     ],
+  };
+}
+
+// ───────────────────────────── Payroll Report (the Locations tab) ─────────────────────────────
+
+const LOC_KIND: Record<(typeof LOCATIONS_COLUMNS)[number]["kind"], Column["kind"]> = { text: undefined, hours: "decimal", rate: "money", money: "money", ratio: "money", pct: "pct" };
+
+/** Each pay period's Locations tab as tables: a block per shop, then the summary. The Payroll Report page draws the same figures with the workbook's formats. */
+export async function payrollReportData(i: PayrollReportInput): Promise<ReportData> {
+  const { scope } = i;
+  const presets = await payPeriodPresets(undefined, scope.shopIds);
+  if (!i.perms?.has("payroll.rates")) return { presets, stats: [], tables: [], notes: ['The Payroll Report shows pay rates and wages, so it needs "See pay rates and labor cost".'] };
+  const { runs, capped } = await runsIn(scope);
+  const columns: Column[] = LOCATIONS_COLUMNS.map((c) => ({ label: c.header.trim(), kind: LOC_KIND[c.kind], sum: false }));
+  const cell = (c: (typeof LOCATIONS_COLUMNS)[number], v: LocationsCell): Cell => (typeof v !== "number" ? v : c.kind === "money" || c.kind === "rate" || c.kind === "ratio" ? toCents(v) : c.kind === "hours" ? h2(v) : v);
+  const tables: ReportData["tables"] = [];
+  for (const r of [...runs].reverse()) {
+    const blocks = locationBlocks(r.view, r.blocks.map((b) => b.shopId));
+    for (const b of blocks) {
+      const rows = [...b.lines.map(locationsRow), locationsTotals(b.totals)].map((cells) => cells.map((v, j) => cell(LOCATIONS_COLUMNS[j], v)));
+      tables.push({ id: `loc-${r.key}-${b.shopId}`, title: `${b.shop} · ${r.label}`, columns, rows, rowStyles: rows.map((_, j) => (j === rows.length - 1 ? "total" : undefined)) });
+    }
+    const { rows, total } = locationSummary(blocks);
+    tables.push({
+      id: `summary-${r.key}`,
+      title: `Location summary · ${r.label}`,
+      subtitle: "Employee Cost is Total Wages (hourly, commission over hourly and product commission). Gross Profit is Service Sales less Employee Cost.",
+      columns: [text("Location"), money("Service Sales"), money("Employee Cost"), money("Gross Profit")],
+      rows: [...rows, total].map((x) => [x.shop, toCents(x.service), toCents(x.employeeCost), toCents(x.grossProfit)]),
+      rowStyles: [...rows.map(() => undefined), "total"],
+    });
+  }
+  const latest = runs[runs.length - 1];
+  const sum = latest ? locationSummary(latest.blocks).total : null;
+  return {
+    presets,
+    bars: [],
+    stats: sum
+      ? [
+          { label: "Service Sales", value: formatCents(toCents(sum.service)), hint: latest!.label },
+          { label: "Employee Cost", value: formatCents(toCents(sum.employeeCost)), hint: "Total Wages" },
+          { label: "Gross Profit", value: formatCents(toCents(sum.grossProfit)), tone: sum.grossProfit >= 0 ? "up" : "down" },
+        ]
+      : [],
+    tables,
+    notes: [...periodNotes(runs, capped), "Every total sums every employee's row. A rate that changed inside the period shows \"mixed\": each sale is paid at the rate in effect on its checkout date, and hours at the wage on the day worked."],
   };
 }
 

@@ -1,10 +1,10 @@
 import { audit } from "@/server/audit";
 import { routeStaff } from "@/server/auth/staff";
-import { lockedExport } from "@/server/payroll/run";
+import { approvedExport } from "@/server/payroll/run";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** One shop's iSolved file for a locked pay period, exactly as approved. Charles uploads it by hand. */
+/** One shop's iSolved file once the pay period is approved (as locked, once it is). Charles uploads it by hand. */
 export async function GET(req: Request) {
   const ctx = await routeStaff("payroll.run");
   if (ctx instanceof Response) return ctx;
@@ -13,9 +13,9 @@ export async function GET(req: Request) {
   const start = url.searchParams.get("start") ?? "";
   const end = url.searchParams.get("end") ?? "";
   if (!/^[0-9a-f-]{36}$/i.test(group) || !DATE.test(start) || !DATE.test(end)) return new Response("Bad request", { status: 400 });
-  const f = await lockedExport(group, start, end);
-  if (!f) return new Response("That pay period isn't approved and locked yet, so there's nothing to download.", { status: 409 });
-  await audit(ctx.actor, "payroll.download", "payroll_run", f.runId, { file: f.fileName });
+  const f = await approvedExport(group, start, end);
+  if (!f) return new Response("That pay period isn't approved yet, or its figures changed since the approval, so there's nothing to download.", { status: 409 });
+  await audit(ctx.actor, "payroll.download", f.runId ? "payroll_run" : "payroll_approval", f.runId ?? f.approvalId, { file: f.fileName, periodStart: start, periodEnd: end, locked: !!f.runId }, null);
   return new Response(new Uint8Array(f.body), {
     headers: {
       "content-type": f.contentType,

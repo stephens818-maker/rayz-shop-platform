@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
-import { and, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { payGroups, payrollEmployers, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, sales as salesTable, staff, timeEntries, timePunches } from "@/db/schema";
+import { auditLog, payGroups, payrollApprovals, payrollEmployers, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, sales as salesTable, staff, timeEntries, timePunches, type PayrollApprovalTotals } from "@/db/schema";
 import { calendarProblem, periodOf, periodStarting, periodsAround, workweeksOf, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
 import {
   OVERRIDABLE,
@@ -11,6 +11,7 @@ import {
   fmtHours,
   fmtMoney,
   ftStatus,
+  locationSummary,
   toCents,
   reconcile,
   totalsOf,
@@ -29,9 +30,10 @@ import { minimumWageCents, minimumWageShortfallCents, rulesFor } from "@/domain/
 import { dailyHours, overtimeSlices, sliceKey, weekStartOf, type DayHours, type Slice, type TimeEntry } from "@/domain/payroll/overtime";
 import { addDays, endOfLocalDay, formatDate, localDateOf, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
+import { AppError } from "@/server/errors";
 import { guaranteeTopUps, exportExtras } from "@/domain/compensation";
 import { loadCompensationSettings, payrollPlans, setupRates } from "@/server/compensation";
-import { payrollSalesBetween } from "@/server/reports";
+import { payrollSalesBetween, unassignedSalesBetween } from "@/server/reports";
 import { declaredTipsBetween } from "@/server/tips/declarations";
 import { lockPayrollTips, payrollTipSplit } from "@/server/tips/payouts";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
@@ -149,7 +151,7 @@ interface Snapshot {
  * guaranteed minimums, nobody had a top-up; before declarations and post-payout refunds, none of either.
  */
 function upgradeBlock(b: ShopBlock): ShopBlock {
-  type Cols = { tips: number; tipsInPayroll?: number; tipsOutside?: number; tipsPaidOut?: number; guaranteeTopUp?: number; declaredCashTips?: number; chargedTips?: number; lateTipRefunds?: number; tipRefundsShopCost?: number };
+  type Cols = { tips: number; cardTipsOutside?: number; salesTax?: number; tipsInPayroll?: number; tipsOutside?: number; tipsPaidOut?: number; guaranteeTopUp?: number; declaredCashTips?: number; chargedTips?: number; lateTipRefunds?: number; tipRefundsShopCost?: number };
   const tipCols = <T extends Cols>(x: T): T => ({
     ...x,
     tipsInPayroll: x.tipsInPayroll ?? 0,
@@ -160,6 +162,8 @@ function upgradeBlock(b: ShopBlock): ShopBlock {
     chargedTips: x.chargedTips ?? 0,
     lateTipRefunds: x.lateTipRefunds ?? 0,
     tipRefundsShopCost: x.tipRefundsShopCost ?? 0,
+    cardTipsOutside: x.cardTipsOutside ?? 0,
+    salesTax: x.salesTax ?? 0,
   });
   return { ...b, lines: b.lines.map(tipCols), totals: tipCols(b.totals) };
 }
@@ -284,6 +288,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
   const plans = comp.enabled && comp.payrollUsesPlans && staffIds.length ? await payrollPlans({ staffIds, start, end, days, fallbackOf: await setupRates(staffIds) }) : null;
 
   const inputsByShop = new Map<string, LineInput[]>();
+  const sourceFlags: Anomaly[] = [];
   for (const k of keys) {
     const [staffId, shopId] = k.split("|");
     if (!runShops.has(shopId)) continue;
@@ -292,6 +297,15 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
     const r = rateOf(staffId, shopId);
     const plan = plans?.rateFor(staffId, shopId) ?? null;
     const h = hours.get(k) ?? { worked: 0, training: 0, pto: 0, ot: 0 };
+    for (const [kind, on] of [["training", settings.trainingSource], ["pto", settings.ptoSource]] as const) {
+      if (on !== "manager" || !h[kind]) continue;
+      sourceFlags.push({
+        staffId,
+        shopId,
+        kind: "hours_source",
+        message: `${p?.label ?? "Unknown"} (${groupOf.get(shopId)?.shop ?? "Other shop"}): ${fmtHours(centi(h[kind]))} of ${kind === "pto" ? "PTO" : "training"} on the time clock aren't paid, because ${kind === "pto" ? "PTO" : "training"} hours are entered by a manager (Payroll setup). Type them on the report if they're owed.`,
+      });
+    }
     const s = salesOf.get(k);
     const ov: Overrides = {};
     for (const o of overrides) if (o.staffId === staffId && o.shopId === shopId && (OVERRIDABLE as readonly string[]).includes(o.field)) ov[o.field as Overridable] = { value: o.value, reason: o.reason };
@@ -315,8 +329,8 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       trainingRate: r?.trainingRate ?? null,
       workedHours: centi(h.worked),
       otHours: centi(h.ot),
-      ptoHours: centi(h.pto),
-      trainingHours: centi(h.training),
+      ptoHours: settings.ptoSource === "manager" ? 0 : centi(h.pto),
+      trainingHours: settings.trainingSource === "manager" ? 0 : centi(h.training),
       serviceSales: (s?.serviceSalesCents ?? 0) / 100,
       productSales: (s?.productSalesCents ?? 0) / 100,
       tips: tipsCents / 100,
@@ -327,6 +341,9 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       declaredCashTips: (declared.get(k) ?? 0) / 100,
       chargedTips: Math.min(tipsCents, Math.max(0, charged)) / 100,
       lateTipRefunds: late / 100,
+      salesTax: (s?.salesTaxCents ?? 0) / 100,
+      zeroHourlyPay: pr?.zeroHourlyPay ?? false,
+      ...(plan?.mixed.length ? { mixedRates: plan.mixed } : {}),
       overrides: Object.keys(ov).length ? ov : undefined,
     };
     inputsByShop.set(shopId, [...(inputsByShop.get(shopId) ?? []), input]);
@@ -342,8 +359,13 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
   const order = (a: LineInput, b: LineInput) =>
     (profile.get(a.staffId)?.exportPosition ?? 1e9) - (profile.get(b.staffId)?.exportPosition ?? 1e9) || a.name.localeCompare(b.name);
 
+  const unassigned = await unassignedSalesBetween([...runShops], start, end);
+  const unassignedOf = (shopId: string) => {
+    const u = unassigned.get(shopId);
+    return u ? { unassigned: { serviceSales: u.serviceSalesCents / 100, productSales: u.productSalesCents / 100, salesTax: u.salesTaxCents / 100 } } : {};
+  };
   const live = assemble(
-    inRun.map(({ g }) => ({ shopId: g.shopId, shop: g.shop, inputs: (inputsByShop.get(g.shopId) ?? []).sort(order) })),
+    inRun.map(({ g }) => ({ shopId: g.shopId, shop: g.shop, inputs: (inputsByShop.get(g.shopId) ?? []).sort(order), ...unassignedOf(g.shopId) })),
     settings,
     { extras: exportExtras(comp), guaranteeHeader: comp.guaranteeHeader },
   );
@@ -411,6 +433,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
     tips,
     anomalies: [
       ...anomalies(blocks, settings),
+      ...sourceFlags.filter((a) => !blocks.find((b) => b.shopId === a.shopId)?.locked),
       ...clockAnomalies(blocks, settings, hoursCheck, days, serviceDays, typed, start, end),
       ...lockAnomalies(blocks),
       ...stateAnomalies(blocks, end, await missedMealsIn([...runShops], start, end)),
@@ -699,13 +722,127 @@ export function hoursOpenMessage(open: PayrollView["hoursOpen"]): string {
   }.`;
 }
 
-/** Approve and lock every shop in the period at once. Refused while anything doesn't reconcile. */
-export async function approveAndLock(start: LocalDate, end: LocalDate, actor: Actor): Promise<{ error: string; mismatches?: Mismatch[] } | { locked: number }> {
-  const view = await buildPayroll(start, end);
+/**
+ * What an approval approves: every shop's rows (inputs, rates, adjustments and results), totals and
+ * iSolved file. Any change to what would be paid or uploaded hashes differently.
+ */
+export function figuresHash(blocks: readonly Pick<ShopBlock, "shopId" | "lines" | "totals" | "exportRows" | "exportHeaders" | "exportFrom">[]): string {
+  const shops = [...blocks]
+    .sort((a, b) => a.shopId.localeCompare(b.shopId))
+    .map((b) => ({ shopId: b.shopId, lines: b.lines.map(({ input, ...l }) => ({ ...l, input })), totals: b.totals, exportRows: b.exportRows, exportHeaders: b.exportHeaders ?? null, exportFrom: b.exportFrom ?? null }));
+  return createHash("sha256").update(JSON.stringify(shops)).digest("hex");
+}
+
+export function approvalTotals(blocks: readonly ShopBlock[]): PayrollApprovalTotals {
+  const { total } = locationSummary(blocks);
+  return {
+    shops: blocks.map((b) => ({ shopId: b.shopId, shop: b.shop, rows: b.lines.length, service: b.totals.service, totalWages: b.totals.totalWages, laborCost: b.totals.laborCost })),
+    service: total.service,
+    employeeCost: total.employeeCost,
+    grossProfit: total.grossProfit,
+  };
+}
+
+export interface ApprovalView {
+  id: string;
+  approvedAt: string;
+  approvedBy: string | null;
+  note: string | null;
+  totals: PayrollApprovalTotals;
+  /** The live figures still hash the same: lock and the iSolved files go ahead. */
+  current: boolean;
+}
+
+/** The period's active approval, and whether the figures still match it. */
+export async function approvalOf(view: Pick<PayrollView, "start" | "end" | "blocks">): Promise<ApprovalView | null> {
+  const [a] = await db
+    .select({ a: payrollApprovals, by: staff.displayLabel })
+    .from(payrollApprovals)
+    .leftJoin(staff, eq(staff.id, payrollApprovals.approvedBy))
+    .where(and(eq(payrollApprovals.periodStart, view.start), eq(payrollApprovals.periodEnd, view.end), isNull(payrollApprovals.revokedAt)));
+  if (!a) return null;
+  const open = view.blocks.filter((b) => !b.locked);
+  return { id: a.a.id, approvedAt: a.a.approvedAt.toISOString(), approvedBy: a.by, note: a.a.note, totals: a.a.totals, current: !open.length || figuresHash(open) === a.a.figuresHash };
+}
+
+type Refusal = { error: string; mismatches?: Mismatch[] };
+
+/** What stops a period being approved or locked as it stands. */
+function gate(view: PayrollView | null): Refusal | null {
   if (!view) return { error: "No shop has a pay period with those dates." };
   if (view.locked !== "none") return { error: "This pay period is already locked." };
-  if (view.mismatches.length) return { error: "Totals don't reconcile, so the period can't be locked.", mismatches: view.mismatches };
+  if (view.mismatches.length) return { error: "Totals don't reconcile, so the period can't be approved or locked.", mismatches: view.mismatches };
   if (view.settings.hoursFromClock && view.hoursOpen.length) return { error: hoursOpenMessage(view.hoursOpen) };
+  return null;
+}
+
+/**
+ * Approve the period's figures as they stand: every shop, after review. Refused while anything
+ * doesn't reconcile or the clock hours are open. Approving changed figures revokes the earlier
+ * approval. The period still has to be locked; until then, a change to the figures needs a new approval.
+ */
+export async function approvePayroll(start: LocalDate, end: LocalDate, actor: Actor, note: string | null = null): Promise<Refusal | { approvalId: string }> {
+  const view = await buildPayroll(start, end);
+  const refused = gate(view);
+  if (refused || !view) return refused!;
+  const hash = figuresHash(view.blocks);
+  const totals = approvalTotals(view.blocks);
+  const text = note?.trim().slice(0, 300) || null;
+  return db.transaction(async (tx) => {
+    const [active] = await tx
+      .select()
+      .from(payrollApprovals)
+      .where(and(eq(payrollApprovals.periodStart, start), eq(payrollApprovals.periodEnd, end), isNull(payrollApprovals.revokedAt)))
+      .for("update");
+    if (active?.figuresHash === hash) return { error: "These figures are already approved. Lock the period to finish." };
+    if (active) {
+      await tx.update(payrollApprovals).set({ revokedAt: new Date(), revokedBy: actor.staffId ?? null, revokeReason: "Approved again with changed figures" }).where(eq(payrollApprovals.id, active.id));
+      await audit(actor, "payroll.approval_revoked", "payroll_approval", active.id, { periodStart: start, periodEnd: end, reason: "Approved again with changed figures", figuresHash: active.figuresHash }, null, tx);
+    }
+    const [row] = await tx.insert(payrollApprovals).values({ periodStart: start, periodEnd: end, figuresHash: hash, totals, note: text, approvedBy: actor.staffId ?? null }).returning({ id: payrollApprovals.id });
+    await audit(
+      actor,
+      "payroll.approve",
+      "payroll_approval",
+      row.id,
+      { periodStart: start, periodEnd: end, figuresHash: hash, ...totals, anomalies: view.anomalies.length, note: text, ...(active ? { supersedes: active.id } : {}) },
+      null,
+      tx,
+    );
+    return { approvalId: row.id };
+  });
+}
+
+/** Take back an approval before the lock, with a reason. A locked period stays as approved. */
+export async function revokeApproval(start: LocalDate, end: LocalDate, reason: string, actor: Actor): Promise<string | null> {
+  const why = reason.trim().slice(0, 300);
+  if (!why) return "Say why the approval is taken back.";
+  const runs = await db.select({ id: payrollRuns.id }).from(payrollRuns).where(and(eq(payrollRuns.periodStart, start), eq(payrollRuns.periodEnd, end)));
+  if (runs.length) return "This pay period is locked, so its approval stands.";
+  return db.transaction(async (tx) => {
+    const [active] = await tx
+      .update(payrollApprovals)
+      .set({ revokedAt: new Date(), revokedBy: actor.staffId ?? null, revokeReason: why })
+      .where(and(eq(payrollApprovals.periodStart, start), eq(payrollApprovals.periodEnd, end), isNull(payrollApprovals.revokedAt)))
+      .returning({ id: payrollApprovals.id, figuresHash: payrollApprovals.figuresHash });
+    if (!active) return "This pay period isn't approved.";
+    await audit(actor, "payroll.approval_revoked", "payroll_approval", active.id, { periodStart: start, periodEnd: end, reason: why, figuresHash: active.figuresHash }, null, tx);
+    return null;
+  });
+}
+
+/**
+ * Lock every shop in an approved period: the figures of record and the iSolved files are kept as
+ * approved from then on. Needs a current approval: if anything changed since, approve again first.
+ */
+export async function lockPayroll(start: LocalDate, end: LocalDate, actor: Actor): Promise<Refusal | { locked: number }> {
+  const view = await buildPayroll(start, end);
+  const refused = gate(view);
+  if (refused || !view) return refused!;
+  const approval = await approvalOf(view);
+  if (!approval) return { error: "Approve the period's figures before locking it." };
+  if (!approval.current) return { error: `The figures changed since ${approval.approvedBy ?? "someone"} approved them. Review the changes and approve again before locking.` };
+  const hash = figuresHash(view.blocks);
   const groups = await ensurePayGroups();
   const settings = view.settings;
   const runShops = new Set(view.blocks.map((b) => b.shopId));
@@ -727,6 +864,8 @@ export async function approveAndLock(start: LocalDate, end: LocalDate, actor: Ac
   }).filter((s) => s.periodStart === start && runShops.has(s.shopId));
 
   return db.transaction(async (tx) => {
+    const [still] = await tx.select({ hash: payrollApprovals.figuresHash, revokedAt: payrollApprovals.revokedAt }).from(payrollApprovals).where(eq(payrollApprovals.id, approval.id)).for("update");
+    if (!still || still.hash !== hash || still.revokedAt) throw new AppError("conflict", "The approval changed just now. Reload and try again.");
     let n = 0;
     for (const b of view.blocks) {
       const snapshot: Snapshot = { block: { shopId: b.shopId, shop: b.shop, lines: b.lines, totals: b.totals, exportRows: b.exportRows, exportHeaders: b.exportHeaders, exportFrom: b.exportFrom }, inputsHash: inputsHash(b.lines) };
@@ -748,7 +887,7 @@ export async function approveAndLock(start: LocalDate, end: LocalDate, actor: Ac
         "payroll.lock",
         "payroll_run",
         run.id,
-        { payGroup: b.payGroup, periodStart: start, periodEnd: end, periodNumber: b.period.number, rows: b.lines.length, laborCost: b.totals.laborCost, service: b.totals.service, inputsHash: snapshot.inputsHash },
+        { payGroup: b.payGroup, periodStart: start, periodEnd: end, periodNumber: b.period.number, rows: b.lines.length, laborCost: b.totals.laborCost, service: b.totals.service, inputsHash: snapshot.inputsHash, approvalId: approval.id },
         b.shopId,
         tx,
       );
@@ -757,6 +896,18 @@ export async function approveAndLock(start: LocalDate, end: LocalDate, actor: Ac
     await lockPayrollTips(tx, view.blocks, start, end, actor);
     return { locked: n };
   });
+}
+
+/** Approve and lock in one step (both recorded): what the Payroll Report's two steps do back to back. */
+export async function approveAndLock(start: LocalDate, end: LocalDate, actor: Actor): Promise<Refusal | { locked: number }> {
+  const view = await buildPayroll(start, end);
+  const refused = gate(view);
+  if (refused || !view) return refused!;
+  if (!(await approvalOf(view))?.current) {
+    const a = await approvePayroll(start, end, actor);
+    if ("error" in a) return a;
+  }
+  return lockPayroll(start, end, actor);
 }
 
 /** The approved file for one shop. Only locked periods download; the file is built from what was approved. */
@@ -770,9 +921,36 @@ export async function lockedExport(payGroupId: string, start: LocalDate, end: Lo
   const block = (row.run.snapshot as Snapshot).block;
   const s = await loadSettings();
   const f = { tab: row.tab, payGroup: row.label, periodNumber: row.run.periodNumber, periodStart: start, periodEnd: end, rows: block.exportRows, headers: block.exportHeaders, format: s.exportFormat, namePattern: s.exportFileName };
-  return { fileName: exporter.fileName(f), contentType: exporter.contentType, body: await exporter.render(f), runId: row.run.id, shopId: row.run.payGroupId };
+  return { fileName: exporter.fileName(f), contentType: exporter.contentType, body: await exporter.render(f), runId: row.run.id as string | null, approvalId: null as string | null, shopId: row.run.payGroupId };
 }
 
+/**
+ * One shop's iSolved file once the period is approved: from the lock's snapshot when locked, else
+ * built from the live figures while they still match the approval. Null before approval, or after a
+ * change that needs approving again.
+ */
+export async function approvedExport(payGroupId: string, start: LocalDate, end: LocalDate, exporter: PayrollExporter = isolvedTimecardExporter) {
+  const locked = await lockedExport(payGroupId, start, end, exporter);
+  if (locked) return locked;
+  const view = await buildPayroll(start, end, { clockChecks: false });
+  if (!view) return null;
+  const b = view.blocks.find((x) => x.payGroupId === payGroupId);
+  const approval = await approvalOf(view);
+  if (!b || b.locked || !approval?.current) return null;
+  const s = view.settings;
+  const f = { tab: b.exportTab, payGroup: b.payGroup, periodNumber: b.period.number, periodStart: start, periodEnd: end, rows: b.exportRows, headers: b.exportHeaders, format: s.exportFormat, namePattern: s.exportFileName };
+  return { fileName: exporter.fileName(f), contentType: exporter.contentType, body: await exporter.render(f), runId: null as string | null, approvalId: approval.id as string | null, shopId: b.payGroupId };
+}
+
+/** Every payroll step recorded for the period, oldest first: runs, adjustments, approvals, revocations, locks and downloads. */
+export async function payrollTrail(start: LocalDate, end: LocalDate) {
+  const list = await db
+    .select({ at: auditLog.at, action: auditLog.action, by: auditLog.actorLabel, details: auditLog.details, shopId: auditLog.shopId })
+    .from(auditLog)
+    .where(and(sql`${auditLog.action} like 'payroll.%'`, sql`${auditLog.details}->>'periodStart' = ${start}`, sql`coalesce(${auditLog.details}->>'periodEnd', ${end}) = ${end}`))
+    .orderBy(asc(auditLog.at));
+  return list.map((r) => ({ ...r, details: (r.details ?? {}) as Record<string, unknown> }));
+}
 
 export async function savePayGroup(id: string, v: { label: string; legalEntity: string; exportTab: string; calendar: PayCalendar }, actor: Actor): Promise<string | null> {
   const label = v.label.trim();
@@ -846,6 +1024,11 @@ export async function saveRate(staffId: string, shopId: string | null, v: { hour
 export async function setOverride(shopId: string, periodStart: LocalDate, staffId: string, field: Overridable, value: number | null, reason: string, actor: Actor): Promise<string | null> {
   if (!(OVERRIDABLE as readonly string[]).includes(field)) return "That value can't be typed over.";
   if (await isLockedOn(shopId, periodStart)) return "This pay period is locked.";
+  if (value !== null && (field === "ptoHours" || field === "trainingHours")) {
+    const s = await loadSettings();
+    if ((field === "ptoHours" ? s.ptoSource : s.trainingSource) === "clock")
+      return `${field === "ptoHours" ? "PTO" : "Training"} hours come from the time clock only (Payroll setup), so they can't be typed on the report. Add a time entry instead.`;
+  }
   if (value === null) {
     await db.delete(payrollOverrides).where(and(eq(payrollOverrides.shopId, shopId), eq(payrollOverrides.periodStart, periodStart), eq(payrollOverrides.staffId, staffId), eq(payrollOverrides.field, field)));
     await audit(actor, "payroll.override_clear", "staff", staffId, { field, periodStart }, shopId);

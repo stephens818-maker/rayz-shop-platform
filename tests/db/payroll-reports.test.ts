@@ -130,15 +130,15 @@ afterAll(async () => {
 describe("who can see them", () => {
   it("brand owner, brand admin and bookkeeper by default; no location role; never a shop login", async () => {
     const keys = P.PAYROLL_REPORTS.flatMap((k) => [P.reportView(k), P.reportExport(k)]);
-    expect(keys).toHaveLength(24);
+    expect(keys).toHaveLength(26);
     for (const t of P.ROLE_TEMPLATES) {
       const has = keys.filter((k) => t.permissions.includes(k));
-      expect([t.key, has.length]).toEqual([t.key, ["brand_owner", "brand_admin", "bookkeeper"].includes(t.key) ? 24 : 0]);
+      expect([t.key, has.length]).toEqual([t.key, ["brand_owner", "brand_admin", "bookkeeper"].includes(t.key) ? 26 : 0]);
     }
     for (const k of keys) expect(P.SHOP_LOGIN_NEVER.has(k)).toBe(true);
     const roles = await m.db.db.select({ key: m.schema.roles.key, permissions: m.schema.roles.permissions }).from(m.schema.roles);
     for (const r of roles.filter((x) => x.key !== P.OWNER_ROLE_KEY))
-      expect([r.key, keys.filter((k) => (r.permissions as string[]).includes(k)).length]).toEqual([r.key, ["brand_admin", "bookkeeper"].includes(r.key ?? "") ? 24 : 0]);
+      expect([r.key, keys.filter((k) => (r.permissions as string[]).includes(k)).length]).toEqual([r.key, ["brand_admin", "bookkeeper"].includes(r.key ?? "") ? 26 : 0]);
 
     await signInAs(ids["manager.moline"]);
     for (const p of PAGES) expect([p, (await open(`/admin/reports/payroll/${p}`)).kind]).toEqual([p, "denied"]);

@@ -795,6 +795,12 @@ export const REPORTS = [
     hint: "Per employee, at shops in a state with a paid leave law (Illinois): hours worked there this year, leave earned at an hour per 40 up to 40 a year, carried in, used and the balance.",
   },
   {
+    key: "payroll_report",
+    label: "Payroll Report",
+    href: "/admin/reports/payroll/report",
+    hint: "Charles's workbook Locations tab per pay period: a block per shop with the 19 columns, then Service Sales, Employee Cost and Gross Profit per shop. Run, review, approve and lock, with the audit trail, the iSolved file per shop once approved, and the report as xlsx or CSV.",
+  },
+  {
     key: "payroll_isolved",
     label: "iSolved export preview",
     href: "/admin/reports/payroll/isolved",
@@ -1041,6 +1047,7 @@ export const PAYROLL_REPORTS = [
   "payroll_full_time",
   "payroll_labor",
   "payroll_overtime",
+  "payroll_report",
   "payroll_isolved",
   "payroll_tips_paid",
   "payroll_w2_codes",

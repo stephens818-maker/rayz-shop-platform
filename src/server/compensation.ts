@@ -9,6 +9,7 @@ import {
   commissionBetween,
   guaranteeForDays,
   lineRate,
+  mixedRates,
   monthStart,
   fieldProblem,
   fieldValue,
@@ -26,6 +27,7 @@ import {
 import type { BrandTipPolicy, TipMethod } from "@/domain/tips";
 import { railed } from "@/server/tips/payout-model";
 import type { DayHours } from "@/domain/payroll/overtime";
+import type { MixedRate } from "@/domain/payroll/calc";
 import { diffDays, todayLocal, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
 import { AppError, forbidden, notFound } from "@/server/errors";
@@ -216,7 +218,7 @@ export async function commissionLines(staffIds: readonly string[] | null, from: 
 
 export interface PayrollPlans {
   /** Null: no plan, so Payroll setup's rates. */
-  rateFor(staffId: string, shopId: string): BaseRates | null;
+  rateFor(staffId: string, shopId: string): (BaseRates & { mixed: MixedRate[] }) | null;
   /** The guaranteed minimum for the period in dollars, or null. */
   guaranteeOf(staffId: string): number | null;
 }
@@ -247,6 +249,7 @@ export async function payrollPlans(o: { staffIds: readonly string[]; start: Loca
         hourlyRate: blendedHourly(days, vs, shopId, fb, o.end),
         servicePct: c?.serviceNetCents ? c.serviceCommissionCents / c.serviceNetCents : flat.source === "tier" ? (v?.servicePct ?? fb(null).servicePct) : flat.pct,
         productPct: c?.productNetCents ? c.productCommissionCents / c.productNetCents : (v?.productPct ?? fb(shopId).productPct),
+        mixed: mixedRates(vs, shopId, fb, days, lines.get(staffId) ?? [], o.start, o.end),
       };
     },
     guaranteeOf(staffId) {
