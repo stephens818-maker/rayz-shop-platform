@@ -5,7 +5,7 @@
  */
 import Stripe from "stripe";
 import ExcelJS from "exceljs";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { Mods, actor, loadModules } from "./setup";
 
 vi.mock("server-only", () => ({}));
@@ -28,9 +28,7 @@ beforeAll(async () => {
   connectWebhook = await import("@/server/payments/connect-webhook");
   run = await import("@/server/payroll/run");
   today = m.time.todayLocal();
-  // These tests cover batches and Stripe payouts, which a deployment turns on: shops pay through
-  // payroll out of the box, and direct Stripe payouts are held behind the flag.
-  process.env.FEATURE_STAFF_STRIPE_PAYOUTS = "true";
+  // Batches by hand and cash by default here, so each test builds the batches it checks.
   await m.db.db
     .update(m.schema.shops)
     .set({ tipPayouts: { schedule: "manual", cardDelayDays: 0, defaultMethod: "cash" } })
@@ -41,7 +39,6 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  delete process.env.FEATURE_STAFF_STRIPE_PAYOUTS;
   await m?.db.closeDb();
 });
 
@@ -507,12 +504,15 @@ describe("payroll export shows tips already paid", () => {
     expect(paid).toContain(lc.tips);
   });
 
-  it("marking paid tips can be turned off, and its column can't take another column's name", async () => {
+  it("marking paid tips is required while Stripe pays tips direct, can be turned off where payroll pays them, and its column can't take another column's name", async () => {
     const before = await m.db.db.query.brandSettings.findFirst();
     const def = (await import("@/server/brand-sync/settings")).settingDef("payroll")!;
     type P = import("@/domain/payroll/calc").PayrollSettings;
     const base = def.read(before?.payroll) as P;
     await expect(Promise.resolve().then(() => def.parse({ tipsPaidOutHeader: "E_Cash Tips Recd_Dollars" }, base, actor as never, m.db.db as never))).rejects.toThrow(/its own name/);
+    await expect(Promise.resolve().then(() => def.parse({ markPaidTips: false }, base, actor as never, m.db.db as never))).rejects.toThrow(/can't be turned off while Stripe payouts are on/);
+    process.env.FEATURE_STAFF_STRIPE_PAYOUTS = "false";
+    onTestFinished(() => void delete process.env.FEATURE_STAFF_STRIPE_PAYOUTS);
     const off = (await def.parse({ markPaidTips: false }, base, actor as never, m.db.db as never)) as P;
     expect(off).toMatchObject({ markPaidTips: false });
     const calc = await import("@/domain/payroll/calc");

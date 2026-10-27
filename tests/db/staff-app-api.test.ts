@@ -455,7 +455,7 @@ describe("the Squire payout cutover (ST-C9)", () => {
     const report = await payoutCutoverReport(cv);
     const line = report.lines.find((l) => l.staffId === ids.makenna)!;
     expect(line).toMatchObject({ squireOwedCents: 1250, tickets: 2, confirmation: null });
-    expect(report.firstRayzPayout).toMatchObject({ via: "payroll" });
+    expect(report.firstRayzPayout).toMatchObject({ via: "stripe" });
     expect(report.ready).toBe(true);
 
     const t = await login("makenna@rayz.test");

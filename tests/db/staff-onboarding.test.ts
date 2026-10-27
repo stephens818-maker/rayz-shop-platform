@@ -33,6 +33,7 @@ const fake = {
     retrieve: async () => {
       throw new Error("offline in the test");
     },
+    update: async (id: string) => ({ id }),
   },
 };
 const fakeStripe = (on: boolean) => ((globalThis as { __fakeStripe?: unknown }).__fakeStripe = on ? fake : undefined);
@@ -60,8 +61,7 @@ beforeAll(async () => {
   cut = await import("@/server/cutover");
   connectWebhook = await import("@/server/payments/connect-webhook");
   today = m.time.todayLocal();
-  // Payout onboarding and tip batches are what a deployment turns on; out of the box tips go through payroll.
-  process.env.FEATURE_STAFF_STRIPE_PAYOUTS = "true";
+  // Batches by hand and cash by default here, so each test builds the batches it checks.
   await m.db.db
     .update(m.schema.shops)
     .set({ tipPayouts: { schedule: "manual", cardDelayDays: 0, defaultMethod: "cash" } })
@@ -73,7 +73,6 @@ beforeAll(async () => {
 afterEach(() => fakeStripe(false));
 
 afterAll(async () => {
-  delete process.env.FEATURE_STAFF_STRIPE_PAYOUTS;
   await m?.db.closeDb();
 });
 

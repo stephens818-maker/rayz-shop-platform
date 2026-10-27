@@ -36,6 +36,7 @@ const fake = {
   refunds: { create: record("refund", "re") },
   accounts: {
     create: record("account", "acct"),
+    update: async (id: string, params: Record<string, unknown>) => (calls.push({ op: "account_update", params: { id, ...params }, opts: undefined }), { id }),
     retrieve: async () => {
       throw new Error("offline in the test");
     },
@@ -61,8 +62,7 @@ beforeAll(async () => {
   mm = await import("@/server/payments/money-movement");
   connectWebhook = await import("@/server/payments/connect-webhook");
   today = m.time.todayLocal();
-  // Direct Stripe payouts and tip batches are what a deployment turns on; out of the box tips go through payroll.
-  process.env.FEATURE_STAFF_STRIPE_PAYOUTS = "true";
+  // Batches by hand here, so a test's tips aren't swept into a scheduled batch.
   await m.db.db
     .update(m.schema.shops)
     .set({ tipPayouts: { schedule: "manual", cardDelayDays: 0, defaultMethod: "cash" } })
@@ -79,7 +79,6 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  delete process.env.FEATURE_STAFF_STRIPE_PAYOUTS;
   await m?.db.closeDb();
 });
 
@@ -289,7 +288,9 @@ describe("Connect webhooks for employees' accounts", () => {
       acct,
     );
     expect(res.status).toBe(200);
+    expect(calls.find((c) => c.op === "account_update")?.params).toMatchObject({ id: acct, metadata: { staffId, worker_type: "w2_employee", tax_forms: "w2_via_payroll_no_1099" } });
     const a = (await accounts.staffAccount(staffId))!;
+    expect(a.w2TaggedAt).toBeNull();
     expect(a.externalAccounts).toEqual([
       { id: "ba_fake_kate", type: "bank_account", name: "STRIPE TEST BANK", last4: "6789", default: true, instant: false },
       { id: "card_fake_kate", type: "card", name: "Visa", last4: "5556", default: false, instant: true },
@@ -316,5 +317,65 @@ describe("Connect webhooks for employees' accounts", () => {
     expect((await m.db.db.query.tipPayouts.findFirst({ where: eq(s().tipPayouts.id, p.id) }))!).toMatchObject({ status: "failed", failureMessage: "Payout failed: Account closed" });
     const mine = (c: Call) => (c.params.metadata as { tipPayoutId?: string } | undefined)?.tipPayoutId === p.id;
     expect(calls.filter((c) => c.op === "reverse" && mine(c)).map((c) => c.params.id)).toEqual([calls.find((c) => c.op === "transfer" && mine(c))!.id]);
+  });
+});
+
+describe("no 1099s for employees (their tips are W-2 wages)", () => {
+  const secret = "whsec_test_tip_stripe";
+  const event = (type: string, object: object, account: string) => {
+    const payload = JSON.stringify({ id: `evt_${Math.random().toString(36).slice(2)}`, object: "event", type, account, data: { object } });
+    return connectWebhook.handleConnectWebhook(payload, Stripe.webhooks.generateTestHeaderString({ payload, secret }), secret);
+  };
+
+  it("every account is made with Ray'z paying its Stripe fees (no 1099-K) and tagged as a W-2 employee's", async () => {
+    const { staffId } = await person("rock-island", "Garrett");
+    fakeStripe(true);
+    calls.length = 0;
+    await accounts.staffOnboardingUrl(staffId, actor, "http://localhost");
+    const made = calls.find((c) => c.op === "account")!;
+    expect(made.params).toMatchObject({
+      controller: { fees: { payer: "application" }, losses: { payments: "application" }, stripe_dashboard: { type: "express" } },
+      metadata: { staffId, purpose: "tip_payouts", worker_type: "w2_employee", tax_forms: "w2_via_payroll_no_1099" },
+    });
+    const a = (await accounts.staffAccount(staffId))!;
+    expect(a).toMatchObject({ stripeAccountId: made.id, simulated: false, feesPayer: "application" });
+    expect(a.w2TaggedAt).not.toBeNull();
+    expect(accounts.issues1099K(a)).toBe(false);
+  });
+
+  it("an account Stripe says pays its own fees has its payouts held, not sent; the Dashboard exclusions list every real account", async () => {
+    const { shop, staffId } = await person("moline", "Sara");
+    const acct = "acct_fake_sara";
+    await readyOnStripe(staffId, acct, false);
+    await shopOnStripe(shop.id, "acct_fake_moline");
+    fakeStripe(true);
+    calls.length = 0;
+    const base = { id: acct, object: "account", payouts_enabled: true, details_submitted: true, requirements: { currently_due: [], past_due: [], pending_verification: [], disabled_reason: null, current_deadline: null } };
+    await event("account.updated", { ...base, controller: { fees: { payer: "account" } }, metadata: { staffId, ...accounts.W2_METADATA } }, acct);
+    expect((await accounts.staffAccount(staffId))!).toMatchObject({ feesPayer: "account" });
+    expect(calls.filter((c) => c.op === "account_update")).toEqual([]);
+    const [flagged] = await m.db.db.select().from(s().auditLog).where(and(eq(s().auditLog.action, "tips.account_1099k"), eq(s().auditLog.entityId, staffId)));
+    expect(flagged.details).toMatchObject({ stripeAccountId: acct, feesPayer: "account" });
+    expect(await accounts.taxFormStatus()).toMatchObject({ feesOnAccount: 1 });
+
+    const { sent, made } = await payOne(shop.id, staffId, 1100);
+    expect(made).toEqual([]);
+    expect(sent).toMatchObject({ status: "held", holdKind: "manager", holdReason: accounts.TAX_FORMS_HOLD_REASON, stripeTransferId: null, stripeDebitId: null });
+    expect(await m.db.db.select().from(s().tipPayoutPeriods).where(eq(s().tipPayoutPeriods.payoutId, sent.id))).toEqual([]);
+
+    await event("account.updated", { ...base, controller: { fees: { payer: "application" } }, metadata: { staffId, ...accounts.W2_METADATA } }, acct);
+    calls.length = 0;
+    await tp.releasePayout(sent.id, actor);
+    const after = (await m.db.db.query.tipPayouts.findFirst({ where: eq(s().tipPayouts.id, sent.id) }))!;
+    expect(after.status).toBe("processing");
+    expect(calls.map((c) => c.op)).toEqual(["debit", "transfer", "payout"]);
+
+    const { csv, accounts: n } = await accounts.taxFormExclusionCsv();
+    const lines = csv.trim().split("\n");
+    expect(lines[0]).toBe("stripe_account_id,filing_requirement,postal_delivery");
+    expect(lines).toContain(`${acct},NOT_REQUIRED,FALSE`);
+    expect(lines.slice(1).every((l) => /^acct_[A-Za-z0-9_]+,NOT_REQUIRED,FALSE$/.test(l))).toBe(true);
+    expect(n).toBe(lines.length - 1);
+    expect(csv).not.toMatch(/sim_acct/);
   });
 });
