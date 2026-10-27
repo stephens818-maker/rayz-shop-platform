@@ -834,6 +834,21 @@ Charles's scope: each employee gets their own Stripe Connect Express account, se
 - [ ] The mobile agent's answer on sharing (or taking over) the money-movement module.
 - [ ] A real run against a Stripe test account with Connect turned on (the tests use a stand-in for Stripe).
 
+## 36. Staff payout onboarding (everyone re-registers)
+
+Charles decided that all staff re-register: no Squire staff Stripe account is migrated, and every employee does fresh Stripe Express onboarding under Ray'z. README "Tip payouts" and "Cutover plan", and NOTES-SYNC "Tip payouts", have the details.
+
+- [x] Onboarding tracker in the brand and shop admin (**Payroll → Payout onboarding**, `tips.approve`, one shop or every shop they can see): not invited, invited, started, blocked on Stripe's requirements (with what Stripe needs), verifying, or done, plus invites and reminders sent and tips waiting. Only whether there's an email or mobile number is shown, not the details.
+- [x] Bulk invites by text, email or both (falling back to whichever they have), up to 500 at once, each audited. Someone already done, verifying, invited in the last 10 minutes or with no contact details is skipped with the reason.
+- [x] Reminders from the notifications cron, in shop hours (9 AM to 7 PM), every 3 days and up to 4 times by default (brand settings). They stop when the person finishes, leaves or a manager stops them.
+- [x] Tip payouts stay pending, never lost: a Stripe payout for someone who can't be paid yet is held for their setup instead of being paid in cash or failing. Its tips stay with it, and it goes back to pending (or is sent, once the batch is approved) as soon as Stripe can pay them. Managers can't release it by hand. The employee sees what's waiting on My tips, My banking and in the staff app.
+- [x] Cutover checklist item: the last day Squire pays each shop's tips, who isn't onboarded yet, and a sign-off that waits until everyone is done unless an owner gives a reason (audited with who wasn't). The cutover list shows how many are onboarded at each shop.
+- [x] Migration `core_0101_staff_onboarding`. Tests: `tests/staff-onboarding.test.ts`, `tests/db/staff-onboarding.test.ts`, `tests/db/cutover.test.ts`, `tests/tips.test.ts`.
+
+**Still open:**
+- [ ] Charles: how to pay someone who leaves before finishing Stripe setup. Today a manager changes their payout method to cash or payroll, then takes the payout out of the batch so the next one pays it that way.
+- [ ] A real invite and onboarding run against a Stripe test account with Connect turned on.
+
 ## Deferred by decision
 
 - I10 stays on destination charges for customers; `payment_transfers` isn't built, and tips aren't transferred to shops separately. Tip payouts to employees (sections 15 and 35) use separate charges and transfers from the shop's own Stripe account to the employee's.

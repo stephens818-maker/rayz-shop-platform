@@ -225,6 +225,11 @@ Everyone is paid hourly and punches in and out. This reverses the earlier "no cl
 - **Permissions:** `tips.own`, `tips.approve` and `tips.settings` (brand-only), and the report `tip_payouts`. There are 77 feature permissions now.
 - **Notification kinds:** `tip_payout`, to the employee (email, or a text if they have no email) when a payout is sent or fails, and to the shop's email when one fails. `tip_banking`, to the employee: Stripe needs more information (email, or a text without one), and security notices when the payout destination or method changes (email and text).
 - **Cron:** `/api/cron/notifications` runs `tipPayoutCron`, which builds each live shop's daily or weekly draft once it's due. The response gains `tipPayouts`.
+- **Everyone re-registers (Charles, 2026-10-27).** No Squire staff Stripe account is migrated: every employee does fresh Express onboarding under Ray'z.
+  - **Pending, never lost:** a Stripe payout for someone Stripe can't pay yet is built `held` with `tip_payouts.hold_kind = 'stripe_setup'` (`core_0101`; a manager's hold is `'manager'`). It's never switched to cash. One approved before their account stopped being payable goes back to held instead of failing. Its tips stay claimed by it. Once `canReceive` turns true (`account.updated` or the simulator), `releaseSetupHolds` puts it back: pending in a draft batch, or sent in an approved one. A manager can't release it by hand; taking it out of the batch returns its tips to the next batch. Read waiting amounts with `waitingForSetup(staffIds)` or `myTips(...).waitingForSetup`.
+  - **Tracker and invites** (`src/server/tips/onboarding.ts`, `/admin/tips/onboarding`, `tips.approve`): progress `not_invited`, `invited`, `started`, `blocked`, `verifying` or `done` (`src/domain/staff-onboarding.ts`), and bulk invites by text, email or both, recorded in `staff_onboarding_invites`. Reminders come from the notifications cron (its response gains `payoutSetupReminders`), 9 AM to 7 PM. The default is every 3 days, up to 4 times; the brand sets this in `brand_settings.tip_payouts.reminderEveryDays` and `reminderMax`. Reminders stop when the person is done or leaves. Links point to `/staff-app/payouts`, which opens `${STAFF_APP_SCHEME:-rayzstaff}://banking` or `/admin/my-banking`.
+  - **Notification kind `tip_onboarding`:** the invite or reminder, sent by email or text. No account details are in it.
+  - **Cutover:** `shop_cutovers.squire_tips_end_on` is the last day Squire pays the shop's tips. `signOffAndSwitch` refuses until everyone active at the shop is `done`, unless an owner gives a reason. The `cutover.switch` audit records `staffPayouts`.
 
 ### Sign-in restrictions (core)
 
@@ -509,9 +514,17 @@ Append-only `analytics_events`, written by database triggers on the tables both 
   - The exact iSolved import template: column names and earning codes. The layout is configurable.
   - Meal break rules: 30 minutes or more is unpaid by default, and the auto-deduction is off.
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
+- Staff payout onboarding, pending Charles: someone who leaves before finishing Stripe setup has tips held for them with no other way out. A manager can take the payout out of the batch, but the next batch holds it again while their method is Stripe. To pay them another way, change their method to cash or payroll, then take the payout out. Should leavers be paid in their final paycheck as a rule?
 - Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
 
 ## Log
+
+### 2026-10-27: core, everyone re-registers for Stripe payouts, FYI for mobile
+- **Charles decided:** there's no migration of Squire staff Stripe accounts; every employee does fresh Express onboarding under Ray'z.
+- **Added:** the payout onboarding tracker in the brand and shop admin, bulk invites by text or email with reminders, tip payouts held for the person (never lost) until they finish, and a cutover checklist item (everyone onboarded before Squire's payouts stop). See "Tip payouts".
+- **Staff API (core's):** `GET /banking` gains `waitingForSetup` (`{ cents, payouts }`). Each payout in `GET /payouts` gains `waitingForSetup` (true while it's held for their setup, with `statusLabel` "Waiting for your Stripe setup"), and the response gains a `waitingForSetup` total. The app can show "tips are waiting" from these. The banking screen at `rayzstaff://banking` is where invites land.
+- **Migration `core_0101_staff_onboarding`.** It adds `staff_onboarding_invites`, `tip_payouts.hold_kind` (backfilled) and `shop_cutovers.squire_tips_end_on`. The next free one is `core_0102`.
+- Nothing under `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, devices and push, or `connect.ts` changed. No request.
 
 ### 2026-10-27: core, staff Stripe tip payouts (S3), one request for mobile
 - **Scope from Charles:** the staff app's Stripe tip payouts, matching Squire Commander. Each employee has their own Stripe Connect Express account, separate from the shops' accounts. Stripe-hosted onboarding is launched from the staff app and covers identity, the bank account and a debit card for instant payouts.

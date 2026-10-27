@@ -309,6 +309,10 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - **Stripe test mode only.** Use test keys (`sk_test_…`) and leave `MONEY_MOVEMENT_LIVE` unset. With a live key, employee accounts, onboarding, transfers and payouts are refused, and batches with Stripe payouts can't be approved, until `MONEY_MOVEMENT_LIVE=true`. Set it only once Charles has signed off on live money movement.
    - Turn on Connect for the platform account, with Express accounts and instant payouts, and check the Connect webhook (step 2) has `account.updated`, `account.external_account.*` and the `payout.*` events.
    - Decide with Charles whether the instant payout fee is passed on to employees (**Tip payout settings**, on by default) and which iSolved code marks tips already paid out (**Payroll → Setup**, default `M_Tips Paid Out_Dollars`; turn it off if iSolved shouldn't get it).
+38. Staff payout onboarding (migration `core_0101_staff_onboarding`): it adds the `staff_onboarding_invites` table and two columns, and marks every payout already on hold as a manager's hold. Nobody's access changes.
+   - **Everyone re-registers.** No Squire staff Stripe account is moved over: every employee sets up Ray'z Stripe payouts from scratch. Until they finish, their Stripe tip payouts wait in each batch as "Waiting for Stripe setup" and are sent by themselves once Stripe can pay them. They're never paid another way and never dropped.
+   - For each shop, set **Last day Squire pays tips** on its **Cutover** page, then send invites from **Payroll → Payout onboarding** (text, email or both). Reminders go out from the notifications cron between 9 AM and 7 PM, every 3 days and up to 4 times by default (**Tip payout settings**).
+   - **Sign-off now waits for staff payouts.** A shop can't switch from Squire until everyone working there has finished, unless the owner types a reason. The reason and who hadn't finished go in the audit log.
 
 ## Running the production build locally
 
