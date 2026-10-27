@@ -28,7 +28,7 @@ export default async function SignInHelpPage() {
             <Card key={r.id}>
               <CardHeader
                 title={policy.name(r.firstName, r.lastName)}
-                subtitle={`${HELP_REASON_LABEL[r.reason]} · ${formatDateTime(r.createdAt, "MMM d", ", ")}`}
+                subtitle={`${HELP_REASON_LABEL[r.reason]} · ${formatDateTime(r.createdAt, { date: "MMM d", sep: ", " })}`}
               />
               <div className="grid gap-4 p-4 md:grid-cols-2">
                 <div className="space-y-1 text-sm">

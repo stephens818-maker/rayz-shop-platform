@@ -2,7 +2,7 @@ import "server-only";
 import { appBaseUrl, demoMode } from "@/lib/deployment";
 import { flags } from "@/lib/flags";
 import { payrollHoursStyle } from "@/lib/hours";
-import { SHOP_TZ, clockFormat, minutesToLabel, timePattern } from "@/lib/time";
+import { SHOP_TZ, currentTimeFormat, minutesToLabel, timePattern } from "@/lib/time";
 import { clientPlatform, versionLessThan, type AppPlatform } from "@/server/app-config";
 import { AppError } from "@/server/errors";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
@@ -100,7 +100,7 @@ export function staffAppConfig(req: Request) {
     support: staffSupport(),
     /** How times and hours read on every screen (the brand's setting). Times in responses stay UTC ISO; show them in the shop's zone. */
     display: {
-      clockFormat: clockFormat(),
+      timeFormat: currentTimeFormat(),
       timePattern: timePattern(),
       example: minutesToLabel(17 * 60 + 30),
       timeZone: SHOP_TZ,

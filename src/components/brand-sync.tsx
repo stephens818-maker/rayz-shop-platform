@@ -65,7 +65,7 @@ function defaultRunAt() {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 /** A datetime-local value (browser wall time) or a saved instant (ISO with a zone). */
-const whenText = (s: string) => (s.length < 16 ? "" : /(Z|[+-]\d{2}:?\d{2})$/.test(s) ? formatDateTime(s, "EEE, MMM d", ", ") : localStampLabel(s.slice(0, 16), "EEE, MMM d"));
+const whenText = (s: string) => (s.length < 16 ? "" : /(Z|[+-]\d{2}:?\d{2})$/.test(s) ? formatDateTime(s, { sep: ", " }) : localStampLabel(s.slice(0, 16), "EEE, MMM d"));
 
 interface ShopLine {
   id: string;
@@ -450,7 +450,7 @@ function BrandSyncDialog({ req, onClose, onDone }: { req: OpenSync & { preview: 
 
 /** For a brand editor's save bar: what the last sync did. */
 export function syncedText(r: CommitResult) {
-  if (r.status === "scheduled") return `Scheduled for ${formatDateTime(r.runAt!, "EEE, MMM d", ", ")}`;
+  if (r.status === "scheduled") return `Scheduled for ${formatDateTime(r.runAt!, { sep: ", " })}`;
   const kept = r.kept ? `; ${r.kept} kept ${r.kept === 1 ? "its" : "their"} own` : "";
   return (r.shops ? `Saved and synced to ${r.shops} shop${r.shops === 1 ? "" : "s"}` : "Saved to the brand") + kept;
 }

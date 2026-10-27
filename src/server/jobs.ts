@@ -11,6 +11,7 @@ import { dueReports, sendReport } from "./report-builder/deliver";
 import { queueReviewFollowUps } from "./reviews";
 import { computeDailyStats } from "./rollups";
 import { buildDuePayout, duePayouts } from "./tips/payouts";
+import { loadDisplay } from "./display";
 
 /**
  * Background work that grows with the number of locations, split into small tasks in job_tasks:
@@ -174,6 +175,7 @@ export interface JobRun {
 
 /** Queues what's due and works through tasks until the time is up. */
 export async function runJobs(now = new Date(), o: { kinds?: readonly JobKind[]; budgetMs?: number } = {}): Promise<JobRun> {
+  await loadDisplay();
   const kinds = o.kinds ?? JOB_KINDS;
   const budget = o.budgetMs ?? 240_000;
   const started = Date.now();

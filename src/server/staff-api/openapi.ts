@@ -51,7 +51,7 @@ const MORE: Op[] = [
     path: "/config",
     tag: "App",
     summary:
-      "Read at launch, before sign-in, and never version-gated: minimum and latest versions per platform (send X-Client: ios|android and X-App-Version; older than the minimum is 426 upgrade_required on every other route), the maintenance message, switches (clock, stripePayouts, tapToPay), the payout default (stripe; payroll where FEATURE_STAFF_STRIPE_PAYOUTS=false), links to the staff privacy policy, terms and support, and legal versions. display says how times and hours read on every screen: clockFormat 12h (the default: 9:05 AM, 5:30 PM, never 24-hour) or 24h, its timePattern, the shop timeZone (times in responses are UTC ISO), and payrollHours (decimal or hm).",
+      "Read at launch, before sign-in, and never version-gated: minimum and latest versions per platform (send X-Client: ios|android and X-App-Version; older than the minimum is 426 upgrade_required on every other route), the maintenance message, switches (clock, stripePayouts, tapToPay), the payout default (stripe; payroll where FEATURE_STAFF_STRIPE_PAYOUTS=false), links to the staff privacy policy, terms and support, and legal versions. display says how times and hours read on every screen: timeFormat 12h (the default: 9:05 AM, 5:30 PM, never 24-hour) or 24h, its timePattern, the shop timeZone (times in responses are UTC ISO), and payrollHours (decimal or hm).",
     permission: "Anyone",
     public: true,
   },

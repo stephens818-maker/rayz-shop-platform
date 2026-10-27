@@ -12,6 +12,7 @@ import { onboardingReminderCron } from "@/server/tips/onboarding";
 import { taxCheckReminderCron } from "@/server/tips/tracker";
 import { payQuestionCron } from "@/server/pay-questions";
 import { staffRetentionCron } from "@/server/staff-retention";
+import { loadDisplay } from "@/server/display";
 
 export const maxDuration = 300;
 
@@ -26,6 +27,7 @@ export const maxDuration = 300;
  */
 export const GET = route(async (req) => {
   if (!cronAuthorized(req.headers.get("authorization"), process.env.CRON_SECRET)) throw new AppError("unauthorized", "Bad or missing cron secret");
+  await loadDisplay();
   const recurringBlocks = await extendSeries();
   const lowStock = await sendLowStockAlerts(null, await allShopIds());
   const digest = await sendDueMorningDashboards();

@@ -7,6 +7,7 @@ import { runAbWinners } from "@/server/marketing/engine";
 import { sendBadgeNotices } from "@/server/customer-badges";
 import { runJobs } from "@/server/jobs";
 import { runMilestones } from "@/server/milestones/engine";
+import { loadDisplay } from "@/server/display";
 
 /** Local stand-in for Vercel Cron: writes recurring blocks ahead, retries or flags call-in outreach, works background tasks (rollups, campaign triggers and nudges per location, badge slices, blasts and sequences, scheduled reports, tip payout drafts), decides A/B tests, queues Badge news, records staff milestones hourly, and drains the notification queue every 30 seconds. `--once` for a single pass. */
 async function main() {
@@ -14,6 +15,7 @@ async function main() {
   const once = process.argv.includes("--once");
   let milestonesAt = 0;
   do {
+    await loadDisplay();
     const written = await extendSeries();
     if (written) console.log(new Date().toISOString(), { recurringBlocks: written });
     const abWinners = await runAbWinners(new Date());

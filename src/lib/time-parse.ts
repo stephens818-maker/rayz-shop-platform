@@ -1,4 +1,4 @@
-import { clockFormat, type ClockFormat } from "./time";
+import { currentTimeFormat, type TimeFormat } from "./time";
 
 /**
  * Typed times of day for the fast time picker: "9", "930", "9:30", "5p", "5:15pm", "17:00", "noon".
@@ -26,7 +26,7 @@ export function parseTimeOfDay(input: string): number | null {
 }
 
 /** "9:30 AM", "12 PM": how a time of day reads in the picker ("09:30", "12:00" on the 24-hour setting). */
-export function formatTimeOfDay(min: number, f: ClockFormat = clockFormat()): string {
+export function formatTimeOfDay(min: number, f: TimeFormat = currentTimeFormat()): string {
   const h = Math.floor(min / 60) % 24;
   const m = min % 60;
   if (f === "24h") return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
@@ -34,7 +34,7 @@ export function formatTimeOfDay(min: number, f: ClockFormat = clockFormat()): st
 }
 
 /** A tight grid's time of day: "9a", "5:30p" ("09:00", "17:30" on the 24-hour setting). 24:00 is midnight, "12a". */
-export function compactTimeOfDay(min: number, f: ClockFormat = clockFormat()): string {
+export function compactTimeOfDay(min: number, f: TimeFormat = currentTimeFormat()): string {
   if (f === "24h") return formatTimeOfDay(min, f);
   const h = Math.floor(min / 60) % 24;
   const m = min % 60;

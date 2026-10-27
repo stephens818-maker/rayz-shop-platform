@@ -13,6 +13,7 @@ import { SHOP_TZ, formatDateTime } from "@/lib/time";
 import { SUPPRESSION_ERROR, oneClickUnsubscribeUrl, suppressedEmails, takesUnsubscribe, unsubscribeUrl } from "./email-events";
 import { emailProvider, pushProvider, smsProvider, voiceProvider } from "./providers";
 import { PermanentSendError } from "./push";
+import { loadDisplay } from "../display";
 
 export type NotificationKind =
   | "confirmation"
@@ -442,6 +443,7 @@ export async function enqueueShopEmail(
 export async function processDueJobs(
   opts: { limit?: number; now?: Date; /** Only these shops' messages; the cron job sends everyone's. */ shopIds?: string[]; /** Only these jobs (a call or text sent from the admin). */ ids?: string[] } = {},
 ) {
+  await loadDisplay();
   const now = opts.now ?? new Date();
   const limit = opts.limit ?? 100;
   const sms = smsProvider();

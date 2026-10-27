@@ -20,7 +20,7 @@ const CELL_TONE: Record<ShownStatus, string> = {
 };
 const DOT: Record<ShownStatus, string> = { in_sync: "bg-emerald-500", overridden: "bg-violet-500", out_of_sync: "bg-amber-500", pending: "bg-sky-500" };
 
-const at = (iso: string) => formatDateTime(iso, "MMM d", ", ");
+const at = (iso: string) => formatDateTime(iso, { date: "MMM d", sep: ", " });
 const cellId = (key: string, shopId: string) => `${key}|${shopId}`;
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 

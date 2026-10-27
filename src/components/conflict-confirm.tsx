@@ -5,7 +5,7 @@ import { Button } from "./ui";
 import { formatDateTime } from "@/lib/time";
 
 const when = (iso: string) =>
-  formatDateTime(iso, "EEE, MMM d", ", ");
+  formatDateTime(iso, { sep: ", " });
 
 /** Booked appointments inside time someone is about to block. Saving anyway keeps every one of them booked. */
 export function ConflictConfirm({

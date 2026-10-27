@@ -1,6 +1,6 @@
 import { DEFAULT_DISPLAY, displaySettings, type DisplaySettings } from "@/domain/display";
 import { setPayrollHoursStyle } from "@/lib/hours";
-import { setClockFormat } from "@/lib/time";
+import { setTimeFormat } from "@/lib/time";
 import { brandColumn } from "@/server/brand-sync/settings";
 
 const TTL_MS = 30_000;
@@ -13,7 +13,7 @@ const cache = {
 };
 
 function apply(v: DisplaySettings): void {
-  setClockFormat(v.clockFormat);
+  setTimeFormat(v.timeFormat);
   setPayrollHoursStyle(v.payrollHours);
 }
 
@@ -26,7 +26,8 @@ export async function loadDisplay(): Promise<DisplaySettings> {
   const c = cache.get();
   if (c && Date.now() - c.at < TTL_MS) return c.v;
   try {
-    const v = displaySettings(await brandColumn("display"));
+    const [timeFormat, display] = await Promise.all([brandColumn("timeFormat"), brandColumn("display")]);
+    const v = displaySettings({ timeFormat, payrollHours: display?.payrollHours });
     cache.set({ at: Date.now(), v });
     apply(v);
     return v;

@@ -16,7 +16,8 @@ import {
   type WorkNow,
 } from "@/domain/staff-notifications";
 import { clockStatus } from "@/domain/time-clock";
-import { formatDate, formatTime } from "@/lib/time";
+import { formatDate } from "@/lib/time";
+import { formatClock } from "@/server/brand-time";
 
 const HOUR = 3600_000;
 /** An open shift older than this is a forgotten clock-out, not someone at work (as in the time clock). */
@@ -96,7 +97,7 @@ export async function queueStaffAlert(
   const channels = channelsFor(cleanNotificationPrefs(row.prefs), event);
   if (!channels.length) return 0;
   const items = await tx.select({ name: appointmentItems.name }).from(appointmentItems).where(eq(appointmentItems.appointmentId, appointmentId)).orderBy(asc(appointmentItems.kind));
-  const when = `${formatDate(row.startsAt, "EEE MMM d")} at ${formatTime(row.startsAt)}`;
+  const when = `${formatDate(row.startsAt, "EEE MMM d")} at ${await formatClock(row.startsAt)}`;
   const body = staffAlertText(event, { firstName: row.firstName, when, shopName: row.shopName, services: items.map((i) => i.name), detail: opts.detail });
   const now = opts.now ?? new Date();
   const phones = channels.includes("push")

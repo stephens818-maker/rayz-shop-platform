@@ -24,7 +24,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
   return (
     <html lang="en" className={inter.variable} suppressHydrationWarning>
       <body>
-        <DisplaySync clockFormat={display.clockFormat} payrollHours={display.payrollHours} />
+        <DisplaySync timeFormat={display.timeFormat} payrollHours={display.payrollHours} />
         {demoMode() && (
           <div role="note" className="bg-amber-300 px-4 py-1 text-center text-xs font-medium text-amber-950">
             Demo preview on sample data. Cards aren&apos;t charged, and no texts or emails are sent; see them under Notifications.

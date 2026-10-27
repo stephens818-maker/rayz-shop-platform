@@ -2,6 +2,7 @@ import { json, route } from "@/server/api";
 import { AppError } from "@/server/errors";
 import { sendDueMorningDashboards } from "@/server/morning-dashboard";
 import { cronAuthorized } from "@/server/notifications/cron";
+import { loadDisplay } from "@/server/display";
 
 export const maxDuration = 300;
 
@@ -13,5 +14,6 @@ export const maxDuration = 300;
  */
 export const GET = route(async (req) => {
   if (!cronAuthorized(req.headers.get("authorization"), process.env.CRON_SECRET)) throw new AppError("unauthorized", "Bad or missing cron secret");
+  await loadDisplay();
   return json(await sendDueMorningDashboards());
 });

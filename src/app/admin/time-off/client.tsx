@@ -31,7 +31,7 @@ function useRun() {
 }
 
 const when = (iso: string) =>
-  formatDateTime(iso, "EEE, MMM d", ", ");
+  formatDateTime(iso, { sep: ", " });
 
 export function AffectedRow({ a }: { a: AffectedAppointment }) {
   const { pending, error, ok, run } = useRun();

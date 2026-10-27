@@ -5,12 +5,12 @@ import { useSettingSync } from "@/components/brand-sync";
 import { Card, CardHeader, Field, Select } from "@/components/ui";
 import { PAYROLL_HOURS_LABEL, PAYROLL_HOURS_STYLES, type PayrollHoursStyle } from "@/domain/display";
 import { formatPayHours, setPayrollHoursStyle } from "@/lib/hours";
-import { CLOCK_FORMATS, CLOCK_FORMAT_LABEL, minutesToLabel, setClockFormat, type ClockFormat } from "@/lib/time";
+import { TIME_FORMATS, TIME_FORMAT_LABEL, minutesToLabel, setTimeFormat, type TimeFormat } from "@/lib/time";
 import { SaveBar } from "./editors";
 
 /** The brand's time format: 12-hour with AM and PM by default, never Squire's 24-hour unless chosen here. */
-export function TimeFormatEditor({ initial, canEdit }: { initial: ClockFormat; canEdit: boolean }) {
-  const { pending, msg, saveSetting, dialog } = useSettingSync("display.clock");
+export function TimeFormatEditor({ initial, canEdit }: { initial: TimeFormat; canEdit: boolean }) {
+  const { pending, msg, saveSetting, dialog } = useSettingSync("time_format");
   const [v, setV] = useState(initial);
   const sample = [9 * 60 + 5, 12 * 60, 17 * 60 + 30].map((m) => minutesToLabel(m, v)).join(", ");
   return (
@@ -21,16 +21,16 @@ export function TimeFormatEditor({ initial, canEdit }: { initial: ClockFormat; c
       />
       <div className="p-4">
         <Field label="Show times as" hint={`For example: ${sample}.`}>
-          <Select value={v} disabled={!canEdit} onChange={(e) => setV(e.target.value as ClockFormat)} data-testid="time-format">
-            {CLOCK_FORMATS.map((f) => (
+          <Select value={v} disabled={!canEdit} onChange={(e) => setV(e.target.value as TimeFormat)} data-testid="time-format">
+            {TIME_FORMATS.map((f) => (
               <option key={f} value={f}>
-                {CLOCK_FORMAT_LABEL[f]}
+                {TIME_FORMAT_LABEL[f]}
               </option>
             ))}
           </Select>
         </Field>
       </div>
-      {canEdit && <SaveBar pending={pending} msg={msg} onClick={() => saveSetting(v, () => setClockFormat(v))} />}
+      {canEdit && <SaveBar pending={pending} msg={msg} onClick={() => saveSetting(v, () => setTimeFormat(v))} />}
       {dialog}
     </Card>
   );

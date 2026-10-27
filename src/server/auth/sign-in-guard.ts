@@ -129,7 +129,7 @@ export async function noteSignInDevice(user: { id: string; email: string | null;
   if (!isNew || !seenBefore.n) return { isNew };
   await audit({ staffId: user.id, label: user.firstName }, "staff.new_device", "staff", user.id, { via, device: o.label, ip: o.ip }, null);
   if (user.email) {
-    const when = formatDateTime(now, "MMM d, yyyy", ", ");
+    const when = formatDateTime(now, { date: "MMM d, yyyy", sep: ", " });
     const body = `Hi ${user.firstName}, someone signed in to your Ray'z account on a new ${via === "app" ? "phone or tablet (the staff app)" : "browser"}: ${o.label ?? "unknown device"}, ${when} Central. If this was you, there's nothing to do. If it wasn't, sign it out at ${appBaseUrl()}/admin/my-security and tell your manager right away, so they can reset your sign-in.`;
     await sendNow({ kind: "new_sign_in", channel: "email", to: user.email, subject: "New sign-in to your Ray'z account", body, storedBody: body }).catch((e) => console.error("new sign-in email", e));
   }

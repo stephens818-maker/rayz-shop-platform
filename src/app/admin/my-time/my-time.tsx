@@ -39,7 +39,7 @@ const mins = (s: string) => {
   const [h, m] = s.split(":").map(Number);
   return h * 60 + (m || 0);
 };
-const when = (iso: string) => formatDateTime(iso, "EEE, MMM d", ", ");
+const when = (iso: string) => formatDateTime(iso, { sep: ", " });
 const timeOnly = (iso: string) => formatTime(iso);
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 

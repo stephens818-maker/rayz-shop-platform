@@ -32,7 +32,7 @@ function useRun() {
 }
 
 const TZ = "America/Chicago";
-const when = (iso: string) => formatDateTime(iso, "EEE, MMM d", ", ");
+const when = (iso: string) => formatDateTime(iso, { sep: ", " });
 const timeOnly = (iso: string) => formatTime(iso);
 const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 const mins = (s: string) => {

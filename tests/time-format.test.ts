@@ -6,20 +6,20 @@ import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_DISPLAY, displaySettings } from "@/domain/display";
 import { formatPayHours, payrollHoursStyle, setPayrollHoursStyle } from "@/lib/hours";
 import {
-  clockFormat,
+  currentTimeFormat,
   formatDateTime,
   formatTime,
   hhmmLabel,
   localStampLabel,
   minutesToLabel,
-  setClockFormat,
+  setTimeFormat,
   timePattern,
   zonedWallTime,
 } from "@/lib/time";
 import { compactTimeOfDay, formatTimeOfDay, parseTimeOfDay } from "@/lib/time-parse";
 
 afterEach(() => {
-  setClockFormat("12h");
+  setTimeFormat("12h");
   setPayrollHoursStyle("decimal");
 });
 
@@ -27,15 +27,15 @@ const at = (min: number) => zonedWallTime("2026-10-27", min).toJSDate();
 
 describe("time format", () => {
   it("defaults to 12-hour with AM and PM, never 24-hour", () => {
-    expect(clockFormat()).toBe("12h");
-    expect(DEFAULT_DISPLAY.clockFormat).toBe("12h");
+    expect(currentTimeFormat()).toBe("12h");
+    expect(DEFAULT_DISPLAY.timeFormat).toBe("12h");
     expect(timePattern()).toBe("h:mm a");
     expect(formatTime(at(9 * 60 + 5))).toBe("9:05 AM");
     expect(formatTime(at(17 * 60 + 30))).toBe("5:30 PM");
     expect(formatTime(at(0))).toBe("12:00 AM");
     expect(formatTime(at(12 * 60))).toBe("12:00 PM");
     expect(formatDateTime(at(17 * 60 + 30))).toBe("Tue, Oct 27 · 5:30 PM");
-    expect(formatDateTime(at(17 * 60 + 30), "MMM d", ", ")).toBe("Oct 27, 5:30 PM");
+    expect(formatDateTime(at(17 * 60 + 30), { date: "MMM d", sep: ", " })).toBe("Oct 27, 5:30 PM");
     expect(minutesToLabel(9 * 60 + 5)).toBe("9:05 AM");
     expect(minutesToLabel(24 * 60)).toBe("12:00 AM");
     expect(formatTimeOfDay(17 * 60 + 30)).toBe("5:30 PM");
@@ -53,7 +53,7 @@ describe("time format", () => {
   });
 
   it("the 24-hour setting switches every formatter at once", () => {
-    setClockFormat("24h");
+    setTimeFormat("24h");
     expect(formatTime(at(17 * 60 + 30))).toBe("17:30");
     expect(formatTime(at(9 * 60 + 5))).toBe("09:05");
     expect(formatDateTime(at(17 * 60 + 30))).toBe("Tue, Oct 27 · 17:30");
@@ -72,8 +72,8 @@ describe("time format", () => {
   });
 
   it("a stored setting that isn't a known value falls back to 12-hour and decimal", () => {
-    expect(displaySettings({ clockFormat: "military", payrollHours: "minutes" })).toEqual({ clockFormat: "12h", payrollHours: "decimal" });
-    expect(displaySettings({ clockFormat: "24h", payrollHours: "hm" })).toEqual({ clockFormat: "24h", payrollHours: "hm" });
+    expect(displaySettings({ timeFormat: "military", payrollHours: "minutes" })).toEqual({ timeFormat: "12h", payrollHours: "decimal" });
+    expect(displaySettings({ timeFormat: "24h", payrollHours: "hm" })).toEqual({ timeFormat: "24h", payrollHours: "hm" });
     expect(displaySettings(null)).toEqual(DEFAULT_DISPLAY);
   });
 });

@@ -12,7 +12,7 @@ import { settingAt } from "@/server/brand-sync/settings";
 import { taxesAdapter } from "@/server/brand-sync/adapters/money";
 import { closureAdapter } from "@/server/brand-sync/adapters/closures";
 import { locationDefaultsBoard } from "@/server/location-defaults";
-import type { ClockFormat } from "@/lib/time";
+import type { TimeFormat } from "@/lib/time";
 import { TimeFormatEditor } from "../settings/display-editors";
 import { HoursEditor } from "../settings/editors";
 import { DefaultsBoard } from "./board";
@@ -31,7 +31,7 @@ export default async function BrandDefaultsPage() {
     taxesAdapter.brand(db, ["rates"]),
     receiptAdapter.brand(db, ["branding"]),
     settingAt<string>("brand_name"),
-    settingAt<ClockFormat>("display.clock"),
+    settingAt<TimeFormat>("time_format"),
   ]);
   const brandEditor = ctx.brandWide && can(ctx, "settings.brand");
   const closureItems = brandEditor ? await closureAdapter.items(db) : [];

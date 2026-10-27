@@ -28,7 +28,7 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
-  await brandSettings({ "display.clock": "12h", "display.payroll_hours": "decimal" }).catch(() => {});
+  await brandSettings({ time_format: "12h", "display.payroll_hours": "decimal" }).catch(() => {});
   await m?.db.closeDb();
 });
 
@@ -58,8 +58,8 @@ describe("the brand's time format", () => {
       .orderBy(S().timePunches.at);
     expect(stored.map((r) => r.at.toISOString())).toEqual([at(day, 9 * 60 + 5).toISOString(), at(day, 17 * 60 + 30).toISOString()]);
 
-    expect(await settings.settingAt("display.clock")).toBe("12h");
-    expect((await display.loadDisplay()).clockFormat).toBe("12h");
+    expect(await settings.settingAt("time_format")).toBe("12h");
+    expect((await display.loadDisplay()).timeFormat).toBe("12h");
     await signInAs((await staffBy("owner@rayz.test")).id);
     const period = (await tc.periodFor(day)).start;
     const page = await open("/admin/timesheets/[staffId]", { staffId: mk.id }, { period });
@@ -68,27 +68,31 @@ describe("the brand's time format", () => {
     expect(page.text).not.toMatch(/\b17:30\b/);
 
     const { staffAppConfig } = await import("@/server/staff-api/config");
-    expect(staffAppConfig(new Request("http://localhost/api/staff/v1/config")).display).toEqual({ clockFormat: "12h", timePattern: "h:mm a", example: "5:30 PM", timeZone: "America/Chicago", payrollHours: "decimal" });
+    expect(staffAppConfig(new Request("http://localhost/api/staff/v1/config")).display).toEqual({ timeFormat: "12h", timePattern: "h:mm a", example: "5:30 PM", timeZone: "America/Chicago", payrollHours: "decimal" });
   });
 
   it("switches to 24-hour only when the brand picks it, and back", async () => {
-    await brandSettings({ "display.clock": "24h" });
-    const [row] = await m.db.db.select({ d: S().brandSettings.display }).from(S().brandSettings);
-    expect(row.d).toMatchObject({ clockFormat: "24h" });
-    expect((await display.loadDisplay()).clockFormat).toBe("24h");
+    await brandSettings({ time_format: "24h" });
+    const [row] = await m.db.db.select({ f: S().brandSettings.timeFormat, d: S().brandSettings.display }).from(S().brandSettings);
+    expect(row.f).toBe("24h");
+    expect(row.d).not.toHaveProperty("timeFormat");
+    expect(await (await import("@/server/brand-time")).brandTimeFormat()).toBe("24h");
+    expect(await (await import("@/server/brand-time")).formatForHumans(at("2026-10-27", 17 * 60 + 30))).toBe("Tue, Oct 27 · 17:30");
+    expect((await display.loadDisplay()).timeFormat).toBe("24h");
     expect(m.time.formatTime(at("2026-10-27", 17 * 60 + 30))).toBe("17:30");
     const { staffAppConfig } = await import("@/server/staff-api/config");
-    expect(staffAppConfig(new Request("http://localhost/api/staff/v1/config")).display).toMatchObject({ clockFormat: "24h", timePattern: "HH:mm", example: "17:30" });
+    expect(staffAppConfig(new Request("http://localhost/api/staff/v1/config")).display).toMatchObject({ timeFormat: "24h", timePattern: "HH:mm", example: "17:30" });
 
-    await brandSettings({ "display.clock": "12h" });
-    expect((await display.loadDisplay()).clockFormat).toBe("12h");
+    await brandSettings({ time_format: "12h" });
+    expect((await display.loadDisplay()).timeFormat).toBe("12h");
     expect(m.time.formatTime(at("2026-10-27", 17 * 60 + 30))).toBe("5:30 PM");
   });
 
   it("refuses a format it doesn't know", async () => {
-    await expect(brandSettings({ "display.clock": "military" })).rejects.toThrow(/12-hour or 24-hour/);
+    await expect(brandSettings({ time_format: "military" })).rejects.toThrow(/12-hour or 24-hour/);
     await expect(brandSettings({ "display.payroll_hours": "minutes" })).rejects.toThrow(/decimal hours or hours and minutes/);
-    expect(await settings.settingAt("display.clock")).toBe("12h");
+    await expect(m.db.db.execute(m.drizzle.sql`update brand_settings set time_format = 'military'`)).rejects.toThrow();
+    expect(await settings.settingAt("time_format")).toBe("12h");
   });
 
   it("payroll hours read decimal by default, or as hours and minutes, and the two settings keep each other", async () => {
@@ -99,7 +103,7 @@ describe("the brand's time format", () => {
     const { fmtHours } = await import("@/domain/payroll/calc");
     expect(fmtHours(2)).toBe("2h");
     expect(fmtHours(7.75)).toBe("7h 45m");
-    expect(await settings.settingAt("display.clock")).toBe("12h");
+    expect(await settings.settingAt("time_format")).toBe("12h");
 
     await brandSettings({ "display.payroll_hours": "decimal" });
     expect((await display.loadDisplay()).payrollHours).toBe("decimal");

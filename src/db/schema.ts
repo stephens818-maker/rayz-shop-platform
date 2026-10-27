@@ -111,7 +111,9 @@ export const brandSettings = pgTable("brand_settings", {
   cardFee: jsonb("card_fee").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Memberships (src/server/memberships.ts) are optional: off, no plans are sold and checkout doesn't offer them. */
   membershipsEnabled: boolean("memberships_enabled").notNull().default(false),
-  /** How times and payroll hours read (DisplaySettings in src/domain/display.ts): 12-hour clock times by default. */
+  /** The brand setting `time_format`, shared with the customer API: how times of day read. 12-hour (9:05 AM) by default. */
+  timeFormat: text("time_format").$type<"12h" | "24h">().notNull().default("12h"),
+  /** How payroll hours read (`payrollHours` in DisplaySettings, src/domain/display.ts): decimal by default. */
   display: jsonb("display").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   updatedAt: ts("updated_at").notNull().defaultNow(),
 });

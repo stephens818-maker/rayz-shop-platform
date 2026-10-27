@@ -890,6 +890,13 @@
       "when": 1796595600000,
       "tag": "core_0126_brand_display",
       "breakpoints": true
+    },
+    {
+      "idx": 127,
+      "version": "7",
+      "when": 1796595660000,
+      "tag": "core_0127_time_format",
+      "breakpoints": true
     }
   ]
 }

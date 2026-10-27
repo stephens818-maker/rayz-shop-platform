@@ -47,8 +47,8 @@ import { cleanRules, rulesProblem, shopRules } from "@/domain/staff-time";
 import { clockRules, parseColumnMapping } from "@/domain/time-clock";
 import { intervalProblem } from "@/domain/timing";
 import { REMINDER_DAYS, REMINDER_MAX, TIP_METHODS, brandTipPolicy, portalUrl } from "@/domain/tips";
-import { PAYROLL_HOURS_LABEL, PAYROLL_HOURS_STYLES, displaySettings, type PayrollHoursStyle } from "@/domain/display";
-import { CLOCK_FORMATS, CLOCK_FORMAT_LABEL, hhmmLabel, type ClockFormat } from "@/lib/time";
+import { PAYROLL_HOURS_LABEL, PAYROLL_HOURS_STYLES, displaySettings, timeFormatOf, type PayrollHoursStyle } from "@/domain/display";
+import { TIME_FORMATS, TIME_FORMAT_LABEL, hhmmLabel, type TimeFormat } from "@/lib/time";
 import { stripePayoutsOn } from "../tips/payout-model";
 import { forgetDisplay } from "../display";
 import { audit } from "../audit";
@@ -350,21 +350,20 @@ export const SETTINGS: readonly SettingDef[] = [
     parse: (raw) => zparse(z.string().trim().min(2, "Give the brand a name").max(60, "Keep the name to 60 characters"), raw, "Check the brand name"),
     audit: "brand.name",
   }),
-  def<ClockFormat>({
-    key: "display.clock",
+  def<TimeFormat>({
+    key: "time_format",
     label: "Time format",
     area: "branding",
-    column: "display",
+    column: "timeFormat",
     perms: ["settings.brand"],
     paths: ["/admin/brand-defaults"],
     note: "Every time on screen: the calendar, the time clock, timesheets and punch edits, reports, readable exports, the staff app and client messages.",
     wholeBrand: "People work and book across shops, and the staff app and the phone line read times one way, so the format is the same at every shop.",
-    read: (col) => displaySettings(col).clockFormat,
-    parse: (raw) => zparse(z.enum(CLOCK_FORMATS as [ClockFormat, ...ClockFormat[]], { message: "Pick 12-hour or 24-hour" }), raw, "Pick 12-hour or 24-hour"),
-    toColumn: (v, col) => ({ ...obj(col), clockFormat: v }),
+    read: (v) => timeFormatOf(v),
+    parse: (raw) => zparse(z.enum(TIME_FORMATS as [TimeFormat, ...TimeFormat[]], { message: "Pick 12-hour or 24-hour" }), raw, "Pick 12-hour or 24-hour"),
     after: async () => forgetDisplay(),
     audit: "brand.time_format",
-    describe: (v) => ({ "Time format": CLOCK_FORMAT_LABEL[v] }),
+    describe: (v) => ({ "Time format": TIME_FORMAT_LABEL[v] }),
     short: (v) => (v === "24h" ? "24-hour" : "12-hour, AM/PM"),
   }),
   def<PayrollHoursStyle>({

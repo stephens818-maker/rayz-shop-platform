@@ -37,7 +37,7 @@ const STATUS: Record<string, string> = {
   snoozed: "Not sent: tapped the review link lately",
   none: "",
 };
-const when = (iso: string) => formatDateTime(iso, "MMM d", ", ");
+const when = (iso: string) => formatDateTime(iso, { date: "MMM d", sep: ", " });
 
 /** Text, email or (at checkout) no receipt: what's on file is offered first, without showing more of it than this person may see. */
 function Chooser({ saleId, onFile, atCheckout, onDone }: { saleId: string; onFile: OnFile; atCheckout: boolean; onDone: (msg: string) => void }) {

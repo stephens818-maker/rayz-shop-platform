@@ -28,7 +28,8 @@ import { reviewRequestEmail, reviewRequestSms } from "@/domain/reviews";
 import { appBaseUrl } from "@/lib/deployment";
 import { formatCents } from "@/lib/money";
 import { formatPhone, normalizeEmail, normalizePhone } from "@/lib/phone";
-import { formatDate, formatDateTime, todayLocal } from "@/lib/time";
+import { formatDate, todayLocal } from "@/lib/time";
+import { formatForHumans } from "@/server/brand-time";
 import { Actor, audit, customerActor } from "./audit";
 import { ticketAppointmentIds } from "./family-ticket";
 import { contactFor, householdsByContact } from "./household-contact";
@@ -188,7 +189,7 @@ export async function composeReceipt(saleId: string, channel: ReceiptSendChannel
   return receiptEmail({
     title: d.shop.title,
     number: d.sale.number,
-    when: formatDateTime(d.sale.paidAt ?? d.sale.createdAt),
+    when: await formatForHumans(d.sale.paidAt ?? d.sale.createdAt),
     barber: d.people ? null : d.barber,
     lines: d.lines.map((l) => ({ name: l.name, qty: l.qty, cents: l.cents, refunded: l.refundedQty > 0 })),
     people: d.people,

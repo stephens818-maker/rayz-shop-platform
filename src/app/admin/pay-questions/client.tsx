@@ -40,7 +40,7 @@ export interface QuestionView {
   canAnswer: boolean;
 }
 
-const when = (iso: string) => formatDateTime(iso, "MMM d", ", ");
+const when = (iso: string) => formatDateTime(iso, { date: "MMM d", sep: ", " });
 const KIND_LABEL: Record<string, string> = { asked: "Asked", answered: "Answered", escalated: "Sent to the owners", resolved: "Closed", reminded: "Owners reminded" };
 
 export function AskForm({ shops, periods }: { shops: { id: string; name: string }[]; periods: { start: string; label: string }[] }) {
