@@ -5,6 +5,10 @@ import {
   availableOn,
   brandTipPolicy,
   draftPayouts,
+  employeeFeeCents,
+  instantFeePayer,
+  receivedCents,
+  shopCostCents,
   effectiveMethod,
   entryStatus,
   feeShareCents,
@@ -167,5 +171,21 @@ describe("settings and methods", () => {
     expect(parseInstantFee("1%")).toEqual({ pct: 1, minCents: 0 });
     expect(parseInstantFee("cheap")).toBeNull();
     expect(instantFeeCents(10_000, { pct: 1.75, minCents: 25 })).toBe(175);
+  });
+});
+
+describe("who pays the instant payout fee", () => {
+  it("the brand passes it on by default; absorbed, the employee gets the whole net and the shop pays it on top", () => {
+    expect(brandTipPolicy({}).instantFeePassedOn).toBe(true);
+    expect(brandTipPolicy({ instantFeePassedOn: false }).instantFeePassedOn).toBe(false);
+    expect(brandTipPolicy({ instantFeePassedOn: "no" }).instantFeePassedOn).toBe(true);
+    expect(instantFeePayer(DEFAULT_BRAND_TIP_POLICY)).toBe("employee");
+    expect(instantFeePayer({ instantFeePassedOn: false })).toBe("shop");
+    const passed = { netCents: 2500, instantFeeCents: 50, instantFeePaidBy: "employee" };
+    const absorbed = { ...passed, instantFeePaidBy: "shop" };
+    expect([receivedCents(passed), shopCostCents(passed), employeeFeeCents(passed)]).toEqual([2450, 2500, 50]);
+    expect([receivedCents(absorbed), shopCostCents(absorbed), employeeFeeCents(absorbed)]).toEqual([2500, 2550, 0]);
+    const standard = { netCents: 2500, instantFeeCents: 0, instantFeePaidBy: "shop" };
+    expect([receivedCents(standard), shopCostCents(standard)]).toEqual([2500, 2500]);
   });
 });

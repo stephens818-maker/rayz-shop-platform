@@ -465,10 +465,11 @@ describe("payroll export shows tips already paid", () => {
     expect(lc.tipsInPayroll).toBe(0);
     expect(lc.tipsOutside).toBe(lc.tips);
     expect(lc.tipsPaidOut).toBe(lc.tips);
-    expect(block.exportHeaders!.at(-1)).toBe(v.settings.tipsInPayrollHeader);
+    expect(block.exportHeaders!.slice(6)).toEqual([v.settings.tipsInPayrollHeader, v.settings.tipsPaidOutHeader]);
+    expect(block.exportFrom).toEqual(["tipsInPayroll", "tipsPaidOut"]);
     const row = (staffId: string) => block.exportRows.find((x) => x.staffId === staffId)!.values;
-    expect([row(a.id)[2], row(a.id)[6]]).toEqual([la.tipsOutside, 8]);
-    expect([row(c.id)[2], row(c.id)[6]]).toEqual([lc.tips, 0]);
+    expect([row(a.id)[2], row(a.id)[6], row(a.id)[7]]).toEqual([la.tipsOutside, 8, la.tipsPaidOut]);
+    expect([row(c.id)[2], row(c.id)[6], row(c.id)[7]]).toEqual([lc.tips, 0, lc.tips]);
     expect(v.mismatches).toEqual([]);
 
     expect(await run.approveAndLock(period.start, period.end, actor)).toMatchObject({ locked: expect.any(Number) });
@@ -486,9 +487,32 @@ describe("payroll export shows tips already paid", () => {
     await wb.xlsx.load(f.body as unknown as ArrayBuffer);
     const ws = wb.getWorksheet("Rock Island")!;
     expect(ws.getCell(1, 9).value).toBe(v.settings.tipsInPayrollHeader);
+    expect(ws.getCell(1, 10).value).toBe("M_Tips Paid Out_Dollars");
     expect(ws.getCell(1, 5).value).toBe("E_Cash Tips Recd_Dollars");
     const values: unknown[] = [];
-    ws.eachRow((rw, n) => n > 1 && values.push(rw.getCell(9).value));
+    const paid: unknown[] = [];
+    ws.eachRow((rw, n) => {
+      if (n > 1) values.push(rw.getCell(9).value);
+      if (n > 1) paid.push(rw.getCell(10).value);
+    });
     expect(values).toContain(8);
+    expect(paid).toContain(lc.tips);
+  });
+
+  it("marking paid tips can be turned off, and its column can't take another column's name", async () => {
+    const before = await m.db.db.query.brandSettings.findFirst();
+    const def = (await import("@/server/brand-sync/settings")).settingDef("payroll")!;
+    type P = import("@/domain/payroll/calc").PayrollSettings;
+    const base = def.read(before?.payroll) as P;
+    await expect(Promise.resolve().then(() => def.parse({ tipsPaidOutHeader: "E_Cash Tips Recd_Dollars" }, base, actor as never, m.db.db as never))).rejects.toThrow(/its own name/);
+    const off = (await def.parse({ markPaidTips: false }, base, actor as never, m.db.db as never)) as P;
+    expect(off).toMatchObject({ markPaidTips: false });
+    const calc = await import("@/domain/payroll/calc");
+    const period = (await run.periodChoices()).find((p) => p.current)!;
+    const lines = (await run.buildPayroll(period.start, period.end))!.blocks.flatMap((b) => b.lines);
+    expect(lines.some((l) => l.tipsPaidOut > 0)).toBe(true);
+    expect(calc.exportExtraColumns(lines, base).map((c) => c.from)).toContain("tipsPaidOut");
+    expect(calc.exportExtraColumns(lines, off).map((c) => c.from)).not.toContain("tipsPaidOut");
+    expect(calc.exportHeaders(lines, off)).not.toContain(base.tipsPaidOutHeader);
   });
 });

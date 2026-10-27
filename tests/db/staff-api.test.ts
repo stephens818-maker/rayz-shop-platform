@@ -391,19 +391,41 @@ describe("tips, earnings, payouts and banking", () => {
 
   it("sets up their own debit card or bank through Stripe's page, keeping the account id, status and last 4 only", async () => {
     const t = await login("makenna@rayz.test");
+    await m.db.db.delete(S().staffPayoutAccounts).where(eq(S().staffPayoutAccounts.staffId, ids.makenna));
     const before = (await call("GET", "banking", { token: t.accessToken })).json;
     expect(before.simulator).toBe(true);
+    expect(before.onboarding).toEqual({ step: "start", label: "Set up Stripe payouts" });
+    expect((await call("GET", "banking/external-accounts", { token: t.accessToken })).json).toMatchObject({ status: "not_set_up", externalAccounts: [] });
     const link = await call("POST", "banking/onboarding-link", { token: t.accessToken });
     expect(link.status, JSON.stringify(link.json)).toBe(200);
     expect(link.json.url).toBeNull();
+    expect(link.json.step).toBe("start");
     const b = link.json.banking;
     expect(b.stripeAccountId).toBeTruthy();
+    expect(b.onboarding.step).toBe("done");
+    expect(b.requirements).toMatchObject({ due: [], pending: [], detailsSubmitted: true, payoutsEnabled: true });
+    expect(b.instant).toMatchObject({ allowed: true, eligible: true, to: { type: "card", last4: "5556" }, feePaidBy: "employee", fee: { pct: 1.5, minCents: 50 } });
     expect(b.destination.last4).toMatch(/^\d{4}$/);
     expect(Object.keys(b.destination).sort()).toEqual(["label", "last4", "name", "type"]);
-    expect(JSON.stringify(b)).not.toMatch(/routing|account_number|\d{8,}/);
+    expect(JSON.stringify({ ...b, stripeAccountId: null, shops: null })).not.toMatch(/routing|account_number|\d{8,}/);
 
     const changed = await call("POST", "banking/dashboard-link", { token: t.accessToken });
     expect(changed.json.banking.destination.last4).not.toBe(b.destination.last4);
+    const list = await call("GET", "banking/external-accounts", { token: t.accessToken });
+    expect(list.status).toBe(200);
+    expect(list.json.externalAccounts).toEqual([
+      { id: "sim_ba_6789", type: "bank_account", name: "STRIPE TEST BANK", last4: "6789", label: "STRIPE TEST BANK ••6789", default: true, instant: false, instantDestination: false },
+      { id: "sim_card_5556", type: "card", name: "Visa", last4: "5556", label: "Visa card ••5556", default: false, instant: true, instantDestination: true },
+    ]);
+    expect((await call("GET", "banking", { token: t.accessToken })).json.instant.to).toMatchObject({ type: "card", last4: "5556" });
+
+    await m.db.db.update(S().staffPayoutAccounts).set({ requirementsDue: ["individual.verification.document"] }).where(eq(S().staffPayoutAccounts.staffId, ids.makenna));
+    const due = (await call("GET", "banking", { token: t.accessToken })).json;
+    expect(due.onboarding.step).toBe("update");
+    expect(due.requirements.due).toEqual([{ key: "individual.verification.document", label: "A photo of your ID" }]);
+    await m.db.db.update(S().staffPayoutAccounts).set({ detailsSubmitted: false, payoutsEnabled: false, requirementsDue: [] }).where(eq(S().staffPayoutAccounts.staffId, ids.makenna));
+    expect((await call("GET", "banking", { token: t.accessToken })).json.onboarding.step).toBe("resume");
+    expect((await call("POST", "banking/onboarding-link", { token: t.accessToken })).json.step).toBe("resume");
 
     const [row] = await m.db.db.select().from(S().staffPayoutAccounts).where(eq(S().staffPayoutAccounts.staffId, ids.makenna));
     const stored = Object.values(row).filter((v) => typeof v === "string") as string[];

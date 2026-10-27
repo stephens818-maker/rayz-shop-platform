@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bankingStatus, defaultDestination, destinationLabel, destinationOf, requirementLabels, sameDestination } from "@/domain/banking";
+import { bankingStatus, defaultDestination, destinationLabel, destinationOf, externalAccountsOf, instantDestination, requirementLabels, sameDestination, storedExternalAccounts } from "@/domain/banking";
 
 const facts = (o: Partial<Parameters<typeof bankingStatus>[0] & object> = {}) => ({
   stripeAccountId: "acct_1",
@@ -79,5 +79,34 @@ describe("payout destination", () => {
     expect(destinationLabel(destinationOf(bank))).toBe("STRIPE TEST BANK ••6789");
     expect(destinationLabel({ type: "card", last4: "1111", name: null })).toBe("Debit card ••1111");
     expect(destinationLabel(null)).toBe("None yet");
+  });
+});
+
+describe("external accounts", () => {
+  const bank = { id: "ba_1", object: "bank_account", bank_name: "Chase", last4: "6789", routing_number: "110000000", fingerprint: "fp", default_for_currency: true, available_payout_methods: ["standard"] };
+  const card = { id: "card_1", object: "card", brand: "Visa", last4: "5556", funding: "debit", exp_year: 2030, default_for_currency: false, available_payout_methods: ["standard", "instant"] };
+
+  it("keep only Stripe's id, the type, name and last 4, the default first", () => {
+    const list = externalAccountsOf([card, bank, { id: "ba_bad", object: "bank_account", last4: "12" }, { id: "x", object: "card", last4: "1234" }]);
+    expect(list).toEqual([
+      { id: "ba_1", type: "bank_account", name: "Chase", last4: "6789", default: true, instant: false },
+      { id: "card_1", type: "card", name: "Visa", last4: "5556", default: false, instant: true },
+    ]);
+    expect(JSON.stringify(list)).not.toMatch(/110000000|fp|2030|debit/);
+    expect(externalAccountsOf([{ ...card, default_for_currency: false }])[0].default).toBe(true);
+  });
+
+  it("instant payouts go to the default when it takes them, else the debit card that does", () => {
+    const list = externalAccountsOf([bank, card]);
+    expect(instantDestination(list)?.id).toBe("card_1");
+    expect(instantDestination(externalAccountsOf([bank]))).toBeNull();
+    expect(instantDestination(externalAccountsOf([{ ...card, default_for_currency: true }, bank]))?.id).toBe("card_1");
+  });
+
+  it("the saved list drops anything that isn't a clean entry", () => {
+    expect(storedExternalAccounts([{ id: "card_1", type: "card", last4: "5556", name: "Visa", default: true, instant: true, number: "4000056655665556" }, { id: "ba_2", type: "bank_account", last4: "12345" }, "x"])).toEqual([
+      { id: "card_1", type: "card", last4: "5556", name: "Visa", default: true, instant: true },
+    ]);
+    expect(storedExternalAccounts(null)).toEqual([]);
   });
 });

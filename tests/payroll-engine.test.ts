@@ -296,23 +296,32 @@ describe("iSolved export values", () => {
 });
 
 describe("tips already paid out", () => {
-  it("tips paid outside payroll go to E_Cash Tips Recd; the usual file has no extra column", () => {
+  it("tips paid outside payroll go to E_Cash Tips Recd; those already paid out are marked in a memo column, which can be turned off", () => {
     const lines = [computeLine(input({ tips: 412.5, tipsPaidOut: 300 }), DEFAULT_PAYROLL_SETTINGS)];
     expect(lines[0]).toMatchObject({ tips: 412.5, tipsInPayroll: 0, tipsOutside: 412.5, tipsPaidOut: 300 });
-    const { blocks, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 412.5, tipsPaidOut: 300 })] }], DEFAULT_PAYROLL_SETTINGS);
-    expect(blocks[0].exportHeaders).toEqual(EXPORT_COLUMNS.map((c) => c.header));
-    expect(blocks[0].exportRows[0].values[2]).toBe(412.5);
-    expect(blocks[0].exportRows[0].values).toHaveLength(EXPORT_COLUMNS.length);
+    const { blocks, grand, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 412.5, tipsPaidOut: 300 })] }], DEFAULT_PAYROLL_SETTINGS);
+    expect(blocks[0].exportHeaders).toEqual([...EXPORT_COLUMNS.map((c) => c.header), "M_Tips Paid Out_Dollars"]);
+    expect(blocks[0].exportFrom).toEqual(["tipsPaidOut"]);
+    expect(blocks[0].exportRows[0].values.slice(2, 3).concat(blocks[0].exportRows[0].values.slice(6))).toEqual([412.5, 300]);
     expect(mismatches).toEqual([]);
+    expect(reconcile([{ ...blocks[0], exportRows: blocks[0].exportRows.map((r) => ({ ...r, values: [...r.values.slice(0, 6), 250] })) }], grand).map((m) => m.column)).toContain("Tips paid out");
+
+    const off = { ...DEFAULT_PAYROLL_SETTINGS, markPaidTips: false };
+    const plain = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 412.5, tipsPaidOut: 300 })] }], off);
+    expect(plain.blocks[0].exportHeaders).toEqual(EXPORT_COLUMNS.map((c) => c.header));
+    expect(plain.blocks[0].exportRows[0].values).toHaveLength(EXPORT_COLUMNS.length);
+    expect(plain.mismatches).toEqual([]);
+    const none = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 412.5 })] }], DEFAULT_PAYROLL_SETTINGS);
+    expect(none.blocks[0].exportHeaders).toEqual(EXPORT_COLUMNS.map((c) => c.header));
   });
 
   it("tips paid through payroll leave E_Cash Tips Recd and get their own column, so nobody is paid twice", () => {
     const inputs = [input({ tips: 412.5, tipsInPayroll: 412.5 }), input({ staffId: "b2", employeeNumber: "1002", tips: 100, tipsPaidOut: 100 })];
     const { blocks, grand, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs }], DEFAULT_PAYROLL_SETTINGS);
-    expect(blocks[0].exportHeaders).toEqual([...EXPORT_COLUMNS.map((c) => c.header), DEFAULT_PAYROLL_SETTINGS.tipsInPayrollHeader]);
-    expect(blocks[0].exportRows.map((r) => [r.values[2], r.values[6]])).toEqual([
-      [0, 412.5],
-      [100, 0],
+    expect(blocks[0].exportHeaders).toEqual([...EXPORT_COLUMNS.map((c) => c.header), DEFAULT_PAYROLL_SETTINGS.tipsInPayrollHeader, DEFAULT_PAYROLL_SETTINGS.tipsPaidOutHeader]);
+    expect(blocks[0].exportRows.map((r) => [r.values[2], r.values[6], r.values[7]])).toEqual([
+      [0, 412.5, 0],
+      [100, 0, 100],
     ]);
     expect(grand).toMatchObject({ tips: 512.5, tipsInPayroll: 412.5, tipsOutside: 100, tipsPaidOut: 100 });
     expect(mismatches).toEqual([]);
