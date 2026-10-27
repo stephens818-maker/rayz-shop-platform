@@ -1,5 +1,5 @@
 import type Stripe from "stripe";
-import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { auditLog, staff, staffOnboardingInvites, staffPayoutAccounts, staffShops } from "@/db/schema";
 import {
@@ -417,6 +417,19 @@ export async function bankingActivity(staffId: string, limit = 12) {
     .limit(limit);
 }
 
+/** Employee Stripe accounts against the no-1099 setup: how many there are, how many lack the W-2 tags, and how many Stripe says pay their own fees (a 1099-K). */
+export async function taxFormStatus(): Promise<{ accounts: number; untagged: number; feesOnAccount: number }> {
+  const [r] = await db
+    .select({
+      accounts: sql<number>`count(*)::int`,
+      untagged: sql<number>`(count(*) filter (where ${staffPayoutAccounts.w2TaggedAt} is null))::int`,
+      feesOnAccount: sql<number>`(count(*) filter (where ${staffPayoutAccounts.feesPayer} = 'account'))::int`,
+    })
+    .from(staffPayoutAccounts)
+    .where(and(isNotNull(staffPayoutAccounts.stripeAccountId), eq(staffPayoutAccounts.simulated, false)));
+  return r ?? { accounts: 0, untagged: 0, feesOnAccount: 0 };
+}
+
 /**
  * Stripe's 1099 tax forms for the employees' accounts, set not to file: an Update import for the
  * Dashboard's Tax reporting page (Import → the form type → Update), one row per account, with
@@ -430,6 +443,6 @@ export async function taxFormExclusionCsv(): Promise<{ csv: string; accounts: nu
     .from(staffPayoutAccounts)
     .where(and(isNotNull(staffPayoutAccounts.stripeAccountId), eq(staffPayoutAccounts.simulated, false)))
     .orderBy(staffPayoutAccounts.stripeAccountId);
-  const ids = rows.map((r) => r.id!).filter((id) => /^acct_[A-Za-z0-9]+$/.test(id));
+  const ids = rows.map((r) => r.id!).filter((id) => /^acct_\w+$/.test(id));
   return { csv: ["stripe_account_id,filing_requirement,postal_delivery", ...ids.map((id) => `${id},NOT_REQUIRED,FALSE`)].join("\n") + "\n", accounts: ids.length };
 }

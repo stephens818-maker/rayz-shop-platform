@@ -8,6 +8,7 @@ import { formatCents } from "@/lib/money";
 import { formatDate, formatDateTime, todayLocal } from "@/lib/time";
 import { guardPage, reportShopIds } from "@/server/auth/staff";
 import { OnboardingRow, onboardingRoster } from "@/server/tips/onboarding";
+import { taxFormStatus } from "@/server/tips/accounts";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { OnboardingTracker, TrackerRow } from "./client";
 
@@ -43,10 +44,11 @@ export default async function PayoutOnboardingPage({ searchParams }: { searchPar
   const shopIds = reportShopIds(ctx, sp.shop ?? (ctx.currentShopId ? ctx.currentShopId : "all"));
   if (!shopIds.length) return <Empty title="No shop selected" />;
   const today = todayLocal();
-  const [roster, names, ends] = await Promise.all([
+  const [roster, names, ends, tax] = await Promise.all([
     onboardingRoster(shopIds),
     db.select({ id: shops.id, name: shops.name }).from(shops).where(inArray(shops.id, ctx.shopIds)).orderBy(asc(shops.name)),
     db.select({ shopId: shopCutovers.shopId, end: shopCutovers.squireTipsEndOn }).from(shopCutovers).where(inArray(shopCutovers.shopId, shopIds)),
+    ctx.brandWide ? taxFormStatus() : null,
   ]);
   const { rows, counts, total, waitingCents } = roster;
   const label = shopIds.length === 1 ? (names.find((n) => n.id === shopIds[0])?.name ?? "This shop") : shopIds.length === ctx.shopIds.length ? "Every shop" : `${shopIds.length} shops`;
@@ -120,6 +122,34 @@ export default async function PayoutOnboardingPage({ searchParams }: { searchPar
         />
         {tracker.length ? <OnboardingTracker rows={tracker} /> : <p className="px-4 py-6 text-sm text-zinc-500">No one on the team here yet.</p>}
       </Card>
+      {tax && (
+        <Card>
+          <CardHeader
+            title="No 1099s for employees"
+            subtitle="Tips are W-2 wages through payroll, so Stripe mustn't send employees a 1099 for them. Every account is made with Ray'z paying its Stripe fees (no 1099-K) and tagged as a W-2 employee's."
+            action={
+              // A CSV download (route handler), not a page; the rule reads /admin/tips/[id] as matching it.
+              // eslint-disable-next-line @next/next/no-html-link-for-pages
+              <a className={buttonClass("secondary")} href="/admin/tips/onboarding/tax-forms">
+                Download 1099 exclusions
+              </a>
+            }
+          />
+          <div className="space-y-2 px-4 py-3 text-sm">
+            {tax.feesOnAccount > 0 && (
+              <Notice tone="red">
+                {tax.feesOnAccount} account{tax.feesOnAccount === 1 ? " pays" : "s pay"} its own Stripe fees, so Stripe would send a 1099-K. Their Stripe payouts are held; ask Stripe support to
+                move the fees to Ray&apos;z, then release them on Tip payouts.
+              </Notice>
+            )}
+            {tax.untagged > 0 && <Notice>{tax.untagged} account{tax.untagged === 1 ? " is" : "s are"} waiting for Stripe to confirm the W-2 tags; they&apos;re added on the next update.</Notice>}
+            <p className="text-zinc-600">
+              {tax.accounts} employee Stripe account{tax.accounts === 1 ? "" : "s"}. Each January before Stripe files (and after new people onboard), import the exclusions file in the Stripe
+              Dashboard: Tax reporting → Import → pick each 1099 form type Stripe prepared → Update. It sets every employee account to not file and not mail a form. Account ids only.
+            </p>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
