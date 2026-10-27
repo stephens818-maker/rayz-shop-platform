@@ -1,6 +1,6 @@
-import { and, eq, gte, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import { db, type DBorTx } from "@/db";
-import { payGroups, payrollEmployers, payrollRuns, shops, timesheetLocks } from "@/db/schema";
+import { payGroups, payrollEmployerStates, payrollEmployers, payrollRuns, shops, timesheetLocks } from "@/db/schema";
 import { DEFAULT_BRAND_CALENDAR, periodOf, type PayCalendar } from "@/domain/payroll/calendar";
 import type { PayrollSettings } from "@/domain/payroll/calc";
 import { settingAt } from "../brand-sync/settings";
@@ -23,6 +23,7 @@ export interface PayGroup {
   shop: string;
   label: string;
   legalEntity: string;
+  employerId: string | null;
   exportTab: string;
   calendar: PayCalendar;
 }
@@ -60,6 +61,7 @@ export async function ensurePayGroups(): Promise<PayGroup[]> {
     shop,
     label: g.label,
     legalEntity: g.legalEntity,
+    employerId: g.employerId,
     exportTab: g.exportTab,
     calendar: { anchorStart: g.anchorStart, anchorNumber: g.anchorNumber, periodDays: g.periodDays, checkOffsetDays: g.checkOffsetDays, numberResetsYearly: g.numberResetsYearly },
   }));
@@ -90,10 +92,88 @@ export async function hoursLockedOn(shopId: string, date: LocalDate): Promise<bo
   return !!t || isLockedOn(shopId, date);
 }
 
-/** The employers (one FEIN each) the pay groups belong to, with how many shops each has. Made from the pay groups' legal entity. */
+/** The employers (one FEIN each) the pay groups belong to, with their shops, the states those shops are in, and the states the employer is registered in. Made from the pay groups' legal entity. */
 export async function payrollEmployerList() {
-  const [list, groups] = await Promise.all([db.select().from(payrollEmployers).orderBy(payrollEmployers.legalName), db.select({ employerId: payGroups.employerId }).from(payGroups)]);
-  return list.map((e) => ({ ...e, shops: groups.filter((g) => g.employerId === e.id).length }));
+  const [list, groups, states] = await Promise.all([
+    db.select().from(payrollEmployers).orderBy(payrollEmployers.legalName),
+    db.select({ employerId: payGroups.employerId, shop: shops.name, state: shops.state }).from(payGroups).innerJoin(shops, eq(shops.id, payGroups.shopId)).orderBy(shops.name),
+    db.select().from(payrollEmployerStates).orderBy(payrollEmployerStates.state),
+  ]);
+  return list.map((e) => {
+    const mine = groups.filter((g) => g.employerId === e.id);
+    const registered = states.filter((s) => s.employerId === e.id);
+    const workStates = [...new Set(mine.map((g) => g.state.trim().toUpperCase()).filter((s) => US_STATE.test(s)))].sort();
+    return {
+      ...e,
+      shops: mine.length,
+      shopNames: mine.map((g) => g.shop),
+      workStates,
+      states: registered,
+      unregistered: workStates.filter((s) => !registered.some((r) => r.state === s)),
+    };
+  });
+}
+
+const US_STATE = /^[A-Z]{2}$/;
+const LAST4 = /^\d{4}$/;
+
+/**
+ * A legal entity's registration in a state: the last 4 of its withholding and unemployment account
+ * numbers and when it registered. Like the EIN, anything longer than four digits is refused.
+ */
+export async function saveEmployerState(
+  employerId: string,
+  v: { state: string; withholdingIdLast4: string; unemploymentIdLast4: string; registeredOn: string | null },
+  actor: Actor,
+): Promise<string | null> {
+  const state = v.state.trim().toUpperCase();
+  const wh = v.withholdingIdLast4.trim();
+  const ui = v.unemploymentIdLast4.trim();
+  if (!US_STATE.test(state)) return "Enter the state's two-letter code, like IL or IA.";
+  if ((wh && !LAST4.test(wh)) || (ui && !LAST4.test(ui))) return "Enter only the last 4 digits of the state account number, never the whole number.";
+  const [e] = await db.select().from(payrollEmployers).where(eq(payrollEmployers.id, employerId));
+  if (!e) return "That employer is gone.";
+  const row = { withholdingIdLast4: wh || null, unemploymentIdLast4: ui || null, registeredOn: v.registeredOn || null };
+  const [before] = await db.select().from(payrollEmployerStates).where(and(eq(payrollEmployerStates.employerId, employerId), eq(payrollEmployerStates.state, state)));
+  await db
+    .insert(payrollEmployerStates)
+    .values({ employerId, state, ...row })
+    .onConflictDoUpdate({ target: [payrollEmployerStates.employerId, payrollEmployerStates.state], set: { ...row, updatedAt: new Date() } });
+  await audit(actor, "payroll.employer_state", "payroll_employer", employerId, {
+    legalName: e.legalName,
+    state,
+    from: before ? { withholdingIdLast4: before.withholdingIdLast4, unemploymentIdLast4: before.unemploymentIdLast4, registeredOn: before.registeredOn } : null,
+    to: row,
+  });
+  return null;
+}
+
+export async function removeEmployerState(employerId: string, state: string, actor: Actor): Promise<string | null> {
+  const gone = await db
+    .delete(payrollEmployerStates)
+    .where(and(eq(payrollEmployerStates.employerId, employerId), eq(payrollEmployerStates.state, state.trim().toUpperCase())))
+    .returning();
+  if (!gone.length) return "That state registration is gone.";
+  await audit(actor, "payroll.employer_state_removed", "payroll_employer", employerId, { state: gone[0].state });
+  return null;
+}
+
+/** Each shop's legal entity: its employer's name, iSolved company code and EIN last 4. */
+export async function legalEntitiesOf(shopIds: readonly string[], tx: DBorTx = db) {
+  if (!shopIds.length) return new Map<string, LegalEntity>();
+  const rows = await tx
+    .select({ shopId: shops.id, id: payrollEmployers.id, legalName: payrollEmployers.legalName, isolvedCompanyCode: payrollEmployers.isolvedCompanyCode, taxIdLast4: payrollEmployers.taxIdLast4 })
+    .from(shops)
+    .innerJoin(payrollEmployers, eq(payrollEmployers.id, shops.legalEntityId))
+    .where(inArray(shops.id, [...shopIds]));
+  return new Map(rows.map(({ shopId, ...e }) => [shopId, e]));
+}
+
+export interface LegalEntity {
+  id: string;
+  legalName: string;
+  isolvedCompanyCode: string | null;
+  taxIdLast4: string | null;
 }
 
 /**

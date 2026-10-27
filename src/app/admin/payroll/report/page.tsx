@@ -364,7 +364,8 @@ function ShopBlockCard({ b, view, canRun }: { b: BlockView; view: PayrollView; c
       <CardHeader
         title={
           <>
-            {b.shop} <span className="font-normal text-zinc-500">· pay group {b.payGroup} · period {String(b.period.number).padStart(2, "0")}, check {formatDate(b.period.checkDate, "EEE MMM d")}</span>
+            {b.shop} <span className="font-normal text-zinc-500">· pay group {b.payGroup}
+            {b.employer ? ` · ${b.employer.legalName}${b.employer.isolvedCompanyCode ? ` (iSolved ${b.employer.isolvedCompanyCode})` : ""}` : ""} · period {String(b.period.number).padStart(2, "0")}, check {formatDate(b.period.checkDate, "EEE MMM d")}</span>
           </>
         }
         subtitle={b.locked ? `Locked ${formatDateTime(b.locked.at)}${b.locked.by ? ` by ${b.locked.by}` : ""}` : "Open: live from hours, sales and overrides"}

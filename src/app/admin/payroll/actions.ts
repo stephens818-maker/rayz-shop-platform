@@ -27,7 +27,7 @@ import {
   type TimeEntryInput,
 } from "@/server/payroll/run";
 import { parseTimeCsv } from "@/domain/payroll/time-csv";
-import { saveEmployer } from "@/server/payroll/groups";
+import { removeEmployerState, saveEmployer, saveEmployerState } from "@/server/payroll/groups";
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -121,6 +121,29 @@ export async function saveEmployerAction(input: { id: string; isolvedCompanyCode
     const ctx = await authorize("payroll.run");
     const v = z.object({ id: z.string().uuid(), isolvedCompanyCode: z.string().max(40), taxIdLast4: z.string().max(4, "Enter only the last 4 digits of the EIN") }).parse(input);
     fail(await saveEmployer(v.id, v, ctx.actor));
+    refresh();
+    return null;
+  });
+}
+
+export async function saveEmployerStateAction(input: { employerId: string; state: string; withholdingIdLast4: string; unemploymentIdLast4: string; registeredOn: string | null }) {
+  return safe(async () => {
+    const ctx = await authorize("payroll.run");
+    const last4 = z.string().max(4, "Enter only the last 4 digits of the state account number");
+    const v = z
+      .object({ employerId: z.string().uuid(), state: z.string().max(2), withholdingIdLast4: last4, unemploymentIdLast4: last4, registeredOn: date.nullable() })
+      .parse(input);
+    fail(await saveEmployerState(v.employerId, v, ctx.actor));
+    refresh();
+    return null;
+  });
+}
+
+export async function removeEmployerStateAction(input: { employerId: string; state: string }) {
+  return safe(async () => {
+    const ctx = await authorize("payroll.run");
+    const v = z.object({ employerId: z.string().uuid(), state: z.string().max(2) }).parse(input);
+    fail(await removeEmployerState(v.employerId, v.state, ctx.actor));
     refresh();
     return null;
   });

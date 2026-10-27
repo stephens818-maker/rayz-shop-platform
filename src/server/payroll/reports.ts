@@ -1457,7 +1457,17 @@ export async function markIsolvedSent(start: LocalDate, end: LocalDate, actor: A
   if (why) throw bad(why);
   const shops: PayrollSendShop[] = view.blocks.map((b) => {
     const headers = b.exportHeaders ?? EXPORT_COLUMNS.map((c) => c.header);
-    return { shopId: b.shopId, payGroup: b.payGroup, tab: b.exportTab, rows: b.exportRows.length, headers, totals: headers.map((_, j) => h2(sumOf(b.exportRows, (r) => r.values[j] ?? 0))) };
+    return {
+      shopId: b.shopId,
+      payGroup: b.payGroup,
+      tab: b.exportTab,
+      rows: b.exportRows.length,
+      headers,
+      totals: headers.map((_, j) => h2(sumOf(b.exportRows, (r) => r.values[j] ?? 0))),
+      employerId: b.employer?.id ?? null,
+      employer: b.employer?.legalName ?? null,
+      isolvedCompanyCode: b.employer?.isolvedCompanyCode ?? null,
+    };
   });
   const [row] = await db
     .insert(payrollExportSends)
@@ -1465,7 +1475,7 @@ export async function markIsolvedSent(start: LocalDate, end: LocalDate, actor: A
     .onConflictDoNothing()
     .returning({ id: payrollExportSends.id });
   if (!row) throw new AppError("conflict", "This pay period is already marked sent.");
-  await audit(actor, "payroll.isolved_sent", "payroll_period", `${start}_${end}`, { periodStart: start, periodEnd: end, shops: shops.map((s) => ({ payGroup: s.payGroup, rows: s.rows })), note: note?.trim() || null });
+  await audit(actor, "payroll.isolved_sent", "payroll_period", `${start}_${end}`, { periodStart: start, periodEnd: end, shops: shops.map((s) => ({ payGroup: s.payGroup, employer: s.employer, rows: s.rows })), note: note?.trim() || null });
 }
 
 /** Takes the sent mark off (say, the upload failed in iSolved). The period goes back to approved. */

@@ -7,7 +7,7 @@ import { SyncMsg, useSettingSync } from "@/components/brand-sync";
 import { FT_BASIS_LABEL, type PayrollSettings, type TipDeclarationSettings, type TipTaxSettings } from "@/domain/payroll/calc";
 import { calendarProblem, periodsAround, type PayCalendar } from "@/domain/payroll/calendar";
 import { formatDate, todayLocal } from "@/lib/time";
-import { saveEmployerAction, savePayGroupAction, saveProfileAction } from "../actions";
+import { removeEmployerStateAction, saveEmployerAction, saveEmployerStateAction, savePayGroupAction, saveProfileAction } from "../actions";
 
 const Check = ({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) => (
   <label className="flex items-start gap-2 text-sm">
@@ -428,6 +428,58 @@ export function EmployerRow({ e }: { e: { id: string; legalName: string; shops: 
           Save
         </Button>
         {error && <p className="mt-1 max-w-48 text-xs text-red-700">{error}</p>}
+      </td>
+    </tr>
+  );
+}
+
+type StateReg = { state: string; withholdingIdLast4: string; unemploymentIdLast4: string; registeredOn: string };
+const digits4 = (s: string) => s.replace(/\D/g, "").slice(0, 4);
+
+function StateRegForm({ employerId, r, isNew }: { employerId: string; r: StateReg; isNew?: boolean }) {
+  const { pending, error, run } = useAction();
+  const [v, setV] = useState(r);
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <Input
+        aria-label="State"
+        value={v.state}
+        maxLength={2}
+        placeholder="IL"
+        disabled={!isNew}
+        onChange={(x) => setV({ ...v, state: x.target.value.replace(/[^a-zA-Z]/g, "").toUpperCase() })}
+        className="h-7 w-12 text-xs"
+      />
+      <Input aria-label="Withholding account last 4" placeholder="WH last 4" inputMode="numeric" autoComplete="off" maxLength={4} value={v.withholdingIdLast4} onChange={(x) => setV({ ...v, withholdingIdLast4: digits4(x.target.value) })} className="h-7 w-24 text-xs" />
+      <Input aria-label="Unemployment account last 4" placeholder="UI last 4" inputMode="numeric" autoComplete="off" maxLength={4} value={v.unemploymentIdLast4} onChange={(x) => setV({ ...v, unemploymentIdLast4: digits4(x.target.value) })} className="h-7 w-24 text-xs" />
+      <Input aria-label="Registered on" type="date" value={v.registeredOn} onChange={(x) => setV({ ...v, registeredOn: x.target.value })} className="h-7 w-36 text-xs" />
+      <Button size="sm" variant="secondary" disabled={pending || v.state.length !== 2} onClick={() => run(() => saveEmployerStateAction({ employerId, ...v, registeredOn: v.registeredOn || null }))}>
+        {isNew ? "Add state" : "Save"}
+      </Button>
+      {!isNew && (
+        <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => removeEmployerStateAction({ employerId, state: v.state }))}>
+          Remove
+        </Button>
+      )}
+      {error && <p className="w-full text-xs text-red-700">{error}</p>}
+    </div>
+  );
+}
+
+/** Where a legal entity is registered to withhold and pay unemployment tax, against the states its shops are in. */
+export function EmployerStatesRow({ e }: { e: { id: string; workStates: string[]; unregistered: string[]; states: StateReg[] } }) {
+  return (
+    <tr className="border-t border-dashed border-zinc-100">
+      <td />
+      <td colSpan={4} className="space-y-1.5 px-2 pb-3 pt-1">
+        <p className="text-[11px] text-zinc-500">
+          State registrations{e.workStates.length ? ` · shops in ${e.workStates.join(", ")}` : ""}. Only the last 4 of each state account number is kept.
+        </p>
+        {e.unregistered.length > 0 && <p className="text-xs text-amber-700">No registration on file for {e.unregistered.join(", ")}, where this entity has shops.</p>}
+        {e.states.map((r) => (
+          <StateRegForm key={r.state} employerId={e.id} r={r} />
+        ))}
+        <StateRegForm key={`new-${e.states.length}`} employerId={e.id} isNew r={{ state: e.unregistered[0] ?? "", withholdingIdLast4: "", unemploymentIdLast4: "", registeredOn: "" }} />
       </td>
     </tr>
   );

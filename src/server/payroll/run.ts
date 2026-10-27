@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, eq, gt, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { payGroups, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, sales as salesTable, staff, timeEntries } from "@/db/schema";
+import { payGroups, payrollEmployers, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, sales as salesTable, staff, timeEntries } from "@/db/schema";
 import { calendarProblem, periodOf, periodStarting, periodsAround, workweeksOf, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
 import {
   OVERRIDABLE,
@@ -36,7 +36,7 @@ import { lockPayrollTips, payrollTipSplit } from "@/server/tips/payouts";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { isolvedTimecardExporter, type PayrollExporter } from "./export";
 import { checkPayrollTips, type TipCheck } from "./tip-reconcile";
-import { ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type PayGroup } from "./groups";
+import { ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type LegalEntity, type PayGroup } from "./groups";
 
 export { DEFAULT_CALENDAR, ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type PayGroup } from "./groups";
 
@@ -95,6 +95,8 @@ export interface BlockView extends ShopBlock {
   payGroupId: string;
   payGroup: string;
   exportTab: string;
+  /** The shop's legal entity: its pay group's employer, or the one it had when the period was locked. */
+  employer: LegalEntity | null;
   period: CalendarPeriod;
   locked: { at: string; by: string | null } | null;
   /** Locked shops: the hash of the inputs of record as approved, and what's changed in the live data since. */
@@ -327,6 +329,13 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
   );
   const lockedBy = new Map((runs.length ? await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, runs.map((r) => r.lockedBy).filter((x): x is string => !!x))) : []).map((s) => [s.id, s.label]));
   const imported = runs.length ? await importedAfterLock(runs, start, end, groups) : new Map<string, number>();
+  const employerIds = [...new Set([...inRun.map(({ g }) => g.employerId), ...runs.map((r) => r.employerId)].filter((x): x is string => !!x))];
+  const employerOf = new Map(
+    (employerIds.length ? await db.select().from(payrollEmployers).where(inArray(payrollEmployers.id, employerIds)) : []).map((e) => [
+      e.id,
+      { id: e.id, legalName: e.legalName, isolvedCompanyCode: e.isolvedCompanyCode, taxIdLast4: e.taxIdLast4 },
+    ]),
+  );
   const blocks: BlockView[] = inRun.map(({ g, p }, i) => {
     const run = runOf.get(g.id);
     const snap = run ? (run.snapshot as Snapshot) : null;
@@ -340,6 +349,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate): Promise<Pa
       payGroupId: g.id,
       payGroup: g.label,
       exportTab: g.exportTab,
+      employer: employerOf.get((run ? run.employerId : g.employerId) ?? "") ?? null,
       period: p,
       locked: run ? { at: run.lockedAt.toISOString(), by: run.lockedBy ? (lockedBy.get(run.lockedBy) ?? null) : null } : null,
       lockCheck,

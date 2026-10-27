@@ -264,12 +264,15 @@ export const shops = pgTable("shops", {
   /** Where latitude/longitude came from: an address lookup (google, census), the ZIP centre (approximate), or placed by hand. */
   geocodeSource: text("geocode_source").$type<GeocodeSource>(),
   geocodedAt: ts("geocoded_at"),
+  /** The legal entity (one FEIN) the shop's staff work for: its pay group's employer, kept in step by a trigger. Null until it has a pay group. */
+  legalEntityId: uuid("legal_entity_id").references((): AnyPgColumn => payrollEmployers.id),
   createdAt: createdAt(),
 }, (t) => [
   check("shops_status", sql`${t.status} in ('setup', 'live', 'closed', 'archived') AND ${t.active} = (${t.status} <> 'archived')`),
   check("shops_payments_mode", sql`${t.paymentsMode} in ('brand', 'connected', 'entity', 'cash_only')`),
   index("shops_region_idx").on(t.regionId),
   index("shops_owner_entity_idx").on(t.ownerEntityId),
+  index("shops_legal_entity_idx").on(t.legalEntityId),
 ]);
 export type PaymentsMode = "brand" | "connected" | "entity" | "cash_only";
 export type NegativeStockPolicy = "block" | "warn";
@@ -2619,6 +2622,8 @@ export const tipPayouts = pgTable(
     heldAt: ts("held_at"),
     /** Payroll: the pay period it was paid in. */
     payrollPeriodStart: date("payroll_period_start"),
+    /** The shop's employer when the payout was built; a trigger sets it and it never changes. */
+    employerId: uuid("employer_id").references((): AnyPgColumn => payrollEmployers.id),
     sentAt: ts("sent_at"),
     paidAt: ts("paid_at"),
     createdAt: createdAt(),
@@ -2639,6 +2644,7 @@ export const tipPayouts = pgTable(
     uniqueIndex("tip_payouts_payout_uq").on(t.stripePayoutId),
     index("tip_payouts_staff_idx").on(t.staffId, t.createdAt),
     index("tip_payouts_drawer_idx").on(t.shopId, t.drawerDate).where(sql`${t.method} = 'cash'`),
+    index("tip_payouts_employer_idx").on(t.employerId, t.createdAt),
   ],
 );
 
@@ -2746,6 +2752,8 @@ export const tipDeclarations = pgTable(
     attestation: text("attestation").notNull(),
     replacesId: uuid("replaces_id").references((): AnyPgColumn => tipDeclarations.id),
     reason: text("reason"),
+    /** The shop's employer when declared; a trigger sets it and it never changes. */
+    employerId: uuid("employer_id").references((): AnyPgColumn => payrollEmployers.id),
     createdBy: uuid("created_by").references(() => staff.id),
     createdAt: createdAt(),
   },
@@ -3246,6 +3254,32 @@ export const payrollEmployers = pgTable(
   (t) => [check("payroll_employers_tax_id_last4", sql`${t.taxIdLast4} is null or ${t.taxIdLast4} ~ '^[0-9]{4}$'`)],
 );
 
+/** A legal entity's registration in one state (withholding and unemployment accounts). Only the last 4 of each account number is kept. */
+export const payrollEmployerStates = pgTable(
+  "payroll_employer_states",
+  {
+    id: id(),
+    employerId: uuid("employer_id")
+      .notNull()
+      .references(() => payrollEmployers.id, { onDelete: "cascade" }),
+    /** Two-letter postal code (IL, IA). */
+    state: text("state").notNull(),
+    withholdingIdLast4: text("withholding_id_last4"),
+    unemploymentIdLast4: text("unemployment_id_last4"),
+    registeredOn: date("registered_on", { mode: "string" }),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("payroll_employer_states_uq").on(t.employerId, t.state),
+    check("payroll_employer_states_state", sql`${t.state} ~ '^[A-Z]{2}$'`),
+    check(
+      "payroll_employer_states_last4",
+      sql`(${t.withholdingIdLast4} is null or ${t.withholdingIdLast4} ~ '^[0-9]{4}$') and (${t.unemploymentIdLast4} is null or ${t.unemploymentIdLast4} ~ '^[0-9]{4}$')`,
+    ),
+  ],
+);
+
 /**
  * Each shop is an iSolved pay group with its own pay calendar (Dubuque's differs from the rest).
  * The label is whatever Charles calls the pay group; no iSolved IDs are stored in the repo.
@@ -3398,11 +3432,14 @@ export const timeEntries = pgTable(
     note: text("note"),
     /** The clock-in punch this was worked out from. Rewritten whenever that shift's punches change. */
     punchInId: uuid("punch_in_id").references((): AnyPgColumn => timePunches.id, { onDelete: "cascade" }),
+    /** The shop's employer; a trigger sets it and moves it with the shop. */
+    employerId: uuid("employer_id").references(() => payrollEmployers.id),
     createdBy: uuid("created_by").references(() => staff.id),
     createdAt: createdAt(),
   },
   (t) => [
     index("time_entries_starts_idx").on(t.startsAt),
+    index("time_entries_employer_idx").on(t.employerId, t.startsAt),
     index("time_entries_staff_idx").on(t.staffId),
     index("time_entries_punch_idx").on(t.punchInId),
     check("time_entries_order", sql`${t.endsAt} > ${t.startsAt}`),
@@ -3447,6 +3484,8 @@ export const payrollRuns = pgTable(
     checkDate: date("check_date", { mode: "string" }).notNull(),
     settings: jsonb("settings").notNull(),
     snapshot: jsonb("snapshot").notNull(),
+    /** The pay group's employer at the lock; a trigger sets it. */
+    employerId: uuid("employer_id").references(() => payrollEmployers.id),
     lockedAt: ts("locked_at").notNull().defaultNow(),
     lockedBy: uuid("locked_by").references(() => staff.id),
   },
@@ -3482,6 +3521,10 @@ export interface PayrollSendShop {
   /** The file's column totals, in its order (hours to the hundredth, dollars to the cent). */
   totals: number[];
   headers: string[];
+  /** The shop's legal entity as sent (absent on sends before ST-I14). */
+  employerId?: string | null;
+  employer?: string | null;
+  isolvedCompanyCode?: string | null;
 }
 
 /**
@@ -3621,6 +3664,8 @@ export const timePunches = pgTable(
     editedAt: ts("edited_at"),
     voidedAt: ts("voided_at"),
     note: text("note"),
+    /** The shop's employer; a trigger sets it and moves it with the shop. */
+    employerId: uuid("employer_id").references(() => payrollEmployers.id),
     createdBy: uuid("created_by").references(() => staff.id),
     createdAt: createdAt(),
   },

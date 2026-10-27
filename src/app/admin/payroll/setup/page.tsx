@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Fragment } from "react";
 import { and, eq } from "drizzle-orm";
 import { Card, CardHeader, Notice, PageHeader } from "@/components/ui";
 import { db } from "@/db";
@@ -8,7 +9,7 @@ import { TEMPLATE_TABS } from "@/server/payroll/export";
 import { ensurePayGroups, loadSettings } from "@/server/payroll/run";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { payrollEmployerList } from "@/server/payroll/groups";
-import { EmployerRow, PayGroupRow, ProfileRowForm, SettingsForm } from "./client";
+import { EmployerRow, EmployerStatesRow, PayGroupRow, ProfileRowForm, SettingsForm } from "./client";
 
 export const metadata: Metadata = { title: "Payroll setup" };
 
@@ -69,7 +70,7 @@ export default async function PayrollSetupPage() {
       <Card>
         <CardHeader
           title="Employers"
-          subtitle="One per legal entity (FEIN) in the pay groups. Every tip is tagged with its shop's employer, and the tips-paid export goes per employer with its iSolved company code. Only the last 4 of the EIN is kept; the full number stays in iSolved."
+          subtitle="One per legal entity (FEIN) in the pay groups. Every shop, punch, time entry, tip, payout, cash tip declaration and locked pay period is tagged with its shop's employer, and the tips-paid export goes per employer with its iSolved company code. Only the last 4 of the EIN and of each state account number is kept; the full numbers stay in iSolved."
         />
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -84,7 +85,17 @@ export default async function PayrollSetupPage() {
             </thead>
             <tbody>
               {employers.map((e) => (
-                <EmployerRow key={e.id} e={{ id: e.id, legalName: e.legalName, shops: e.shops, isolvedCompanyCode: e.isolvedCompanyCode ?? "", taxIdLast4: e.taxIdLast4 ?? "" }} />
+                <Fragment key={e.id}>
+                  <EmployerRow e={{ id: e.id, legalName: e.legalName, shops: e.shops, isolvedCompanyCode: e.isolvedCompanyCode ?? "", taxIdLast4: e.taxIdLast4 ?? "" }} />
+                  <EmployerStatesRow
+                    e={{
+                      id: e.id,
+                      workStates: e.workStates,
+                      unregistered: e.unregistered,
+                      states: e.states.map((s) => ({ state: s.state, withholdingIdLast4: s.withholdingIdLast4 ?? "", unemploymentIdLast4: s.unemploymentIdLast4 ?? "", registeredOn: s.registeredOn ?? "" })),
+                    }}
+                  />
+                </Fragment>
               ))}
             </tbody>
           </table>
