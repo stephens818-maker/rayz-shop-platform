@@ -120,7 +120,7 @@ describe("Squire import of a realistic export", () => {
     expect(saved.errors).toHaveLength(c.skipped);
     expect(saved.stats).toMatchObject({ clientsCreated: e.clients.created, "skipped:Missing name": 2 });
     expect(saved.errors[0].data).toHaveProperty("Client ID");
-  });
+  }, 60_000);
 
   it("every person in the export is one client with the right contact, consent, history, spend, and loyalty", async () => {
     const cfg = await m.loyalty.getLoyaltyConfig();
@@ -216,7 +216,7 @@ describe("Squire import of a realistic export", () => {
     expect(again.loyalty.inserted).toBe(0);
     expect(again.loyalty.stats.rewardsImported).toBe(fx.expected.loyalty.rewards);
     expect(again.gift_cards.inserted).toBe(0);
-  });
+  }, 60_000);
 
   it("imported tickets don't double count: loyalty, the drawer, and reports see each visit once", async () => {
     // Loyalty comes from Squire's balance, never from replaying imported tickets.

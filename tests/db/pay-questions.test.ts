@@ -101,6 +101,20 @@ describe("pay questions (ST-I10)", () => {
     await pq.resolvePayQuestion(asker, q.id);
   });
 
+  it("scrubs a card or SSN typed into the question or an answer, keeping the history's ids and times", async () => {
+    const asker = { staffId: ids.makenna, actor: { staffId: ids.makenna, label: "Makenna" } };
+    const q = await pq.askPayQuestion(asker, { shopId: ids.coralville, topic: "deductions", detail: "Deposit to card 4242 4242 4242 4242, SSN 123-45-6789?" });
+    const owner = await api.login("owner@rayz.test");
+    expect((await api.call("POST", `pay-questions/${q.id}/answer`, { token: owner.accessToken, body: { answer: "Never send 123-45-6789 here." } })).status).toBe(200);
+    const row = (await m.db.db.query.payQuestions.findFirst({ where: eq(S().payQuestions.id, q.id) }))!;
+    expect(row.detail).not.toMatch(/4242 4242 4242 4242|123-45-6789/);
+    expect(JSON.stringify(row.history)).not.toMatch(/4242 4242 4242 4242|123-45-6789/);
+    expect(row.history.map((h) => h.kind)).toEqual(["asked", "answered"]);
+    expect(row.history[1]).toMatchObject({ by: ids.owner, at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) });
+    expect(Number.isNaN(Date.parse(row.history[1].at))).toBe(false);
+    await pq.resolvePayQuestion(asker, q.id);
+  });
+
   it("deletes signed-out phones after 30 days and punch photos after 90, keeping photos while a pay question is open", async () => {
     const { staffRetentionCron } = await import("@/server/staff-retention");
     const now = new Date();
