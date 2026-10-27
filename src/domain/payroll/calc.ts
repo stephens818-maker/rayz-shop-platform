@@ -17,7 +17,7 @@ export interface PayrollSettings {
   dailyOtHours: number | null;
   /** For the report's OT Pay. iSolved computes the real (blended) OT itself. */
   otMultiplier: number;
-  /** C2: training hours count toward the weekly 40. Off until Charles answers Q11. */
+  /** C2: training hours on top of clocked hours count toward the weekly 40; training inside clocked time is already there. Configurable until Charles answers Q11. */
   trainingCountsTowardOt: boolean;
   /** Training hours paid at the training rate are labor cost. The workbook leaves them out. */
   trainingPayInCost: boolean;
@@ -146,7 +146,7 @@ export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
   otThresholdHours: 40,
   dailyOtHours: null,
   otMultiplier: 1.5,
-  trainingCountsTowardOt: false,
+  trainingCountsTowardOt: true,
   trainingPayInCost: true,
   roundExport2dp: false,
   ftHoursPerWeek: 32,
@@ -310,6 +310,8 @@ export interface LineInput {
   otHours: number;
   ptoHours: number;
   trainingHours: number;
+  /** Of the training hours, those inside the employee's clocked worked time (C2): counted toward OT once, as worked hours. */
+  trainingOverlapHours?: number;
   serviceSales: number;
   productSales: number;
   tips: number;
@@ -418,9 +420,15 @@ export interface Line {
 
 const ov = (i: LineInput, k: Overridable, v: number) => i.overrides?.[k]?.value ?? v;
 
+/** C6: an adjustment can add hours or overtime but never take away what the punches show. Fix the punches instead. */
+export const belowPunches = (i: LineInput, k: "workedHours" | "otHours") => {
+  const v = i.overrides?.[k]?.value;
+  return v !== undefined && toCents(v) < toCents(i[k]);
+};
+
 export function computeLine(i: LineInput, s: PayrollSettings): Line {
-  const worked = ov(i, "workedHours", i.workedHours);
-  const otHours = ov(i, "otHours", i.otHours);
+  const worked = Math.max(i.workedHours, ov(i, "workedHours", i.workedHours));
+  const otHours = Math.max(i.otHours, ov(i, "otHours", i.otHours));
   const hours = worked - otHours;
   const wage = i.hourlyRate;
   const payWage = i.zeroHourlyPay ? 0 : wage;
@@ -932,6 +940,7 @@ export type AnomalyKind =
   | "owner_case"
   | "sales_without_hours"
   | "override"
+  | "below_punches"
   | "netcomm_gap"
   | "missing_key"
   | "training_in_hours"
@@ -975,7 +984,24 @@ export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Ano
         if (k === "netComm") continue;
         out.push({ staffId: l.staffId, shopId: b.shopId, kind: "override", message: `${who}: ${OVERRIDE_LABEL[k]} typed by hand (${l.input.overrides?.[k]?.reason}).` });
       }
-      if (l.trainingHours > 0 && !s.trainingCountsTowardOt) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "training_in_hours", message: `${who}: ${fmtHours(l.trainingHours)} training. If the clocked hours already include it, it's counted twice (Q11, C2 flag).` });
+      for (const k of ["workedHours", "otHours"] as const)
+        if (belowPunches(l.input, k))
+          out.push({
+            staffId: l.staffId,
+            shopId: b.shopId,
+            kind: "below_punches",
+            message: `${who}: ${OVERRIDE_LABEL[k]} typed as ${fmtHours(l.input.overrides![k]!.value)}, below the ${fmtHours(l.input[k])} the punches show. The report pays the punches' ${fmtHours(l.input[k])}; fix the punches on the timesheet if they're wrong.`,
+          });
+      const overlap = l.input.trainingOverlapHours ?? 0;
+      if (overlap > 0)
+        out.push({
+          staffId: l.staffId,
+          shopId: b.shopId,
+          kind: "training_in_hours",
+          message: `${who}: ${fmtHours(overlap)} of training falls inside their clocked hours, so it's paid as both worked and training time. It counts toward overtime once. Fix the training entry if it's the same time.`,
+        });
+      else if (l.trainingHours > 0 && !s.trainingCountsTowardOt)
+        out.push({ staffId: l.staffId, shopId: b.shopId, kind: "training_in_hours", message: `${who}: ${fmtHours(l.trainingHours)} training, left out of the weekly 40 (training toward overtime is off, Q11).` });
       if (l.wage === 0 && l.service > 0 && l.servicePct === 0) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "no_rate", message: `${who} has sales but no wage or commission rate.` });
       const mixed = l.input.mixedRates ?? [];
       if (mixed.length)

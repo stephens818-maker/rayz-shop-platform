@@ -59,6 +59,23 @@ describe("payroll period", () => {
     expect(mol.period).toMatchObject({ number: 1, checkDate: "2027-01-01" });
   });
 
+  it("C6: an adjustment can't take overtime or hours below the punches; one above them is paid, flagged and audited", async () => {
+    const jamie = await staffBy("Jamie");
+    const moline = (await shop("moline"))!;
+    expect(await run.setOverride(moline.id, START, jamie.id, "otHours", 0, "no OT this week", actor)).toMatch(/punches show 2\.78h of overtime.*can't go below/);
+    expect(await run.setOverride(moline.id, START, jamie.id, "workedHours", 20, "short day", actor)).toMatch(/punches show 25h of hours worked/);
+    expect((await m.db.db.select().from(m.schema.payrollOverrides).where(eq(m.schema.payrollOverrides.staffId, jamie.id))).filter((o) => o.field === "otHours" || o.field === "workedHours")).toEqual([]);
+
+    expect(await run.setOverride(moline.id, START, jamie.id, "otHours", 3, "OT owed from a missed punch", actor)).toBeNull();
+    const v = (await run.buildPayroll(START, END))!;
+    const l = v.blocks.find((b) => b.shopId === moline.id)!.lines.find((x) => x.staffId === jamie.id)!;
+    expect([l.otHours, l.hours]).toEqual([3, 22]);
+    expect(v.anomalies.filter((a) => a.staffId === jamie.id).map((a) => a.kind)).toContain("override");
+    const logged = await m.db.db.select().from(m.schema.auditLog).where(eq(m.schema.auditLog.action, "payroll.override"));
+    expect(logged.at(-1)?.details).toMatchObject({ field: "otHours", value: 3, reason: "OT owed from a missed punch" });
+    expect(await run.setOverride(moline.id, START, jamie.id, "otHours", null, "", actor)).toBeNull();
+  });
+
   it("puts Dubuque in the same dates under its own period number", async () => {
     const v = (await run.buildPayroll("2026-11-29", "2026-12-12"))!;
     expect(v.blocks.find((b) => b.shop === "Dubuque")!.period).toMatchObject({ number: 5, checkDate: "2026-12-18" });

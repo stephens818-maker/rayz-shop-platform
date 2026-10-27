@@ -26,8 +26,8 @@ export function SettingsForm({ initial, memoRequired }: { initial: PayrollSettin
   return (
     <div className="space-y-3">
       <Check
-        label="Training hours count toward the weekly 40 for overtime (C2)"
-        hint="Off until Charles answers Q11. If Squire's hours already include training, turning this on would count it twice."
+        label="Training hours on top of clocked hours count toward the weekly 40 for overtime (C2)"
+        hint="On by default until Charles answers Q11. Training inside the same person's clocked time is already in their hours and is never counted twice."
         checked={v.trainingCountsTowardOt}
         onChange={(x) => setV({ ...v, trainingCountsTowardOt: x })}
       />

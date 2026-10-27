@@ -254,12 +254,13 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
     locked,
   });
   const mine = slices.filter((s) => s.periodStart === start && runShops.has(s.shopId) && s.weekStart >= weeks[0] && s.weekStart <= weeks[weeks.length - 1]);
-  const hours = new Map<string, { worked: number; training: number; pto: number; ot: number }>();
+  const hours = new Map<string, { worked: number; training: number; trainingOverlap: number; pto: number; ot: number }>();
   for (const s of mine) {
     const k = `${s.staffId}|${s.shopId}`;
-    const h = hours.get(k) ?? { worked: 0, training: 0, pto: 0, ot: 0 };
+    const h = hours.get(k) ?? { worked: 0, training: 0, trainingOverlap: 0, pto: 0, ot: 0 };
     h.worked += s.worked;
     h.training += s.training;
+    h.trainingOverlap += s.trainingOverlap;
     h.pto += s.pto;
     h.ot += s.ot;
     hours.set(k, h);
@@ -300,7 +301,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
     const pr = profile.get(staffId);
     const r = rateOf(staffId, shopId);
     const plan = plans?.rateFor(staffId, shopId) ?? null;
-    const h = hours.get(k) ?? { worked: 0, training: 0, pto: 0, ot: 0 };
+    const h = hours.get(k) ?? { worked: 0, training: 0, trainingOverlap: 0, pto: 0, ot: 0 };
     for (const [kind, on] of [["training", settings.trainingSource], ["pto", settings.ptoSource]] as const) {
       if (on !== "manager" || !h[kind]) continue;
       sourceFlags.push({
@@ -335,6 +336,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       otHours: centi(h.ot),
       ptoHours: settings.ptoSource === "manager" ? 0 : centi(h.pto),
       trainingHours: settings.trainingSource === "manager" ? 0 : centi(h.training),
+      ...(h.trainingOverlap && settings.trainingSource !== "manager" ? { trainingOverlapHours: centi(h.trainingOverlap) } : {}),
       serviceSales: (s?.serviceSalesCents ?? 0) / 100,
       productSales: (s?.productSalesCents ?? 0) / 100,
       tips: tipsCents / 100,
@@ -1078,6 +1080,16 @@ export async function saveRate(staffId: string, shopId: string | null, v: { hour
   return null;
 }
 
+/** An employee's hours worked and overtime at a shop for the pay period starting then, as the punches give them (C6). */
+async function punchedHours(shopId: string, periodStart: LocalDate, staffId: string): Promise<{ workedHours: number; otHours: number } | null> {
+  const g = (await ensurePayGroups()).find((x) => x.shopId === shopId);
+  const p = g ? periodStarting(g.calendar, periodStart) : null;
+  if (!p) return null;
+  const view = await buildPayroll(p.start, p.end, { clockChecks: false });
+  const l = view?.blocks.find((b) => b.shopId === shopId)?.lines.find((x) => x.staffId === staffId);
+  return { workedHours: l?.input.workedHours ?? 0, otHours: l?.input.otHours ?? 0 };
+}
+
 export async function setOverride(shopId: string, periodStart: LocalDate, staffId: string, field: Overridable, value: number | null, reason: string, actor: Actor): Promise<string | null> {
   if (!(OVERRIDABLE as readonly string[]).includes(field)) return "That value can't be typed over.";
   if (await isLockedOn(shopId, periodStart)) return "This pay period is locked.";
@@ -1093,6 +1105,11 @@ export async function setOverride(shopId: string, periodStart: LocalDate, staffI
   }
   if (!Number.isFinite(value)) return "Enter a number.";
   if (!reason.trim()) return "Say why the value is being typed over.";
+  if (field === "workedHours" || field === "otHours") {
+    const punched = await punchedHours(shopId, periodStart, staffId);
+    if (punched && toCents(value) < toCents(punched[field]))
+      return `The punches show ${fmtHours(punched[field])} of ${field === "otHours" ? "overtime" : "hours worked"}, and an adjustment can't go below that. If the punches are wrong, fix them on the timesheet.`;
+  }
   await db
     .insert(payrollOverrides)
     .values({ shopId, periodStart, staffId, field, value, reason: reason.trim(), createdBy: actor.staffId ?? null })

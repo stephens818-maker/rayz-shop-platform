@@ -255,7 +255,7 @@ function Report({
   );
 }
 
-const AMBER = new Set(["owner_case", "netcomm_gap", "sales_without_hours", "sales_day_without_hours", "timesheet_not_approved", "hours_not_locked", "hours_not_from_clock"]);
+const AMBER = new Set(["owner_case", "netcomm_gap", "below_punches", "sales_without_hours", "sales_day_without_hours", "timesheet_not_approved", "hours_not_locked", "hours_not_from_clock"]);
 
 function HoursGate({ view }: { view: PayrollView }) {
   if (!view.hoursOpen.length || view.locked === "all") return null;
@@ -554,7 +554,10 @@ function ShopBlockCard({ b, view, canRun, downloadable }: { b: BlockView; view: 
                       {s.trainingPayInCost
                         ? `${hrsH(l.trainingHours)} × ${fmtMoney(l.input.trainingRate ?? l.wage)}${l.input.trainingRate === null ? " (hourly rate)" : " training rate"} = ${fmtMoney(l.trainingPay)}`
                         : "left out of labor cost (setting)"}
-                      {!s.trainingCountsTowardOt && l.trainingHours > 0 && " · training doesn't count toward the weekly 40 (C2 off, Q11)"}
+                      {l.trainingHours > 0 &&
+                        (s.trainingCountsTowardOt
+                          ? ` · ${hrsH(l.trainingHours - (l.input.trainingOverlapHours ?? 0))} of it counts toward the weekly 40 (on top of clocked hours, C2)`
+                          : " · training doesn't count toward the weekly 40 (C2 off, Q11)")}
                     </p>
                     {view.ft[l.staffId] && (
                       <p>

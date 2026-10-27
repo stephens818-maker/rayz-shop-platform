@@ -55,26 +55,63 @@ export interface DayHours {
   worked: number;
   training: number;
   pto: number;
+  /** Of the training, what falls inside the same person's worked time at any shop: already in their clocked hours. */
+  trainingOverlap?: number;
+}
+
+/** The parts of one interval inside a sorted list of non-overlapping ones. */
+function within(e: Pick<TimeEntry, "startsAt" | "endsAt">, merged: readonly [number, number][]): { startsAt: Date; endsAt: Date }[] {
+  const a = e.startsAt.getTime();
+  const b = e.endsAt.getTime();
+  return merged.flatMap(([s, t]) => (Math.max(a, s) < Math.min(b, t) ? [{ startsAt: new Date(Math.max(a, s)), endsAt: new Date(Math.min(b, t)) }] : []));
+}
+
+function mergedWorked(entries: readonly TimeEntry[]): Map<string, [number, number][]> {
+  const by = new Map<string, [number, number][]>();
+  for (const e of entries) if (e.kind === "worked") by.set(e.staffId, [...(by.get(e.staffId) ?? []), [e.startsAt.getTime(), e.endsAt.getTime()]]);
+  for (const [k, list] of by) {
+    list.sort((x, y) => x[0] - y[0]);
+    const out: [number, number][] = [];
+    for (const [s, t] of list) {
+      const last = out[out.length - 1];
+      if (last && s <= last[1]) last[1] = Math.max(last[1], t);
+      else out.push([s, t]);
+    }
+    by.set(k, out);
+  }
+  return by;
 }
 
 /** Hours per employee, shop and local date. Minutes are added up per day first, then turned into hundredths once. */
 export function dailyHours(entries: readonly TimeEntry[]): DayHours[] {
-  const minutes = new Map<string, { staffId: string; shopId: string; date: string; worked: number; training: number; pto: number }>();
-  for (const e of entries) {
-    for (const part of splitByLocalDay(e)) {
+  const minutes = new Map<string, { staffId: string; shopId: string; date: string; worked: number; training: number; pto: number; trainingOverlap: number }>();
+  const add = (e: TimeEntry, parts: { date: string; minutes: number }[], kind: EntryKind | "trainingOverlap") => {
+    for (const part of parts) {
       const k = `${e.staffId}|${e.shopId}|${part.date}`;
-      const v = minutes.get(k) ?? { staffId: e.staffId, shopId: e.shopId, date: part.date, worked: 0, training: 0, pto: 0 };
-      v[e.kind] += part.minutes;
+      const v = minutes.get(k) ?? { staffId: e.staffId, shopId: e.shopId, date: part.date, worked: 0, training: 0, pto: 0, trainingOverlap: 0 };
+      v[kind] += part.minutes;
       minutes.set(k, v);
     }
+  };
+  const worked = mergedWorked(entries);
+  for (const e of entries) {
+    add(e, splitByLocalDay(e), e.kind);
+    if (e.kind === "training") for (const piece of within(e, worked.get(e.staffId) ?? [])) add(e, splitByLocalDay(piece), "trainingOverlap");
   }
-  return [...minutes.values()].map((v) => ({ ...v, worked: minutesToCenti(v.worked), training: minutesToCenti(v.training), pto: minutesToCenti(v.pto) }));
+  return [...minutes.values()].map(({ trainingOverlap: overlap, ...v }) => {
+    const training = minutesToCenti(v.training);
+    const trainingOverlap = Math.min(training, minutesToCenti(overlap));
+    return { ...v, worked: minutesToCenti(v.worked), training, pto: minutesToCenti(v.pto), ...(trainingOverlap ? { trainingOverlap } : {}) };
+  });
 }
+
+/** C2: training counts toward the 40 only where it's on top of clocked hours, so no hour is counted twice. */
+const trainingBasis = (d: Pick<DayHours, "training" | "trainingOverlap">, o: Pick<OtOptions, "trainingCountsTowardOt">) => (o.trainingCountsTowardOt ? d.training - (d.trainingOverlap ?? 0) : 0);
 
 export interface OtOptions {
   /** Weekly threshold in centi-hours. 4000 = 40 hours. */
   thresholdCenti: number;
-  /** C2: training hours count toward the weekly 40 (and carry OT share). Off until Charles answers Q11. */
+  /** C2: training hours on top of clocked hours count toward the weekly 40 (and carry OT share). Configurable until Charles answers Q11. */
   trainingCountsTowardOt: boolean;
   /** Which legal entity (FEIN) a shop belongs to; hours only add up within one. */
   entityOf: (shopId: string) => string;
@@ -100,6 +137,8 @@ export interface Slice {
   basis: number;
   worked: number;
   training: number;
+  /** Of the training, the part inside clocked worked time. */
+  trainingOverlap: number;
   pto: number;
   ot: number;
   locked: boolean;
@@ -130,11 +169,12 @@ export function overtimeSlices(days: readonly DayHours[], o: OtOptions): Slice[]
     const weekStart = weekStartOf(d.date);
     const s0 = { staffId: d.staffId, shopId: d.shopId, periodStart: o.periodOf(d.shopId, d.date), weekStart };
     const k = sliceKey(s0);
-    const s = slices.get(k) ?? { ...s0, entity: o.entityOf(d.shopId), basis: 0, worked: 0, training: 0, pto: 0, ot: 0, locked: false };
+    const s = slices.get(k) ?? { ...s0, entity: o.entityOf(d.shopId), basis: 0, worked: 0, training: 0, trainingOverlap: 0, pto: 0, ot: 0, locked: false };
     s.worked += d.worked;
     s.training += d.training;
+    s.trainingOverlap += d.trainingOverlap ?? 0;
     s.pto += d.pto;
-    s.basis += d.worked + (o.trainingCountsTowardOt ? d.training : 0);
+    s.basis += d.worked + trainingBasis(d, o);
     slices.set(k, s);
   }
   const weeks = new Map<string, Slice[]>();
@@ -176,7 +216,7 @@ function dailyOvertime(days: readonly DayHours[], o: OtOptions, threshold: numbe
     byDay.set(k, [...(byDay.get(k) ?? []), d]);
   }
   const out = new Map<string, number>();
-  const basisOf = (d: DayHours) => d.worked + (o.trainingCountsTowardOt ? d.training : 0);
+  const basisOf = (d: DayHours) => d.worked + trainingBasis(d, o);
   for (const list of byDay.values()) {
     list.sort((a, b) => a.shopId.localeCompare(b.shopId));
     const excess = list.reduce((a, d) => a + basisOf(d), 0) - threshold;
