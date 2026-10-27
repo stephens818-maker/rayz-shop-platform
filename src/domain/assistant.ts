@@ -150,6 +150,9 @@ export function systemPrompt(p: PromptPerson): string {
     p.tools.includes("customer_report")
       ? "- customer_report lists or counts clients with filters (lapsed, visits, spend)."
       : "",
+    p.tools.includes("builder_report")
+      ? "- builder_report counts, totals or lists rows from the custom report builder's other sources (tickets, appointments, barbers, products, tip entries, campaign messages), grouped by up to two fields such as location, barber, weekday or hour. Use it when run_report's views don't break the numbers down the way the person asks."
+      : "",
     p.tools.includes("event_report")
       ? "- event_report counts and totals logged actions from the event log (bookings and cancellations with their lead time, the online booking funnel and where people drop off, wait and chair times, no-shows, ticket edits, voids, refunds, tips, stock, clock punches, block-outs, messages, calls), grouped by up to two fields."
       : "",
@@ -371,6 +374,18 @@ export function stubPlan(
       },
     };
   }
+  const by = q.match(/\bby (weekday|day of (?:the )?week|hour|time of day)\b/);
+  if (by && offered("builder_report") && !has(q, /\b(sales|revenue|tips?|campaigns?|stock|inventory)\b/))
+    return {
+      name: "builder_report",
+      args: {
+        source: "appointments",
+        columns: ["appointments", "completed", "no_shows", "cancellations"],
+        groupBy: [by[1].startsWith("hour") || by[1].startsWith("time") ? "hour" : "weekday"],
+        summary: true,
+        preset: PRESET_WORDS.find(([re]) => has(q, re))?.[1] ?? "30d",
+      },
+    };
   const ev = offered("event_report")
     ? EVENT_WORDS.find(([re]) => has(q, re))
     : undefined;

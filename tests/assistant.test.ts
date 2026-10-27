@@ -43,6 +43,16 @@ describe("the dev stub's router", () => {
     expect(stubPlan("Payroll hours this pay period", opts)).toMatchObject({ args: { report: "labor", preset: "payperiod" } });
   });
 
+  it("breaks appointments down by weekday or hour with the report builder, when it's offered", () => {
+    const withBuilder = { ...opts, tools: [...opts.tools, "builder_report"] };
+    expect(stubPlan("Appointments by weekday last month", withBuilder)).toEqual({
+      name: "builder_report",
+      args: { source: "appointments", columns: ["appointments", "completed", "no_shows", "cancellations"], groupBy: ["weekday"], summary: true, preset: "lastmonth" },
+    });
+    expect(stubPlan("No-shows by hour", withBuilder)).toMatchObject({ name: "builder_report", args: { groupBy: ["hour"], preset: "30d" } });
+    expect(stubPlan("Appointments by weekday", { ...opts, tools: opts.tools.filter((t) => t !== "builder_report") })?.name).not.toBe("builder_report");
+  });
+
   it("only uses reports and tools the person has", () => {
     const barber = { ...opts, tools: ["run_report", "help"], reports: ["my_sales", "service_times"] };
     expect(stubPlan("Compare sales by location", barber)).toMatchObject({ name: "run_report", args: { report: "my_sales" } });

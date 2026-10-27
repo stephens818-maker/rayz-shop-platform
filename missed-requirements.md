@@ -672,7 +672,7 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 
 **Still open:**
 - [ ] Zero data retention has to be agreed with OpenAI or Anthropic for the brand's organization; the app can't turn it on.
-- [ ] The tools cover the existing reports, the customer source and the event log. The report builder's sales, appointments, staff, inventory, tips and campaigns sources don't have an assistant tool yet, so row-level questions about them outside a report still go unanswered.
+- [x] The report builder's sales, appointments, staff, inventory, tips and campaigns sources have an assistant tool, `builder_report`, with the builder's source and field permissions (`tests/db/assistant.test.ts`).
 - [ ] Answers aren't streamed; the panel waits for the whole reply.
 
 ## 27. Shop login parity with Squire, tighter

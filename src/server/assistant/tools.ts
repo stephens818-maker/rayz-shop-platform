@@ -33,13 +33,19 @@ import {
   EVENT_FIELDS,
   EVENT_TYPES,
   ReportDefinition,
+  allFields,
   cellText,
   encodeDefinition,
   fieldUse,
+  nounHeader,
+  nounOf,
   segmentFromReport,
+  sourceLabel,
+  sourceReport,
   totalHeader,
   totalType,
   type FieldDef,
+  type ReportResult,
 } from "@/domain/report-builder";
 import { csvTable, type ReportTable } from "@/domain/report-views";
 import { REFILL_STATUSES } from "@/domain/product-history";
@@ -388,13 +394,47 @@ export function assistantFields(
 }
 
 const aggOf = (f: FieldDef) =>
-  f.key === "days_since_visit"
+  ["ticket", "client_number", "number", "hour"].includes(f.key)
+    ? "none"
+    : f.key === "days_since_visit"
     ? "avg"
     : f.type === "int" || f.type === "money"
       ? "sum"
       : f.type === "number" || f.type === "stars" || f.type === "pct"
         ? "avg"
         : "none";
+
+/** A builder report's rows as text: every row, or one per group in a summary, and the totals. */
+function resultLines(
+  def: ReportDefinition,
+  r: Pick<ReportResult, "columns" | "groupBy" | "lines" | "totals">,
+) {
+  const shownHeaders = def.summary
+    ? [...r.groupBy.map((g) => g.label), ...r.columns.map(totalHeader)]
+    : r.columns.map((c) => c.label);
+  const rows = r.lines.flatMap((l) =>
+    def.summary && l.kind === "group"
+      ? [
+          [
+            ...l.values,
+            ...r.columns.map((c, i) => cellText(totalType(c), l.cells[i])),
+          ],
+        ]
+      : !def.summary && l.kind === "row"
+        ? [r.columns.map((c, i) => cellText(c.type, l.cells[i], c.masked))]
+        : [],
+  );
+  const totals = r.totals
+    ? r.columns
+        .map((c, i) =>
+          c.agg === "none"
+            ? null
+            : `${totalHeader(c)}: ${cellText(totalType(c), r.totals!.cells[i])}`,
+        )
+        .filter((x): x is string => !!x)
+    : [];
+  return { shownHeaders, rows, totals };
+}
 
 async function customerReportTool(
   ctx: StaffContext,
@@ -537,30 +577,7 @@ async function customerReportTool(
             fields: r.columns.map((c) => c.key),
           },
         });
-      const shownHeaders = def.summary
-        ? [...r.groupBy.map((g) => g.label), ...r.columns.map(totalHeader)]
-        : r.columns.map((c) => c.label);
-      const rows = r.lines.flatMap((l) =>
-        def.summary && l.kind === "group"
-          ? [
-              [
-                ...l.values,
-                ...r.columns.map((c, i) => cellText(totalType(c), l.cells[i])),
-              ],
-            ]
-          : !def.summary && l.kind === "row"
-            ? [r.columns.map((c, i) => cellText(c.type, l.cells[i], c.masked))]
-            : [],
-      );
-      const totals = r.totals
-        ? r.columns
-            .map((c, i) =>
-              c.agg === "none"
-                ? null
-                : `${totalHeader(c)}: ${cellText(totalType(c), r.totals!.cells[i])}`,
-            )
-            .filter((x): x is string => !!x)
-        : [];
+      const { shownHeaders, rows, totals } = resultLines(def, r);
       const what = def.summary
         ? `${r.total} groups`
         : `${r.total} client${r.total === 1 ? "" : "s"}`;
@@ -613,6 +630,142 @@ async function customerReportTool(
           more: Math.max(0, r.total - ROWS_ON_CARD),
         },
         links,
+      };
+      return { content, cards: [scrub(card)] };
+    },
+  };
+}
+
+// ───────────────────────────── builder_report ─────────────────────────────
+
+const ROW_SOURCES = ["sales", "appointments", "staff", "inventory", "tips", "campaigns"] as const;
+type RowSource = (typeof ROW_SOURCES)[number];
+
+/** The report builder's row sources this person may build on, each with the fields they see in full. */
+export function assistantSources(
+  sees: ReturnType<typeof panelSees>,
+): { source: RowSource; fields: FieldDef[] }[] {
+  return ROW_SOURCES.flatMap((source) => {
+    const needs = sourceReport(source);
+    if (needs && !sees.reports?.includes(needs)) return [];
+    const fields = allFields([], source).filter((f) => fieldUse(f, sees).use === "full");
+    return fields.length ? [{ source, fields }] : [];
+  });
+}
+
+function builderReportTool(
+  ctx: StaffContext,
+  sees: ReturnType<typeof panelSees>,
+): AssistantTool | null {
+  if (!can(ctx, "report_builder.build")) return null;
+  const sources = assistantSources(sees);
+  if (!sources.length) return null;
+  const keys = [...new Set(sources.flatMap((s) => s.fields.map((f) => f.key)))] as [string, ...string[]];
+  const args = z.object({
+    source: z
+      .enum(sources.map((s) => s.source) as [RowSource, ...RowSource[]])
+      .describe("What each row is: a ticket, appointment, barber at a location, product at a location, tip entry or campaign message"),
+    columns: z.array(z.enum(keys)).min(1).max(8).describe("Fields of that source to show"),
+    groupBy: z.array(z.enum(keys)).max(2).optional().describe("Group by up to two fields, e.g. location or barber"),
+    summary: z.boolean().optional().describe("One row per group with its totals, instead of every row"),
+    sort: z.enum(keys).optional(),
+    descending: z.boolean().optional(),
+    preset: z.enum(["all", ...PRESET_IDS]).optional().describe("Dates; the default is the last 30 days"),
+    from: isoDate.optional().describe("With to: exact dates instead of a preset"),
+    to: isoDate.optional(),
+    locations: names('Location or location group names, or ["all"]'),
+    barbers: names("Only these barbers"),
+  });
+  return {
+    name: "builder_report",
+    args,
+    spec: spec(
+      "builder_report",
+      `Count, total or list rows from the custom report builder, as it runs for this person. Totals are summed or averaged over the rows. Sources and their fields:\n${sources
+        .map((s) => `- ${s.source}: ${s.fields.map((f) => `${f.key} (${f.label})`).join(", ")}`)
+        .join("\n")}\nClient contact details and names aren't in these sources.`,
+      args,
+    ),
+    async run({ ctx, now }, raw) {
+      const a = args.parse(raw);
+      const src = sources.find((s) => s.source === a.source)!;
+      const byKey = new Map(src.fields.map((f) => [f.key, f]));
+      const wrong = [...a.columns, ...(a.groupBy ?? []), ...(a.sort ? [a.sort] : [])].find((k) => !byKey.has(k));
+      if (wrong) return fail(`"${wrong}" isn't one of the ${sourceLabel(a.source)} fields you can use`);
+      let shops: string | undefined;
+      let staff: string | undefined;
+      try {
+        shops = await locationParam(ctx, a.locations);
+        staff = await barberParam(ctx, a.barbers);
+      } catch (e) {
+        if (e instanceof AppError) return fail(e.message);
+        throw e;
+      }
+      const groupBy = [...new Set(a.groupBy ?? [])];
+      const columns = [...new Set([...groupBy, ...a.columns])];
+      const def = ReportDefinition.parse({
+        source: a.source,
+        columns: columns.map((k) => ({
+          field: k,
+          agg: groupBy.includes(k) ? "none" : aggOf(byKey.get(k)!),
+        })),
+        sort: a.sort ? [{ field: a.sort, dir: a.descending ? "desc" : "asc" }] : [],
+        groupBy,
+        summary: !!a.summary && groupBy.length > 0,
+        range:
+          a.from && a.to
+            ? { preset: "custom", from: a.from, to: a.to }
+            : { preset: a.preset ?? "30d" },
+        shops: shops ?? null,
+        staff: staff ?? null,
+      });
+      const policy = await clientPolicy(ctx);
+      const problem = await reportProblem(ctx, policy, def, { building: true });
+      if (problem) return fail(problem);
+      const r = await runReport(ctx, policy, def, {
+        page: 1,
+        pageSize: 25,
+        own: true,
+        now,
+      });
+      const { shownHeaders, rows, totals } = resultLines(def, r);
+      const noun = nounOf(a.source);
+      const what = def.summary
+        ? `${r.total} group${r.total === 1 ? "" : "s"}`
+        : `${r.total} ${noun}${r.total === 1 ? "" : "s"}`;
+      const content = scrubText(
+        [
+          `SUMMARY: ${what} (${r.rangeLabel}, ${r.scopeLabel})${totals.length ? `; ${totals.join(", ")}` : ""}.`,
+          ...r.scope.notes,
+          shownHeaders.join(" | "),
+          ...rows.map((x) => x.join(" | ")),
+          ...(r.total > rows.length ? [`(${r.total - rows.length} more)`] : []),
+        ].join("\n"),
+      );
+      const title = sourceLabel(a.source);
+      const card: AssistantCard = {
+        kind: "report",
+        title,
+        subtitle: `${r.rangeLabel} · ${r.scopeLabel}`,
+        stats: [
+          { label: def.summary ? "Groups" : nounHeader(noun), value: r.total.toLocaleString("en-US") },
+          ...totals.slice(0, 5).map((t) => ({
+            label: t.split(": ")[0],
+            value: t.split(": ").slice(1).join(": "),
+          })),
+        ],
+        table: {
+          title,
+          headers: shownHeaders,
+          rows: rows.slice(0, ROWS_ON_CARD),
+          more: Math.max(0, r.total - ROWS_ON_CARD),
+        },
+        links: [
+          {
+            label: "Open in the report builder to save it",
+            href: `/admin/reports/custom/new?d=${encodeDefinition(def)}`,
+          },
+        ],
       };
       return { content, cards: [scrub(card)] };
     },
@@ -1251,12 +1404,12 @@ export async function toolsFor(
   ctx: StaffContext,
   settings: AssistantSettings,
 ): Promise<AssistantTool[]> {
+  const sees = reportSees(ctx, await clientPolicy(ctx));
   const out: (AssistantTool | null)[] = [
     runReportTool(ctx),
     await customerReportTool(ctx),
-    can(ctx, "analytics.events")
-      ? eventReportTool(ctx, reportSees(ctx, await clientPolicy(ctx)))
-      : null,
+    builderReportTool(ctx, sees),
+    can(ctx, "analytics.events") ? eventReportTool(ctx, sees) : null,
     helpTool(),
     can(ctx, "notes.view") ? clientNotesTool() : null,
   ];

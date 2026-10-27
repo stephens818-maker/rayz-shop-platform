@@ -1139,6 +1139,7 @@ Each report is its own page with **two permissions of its own**: `report.<key>.v
 - **Answers come from the reports, never from SQL.** The model gets tools, not the database:
   - `run_report` runs any report the person can view through the same loaders as the report pages and CSVs (`REPORT_LOADERS`), over dates, locations, barbers and the by-location or by-barber view.
   - `customer_report` builds a client list with the report builder's engine (filters such as last visit, visit counts, spend and not booked, plus columns, grouping and totals).
+  - `builder_report` runs the report builder's other sources (sales tickets, appointments, staff, inventory, tips and campaign messages) for breakdowns the standard reports don't have, like "No-shows by weekday at Coralville" or "Tips by payout method this month". It offers a source only with its standard report (Inventory, Barber performance, Tip payouts, Campaign Center) and a field only as the builder would (dollar amounts, pay data, labor hours), and these sources carry client numbers, never names or contact details.
   - `help` gives the steps for one of 26 how-to topics.
   - `client_notes` reads one client's notes ("What's Marcus's usual cut?"), exactly as the person could read them on the profile: only clients they reach, masked notes as a count, private notes only with **See and write private manager notes**. Each look is logged as a client view.
   - `draft_po` and `draft_blast` prepare a purchase order or a Campaign Center blast.

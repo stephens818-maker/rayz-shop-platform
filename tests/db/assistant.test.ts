@@ -83,9 +83,9 @@ describe("tools follow the person's permissions", () => {
 
   it("offers a manager client lists and purchase orders but not blasts, and the brand admin everything", async () => {
     const s = await assistant.loadAssistantSettings();
-    expect((await tools.toolsFor(await ctxOf("michelle"), s)).map((t) => t.name).sort()).toEqual(["client_notes", "customer_report", "draft_po", "help", "run_report"]);
-    expect((await tools.toolsFor(await ctxOf("admin"), s)).map((t) => t.name).sort()).toEqual(["client_notes", "customer_report", "draft_blast", "draft_po", "event_report", "help", "run_report"]);
-    expect((await tools.toolsFor(await ctxOf("admin"), { ...s, actions: false })).map((t) => t.name).sort()).toEqual(["client_notes", "customer_report", "event_report", "help", "run_report"]);
+    expect((await tools.toolsFor(await ctxOf("michelle"), s)).map((t) => t.name).sort()).toEqual(["builder_report", "client_notes", "customer_report", "draft_po", "help", "run_report"]);
+    expect((await tools.toolsFor(await ctxOf("admin"), s)).map((t) => t.name).sort()).toEqual(["builder_report", "client_notes", "customer_report", "draft_blast", "draft_po", "event_report", "help", "run_report"]);
+    expect((await tools.toolsFor(await ctxOf("admin"), { ...s, actions: false })).map((t) => t.name).sort()).toEqual(["builder_report", "client_notes", "customer_report", "event_report", "help", "run_report"]);
   });
 
   it("never offers the audit log, client ratings or reports the person can't view", async () => {
@@ -161,6 +161,57 @@ describe("location and barber scope", () => {
     await assistant.askAssistant(wide, { question: "Moline sales?" }, { provider: w });
     expect(toolResults(w)[0]).not.toMatch(/isn't one of your locations/);
     expect(toolResults(w)[0]).toMatch(/Moline/);
+  });
+});
+
+describe("the report builder's other sources", () => {
+  const sourcesOf = (t: { spec: { parameters: unknown } }) =>
+    (t.spec.parameters as { properties: { source: { enum: string[] } } }).properties.source.enum;
+  const builder = async (c: Ctx) => (await tools.toolsFor(c, await assistant.loadAssistantSettings())).find((t) => t.name === "builder_report");
+
+  it("offers each source only with its standard report, and each field only as the builder would", async () => {
+    const admin = await ctxOf("admin");
+    expect(sourcesOf((await builder(admin))!).sort()).toEqual(["appointments", "campaigns", "inventory", "sales", "staff", "tips"]);
+    const noInventory = await builder(without(admin, ["report.inventory.view"]));
+    expect(sourcesOf(noInventory!)).not.toContain("inventory");
+    const noMoney = await builder(without(admin, ["reports.money"]));
+    expect(noMoney!.spec.description).not.toMatch(/net_sales/);
+    expect(noMoney!.spec.description).toMatch(/completed \(/);
+    expect(await builder(without(admin, ["report_builder.build"]))).toBeUndefined();
+  });
+
+  it("totals a source the way the builder does, at the person's own locations", async () => {
+    const michelle = await ctxOf("michelle");
+    const p = scripted(
+      [{ name: "builder_report", args: { source: "appointments", columns: ["completed", "no_shows"], groupBy: ["location"], summary: true, preset: "30d", locations: ["all"] } }],
+      [{ name: "builder_report", args: { source: "appointments", columns: ["completed"], locations: ["Moline"] } }],
+    );
+    const r = await assistant.askAssistant(michelle, { question: "Completed and no-shows by location" }, { provider: p });
+    const [ok, refused] = toolResults(p);
+    expect(ok).toMatch(/^SUMMARY: \d+ groups? \(Last 30 days/);
+    expect(ok).toMatch(/Coralville/);
+    expect(ok).not.toMatch(/Moline|Kimberly|Silvis|Utica|Dubuque/);
+    expect(refused).toMatch(/"Moline" isn't one of your locations/);
+    const direct = await (await import("@/server/report-builder/engine")).runReport(
+      michelle,
+      await (await import("@/server/client-privacy")).clientPolicy(michelle),
+      (await import("@/domain/report-builder")).ReportDefinition.parse({ source: "appointments", columns: [{ field: "location" }, { field: "completed", agg: "sum" }, { field: "no_shows", agg: "sum" }], groupBy: ["location"], summary: true, range: { preset: "30d" }, shops: "all" }),
+      { own: true },
+    );
+    expect(ok).toContain(`Sum of Completed: ${direct.totals!.cells[1]}`);
+    const card = r.messages[1].cards[0];
+    expect(card.kind === "report" && card.title).toBe("Appointments");
+    expect(card.links[0].href).toMatch(/^\/admin\/reports\/custom\/new\?d=/);
+  });
+
+  it("refuses a field from another source and a source the person can't use", async () => {
+    const admin = await ctxOf("admin");
+    const p = scripted([{ name: "builder_report", args: { source: "inventory", columns: ["no_shows"] } }]);
+    await assistant.askAssistant(admin, { question: "inventory?" }, { provider: p });
+    expect(toolResults(p)[0]).toMatch(/"no_shows" isn't one of the Inventory fields you can use/);
+    const q = scripted([{ name: "builder_report", args: { source: "inventory", columns: ["on_hand"] } }]);
+    await assistant.askAssistant(without(admin, ["report.inventory.view"]), { question: "stock?" }, { provider: q });
+    expect(toolResults(q)[0]).toMatch(/arguments didn't fit/);
   });
 });
 
