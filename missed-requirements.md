@@ -778,7 +778,7 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 - [x] Tests: `tests/badges.test.ts`, `tests/db/badges.test.ts`.
 
 **Still open:**
-- [ ] Staff badges in the mobile staff app, if wanted: the mobile agent owns `/api/v1`. NOTES-SYNC says how to read them safely. Customer badges: section 33.
+- [x] Staff badges in the staff app: `GET /api/staff/v1/appointments/{id}` returns the client's badges through `shownBadges` (section 34).
 
 ## 33. Customer-facing badges (gamified)
 
@@ -792,6 +792,27 @@ Called "Marketing / Engage" in the first request; renamed to the Campaign Center
 
 **Still open:**
 - [ ] `/api/v1/me/badges` and its OpenAPI entry: the handler and the OpenAPI fragment are ready (`src/server/customer-badges-api.ts`, `CUSTOMER_BADGES_OPENAPI`). The mobile agent owns `/api/v1` and `openapi.ts`; the request is in NOTES-SYNC. Until it's mounted, the same endpoint is at `/api/account/badges`.
+
+## 34. Staff mobile app API (replaces Squire Commander)
+
+Charles's scope: a staff namespace at `/api/staff/v1`, apart from the customer `/api/v1` (the mobile agent's), with roles and permissions enforced on the server. The Rayz App builder is auditing Squire Commander and will send the API gaps. README "Staff app API" and NOTES-SYNC "Staff app API" have the contract.
+
+- [x] Staff sign-in apart from the customer phone code: email and password, the authenticator step, rotating refresh tokens (reuse ends every session), sign-out. Inactive, offboarded and signed-out-everywhere people are refused, and location sign-in rules apply.
+- [x] Roles and permissions on the server for every request, from the same staff context as the web: role, overrides and their expiry, shop scope and per-shop roles. Shop logins get the front-desk clock only.
+- [x] My schedule (hours, time off, blocks) and my appointments. Others' appointments are not found unless they can see every barber's calendar.
+- [x] Client notes for my appointments, filtered by the notes permissions (private manager notes need their own permission), each read logged.
+- [x] Time clock (S2) with the front-desk QR code, the NFC sticker, Wi-Fi or location, or the front-desk tablet with each person's PIN. No biometrics.
+- [x] Breaks with a reason and a planned length.
+- [x] My tips, earnings and payout history (S3). Each earnings part (sales, tips, commission) follows its own permission.
+- [x] Stripe-hosted bank account and debit card onboarding and dashboard links. Only the Stripe account id, status and last 4 (with type and bank or brand name) are kept.
+- [x] Milestone pop-ups, a clock-in reminder and an open shift pop-up; congratulations seen in the app don't show again on the web.
+- [x] Push to the barber's phones for their own new, changed and cancelled bookings (staff phones, their own APNs topic).
+- [x] OpenAPI document at `/api/staff/v1/openapi.json`. Migration `core_0099_staff_app`. Tests: `tests/db/staff-api.test.ts`.
+
+**Still open:**
+- [ ] The Rayz App builder's Squire Commander gap list: checkout and send to checkout, booking and moving appointments, client profiles and search, time off requests, timesheet sign-off and reports are likely candidates.
+- [ ] Approved-device sign-in rules for the app (the app sends no device evidence yet, so a location needing an approved device or its Wi-Fi blocks the app off that network).
+- [ ] An app version gate for `/api/staff/v1`, like `/api/v1`'s 426.
 
 ## Deferred by decision
 

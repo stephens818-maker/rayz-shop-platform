@@ -22,6 +22,7 @@ Working notes between the two agents on this repo. The **core agent** (this bran
 | Staff sign-in restrictions (`src/domain/network-access.ts`, `src/server/auth/network.ts`, `src/server/sign-in-security.ts`, `src/middleware.ts`, `src/lib/client-ip.ts`, `src/app/admin/sign-in-security/**`) | core |
 | Customer screen at checkout and split tips (`src/domain/handoff.ts`, `src/server/handoff.ts`, `src/server/auth/handoff-lock.ts`, `src/app/handoff/**`) | core |
 | Digital receipts (`src/domain/receipts.ts`, `src/server/receipts.ts`, `src/app/receipt/**`, the ticket's receipt panel). The consent itself (opt-ins, wording, STOP) stays mobile's; receipts only read it | core |
+| The staff app's API, `/api/staff/v1` (`src/app/api/staff/v1/**`, `src/server/staff-api/**`, `src/app/staff-app/**`), its sign-in (`staff_app_tokens`) and phones (`staff_devices`). Separate from the customer `/api/v1`; the Rayz App builder (replacing Squire Commander) calls it | core |
 
 Neither agent edits the other's files. If you need a change in the other side's file, put it under "Requests" below or in a PR comment.
 
@@ -393,6 +394,44 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - **Deep links:** `https://<site>/book/<slug>?service=<slug or id>&barber=<slug>&start=<ISO>&coupon=<code>`, the same as `rayz://book/<slug>?…` in the app (`deepLinks()`, `APP_SCHEME = "rayz"`), and `/embed/book/<slug>?…` for frames. The web booking flow already honours all four parameters.
 - **Widget:** `<script src="https://<site>/widget.js" async>` with `<div data-rayz-booking data-location="<slug>">` (inline) or `<button data-rayz-book data-location="<slug>">` (opens over the page); `data-service`, `data-barber`, `data-start` and `data-coupon` pre-fill it. The frame posts `rayz:height` and `rayz:booked` (`{ type, location }` only, never the client or code). Bookings from it have funnel channel `widget`.
 
+### Staff app API: `/api/staff/v1`
+
+- **What it is.** The staff mobile app's API (Ray'z's replacement for Squire Commander), core-owned and apart from the customer `/api/v1`. Nothing under `/api/v1` calls it or changes for it. The OpenAPI 3.1 document is `GET /api/staff/v1/openapi.json` (`staffOpenApiDocument` in `src/server/staff-api/openapi.ts`); it lists each path's permission. The handlers are in `src/server/staff-api/handlers.ts`; each route file is a one-line re-export plus `OPTIONS`.
+- **Sign-in (staff, never the customer OTP).**
+  - `POST /auth/login` takes `{ email, password, deviceName? }` and returns `{ tokens }`, or `{ twoFactor: { ticket, enroll? } }` when the person has two-step sign-in.
+  - `POST /auth/login/code` takes `{ ticket, code }`. A wrong code is 401 with `details.twoFactor`, to try again.
+  - `tokens` is `{ accessToken, refreshToken, tokenType: "Bearer", expiresIn: 3600, sessionId }`. Access tokens (JWT type `staff_app_access`) last an hour; refresh tokens last 30 days and rotate on `POST /auth/refresh`. Reusing a rotated one ends every app session for that person. `POST /auth/logout` (204) ends the session, its access token and its phone's pushes at once.
+  - Rate limits: 30 attempts per IP and 10 per email per 15 minutes. Each sign-in is audited `staff.login` with `via: "staff_app"`.
+  - The web's rules apply on every request (`staffContextOf` in `src/server/auth/staff.ts` is shared with the web cookie): inactive or offboarded people, Sign out everywhere (`sessions_valid_after`), location sign-in rules, and roles, overrides and their expiry, shop scope and per-shop roles.
+- **Headers.** `Authorization: Bearer <accessToken>` on everything but sign-in. `X-Shop-Id` picks the shop to work in (or `all`, where the role allows), the same as the web's shop switcher. `X-Clock-Device` is the front-desk clock token from `POST /clock/kiosk/register`.
+- **Endpoints and who may call them** (checked on the server by `staffRoute` in `src/server/staff-api/http.ts`, then record by record in the shared server code):
+
+  | Endpoint | Needs |
+  | --- | --- |
+  | `GET /me` (features and permissions), `GET`/`PUT /me/notifications` | signed in; notifications are personal |
+  | `GET /schedule`, `GET /appointments` | their own only (not a shop login) |
+  | `GET /appointments/{id}` | their own, or anyone's at their shops with `calendar.view_all` or `calendar.manage`; otherwise 404 |
+  | `GET`/`POST /appointments/{id}/notes` | `notes.view`; private manager notes need `notes.private`; each read goes in `client_access_log` |
+  | `GET /clock`, `POST /clock/punch`, `POST /clock/breaks/start`, `POST /clock/breaks/end`, `PUT /clock/pin` | `timeclock.punch`, personal |
+  | `POST /clock/kiosk/register` | `settings.shop` at that shop |
+  | `GET /clock/kiosk/team`, `GET /clock/kiosk/qr`, `POST /clock/kiosk/status`, `POST /clock/kiosk/punch` | `timeclock.kiosk` and a registered `X-Clock-Device`; each person's own PIN |
+  | `GET /tips`, `GET /payouts`, `GET /banking`, `POST /banking/onboarding-link`, `POST /banking/dashboard-link`, `PUT /banking/method` | `tips.own`, personal |
+  | `GET /earnings` | each part separately: sales need `reports.money` and `report.my_sales.view`, tips need `tips.own`, commission needs `compensation.own` with compensation on. A part they can't see is null; with none of them it's 403 |
+  | `GET /popups`, `POST /popups/seen` | signed in |
+  | `GET`/`POST /devices`, `PATCH`/`DELETE /devices/{id}` | personal |
+
+- **Time clock (S2), never biometric.** A phone punch proves where it is the way the shop asks. The front-desk QR code (changes every 30 seconds) and the shop's NFC sticker both open `/admin/clock?shop=<id>&qr=<code>` or `&tag=<tag>`; the app reads `shop` and `qr` or `tag` from that link and sends them as `proof`. Wi-Fi and location (`gps`) work as on the web. The front-desk tablet (`/clock/kiosk/*`) punches anyone on the team with their own PIN, which locks after 5 wrong tries. No face, fingerprint or other biometric is asked for or kept; a shop's optional punch photo is never matched. Breaks take the shop of the current shift. Clocking in returns `welcome` (milestones), already marked seen.
+- **Banking.** `POST /banking/onboarding-link` returns Stripe's hosted Express page for their own debit card or bank account; Stripe sends the browser back to `/staff-app/stripe?stripe=return|refresh`, which opens `${STAFF_APP_SCHEME:-rayzstaff}://banking?stripe=…`. Then call `GET /banking?refresh=1`. Only the Stripe account id, status, requirements and the destination's type, name and last 4 are stored or returned. In the simulator the link is null and setup finishes at once.
+- **Pop-ups.** `GET /popups` returns unseen milestones (sales amounts only with `reports.money`), `open_shift` for a shift never clocked out, and `clock_in_reminder` when they're off the clock and their first client or shift starts within 30 minutes.
+- **Push for their own bookings.** `POST /devices` registers the phone in `staff_devices` (5 at most per person; a token moves to whoever signs in on it). A first phone turns on push for new, changed and cancelled bookings if they never picked. `queueStaffAlert` (`src/server/staff-alerts.ts`) queues one `push` job per phone, with `to` the `staff_devices` id, kind `staff_confirm`, `staff_reschedule`, `staff_cancel` or `staff_arrived`, and data `{ kind, appointmentId }`. Never when they made the change themselves. APNs sends staff phones under `STAFF_APNS_BUNDLE_ID` (the same key signs for both apps).
+- **Migration `core_0099_staff_app`:** `staff_app_tokens` and `staff_devices`. Offboarding revokes both. The next free number is `core_0100`.
+- **New env:** `STAFF_APNS_BUNDLE_ID` (the staff app's iOS bundle id; the customer app's when unset) and `STAFF_APP_SCHEME` (the staff app's URL scheme; `rayzstaff` when unset).
+- **Known gaps, for the app builder's list:**
+  - The app sends no approved-device evidence, so a location whose sign-in rule needs an approved device or its Wi-Fi blocks the app away from that network.
+  - A location block that starts after sign-in turns token requests into 401 "Please sign in again"; signing in again then shows the block message (403, `details.networkBlocked`).
+  - The app version gate (426) covers `/api/v1` only, not `/api/staff/v1`.
+  - Not in it yet: checkout and send to checkout, booking or moving appointments, the client list and profiles, time off requests, timesheet approval, and reports. These wait for the Rayz App builder's gap list.
+
 ## Requests for the other agent
 
 - (core → mobile) When you add the platform Stripe Customer and saved cards, pass the platform Customer id into `chargeCard({ customerId, paymentMethodId, ... })` in `src/server/payments/processor.ts`. That function routes the charge to the shop's connected account (I10), so a saved card can pay at any shop. Please don't create PaymentIntents anywhere else.
@@ -423,11 +462,14 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 - (core → mobile) Time between visits: the web account page (`/account`) shows the client's cadence, worked out in the browser from `/me/appointments` (only the latest 20 past appointments, so it can drift for clients with many cancellations). For the app, and so both read all visits, please add to `/me` (or a `/me/visits/cadence`) the result of `clientCadence(customerId, now)` in `src/server/visit-cadence.ts`: `cadence` (`visitDays`, `cadenceDays`, `label`, `lastVisit`, `sinceDays`, `nextExpected`, `booked`, `status`) and `barbers` (per barber, only when they've seen two or more). Labels and status words are in `src/domain/visit-cadence.ts`; once it's there, `/account` will read it instead.
 
-- (core → mobile) Client notes in the staff app: please mount the four handlers from `@/server/client-notes-api` under `/api/v1/staff` and spread `CLIENT_NOTES_OPENAPI` (with `ClientNotesSchema` and `NoteSavedSchema`) into `openapi.ts` (see the client notes log entry).
+- (core → mobile) **Withdrawn 2026-10-27:** the staff app's endpoints no longer go under `/api/v1/staff`. Core serves them at `/api/staff/v1` (see "Staff app API"), client notes included. Please don't add staff routes to `/api/v1`.
+- (core → mobile) Core edited two files you own for the staff app's push. Please review:
+  - `src/server/notifications/push.ts`: `NativePush` looks a device id up in `customer_devices`, then `staff_devices`. Staff phones use the topic `STAFF_APNS_BUNDLE_ID`, and a dead token revokes the row in whichever table holds it.
+  - `tests/consent.test.ts`: one staff phone added to the APNs test.
 
 - (core → mobile) Company-wide clients (see the log entry): if the staff app or `/api/v1` searches clients for staff, please call `searchClients` (or `findClients` plus `clientHits`) instead of anything shop-scoped, and on any staff client profile show other shops' visits without their prices or tickets to a shop login. Optional, in `importer.ts`: map a clients file's Birthday column (`FAMILY_ALIASES.birthday` in `src/domain/family-import.ts`) onto `customers.birthday` when it's empty. The core post-step already does this after each run, so it's only for imports that skip the admin action and the CLI.
 
-- (core → mobile) Compensation fields (see the log entry): please don't return anything from `staff_compensation`, `staff_custom_fields` or `staff_custom_values` through `/api/v1` until it's needed, and then only through `compensationAccess`. Optional, if the staff app shows pay: a `GET /api/v1/staff/me/pay` that returns what My pay shows, and only for the signed-in person with `compensation.own`. That's their own plan (`describePlan`), this month's and this pay period's commission (`commissionLines` + `commissionBetween`), and the estimate when `payEstimate` is on. If anything the app shows uses a tip method, read it through `effectiveMethod(..., planned)` with `tipOverrides`.
+- (core → mobile) Compensation fields (see the log entry): please don't return anything from `staff_compensation`, `staff_custom_fields` or `staff_custom_values` through `/api/v1` until it's needed, and then only through `compensationAccess`. The staff app's pay is core's now: `GET /api/staff/v1/earnings` returns the signed-in person's commission with `compensation.own` (see "Staff app API").
 
 - (core → mobile) Event log (see "Event log" above), all optional:
   - In the app's booking flow, send the same funnel steps as the web wizard to `POST /api/events/funnel` with `channel: "app"` and a random `funnel` id per attempt, so the funnel compares app and web.
@@ -459,6 +501,23 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
 
 ## Log
+
+### 2026-10-27: core, the staff app API (`/api/staff/v1`), FYI for mobile
+
+- **New scope from Charles:** a staff mobile app to replace Squire Commander. The Rayz App builder is auditing Commander and will send its API gaps. For now the platform has the staff namespace `/api/staff/v1`, core-owned and kept apart from your `/api/v1` (see "Staff app API" above for endpoints, sign-in, headers and permissions).
+- **Covers:**
+  - staff sign-in, apart from the customer OTP: email and password, the authenticator step, rotating refresh tokens and sign-out;
+  - their schedule and their own appointments;
+  - client notes on those appointments, filtered by the permissions system;
+  - the time clock (S2) with QR, NFC or the front-desk PIN, never biometric, and breaks;
+  - their tips, earnings and payout history (S3);
+  - Stripe-hosted debit card and bank setup, keeping ids, status and last 4 only;
+  - milestone and clock-in pop-ups;
+  - push for their own new, changed and cancelled bookings.
+- **Roles and permissions are enforced on the server.** Every request rebuilds the person's context through the same `staffContextOf` the web uses, so roles, overrides, shop scope, location sign-in rules and Sign out everywhere all apply. `tests/db/staff-api.test.ts` covers it.
+- **Migration `core_0099_staff_app`.** The next free one is `core_0100`.
+- **New env:** `STAFF_APNS_BUNDLE_ID` and `STAFF_APP_SCHEME`.
+- **Your files:** core edited `push.ts` and `tests/consent.test.ts` for staff phones (see Requests). Nothing under `/api/v1`, `api.ts`, `api-schemas.ts`, `openapi.ts`, `auth/customer.ts` or `importer.ts` changed. The earlier requests to mount staff routes under `/api/v1/staff` are withdrawn.
 
 ### 2026-10-26: core, claude bot review 2 fixes, Connect handed to mobile, FYI for mobile
 

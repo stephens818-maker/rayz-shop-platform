@@ -2860,6 +2860,35 @@ The owner plans an iOS/Android customer app. The booking side is API-first so th
   - **Not approved, behind flags that are off:** the App Review sign-in (C18, `FEATURE_REVIEW_LOGIN` with `APP_REVIEW_*`), the wallet fee (`FEATURE_WALLET_FEE`) and the merchant-of-record model (I10, `STRIPE_CHARGE_MODEL`).
 - The public web booking UI (`/book/{shop}`, `/a/{code}`, `/account`) uses the same endpoints through `src/lib/api-client.ts`, so the mobile app gets exactly what the website gets.
 
+## Staff app API
+
+Ray'z is replacing Squire Commander with its own staff app, where staff see their appointments and calendar, clock in and out, see tips and earnings, and add their own bank account or debit card for tip deposits. Its API is **`/api/staff/v1`**, kept apart from the customer `/api/v1`. The spec is at `/api/staff/v1/openapi.json`, with each path's permission. The Rayz App builder is auditing Squire Commander and will send the gaps; NOTES-SYNC.md ("Staff app API") has the full contract.
+
+- **Sign-in is staff email and password, never the customer code.**
+  - `POST /auth/login` returns tokens, or a ticket for `POST /auth/login/code` when the person has two-step sign-in.
+  - Access tokens last an hour. Refresh tokens last 30 days and rotate on `POST /auth/refresh`; reusing an old one ends every app session.
+  - `POST /auth/logout` ends the session and its phone's pushes.
+  - Turning someone inactive, offboarding them or **Sign out everywhere** ends their app sessions too, and the location sign-in rules apply as on the web.
+- **Roles and permissions are checked on the server on every request**, from the same staff context the web builds. That covers the role, per-person overrides and their expiry, shop scope, and per-shop roles. `X-Shop-Id` picks the shop, like the web's shop switcher. A shop login can use the front-desk clock but has no personal schedule, clock or tips.
+- **Schedule and appointments:** `GET /schedule` shows their own hours, time off and blocks. `GET /appointments` lists only their own appointments. Opening someone else's needs **See every barber's calendar**; otherwise it's not found. Last names follow Client data.
+- **Client notes:** `GET`/`POST /appointments/{id}/notes` need **See client notes**. Private manager notes need **See and write private manager notes**, and each read is logged as a client view.
+- **Time clock (S2) and breaks, without biometrics:**
+  - From the phone: the front-desk QR code (it changes every 30 seconds), the shop's NFC sticker, or the shop's Wi-Fi or location, whichever the shop asks for.
+  - The QR code and the sticker both open `/admin/clock?shop=…&qr=…` (or `&tag=…`); the app sends `qr` or `tag` from that link as the proof.
+  - On the front-desk tablet: a manager registers it once (`POST /clock/kiosk/register`), then anyone punches with their own PIN, which locks after 5 wrong tries.
+  - Breaks start and end with a reason and a planned length. No face or fingerprint is ever asked for or kept.
+- **Tips, earnings and payouts (S3):**
+  - `GET /tips` shows their tips by status and shop, and `GET /payouts` their payout history after fees.
+  - `GET /earnings` shows each part only with its permission: sales need **See dollar amounts in reports** and the **My sales and tips** report, tips need **See their own tips and payouts**, and commission needs **See their own pay**.
+- **Bank account or debit card:** `POST /banking/onboarding-link` opens Stripe's hosted page and comes back through `/staff-app/stripe` into the app (`STAFF_APP_SCHEME`, default `rayzstaff`). Only the Stripe account id, status and the card or bank's type, name and last 4 are kept.
+- **Pop-ups:** `GET /popups` returns unseen congratulations, a reminder to clock in when their first client or shift starts within 30 minutes, and an old shift that was never clocked out.
+- **Push:** `POST /devices` registers the phone. They get pushes for their own clients' new, changed and cancelled bookings (a first phone turns these on if they never picked), never for changes they made themselves. iOS staff phones use `STAFF_APNS_BUNDLE_ID`.
+- **Migration `core_0099_staff_app`** (`staff_app_tokens`, `staff_devices`). Tests: `tests/db/staff-api.test.ts`.
+- **Not in it yet:**
+  - checkout, booking and moving appointments, client profiles, time off requests, timesheet approval and reports, until the builder's gap list;
+  - approved-device sign-in rules, which the app can't meet away from the shop's network;
+  - the app version gate, which covers `/api/v1` only.
+
 ---
 
 ## What's stubbed or simulated
