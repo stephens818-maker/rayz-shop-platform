@@ -69,6 +69,8 @@ export type NotificationKind =
   | "saved_report"
   /** An invite to the brand portal; the outbox keeps it without the sign-up link. */
   | "staff_invite"
+  /** The staff app's sign-in link, by text or email; the outbox keeps it without the link. */
+  | "staff_app_invite"
   /** A staff milestone, to the brand and the person's managers. */
   | "milestone";
 

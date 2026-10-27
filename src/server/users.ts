@@ -30,6 +30,7 @@ import { StaffContext, staffGrantor } from "./auth/staff";
 import { randomToken, sha256 } from "./auth/tokens";
 import { AppError, forbidden, notFound } from "./errors";
 import { sendNow } from "./notifications/queue";
+import { endAllStaffAppSessions } from "./staff-api/auth";
 import { futureBookings } from "./offboarding";
 import { roleFitProblem } from "./owner-entities";
 import { inTenant } from "./tenant";
@@ -51,7 +52,7 @@ export async function accountOf(ctx: StaffContext, staffId: string) {
   return { row, access, target };
 }
 
-async function assertMay(ctx: StaffContext, staffId: string, change: AccountChange) {
+export async function assertMay(ctx: StaffContext, staffId: string, change: AccountChange) {
   const a = await accountOf(ctx, staffId);
   const bookings = change === "deactivate" || change === "remove" ? (await futureBookings(staffId)).length : 0;
   const denied = accountChangeDenied(staffGrantor(ctx), a.target, change, { activeOwners: await activeOwnerCount(), upcomingBookings: bookings });
@@ -72,7 +73,7 @@ export async function listUsers(ctx: StaffContext) {
     db
       .select({ staffId: staffInvites.staffId, expiresAt: staffInvites.expiresAt })
       .from(staffInvites)
-      .where(and(isNull(staffInvites.usedAt), isNull(staffInvites.revokedAt), gt(staffInvites.expiresAt, new Date()))),
+      .where(and(eq(staffInvites.purpose, "portal"), isNull(staffInvites.usedAt), isNull(staffInvites.revokedAt), gt(staffInvites.expiresAt, new Date()))),
   ]);
   const viewer = { permissions: ctx.permissions, staffId: ctx.staff.id };
   const today = todayLocal();
@@ -103,8 +104,11 @@ export async function listUsers(ctx: StaffContext) {
 
 async function createInvite(staffId: string, by: string, tx: DBorTx = db) {
   const token = randomToken(32);
-  await tx.update(staffInvites).set({ revokedAt: new Date() }).where(and(eq(staffInvites.staffId, staffId), isNull(staffInvites.usedAt), isNull(staffInvites.revokedAt)));
-  await tx.insert(staffInvites).values({ staffId, tokenHash: sha256(token), expiresAt: new Date(Date.now() + INVITE_TTL_DAYS * DAY), createdBy: by });
+  await tx
+    .update(staffInvites)
+    .set({ revokedAt: new Date() })
+    .where(and(eq(staffInvites.staffId, staffId), eq(staffInvites.purpose, "portal"), isNull(staffInvites.usedAt), isNull(staffInvites.revokedAt)));
+  await tx.insert(staffInvites).values({ staffId, tokenHash: sha256(token), purpose: "portal", expiresAt: new Date(Date.now() + INVITE_TTL_DAYS * DAY), createdBy: by });
   return token;
 }
 
@@ -237,7 +241,7 @@ export async function openInvite(token: string, now: Date = new Date()) {
     .select({ invite: staffInvites, person: staff })
     .from(staffInvites)
     .innerJoin(staff, eq(staff.id, staffInvites.staffId))
-    .where(and(eq(staffInvites.tokenHash, sha256(token)), isNull(staffInvites.usedAt), isNull(staffInvites.revokedAt), gt(staffInvites.expiresAt, now)));
+    .where(and(eq(staffInvites.tokenHash, sha256(token)), eq(staffInvites.purpose, "portal"), isNull(staffInvites.usedAt), isNull(staffInvites.revokedAt), gt(staffInvites.expiresAt, now)));
   if (!r || !r.person.active || r.person.removedAt || r.person.passwordHash || !r.person.email) return null;
   return r;
 }
@@ -294,6 +298,7 @@ export async function setUserActive(ctx: StaffContext, staffId: string, active: 
     if (!active) await tx.update(staffInvites).set({ revokedAt: now }).where(and(eq(staffInvites.staffId, staffId), isNull(staffInvites.usedAt), isNull(staffInvites.revokedAt)));
     await audit(ctx.actor, active ? "user.reactivate" : "user.deactivate", "staff", staffId, { name: row.displayLabel }, null, tx);
   });
+  if (!active) await endAllStaffAppSessions(staffId, now);
   return null;
 }
 
@@ -330,6 +335,7 @@ export async function removeUser(ctx: StaffContext, staffId: string) {
       .returning({ id: clientContactGrants.id });
     await audit(ctx.actor, "user.remove", "staff", staffId, { name: row.displayLabel, contactGrantsRevoked: grants.length }, null, tx);
   });
+  await endAllStaffAppSessions(staffId, now);
   return null;
 }
 
@@ -358,6 +364,7 @@ export async function resetTwoFactor(ctx: StaffContext, staffId: string) {
       .where(eq(staff.id, staffId));
     await audit(ctx.actor, "user.two_factor_reset", "staff", staffId, { name: row.displayLabel }, null, tx);
   });
+  await endAllStaffAppSessions(staffId);
   return null;
 }
 

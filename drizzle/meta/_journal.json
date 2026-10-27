@@ -715,6 +715,13 @@
       "when": 1796328000000,
       "tag": "core_0101_staff_onboarding",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1796414400000,
+      "tag": "core_0102_staff_app_gaps",
+      "breakpoints": true
     }
   ]
 }

@@ -16,10 +16,11 @@ import { AppError } from "@/server/errors";
 import { rateLimit } from "@/server/rate-limit";
 
 /**
- * The staff app's sign-in (/api/staff/v1): email and password, then the authenticator code when the
- * person has two-step sign-in, apart from the customer app's phone codes. Each sign-in is a session of
- * rotating refresh tokens; the Bearer access token names it, so signing out ends both at once. Every
- * request is held to the same roles, permissions and location sign-in rules as the web.
+ * The staff app's sign-in (/api/staff/v1): email and password, a code by text or email, or a staff
+ * app invite link; then the authenticator code when the person has two-step sign-in. Apart from the
+ * customer app's sign-in (its own token type). Each sign-in is a session of rotating refresh tokens
+ * bound to the install that signed in; the Bearer access token names it, so signing out ends both at
+ * once. Every request is held to the same roles, permissions and location sign-in rules as the web.
  */
 
 export const STAFF_ACCESS_TTL_SECONDS = 60 * 60;
@@ -41,23 +42,43 @@ interface Where {
   userAgent: string | null;
 }
 
+/** The install signing in: a name for their list of sign-ins, and the app's own random install id the refresh token is bound to. */
+export interface Install {
+  deviceName?: string | null;
+  deviceId?: string | null;
+}
+
 export const requestWhere = (req: Request): Where => ({ ip: clientIp(req.headers), userAgent: req.headers.get("user-agent") });
 
 const cleanDevice = (name: string | null | undefined) => name?.trim().slice(0, 80) || null;
+const cleanDeviceId = (id: string | null | undefined) => id?.trim().slice(0, 100) || null;
 
-async function issue(staffId: string, deviceName: string | null, sessionId?: string): Promise<StaffTokens & { tokenId: string }> {
+async function issue(staffId: string, install: { deviceName: string | null; deviceId: string | null }, sessionId?: string): Promise<StaffTokens & { tokenId: string }> {
   const id = randomUUID();
   const sid = sessionId ?? id;
   const refreshToken = randomToken(32);
-  await db.insert(staffAppTokens).values({ id, staffId, sessionId: sid, tokenHash: sha256(refreshToken), deviceName, expiresAt: new Date(Date.now() + STAFF_REFRESH_TTL_DAYS * 86_400_000) });
+  await db.insert(staffAppTokens).values({
+    id,
+    staffId,
+    sessionId: sid,
+    tokenHash: sha256(refreshToken),
+    deviceName: install.deviceName,
+    deviceId: install.deviceId,
+    lastUsedAt: new Date(),
+    expiresAt: new Date(Date.now() + STAFF_REFRESH_TTL_DAYS * 86_400_000),
+  });
   const accessToken = await signToken({ sub: staffId, sid }, "staff_app_access", STAFF_ACCESS_TTL_SECONDS);
   return { accessToken, refreshToken, tokenType: "Bearer", expiresIn: STAFF_ACCESS_TTL_SECONDS, sessionId: sid, tokenId: id };
 }
 
 const strip = ({ tokenId: _t, ...t }: StaffTokens & { tokenId: string }): StaffTokens => t;
 
-/** The password was right (and the code, if they have one): held to the location sign-in rules, then a new session. */
-async function admit(user: typeof staff.$inferSelect, where: Where, deviceName: string | null, twoStep: boolean): Promise<StaffTokens> {
+export type SignInVia = "password" | "code" | "invite";
+
+/** The first step was right (and the authenticator code, if they have one): held to the location sign-in rules, then a new session. */
+export async function admit(user: typeof staff.$inferSelect, where: Where, install: Install, twoStep: boolean, via: SignInVia = "password"): Promise<StaffTokens> {
+  if (!user.active || user.removedAt || (user.kind !== "person" && via !== "password")) throw new AppError("unauthorized", "Email or password is incorrect");
+  const deviceName = cleanDevice(install.deviceName);
   const access = await loadStaffAccess(user.id);
   if (!access) throw new AppError("unauthorized", "Email or password is incorrect");
   const verdict = await evaluateNetwork(access, { ip: where.ip, deviceShopIds: [] });
@@ -65,21 +86,21 @@ async function admit(user: typeof staff.$inferSelect, where: Where, deviceName: 
     await recordBlocked({ staff: user, roleName: access.role.name, verdict, ip: where.ip, via: "sign_in", outcome: verdict.full ? "blocked" : "limited", userAgent: where.userAgent, path: "/api/staff/v1/auth/login" });
   }
   if (verdict.full) throw new AppError("forbidden", BLOCK_MESSAGE, { networkBlocked: true });
-  const tokens = await issue(user.id, deviceName);
+  const tokens = await issue(user.id, { deviceName, deviceId: cleanDeviceId(install.deviceId) });
   await db.update(staff).set({ lastSignInAt: new Date() }).where(eq(staff.id, user.id));
   await audit(
     { staffId: user.id, label: `${access.role.name}:${user.displayLabel}` },
     "staff.login",
     "staff",
     user.id,
-    { ip: where.ip, via: "staff_app", deviceName, ...(twoStep ? { twoStep: true } : {}) },
+    { ip: where.ip, via: "staff_app", signIn: via, deviceName, ...(twoStep ? { twoStep: true } : {}) },
     access.scope === "all" ? null : (access.shopIds[0] ?? null),
   );
   return strip(tokens);
 }
 
 /** Step one: email and password. Someone with two-step sign-in gets a ticket for their code (or for setting it up). */
-export async function staffPasswordLogin(input: { email: string; password: string; deviceName?: string | null }, where: Where): Promise<StaffLoginResult> {
+export async function staffPasswordLogin(input: { email: string; password: string } & Install, where: Where): Promise<StaffLoginResult> {
   const email = input.email.trim().toLowerCase();
   await rateLimit("staff_app_login_ip", where.ip, 30, LOGIN_WINDOW_MS, "Too many sign-in attempts. Try again in 15 minutes.");
   await rateLimit("staff_app_login_email", email || null, 10, LOGIN_WINDOW_MS, "Too many sign-in attempts. Try again in 15 minutes.");
@@ -87,15 +108,15 @@ export async function staffPasswordLogin(input: { email: string; password: strin
   if (!user) throw new AppError("unauthorized", "Email or password is incorrect");
   const step = twoFactorStep(user);
   if (step) return { twoFactor: await twoFactorPrompt(user, step) };
-  return { tokens: await admit(user, where, cleanDevice(input.deviceName), false) };
+  return { tokens: await admit(user, where, input, false) };
 }
 
 /** Step two: the authenticator code against the ticket from step one. A wrong code returns the same ticket to try again. */
-export async function staffCodeLogin(input: { ticket: string; code: string; deviceName?: string | null }, where: Where): Promise<StaffTokens> {
+export async function staffCodeLogin(input: { ticket: string; code: string } & Install, where: Where): Promise<StaffTokens> {
   await rateLimit("staff_app_login_ip", where.ip, 30, LOGIN_WINDOW_MS, "Too many sign-in attempts. Try again in 15 minutes.");
   const r = await finishTwoFactor(input.ticket, input.code);
   if (!("user" in r)) throw new AppError("unauthorized", r.error, r.twoFactor ? { twoFactor: r.twoFactor } : undefined);
-  return admit(r.user, where, cleanDevice(input.deviceName), true);
+  return admit(r.user, where, input, true);
 }
 
 /** Ends a staff app session: its refresh tokens stop working, its access token with them, and its phone gets no more pushes. */
@@ -112,12 +133,17 @@ export async function endAllStaffAppSessions(staffId: string, now = new Date()) 
 }
 
 /**
- * Rotating refresh tokens. Reusing one that was already rotated ends every staff app session for that
- * person. Someone made inactive, or signed out everywhere since, can't refresh.
+ * Rotating refresh tokens, bound to the install that signed in: a token sent from another install ends
+ * its session. Reusing one that was already rotated ends every staff app session for that person.
+ * Someone made inactive, or signed out everywhere since, can't refresh.
  */
-export async function refreshStaffTokens(refreshToken: string): Promise<StaffTokens> {
+export async function refreshStaffTokens(refreshToken: string, deviceId?: string | null): Promise<StaffTokens> {
   const row = await db.query.staffAppTokens.findFirst({ where: eq(staffAppTokens.tokenHash, sha256(refreshToken)) });
   if (!row) throw new AppError("unauthorized", "Invalid refresh token");
+  if (row.deviceId && row.deviceId !== cleanDeviceId(deviceId)) {
+    if (!row.revokedAt) await endStaffAppSession(row.sessionId);
+    throw new AppError("unauthorized", "This sign-in belongs to another phone; please sign in again");
+  }
   if (row.revokedAt) {
     if (row.replacedBy) await endAllStaffAppSessions(row.staffId);
     throw new AppError("unauthorized", "Refresh token was already used; please sign in again");
@@ -130,7 +156,7 @@ export async function refreshStaffTokens(refreshToken: string): Promise<StaffTok
     await endStaffAppSession(row.sessionId);
     throw new AppError("unauthorized", "Please sign in again");
   }
-  const next = await issue(row.staffId, row.deviceName, row.sessionId);
+  const next = await issue(row.staffId, { deviceName: row.deviceName, deviceId: row.deviceId }, row.sessionId);
   await db.update(staffAppTokens).set({ revokedAt: new Date(), replacedBy: next.tokenId }).where(eq(staffAppTokens.id, row.id));
   return strip(next);
 }

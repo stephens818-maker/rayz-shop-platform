@@ -25,7 +25,8 @@ export function accountStatus(s: { active: boolean; hasPassword: boolean; invite
   return s.invitedAt && !s.hasPassword ? "invited" : "active";
 }
 
-export type AccountChange = "profile" | "invite" | "deactivate" | "reactivate" | "remove" | "require_2fa" | "drop_2fa" | "reset_2fa";
+/** app_invite: the staff app's sign-in link by text or email. sign_out: end every staff app session and phone (a lost phone). */
+export type AccountChange = "profile" | "invite" | "deactivate" | "reactivate" | "remove" | "require_2fa" | "drop_2fa" | "reset_2fa" | "app_invite" | "sign_out";
 
 export interface AccountTarget extends UserAccessState {
   kind: "person" | "shop";
@@ -65,6 +66,7 @@ export function accountChangeDenied(
   if (change === "deactivate" && target.status === "deactivated") return "They're already deactivated";
   if (change === "reactivate" && target.status !== "deactivated") return "They're not deactivated";
   if (change === "invite" && target.status !== "invited") return "They've already signed up. Reset their password from their staff profile instead.";
+  if ((change === "app_invite" || change === "sign_out") && target.status === "deactivated") return "They're deactivated, so they're already signed out everywhere";
   if ((change === "deactivate" || change === "remove") && (opts.upcomingBookings ?? 0) > 0)
     return `They have ${opts.upcomingBookings} upcoming appointment${opts.upcomingBookings === 1 ? "" : "s"}. Offboard them from Staff first, so the shop can move their clients.`;
   return null;

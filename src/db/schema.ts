@@ -519,6 +519,9 @@ export const staffInvites = pgTable(
       .notNull()
       .references(() => staff.id, { onDelete: "cascade" }),
     tokenHash: text("token_hash").notNull().unique(),
+    /** portal: the brand portal's set-your-password email. staff_app: the staff app's sign-in link, by text or email. */
+    purpose: text("purpose").$type<"portal" | "staff_app">().notNull().default("portal"),
+    channel: text("channel").$type<"sms" | "email">(),
     expiresAt: ts("expires_at").notNull(),
     createdBy: uuid("created_by").references((): AnyPgColumn => staff.id, { onDelete: "set null" }),
     createdAt: createdAt(),
@@ -1657,6 +1660,9 @@ export const staffAppTokens = pgTable(
     sessionId: uuid("session_id").notNull(),
     tokenHash: text("token_hash").notNull().unique(),
     deviceName: text("device_name"),
+    /** The app install that signed in (its own random id); a refresh from another install is refused. */
+    deviceId: text("device_id"),
+    lastUsedAt: ts("last_used_at"),
     expiresAt: ts("expires_at").notNull(),
     revokedAt: ts("revoked_at"),
     replacedBy: uuid("replaced_by"),
@@ -2882,9 +2888,64 @@ export const shopCutovers = pgTable("shop_cutovers", {
   handedBackBy: uuid("handed_back_by").references(() => staff.id, { onDelete: "set null" }),
   /** The last day Squire pays this shop's tips. Everyone should finish Ray'z Stripe payout setup before it. */
   squireTipsEndOn: date("squire_tips_end_on"),
+  /** Squire's last payout statement covers tips through this day; what's after it, to squireTipsEndOn, Squire still owes. */
+  squirePaidThrough: date("squire_paid_through"),
+  /** The day Squire makes its last payout of this shop's tips. */
+  squireLastPayoutOn: date("squire_last_payout_on"),
+  /** The tip payout reconciliation as the manager signed it off (src/server/payout-cutover.ts). */
+  payoutReport: jsonb("payout_report").$type<Record<string, unknown>>(),
+  payoutReportSignedBy: uuid("payout_report_signed_by").references(() => staff.id, { onDelete: "set null" }),
+  payoutReportSignedAt: ts("payout_report_signed_at"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: createdAt(),
 });
+
+/** Each barber's answer, in the staff app, to what the cutover report says Squire still owes them. */
+export const staffPayoutConfirmations = pgTable(
+  "staff_payout_confirmations",
+  {
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    status: text("status").$type<"confirmed" | "disputed">().notNull(),
+    /** What the report said when they answered; a later change to it asks them again. */
+    squireOwedCents: integer("squire_owed_cents").notNull(),
+    note: text("note"),
+    decidedAt: ts("decided_at").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ name: "staff_payout_confirmations_pk", columns: [t.shopId, t.staffId] })],
+);
+
+/** Year-to-date tips and sales from before Ray'z (Squire's reports), per barber per shop, so year totals and the W-2 reconcile. Read-only in the app. */
+export const staffYtdImports = pgTable(
+  "staff_ytd_imports",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    year: smallint("year").notNull(),
+    throughDate: date("through_date").notNull(),
+    cardTipsCents: integer("card_tips_cents").notNull().default(0),
+    cashTipsCents: integer("cash_tips_cents").notNull().default(0),
+    serviceSalesCents: integer("service_sales_cents").notNull().default(0),
+    productSalesCents: integer("product_sales_cents").notNull().default(0),
+    /** Tips Squire already paid them directly (outside payroll), for the CPA's withholding check. */
+    paidOutCents: integer("paid_out_cents").notNull().default(0),
+    source: text("source").$type<"squire">().notNull().default("squire"),
+    importedBy: uuid("imported_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: createdAt(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("staff_ytd_imports_uq").on(t.staffId, t.shopId, t.year, t.source)],
+);
 
 /**
  * Staff-only rating of a client for one visit (an appointment, or a ticket with no appointment).
