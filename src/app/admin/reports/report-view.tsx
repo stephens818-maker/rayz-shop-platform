@@ -8,13 +8,13 @@ import { reportBarChart } from "@/domain/report-charts";
 import { reportFor, reportsFor } from "@/domain/navigation";
 import { ReportKey, reportExport } from "@/domain/permissions";
 import { MONEY_HIDDEN_NOTE } from "@/domain/report-money";
+import { formatCell, numericKind } from "@/domain/report-format";
 import { REPORT_GROUP, groupReports } from "@/domain/report-groups";
 import { REPORT_VIEWS, viewOf } from "@/domain/report-views";
-import { formatCents } from "@/lib/money";
 import { WEEKDAYS, formatDate } from "@/lib/time";
 import { StaffContext, can, guardPage, reasonViewer } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
-import { Cell, ColumnKind, ReportData, ReportTable, loadReport } from "@/server/report-data";
+import { ReportData, ReportTable, loadReport } from "@/server/report-data";
 import { reportContext } from "@/server/report-access";
 import { LocationNotice, ReportFilters, locationProps, optionValues, reportQuery } from "./filters";
 import { ReportParams, resolveScope } from "./scope";
@@ -62,23 +62,11 @@ export function ReportTabs({ ctx, active }: { ctx: StaffContext; active: ReportK
   );
 }
 
-function formatCell(v: Cell, kind: ColumnKind | undefined) {
-  if (v === null || v === "") return "—";
-  if (kind === "money" && typeof v === "number") return formatCents(v);
-  if (kind === "pct" && typeof v === "number") return `${Math.round(v * 100)}%`;
-  if (kind === "hours" && typeof v === "number") return (v / 60).toFixed(1);
-  if (kind === "decimal" && typeof v === "number") return v.toFixed(2);
-  if (kind === "minutes" && typeof v === "number") return v.toFixed(1);
-  if (kind === "minutes_delta" && typeof v === "number") return `${v > 0.05 ? "+" : v < -0.05 ? "−" : ""}${Math.abs(v).toFixed(1)}`;
-  if (kind === "bool") return v ? "Yes" : "";
-  return String(v);
-}
-
 const ROW_STYLE = { subtotal: "bg-zinc-50 font-medium", total: "bg-zinc-100 font-semibold" } as const;
 
 /** One report table: per-row number formats for metric tables, shaded subtotal and total rows. */
 export function ReportTableCard({ t, csv, rowAction }: { t: ReportTable; csv: string | null; rowAction?: (row: number) => ReactNode }) {
-  const right = (k?: ColumnKind) => k === "money" || k === "int" || k === "pct" || k === "hours" || k === "decimal" || k === "minutes" || k === "minutes_delta";
+  const right = numericKind;
   const kindAt = (i: number, j: number) => (t.rowKinds?.[i] && j > 0 ? t.rowKinds[i] : t.columns[j]?.kind);
   const last = t.columns.length - 1;
   return (
@@ -217,7 +205,8 @@ export async function ReportPage({
   const exportAll = data.tables.find((t) => t.exportOnly && !t.downloadLabel && t.id !== "heatmap");
   const heatmapCsv = data.heatmaps && data.tables.some((t) => t.id === "heatmap") ? csv("heatmap") : null;
   const actions = rowActions?.(data, ctx) ?? {};
-  const bars = data.charts?.length || data.heatmaps?.length ? null : reportBarChart(data.tables);
+  const bars = data.bars || data.charts?.length || data.heatmaps?.length ? null : reportBarChart(data.tables);
+  const pdf = canExport && data.tables.some((t) => !t.exportOnly) ? `/admin/reports/export?${reportQuery(scope, { ...optionValues(data.options), type: report, format: "pdf", from: scope.from, to: scope.to })}` : null;
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -233,10 +222,19 @@ export async function ReportPage({
           </>
         }
         actions={
-          exportAll && canExport ? (
-            <a className="rounded-lg px-3 py-2 text-sm ring-1 ring-zinc-300 hover:bg-white" href={csv(exportAll.id)!}>
-              Export {exportAll.title.toLowerCase()} CSV
-            </a>
+          (exportAll && canExport) || pdf ? (
+            <span className="flex flex-wrap gap-2">
+              {exportAll && canExport && (
+                <a className="rounded-lg px-3 py-2 text-sm ring-1 ring-zinc-300 hover:bg-white" href={csv(exportAll.id)!}>
+                  Export {exportAll.title.toLowerCase()} CSV
+                </a>
+              )}
+              {pdf && (
+                <a className="rounded-lg px-3 py-2 text-sm ring-1 ring-zinc-300 hover:bg-white" href={pdf} data-testid="report-pdf">
+                  PDF
+                </a>
+              )}
+            </span>
           ) : undefined
         }
       />
@@ -269,6 +267,13 @@ export async function ReportPage({
         </div>
       )}
       {bars && <BarChartCard chart={bars} />}
+      {data.bars && data.bars.length > 0 && (
+        <div className={cx(data.bars.length > 1 && "grid gap-x-4 xl:grid-cols-2")}>
+          {data.bars.map((b) => (
+            <BarChartCard key={b.id} chart={b} />
+          ))}
+        </div>
+      )}
       {data.heatmaps && (
         <div className={cx(data.heatmaps.length > 1 && "grid gap-x-4 xl:grid-cols-2")}>
           {data.heatmaps.map((h) => (

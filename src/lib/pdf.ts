@@ -15,7 +15,7 @@ const W_BOLD = [
   278, 889, 611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389, 280, 389, 584,
 ];
 
-const SUBSTITUTE: Record<string, string> = { "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u2013": "-", "\u2014": "-", "\u2026": "...", "\u00b7": "-", "\u2022": "-", "\u00a0": " " };
+const SUBSTITUTE: Record<string, string> = { "\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u2013": "-", "\u2014": "-", "\u2212": "-", "\u2026": "...", "\u00b7": "-", "\u2022": "-", "\u00a0": " " };
 
 /** WinAnsi (Latin-1 range) text; anything else becomes "?". */
 export function pdfSafe(s: string): string {

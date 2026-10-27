@@ -7,7 +7,11 @@ export interface BarChart {
   kind: ColumnKind;
   /** "time": rows are dates or periods, drawn in order as columns; "rank": largest first, as bars. */
   shape: "time" | "rank";
-  bars: { label: string; value: number }[];
+  /** `parts` stack the bar (they add up to `value`), named by `legend`; `warn` draws it in the warning color. */
+  bars: { label: string; value: number; parts?: number[]; warn?: boolean }[];
+  legend?: string[];
+  /** A threshold drawn across the bars, like 32 hours for full time or 40 for overtime. */
+  reference?: { value: number; label: string };
 }
 
 const CHARTABLE: ColumnKind[] = ["money", "int", "hours"];
