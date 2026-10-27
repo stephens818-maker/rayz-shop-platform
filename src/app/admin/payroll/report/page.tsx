@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Badge, Card, CardHeader, Notice, PageHeader, cx } from "@/components/ui";
 import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, fmtMoney, type Line, type Totals } from "@/domain/payroll/calc";
 import { formatDate, formatDateTime } from "@/lib/time";
+import { reportView } from "@/domain/permissions";
 import { can, guardPage } from "@/server/auth/staff";
 import { buildPayroll, periodChoices, periodKey, type BlockView, type PayrollView } from "@/server/payroll/run";
 import { LockButton, OverrideForm } from "./client";
@@ -60,6 +61,7 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
   const view = chosen ? await buildPayroll(chosen.start, chosen.end) : null;
   const canRun = can(ctx, "payroll.run");
   const canApprove = can(ctx, "payroll.approve");
+  const isolved = chosen && can(ctx, reportView("payroll_isolved")) ? `/admin/reports/payroll/isolved?preset=pp:${chosen.start}_${chosen.end}` : null;
 
   return (
     <div className="mx-auto max-w-[1400px]">
@@ -95,6 +97,11 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
             {c.lockedGroups > 0 && (c.lockedGroups === c.groups.length ? " · locked" : ` · ${c.lockedGroups} locked`)}
           </Link>
         ))}
+        {isolved && (
+          <Link href={isolved} className="ml-auto self-center text-sm font-medium text-brand-700 underline-offset-2 hover:underline" data-testid="payroll-isolved-link">
+            iSolved export and payroll reports →
+          </Link>
+        )}
       </div>
       {!view ? (
         <Notice>No shop has a pay period with those dates.</Notice>
