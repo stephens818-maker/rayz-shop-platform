@@ -462,6 +462,10 @@ describe("earnings (ST-C6) and tip payouts (ST-C7)", () => {
     expect(cv.hours.regular).toBe(line?.hours ?? 0);
     expect(cv.tips.cardCents + cv.tips.cashCents + cv.tips.giftCardCents + cv.tips.adjustmentsCents).toBe(cv.tips.totalCents);
     expect(r.json.payout.defaultMethod).toBe("stripe");
+    const block = run!.blocks.find((b) => b.shopId === shop.coralville)!;
+    const { paystubLines } = await import("@/domain/payroll/calc");
+    expect(cv.paystub).toEqual(JSON.parse(JSON.stringify(paystubLines(block, ids.makenna).filter((l) => r.json.sees[l.group]))));
+    if (line?.hours) expect(cv.paystub).toContainEqual(expect.objectContaining({ header: "E_Regular_Hours", name: "Regular", unit: "hours", amount: line.hours }));
 
     await setOverrides("makenna", { "reports.money": false, "compensation.own": false });
     onTestFinished(async () => {
@@ -470,6 +474,7 @@ describe("earnings (ST-C6) and tip payouts (ST-C7)", () => {
     const less = (await call("GET", "me/earnings", { token: t.accessToken })).json;
     expect(less.shops[0].sales).toBeNull();
     expect(less.shops[0].wages).toBeNull();
+    expect(less.shops[0].paystub.every((l: { group: string }) => l.group !== "wages")).toBe(true);
     expect(less.shops[0].tips).not.toBeNull();
   });
 

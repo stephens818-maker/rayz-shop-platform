@@ -579,6 +579,55 @@ export interface ShopBlock {
 /** Locked before exportFrom existed, a seventh column could only be tips paid in payroll. */
 export const extraFromOf = (b: Pick<ShopBlock, "exportFrom" | "exportHeaders">): ExtraFrom[] => b.exportFrom ?? ((b.exportHeaders?.length ?? EXPORT_COLUMNS.length) > EXPORT_COLUMNS.length ? ["tipsInPayroll"] : []);
 
+/** The paystub's name for an iSolved import column: the earning (E_) or memo (M_) between the prefix and _Hours or _Dollars ("E_Comm Sales_Dollars" is Comm Sales). */
+export function paystubName(header: string): { name: string; unit: "hours" | "dollars"; memo: boolean } {
+  const m = /^([EM])_(.+)_(Hours|Dollars)$/.exec(header.trim());
+  return m ? { name: m[2].trim(), unit: m[3] === "Hours" ? "hours" : "dollars", memo: m[1] === "M" } : { name: header.trim(), unit: "dollars", memo: false };
+}
+
+export type PaystubGroup = "hours" | "tips" | "wages";
+const PAYSTUB_GROUP: Partial<Record<Summed | ExtraFrom, PaystubGroup>> = {
+  hours: "hours",
+  otHours: "hours",
+  ptoHours: "hours",
+  trainingHours: "hours",
+  tipsOutside: "tips",
+  tipsInPayroll: "tips",
+  tipsInPayrollChosen: "tips",
+  tipsInPayrollOwed: "tips",
+  tipsPaidOut: "tips",
+  tipsPaidOutCash: "tips",
+  tipsPaidOutStripe: "tips",
+  declaredCashTips: "tips",
+};
+
+export interface PaystubLine {
+  /** The import column, exactly as in the payroll file. */
+  header: string;
+  /** What the paystub prints. */
+  name: string;
+  unit: "hours" | "dollars";
+  amount: number;
+  group: PaystubGroup;
+  /** Tips the employee already has (paid out in cash or by Stripe): on the stub, never paid again. */
+  memo: boolean;
+}
+
+/** One person's lines in their shop's payroll file, named as their paystub names them; zero lines left out. */
+export function paystubLines(b: Pick<ShopBlock, "exportRows" | "exportHeaders" | "exportFrom">, staffId: string): PaystubLine[] {
+  const row = b.exportRows.find((r) => r.staffId === staffId);
+  if (!row) return [];
+  const headers = b.exportHeaders ?? EXPORT_COLUMNS.map((c) => c.header);
+  const from: (Summed | ExtraFrom)[] = [...EXPORT_COLUMNS.map((c) => c.from), ...extraFromOf(b)];
+  return headers.flatMap((header, i) => {
+    const amount = row.values[i] ?? 0;
+    if (!amount) return [];
+    const k = from[i];
+    const n = paystubName(header);
+    return [{ header, ...n, amount, group: (k && PAYSTUB_GROUP[k]) ?? "wages", memo: n.memo || (!!k && (PAID_TIP_COLUMNS as readonly string[]).includes(k)) }];
+  });
+}
+
 /**
  * The reconciliation gate (spec §5). Approve-and-lock is blocked while this returns anything:
  * a report total that isn't the sum of its rows, a per-shop export column whose total isn't the report's,

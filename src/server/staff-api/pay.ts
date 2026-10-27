@@ -3,7 +3,7 @@ import { and, eq, inArray, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { shops, staffYtdImports } from "@/db/schema";
 import { periodOf, type CalendarPeriod } from "@/domain/payroll/calendar";
-import type { Line } from "@/domain/payroll/calc";
+import { paystubLines, type Line } from "@/domain/payroll/calc";
 import { reportView } from "@/domain/permissions";
 import { METHOD_LABEL, PAYOUT_PATH_TEXT, defaultShopTipSettings, effectiveMethod } from "@/domain/tips";
 import { isValidLocalDate, todayLocal, type LocalDate } from "@/lib/time";
@@ -101,7 +101,8 @@ export async function myPeriodEarnings(ctx: StaffAppContext, period: string | un
     const line = block?.lines.find((l) => l.staffId === me);
     const [s] = see.tips ? await payrollSalesBetween({ shopIds: [shop.id], staffId: me }, p.start, p.end) : [];
     const e = shopEarnings(see, line, { card: s?.cardTipsCents ?? 0, cash: s?.cashTipsCents ?? 0, giftCard: s?.giftCardTipsCents ?? 0, refunds: s?.tipRefundsCents ?? 0 });
-    out.push({ shopId: shop.id, shop: shop.name, period: periodView(p), locked: !!block?.locked, ...e });
+    const paystub = block ? paystubLines(block, me).filter((l) => see[l.group]) : [];
+    out.push({ shopId: shop.id, shop: shop.name, period: periodView(p), locked: !!block?.locked, ...e, paystub });
   }
   return { sees: see, date: day, shops: out, totals: sumShops(see, out), payout: await payoutSetup(ctx) };
 }

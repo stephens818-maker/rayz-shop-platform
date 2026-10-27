@@ -15,7 +15,7 @@ import {
   zeroTotals,
   type CommissionTotals,
 } from "@/domain/compensation";
-import type { Line } from "@/domain/payroll/calc";
+import { paystubLines, type Line, type PaystubLine } from "@/domain/payroll/calc";
 import { METHOD_LABEL } from "@/domain/tips";
 import { formatCents } from "@/lib/money";
 import { addDays, diffDays, formatDate, todayLocal, type LocalDate } from "@/lib/time";
@@ -69,14 +69,14 @@ export default async function MyPayPage() {
   const nextTier = tiers.find((t) => t.fromCents > monthNet) ?? null;
   const rent = current?.boothRentCents != null && current.boothRentFrequency ? boothRentForDays({ cents: current.boothRentCents, frequency: current.boothRentFrequency }, diffDays(monthEnd(today), monthStart(today)) + 1) : null;
 
-  let estimate: { shop: string; l: Line; locked: boolean }[] = [];
+  let estimate: { shop: string; l: Line; locked: boolean; stub: PaystubLine[] }[] = [];
   if (settings.payEstimate && periods.length) {
     const seen = new Set<string>();
     for (const p of periods) {
       if (seen.has(p.key)) continue;
       seen.add(p.key);
       const view = await buildPayroll(p.start, p.end);
-      for (const b of view?.blocks ?? []) for (const l of b.lines) if (l.staffId === me) estimate.push({ shop: b.shop, l, locked: !!b.locked });
+      for (const b of view?.blocks ?? []) for (const l of b.lines) if (l.staffId === me) estimate.push({ shop: b.shop, l, locked: !!b.locked, stub: paystubLines(b, me) });
     }
     estimate = estimate.sort((a, b) => a.shop.localeCompare(b.shop));
   }
@@ -190,6 +190,19 @@ export default async function MyPayPage() {
             </Table>
           ) : (
             <p className="px-4 py-6 text-sm text-zinc-500">No hours or sales in the current pay period yet.</p>
+          )}
+          {estimate.some((e) => e.stub.length) && (
+            <div className="space-y-1 border-t border-zinc-100 px-4 py-3 text-sm">
+              <p className="text-xs text-zinc-500">As your paystub will name them (the payroll file&apos;s earnings):</p>
+              {estimate.map(({ shop, stub }) =>
+                stub.length ? (
+                  <p key={shop}>
+                    <span className="font-medium">{shop}:</span>{" "}
+                    {stub.map((s) => `${s.name} ${s.unit === "hours" ? `${s.amount.toFixed(2)} hrs` : dollars(s.amount)}${s.memo ? " (already paid to you)" : ""}`).join(" · ")}
+                  </p>
+                ) : null,
+              )}
+            </div>
           )}
         </Card>
       )}
