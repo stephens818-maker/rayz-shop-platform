@@ -573,7 +573,7 @@ describe("calls to the shop line", () => {
     const cv = await shop("coralville");
     const mon = dayOn(1, 21);
     const tue = m.time.addDays(mon, 1);
-    const a = await book("coralville", makenna.id, m.time.addDays(mon, 8), 600, { firstName: "Ringback" });
+    const a = await book("coralville", makenna.id, dayOn(6, 28), 600, { firstName: "Ringback" });
     const c = await customer(a.customerId!);
 
     const ring = await line.handleIncomingCall({ from: c.phone!, to: cv.twilioNumber!, callSid: "CA-missed-1" }, at(mon, 600));

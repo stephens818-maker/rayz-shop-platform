@@ -231,7 +231,9 @@ describe("hidden and masked values never reach a restricted person's browser", (
         opened++;
         if (route === "/admin/customers/[id]") profile = r.text;
         // The client list's search box shows back the number the person typed, which they already know.
-        const hits = found(route === "/admin/customers" && sp.q ? r.text.split(sp.q).join(" ") : r.text, NEVER[who]);
+        // Dates with a weekday ("Mon, Nov 23": time off, the calendar) are never a birthday, which shows without one.
+        const text = (route === "/admin/customers" && sp.q ? r.text.split(sp.q).join(" ") : r.text).replace(/\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun), [A-Z][a-z]{2} \d{1,2}\b/g, " ");
+        const hits = found(text, NEVER[who]);
         if (hits.length) leaks.push(`${route}?${new URLSearchParams(sp)}: ${hits.join(", ")}`);
       }
       expect(leaks).toEqual([]);
