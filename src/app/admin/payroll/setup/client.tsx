@@ -17,7 +17,7 @@ const Check = ({ label, hint, checked, onChange }: { label: string; hint?: strin
   </label>
 );
 
-export function SettingsForm({ initial }: { initial: PayrollSettings }) {
+export function SettingsForm({ initial, memoRequired }: { initial: PayrollSettings; memoRequired: boolean }) {
   const { pending, msg, saveSetting, dialog } = useSettingSync("payroll");
   const [v, setV] = useState(initial);
   const num = (k: keyof PayrollSettings) => (e: { target: { value: string } }) => setV({ ...v, [k]: Number(e.target.value) });
@@ -81,11 +81,11 @@ export function SettingsForm({ initial }: { initial: PayrollSettings }) {
           <span className="block text-xs text-zinc-500">iSolved column for tips paid in payroll</span>
           <Input value={v.tipsInPayrollHeader} onChange={(e) => setV({ ...v, tipsInPayrollHeader: e.target.value })} className="h-9 w-72" />
         </label>
-        <label className="flex items-center gap-2 self-end text-sm">
-          <input type="checkbox" checked={v.markPaidTips} onChange={(e) => setV({ ...v, markPaidTips: e.target.checked })} />
-          Mark tips already paid out
+        <label className="flex items-center gap-2 self-end text-sm" title={memoRequired ? "Required while tips are paid straight to employees through Stripe" : undefined}>
+          <input type="checkbox" checked={v.markPaidTips || memoRequired} disabled={memoRequired} onChange={(e) => setV({ ...v, markPaidTips: e.target.checked })} />
+          Mark tips already paid out{memoRequired && " (required with Stripe payouts)"}
         </label>
-        {v.markPaidTips && (
+        {(v.markPaidTips || memoRequired) && (
           <label>
             <span className="block text-xs text-zinc-500">iSolved memo column for tips already paid out</span>
             <Input value={v.tipsPaidOutHeader} onChange={(e) => setV({ ...v, tipsPaidOutHeader: e.target.value })} className="h-9 w-72" />
@@ -99,11 +99,13 @@ export function SettingsForm({ initial }: { initial: PayrollSettings }) {
       <p className="text-xs text-zinc-500">
         Marked, the tips already paid out by the time the period is locked (cash from the drawer, or Stripe to the employee&apos;s card or bank) also go in the memo column: part of the tips
         received, never paid again. A shop&apos;s file gets it only when someone there was paid tips. The memo code is to confirm with Charles before the first upload.
+        {memoRequired &&
+          " With tips paid straight to employees through Stripe, the column can't be turned off, and approve and lock checks it per employee against every payout in the period, to the cent (the Payroll tip report shows it)."}
       </p>
       <p className="text-xs text-zinc-500">Full time / part time: exactly {v.ftHoursPerWeek} is part time. Defaults (clocked worked hours over a rolling 4 weeks) are pending Charles. Overtime is weekly over 40 (federal FLSA); Iowa and
         Illinois appear to add no daily rule, which is to confirm before a daily threshold is set.</p>
       <div className="flex items-center gap-3">
-        <Button size="sm" disabled={pending} onClick={() => saveSetting(v)}>
+        <Button size="sm" disabled={pending} onClick={() => saveSetting(memoRequired ? { ...v, markPaidTips: true } : v)}>
           Save settings
         </Button>
         <SyncMsg msg={msg} />

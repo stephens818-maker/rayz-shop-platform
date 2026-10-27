@@ -209,6 +209,7 @@ export const TABLES: Record<string, Coverage> = {
   timesheets: REC,
   tip_ledger: PAY,
   tip_payout_batches: PAY,
+  tip_payout_periods: PAY,
   tip_payouts: PAY,
   trusted_devices: is("person", "One person's remembered devices"),
   vendor_products: is("shared", "Who sells a product and at what case cost, for the brand's buying"),

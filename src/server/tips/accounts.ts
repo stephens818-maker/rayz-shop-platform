@@ -1,5 +1,5 @@
 import type Stripe from "stripe";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { auditLog, staff, staffOnboardingInvites, staffPayoutAccounts, staffShops } from "@/db/schema";
 import {
@@ -33,6 +33,23 @@ type AccountPatch = Partial<typeof staffPayoutAccounts.$inferInsert>;
 
 /** Barber and beauty shops, as on the shops' accounts. */
 const MCC_BARBER = "7241";
+
+/**
+ * Tags on every employee's Stripe account: they're W-2 employees whose tips are wages reported
+ * through payroll (iSolved), so the platform files no 1099 for them. Stripe reads none of this; it's
+ * for anyone looking at the account in the Dashboard, and for the tax form exclusion list.
+ */
+export const W2_METADATA = { purpose: "tip_payouts", worker_type: "w2_employee", tax_forms: "w2_via_payroll_no_1099" } as const;
+const isW2Tagged = (m: Stripe.Metadata | null | undefined) => m?.worker_type === W2_METADATA.worker_type && m?.tax_forms === W2_METADATA.tax_forms;
+
+/**
+ * Stripe files a 1099-K for a connected account only when the account pays its own Stripe fees
+ * (controller.fees.payer "account"). Ray'z creates every employee account with the platform paying,
+ * so no 1099-K; an account that reports otherwise has its Stripe payouts held until it's fixed.
+ */
+export const issues1099K = (a: Pick<StaffPayoutAccount, "feesPayer"> | null) => a?.feesPayer === "account";
+export const TAX_FORMS_HOLD_REASON =
+  "Stripe would send a 1099-K for this employee's Stripe account, because the account pays its own Stripe fees. Their tips are W-2 wages, so nothing is paid to it until Stripe moves the fees to Ray'z (ask Stripe support), then a manager releases it.";
 const STRIPE_ACTOR: Actor = { staffId: null, label: "stripe" };
 const MY_BANKING = "/admin/my-banking";
 
@@ -190,6 +207,7 @@ const listCols = (list: ExternalAccount[]): AccountPatch => ({
 });
 
 const flagsOf = (acct: Stripe.Account): AccountPatch => ({
+  ...(acct.controller?.fees?.payer ? { feesPayer: acct.controller.fees.payer } : {}),
   payoutsEnabled: !!acct.payouts_enabled,
   detailsSubmitted: !!acct.details_submitted,
   requirementsDue: [...new Set([...(acct.requirements?.past_due ?? []), ...(acct.requirements?.currently_due ?? [])])],
@@ -222,7 +240,7 @@ export async function ensureStaffAccount(staffId: string, actor: Actor): Promise
           capabilities: { transfers: { requested: true } },
           business_profile: { mcc: MCC_BARBER, product_description: "Tips earned at Ray'z Barber Shop, paid out by the shop" },
           settings: { payouts: { schedule: { interval: "manual" } } },
-          metadata: { staffId, purpose: "tip_payouts" },
+          metadata: { staffId, ...W2_METADATA },
         },
         { idempotencyKey: `staff-account-${staffId}-${existing?.stripeAccountId ?? "new"}` },
       )
@@ -236,6 +254,8 @@ export async function ensureStaffAccount(staffId: string, actor: Actor): Promise
   const values = {
     stripeAccountId: accountId,
     simulated: !s,
+    feesPayer: "application",
+    w2TaggedAt: new Date(),
     payoutsEnabled: false,
     detailsSubmitted: false,
     instantEligible: false,
@@ -312,14 +332,27 @@ export async function refreshStaffAccount(staffId: string): Promise<StaffPayoutA
   const acct = await s.accounts.retrieve(a.stripeAccountId, { expand: ["external_accounts"] }).catch((e: Stripe.errors.StripeError) => {
     throw new AppError("payment_failed", `Couldn't reach Stripe: ${e.message}`);
   });
-  return saveAccount(a, flagsOf(acct), STRIPE_ACTOR);
+  return saveAccount(a, { ...flagsOf(acct), ...(await tagW2(a, acct)) }, STRIPE_ACTOR);
+}
+
+/**
+ * An account made before the W-2 tags (or with them edited away in the Dashboard) gets them back.
+ * Best effort: the next account.updated records it.
+ */
+async function tagW2(a: StaffPayoutAccount, acct: Stripe.Account): Promise<AccountPatch> {
+  if (isW2Tagged(acct.metadata)) return { w2TaggedAt: a.w2TaggedAt ?? new Date() };
+  const s = moneyClient();
+  if (s) await s.accounts.update(acct.id, { metadata: { staffId: a.staffId, ...W2_METADATA } }).catch((e: Stripe.errors.StripeError) => console.error(`W-2 tags on ${acct.id}: ${e.message}`));
+  return { w2TaggedAt: null };
 }
 
 /** account.updated for an employee's account, from the Connect webhook. */
 export async function applyStaffAccountUpdate(acct: Stripe.Account) {
   const a = await staffAccountByStripeId(acct.id);
   if (!a) return null;
-  return saveAccount(a, flagsOf(acct), STRIPE_ACTOR);
+  const after = await saveAccount(a, { ...flagsOf(acct), ...(await tagW2(a, acct)) }, STRIPE_ACTOR);
+  if (issues1099K(after) && !issues1099K(a)) await audit(STRIPE_ACTOR, "tips.account_1099k", "staff", a.staffId, { stripeAccountId: acct.id, feesPayer: after.feesPayer });
+  return after;
 }
 
 type ExternalAccountEvent = "account.external_account.created" | "account.external_account.updated" | "account.external_account.deleted";
@@ -382,4 +415,21 @@ export async function bankingActivity(staffId: string, limit = 12) {
     .where(and(eq(auditLog.entity, "staff"), eq(auditLog.entityId, staffId), inArray(auditLog.action, BANKING_ACTIONS)))
     .orderBy(desc(auditLog.at))
     .limit(limit);
+}
+
+/**
+ * Stripe's 1099 tax forms for the employees' accounts, set not to file: an Update import for the
+ * Dashboard's Tax reporting page (Import → the form type → Update), one row per account, with
+ * filing_requirement NOT_REQUIRED and no postal delivery. Stripe has no API for this. Import it for
+ * each 1099 form type Stripe made, every January before it files, and after new employees onboard.
+ * Simulator accounts never reach Stripe, so they're left out. Account ids only.
+ */
+export async function taxFormExclusionCsv(): Promise<{ csv: string; accounts: number }> {
+  const rows = await db
+    .select({ id: staffPayoutAccounts.stripeAccountId })
+    .from(staffPayoutAccounts)
+    .where(and(isNotNull(staffPayoutAccounts.stripeAccountId), eq(staffPayoutAccounts.simulated, false)))
+    .orderBy(staffPayoutAccounts.stripeAccountId);
+  const ids = rows.map((r) => r.id!).filter((id) => /^acct_[A-Za-z0-9]+$/.test(id));
+  return { csv: ["stripe_account_id,filing_requirement,postal_delivery", ...ids.map((id) => `${id},NOT_REQUIRED,FALSE`)].join("\n") + "\n", accounts: ids.length };
 }

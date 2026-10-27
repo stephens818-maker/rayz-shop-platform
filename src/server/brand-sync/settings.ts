@@ -25,6 +25,7 @@ import { cleanRules, rulesProblem, shopRules } from "@/domain/staff-time";
 import { clockRules, parseColumnMapping } from "@/domain/time-clock";
 import { intervalProblem } from "@/domain/timing";
 import { REMINDER_DAYS, REMINDER_MAX, TIP_METHODS, brandTipPolicy, portalUrl } from "@/domain/tips";
+import { stripePayoutsOn } from "../tips/payout-model";
 import { audit } from "../audit";
 import { AppError } from "../errors";
 import type { SyncAdapter, SyncItem, Who } from "./types";
@@ -377,6 +378,8 @@ export const SETTINGS: readonly SettingDef[] = [
       const v = payrollSettings(PayrollInput.parse({ ...before, ...obj(raw) }));
       const taken = [...EXPORT_COLUMNS.map((c) => c.header), v.tipsInPayrollHeader].map((h) => h.toLowerCase());
       if (v.markPaidTips && taken.includes(v.tipsPaidOutHeader.toLowerCase())) bad("The column for tips already paid out needs its own name, not another column's.");
+      if (!v.markPaidTips && stripePayoutsOn())
+        bad("Tips are paid straight to employees through Stripe, so the iSolved file has to mark the tips already paid out; that column can't be turned off while Stripe payouts are on.");
       return v;
     },
     labels: { otThresholdHours: "Weekly OT after (hours)", dailyOtHours: "Daily OT after (hours)", otMultiplier: "OT multiplier", ftBasis: "Full-time basis", markPaidTips: "Mark tips already paid out", tipsPaidOutHeader: "Tips paid out column" },

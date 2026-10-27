@@ -17,6 +17,7 @@ import { noteShopSetting } from "../brand-sync/shop-settings";
 import { Actor, audit } from "@/server/audit";
 import { tipOverrides } from "@/server/compensation";
 import { AppError, notFound } from "@/server/errors";
+import { recordMissingPayoutPeriods } from "./pay-periods";
 import { railed } from "./payout-model";
 
 /**
@@ -85,6 +86,7 @@ export async function recordOpeningTips(before: LocalDate, tx: DBorTx = db) {
       returning l.id
     )
     select (select count(*)::int from p) n`);
+  await recordMissingPayoutPeriods(tx, null);
   return [...rows][0]?.n ?? 0;
 }
 

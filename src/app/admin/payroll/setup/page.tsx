@@ -6,6 +6,7 @@ import { payrollProfiles, payrollRates, staff } from "@/db/schema";
 import { guardPage } from "@/server/auth/staff";
 import { TEMPLATE_TABS } from "@/server/payroll/export";
 import { ensurePayGroups, loadSettings } from "@/server/payroll/run";
+import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { PayGroupRow, ProfileRowForm, SettingsForm } from "./client";
 
 export const metadata: Metadata = { title: "Payroll setup" };
@@ -31,7 +32,7 @@ export default async function PayrollSetupPage() {
       <Card>
         <CardHeader title="Settings" />
         <div className="px-4 py-3">
-          <SettingsForm initial={settings} />
+          <SettingsForm initial={settings} memoRequired={stripePayoutsOn()} />
         </div>
       </Card>
       <Card>

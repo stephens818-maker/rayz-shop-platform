@@ -2635,6 +2635,41 @@ export const tipLedger = pgTable(
 );
 
 /**
+ * For payroll (W-2): the pay period each payout's tips belong to, by the business date of every
+ * entry in it, on the shop's pay group calendar. One row per payout per period, almost always just
+ * one; a weekly batch that crosses a period end gets two. Written when a payout is approved, sent or
+ * paid, and dropped when it fails or is taken out, so the paid ones add up to what iSolved got as
+ * tips already received for that employee, shop and period.
+ */
+export const tipPayoutPeriods = pgTable(
+  "tip_payout_periods",
+  {
+    id: id(),
+    payoutId: uuid("payout_id")
+      .notNull()
+      .references(() => tipPayouts.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    staffId: uuid("staff_id").notNull().references(() => staff.id),
+    method: text("method").$type<TipPayoutMethod>().notNull(),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    /** Tips less refunds from the period, before any card fee: what payroll counts as tips. */
+    tipsCents: integer("tips_cents").notNull(),
+    /** Manager adjustments dated in the period; payroll counts them as tips too. */
+    adjustCents: integer("adjust_cents").notNull().default(0),
+    /** The card fee share netted from the period's card tips, where the shop nets it. */
+    feeCents: integer("fee_cents").notNull().default(0),
+    recordedAt: ts("recorded_at").notNull().defaultNow(),
+  },
+  (t) => [
+    check("tip_payout_periods_method", sql`${t.method} in ('cash', 'stripe', 'payroll', 'prior')`),
+    check("tip_payout_periods_dates", sql`${t.periodEnd} >= ${t.periodStart}`),
+    uniqueIndex("tip_payout_periods_uq").on(t.payoutId, t.periodStart),
+    index("tip_payout_periods_period_idx").on(t.shopId, t.periodStart, t.staffId),
+  ],
+);
+
+/**
  * How each employee is paid tips, and their own Stripe Connect Express account for card or bank
  * payouts. Onboarding is Stripe-hosted: no bank or card details are ever stored here.
  */
@@ -2669,6 +2704,14 @@ export const staffPayoutAccounts = pgTable(
       .$type<{ id: string; type: "bank_account" | "card"; name: string | null; last4: string; default: boolean; instant: boolean }[]>()
       .notNull()
       .default(sql`'[]'::jsonb`),
+    /**
+     * Who pays Stripe's fees on the account (controller.fees.payer), as Stripe last reported it. Ray'z
+     * creates every one as "application": Stripe issues a 1099-K only where the account pays its own
+     * fees, and these employees' tips are W-2 wages. Anything else holds their Stripe payouts.
+     */
+    feesPayer: text("fees_payer"),
+    /** When Stripe confirmed the account is tagged as a W-2 employee's (metadata worker_type, tax_forms), so nobody treats it as a contractor's. */
+    w2TaggedAt: ts("w2_tagged_at"),
     createdAt: createdAt(),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },

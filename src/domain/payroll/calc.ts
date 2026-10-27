@@ -383,13 +383,14 @@ export function exportRows(lines: readonly Line[], s: PayrollSettings, o: Export
 }
 
 /** Sums to the cent (or hundredth of an hour) without float drift deciding the answer. */
-const toCents = (x: number) => Math.round(x * 100 + (x >= 0 ? 1e-7 : -1e-7));
+export const toCents = (x: number) => Math.round(x * 100 + (x >= 0 ? 1e-7 : -1e-7));
 export const sameToTheCent = (a: number, b: number) => toCents(a) === toCents(b);
 
 export interface Mismatch {
   shopId: string | null;
   column: string;
-  check: "rows" | "export" | "locations";
+  /** tips: an employee's tips in the export against the tip ledger and their payouts in the period (with direct Stripe payouts on). */
+  check: "rows" | "export" | "locations" | "tips";
   report: number;
   other: number;
   detail: string;
@@ -408,7 +409,7 @@ export interface ShopBlock {
 }
 
 /** Locked before exportFrom existed, a seventh column could only be tips paid in payroll. */
-const extraFromOf = (b: ShopBlock): ExtraFrom[] => b.exportFrom ?? ((b.exportHeaders?.length ?? EXPORT_COLUMNS.length) > EXPORT_COLUMNS.length ? ["tipsInPayroll"] : []);
+export const extraFromOf = (b: Pick<ShopBlock, "exportFrom" | "exportHeaders">): ExtraFrom[] => b.exportFrom ?? ((b.exportHeaders?.length ?? EXPORT_COLUMNS.length) > EXPORT_COLUMNS.length ? ["tipsInPayroll"] : []);
 
 /**
  * The reconciliation gate (spec §5). Approve-and-lock is blocked while this returns anything:

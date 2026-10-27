@@ -736,6 +736,13 @@
       "when": 1796504400000,
       "tag": "core_0104_staff_payout_confirm_scrub",
       "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1796508000000,
+      "tag": "core_0105_tip_payout_periods",
+      "breakpoints": true
     }
   ]
 }
