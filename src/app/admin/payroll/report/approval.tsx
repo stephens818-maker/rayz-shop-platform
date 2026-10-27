@@ -6,8 +6,12 @@ import { useAction } from "@/components/use-action";
 import type { ApprovalStatus } from "@/server/payroll/run";
 import { approvePayrollAction, lockPayrollAction, revokeApprovalAction } from "../actions";
 
-/** Approve the figures after review, then lock: two steps, each recorded. A change after approval needs approving again before the lock. */
-export function ApprovalControls({ start, end, label, status, blocked }: { start: string; end: string; label: string; status: ApprovalStatus; blocked: string | null }) {
+/**
+ * Approve the figures after review, then lock: two steps, each recorded. A change after approval
+ * needs approving again before the lock. `approveBlocked` stops only the approval: someone who
+ * changed the figures can still lock what another person approved.
+ */
+export function ApprovalControls({ start, end, label, status, blocked, approveBlocked = null }: { start: string; end: string; label: string; status: ApprovalStatus; blocked: string | null; approveBlocked?: string | null }) {
   const { pending, error, run } = useAction();
   const [step, setStep] = useState<"approve" | "lock" | "revoke" | null>(null);
   const [note, setNote] = useState("");
@@ -69,7 +73,7 @@ export function ApprovalControls({ start, end, label, status, blocked }: { start
                   Take back approval
                 </Button>
               )}
-              <Button disabled={!!blocked} title={blocked ?? undefined} onClick={() => setStep("approve")}>
+              <Button disabled={!!(blocked ?? approveBlocked)} title={(blocked ?? approveBlocked) || undefined} onClick={() => setStep("approve")}>
                 {status === "stale" ? "Approve again" : "Approve figures"}
               </Button>
             </>
@@ -77,6 +81,11 @@ export function ApprovalControls({ start, end, label, status, blocked }: { start
         </div>
       )}
       {blocked && <span className="text-xs text-red-700">{blocked}</span>}
+      {!blocked && approveBlocked && status !== "approved" && (
+        <span className="max-w-md text-right text-xs text-zinc-600" data-testid="payroll-self-approval">
+          {approveBlocked}
+        </span>
+      )}
       {error && <span className="text-xs text-red-700">{error}</span>}
     </div>
   );

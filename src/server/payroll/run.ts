@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, sql } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { auditLog, payGroups, payrollApprovals, payrollCommissionAdjustments, payrollEmployers, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, sales as salesTable, staff, timeEntries, timePunches, type PayrollApprovalTotals } from "@/db/schema";
 import { calendarProblem, periodOf, periodStarting, periodsAround, sameCalendar, workweeksOf, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
@@ -33,6 +33,7 @@ import { minimumWageCents, minimumWageShortfallCents, rulesFor } from "@/domain/
 import { dailyHours, overtimeSlices, sliceKey, weekStartOf, type DayHours, type Slice, type TimeEntry } from "@/domain/payroll/overtime";
 import { addDays, endOfLocalDay, formatDate, localDateOf, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
+import { loadStaffAccess } from "@/server/auth/access";
 import { AppError } from "@/server/errors";
 import { notSquireEra } from "@/server/squire-era";
 import { guaranteeTopUps, exportExtras } from "@/domain/compensation";
@@ -843,15 +844,52 @@ function gate(view: PayrollView | null): Refusal | null {
   return null;
 }
 
+const PREPARING = ["payroll.override", "payroll.override_clear", "payroll.late_commission", "payroll.late_commission_remove"];
+
+export const SELF_APPROVAL =
+  "You changed this pay period's figures (an adjustment, late commission or hours entered by hand), so someone else with Approve and lock approves them. The Brand Owner can approve their own changes; that's recorded.";
+
+/** Who changed the period's figures by hand: adjustments, late commission, and hours entered, imported or deleted on the report. */
+export async function preparersOf(start: LocalDate, end: LocalDate): Promise<{ staffId: string; label: string }[]> {
+  const from = startOfLocalDay(start);
+  const to = endOfLocalDay(end);
+  const [audited, entered] = await Promise.all([
+    db
+      .selectDistinct({ id: auditLog.actorStaffId })
+      .from(auditLog)
+      .where(
+        and(
+          isNotNull(auditLog.actorStaffId),
+          or(
+            and(inArray(auditLog.action, PREPARING), sql`${auditLog.details}->>'periodStart' = ${start}`),
+            and(eq(auditLog.action, "payroll.time_delete"), sql`(${auditLog.details}->>'startsAt')::timestamptz < ${to.toISOString()}::timestamptz and (${auditLog.details}->>'endsAt')::timestamptz > ${from.toISOString()}::timestamptz`),
+          ),
+        ),
+      ),
+    db
+      .selectDistinct({ id: timeEntries.createdBy })
+      .from(timeEntries)
+      .where(and(isNotNull(timeEntries.createdBy), ne(timeEntries.source, "clock"), lt(timeEntries.startsAt, to), gt(timeEntries.endsAt, from))),
+  ]);
+  const ids = [...new Set([...audited, ...entered].map((r) => r.id).filter((x): x is string => !!x))];
+  if (!ids.length) return [];
+  const rows = await db.select({ staffId: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, ids));
+  return rows.sort((a, b) => a.label.localeCompare(b.label));
+}
+
 /**
  * Approve the period's figures as they stand: every shop, after review. Refused while anything
- * doesn't reconcile or the clock hours are open. Approving changed figures revokes the earlier
- * approval. The period still has to be locked; until then, a change to the figures needs a new approval.
+ * doesn't reconcile or the clock hours are open, and to anyone who changed the figures by hand
+ * unless they're the Brand Owner (recorded as approving their own changes). Approving changed
+ * figures revokes the earlier approval. The period still has to be locked; until then, a change
+ * to the figures needs a new approval.
  */
 export async function approvePayroll(start: LocalDate, end: LocalDate, actor: Actor, note: string | null = null): Promise<Refusal | { approvalId: string }> {
   const view = await buildPayroll(start, end);
   const refused = gate(view);
   if (refused || !view) return refused!;
+  const selfApproved = actor.staffId ? (await preparersOf(start, end)).some((p) => p.staffId === actor.staffId) : false;
+  if (selfApproved && !(await loadStaffAccess(actor.staffId!))?.isOwner) return { error: SELF_APPROVAL };
   const hash = figuresHash(view.blocks);
   const totals = approvalTotals(view.blocks);
   const text = note?.trim().slice(0, 300) || null;
@@ -872,7 +910,7 @@ export async function approvePayroll(start: LocalDate, end: LocalDate, actor: Ac
       "payroll.approve",
       "payroll_approval",
       row.id,
-      { periodStart: start, periodEnd: end, figuresHash: hash, ...totals, anomalies: view.anomalies.length, note: text, ...(active ? { supersedes: active.id } : {}) },
+      { periodStart: start, periodEnd: end, figuresHash: hash, ...totals, anomalies: view.anomalies.length, note: text, ...(active ? { supersedes: active.id } : {}), ...(selfApproved ? { selfApproved: true } : {}) },
       null,
       tx,
     );

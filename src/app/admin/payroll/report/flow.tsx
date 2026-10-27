@@ -4,7 +4,8 @@ import { formatDateTime } from "@/lib/time";
 import type { ApprovalStatus, ApprovalView, PayrollView, payrollTrail } from "@/server/payroll/run";
 
 /** Where the period is in run → review → approve → lock. */
-export function ApprovalNotice({ view, approval, status }: { view: PayrollView; approval: ApprovalView | null; status: ApprovalStatus }) {
+export function ApprovalNotice({ view, approval, status, preparers = [] }: { view: PayrollView; approval: ApprovalView | null; status: ApprovalStatus; preparers?: readonly { label: string }[] }) {
+  const prepared = preparers.length ? ` Figures changed by hand by ${preparers.map((p) => p.label).join(", ")}; someone else approves them, or the Brand Owner.` : "";
   const lockedAt = view.blocks.find((b) => b.locked)?.locked;
   if (status === "locked")
     return (
@@ -26,10 +27,14 @@ export function ApprovalNotice({ view, approval, status }: { view: PayrollView; 
     return (
       <Notice tone="amber">
         The figures changed since {approval.approvedBy ?? "someone"} approved them {formatDateTime(approval.approvedAt)}, so the approval no longer covers them and the iSolved files are held.
-        Review the changes, then approve again (or take the approval back).
+        Review the changes, then approve again (or take the approval back).{prepared}
       </Notice>
     );
-  return <Notice tone="amber">Draft: review every shop, then approve the figures. The iSolved files download once they&apos;re approved.</Notice>;
+  return (
+    <Notice tone="amber">
+      Draft: review every shop, then approve the figures. The iSolved files download once they&apos;re approved.{prepared}
+    </Notice>
+  );
 }
 
 type Trail = Awaited<ReturnType<typeof payrollTrail>>;
@@ -41,7 +46,7 @@ function describe(r: Trail[number], names: Map<string, string>): string {
   const who = r.entityId ? (names.get(r.entityId) ?? "an employee") : "";
   switch (r.action) {
     case "payroll.approve":
-      return `Approved the figures: Service Sales ${fmtMoney(Number(d.service ?? 0))}, Employee Cost ${fmtMoney(Number(d.employeeCost ?? 0))}${d.anomalies ? `, ${str(d.anomalies)} anomal${d.anomalies === 1 ? "y" : "ies"} reviewed` : ""}${d.note ? ` (${str(d.note)})` : ""}`;
+      return `Approved the figures: Service Sales ${fmtMoney(Number(d.service ?? 0))}, Employee Cost ${fmtMoney(Number(d.employeeCost ?? 0))}${d.anomalies ? `, ${str(d.anomalies)} anomal${d.anomalies === 1 ? "y" : "ies"} reviewed` : ""}${d.note ? ` (${str(d.note)})` : ""}${d.selfApproved ? ", including their own changes (Brand Owner)" : ""}`;
     case "payroll.approval_revoked":
       return `Took back the approval: ${str(d.reason)}`;
     case "payroll.lock":
@@ -56,6 +61,8 @@ function describe(r: Trail[number], names: Map<string, string>): string {
       return `Adjusted ${who}'s ${str(d.field)} to ${str(d.value)}: ${str(d.reason)}`;
     case "payroll.override_clear":
       return `Removed the adjustment to ${who}'s ${str(d.field)}`;
+    case "payroll.late_commission":
+      return `Added late commission for ${who}: ${fmtMoney(Number(d.amountCents ?? 0) / 100)}${d.reason ? ` (${str(d.reason)})` : ""}`;
     case "payroll.isolved_sent":
       return "Marked the iSolved file sent";
     case "payroll.isolved_unsent":

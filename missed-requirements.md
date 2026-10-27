@@ -1042,6 +1042,7 @@ The iSolved file's columns, headers, order and codes stay exactly as in Charles'
 - [x] I4: refunds lower commission before the greater-of; the rest is written off and flagged.
 - [x] I10: card surcharge and loyalty in the commission base are settings, defaulting to today's behavior.
 - [x] I12: the golden check flags circular, out-of-block and row-skipping totals.
+- [x] I8: whoever changes a period's figures by hand (an adjustment, late commission, or hours entered, imported or deleted) can't approve them; someone else with Approve and lock does. The Brand Owner may approve their own changes, recorded as such on the trail. Locking what someone else approved stays open to the preparer.
 - [x] Hand-worked tests: OT from punches, effective-dated rates, cross-shop totals, DST and refund order.
 - [x] Privacy: the docs and tests carry only made-up figures, and a test guards it.
 - [ ] C1 (Needs Charles): regular-rate OT on commission is computed and flagged; the file column is a switch, off.

@@ -6,7 +6,7 @@ import { reportExport } from "@/domain/permissions";
 import { formatDate, isValidLocalDate, todayLocal } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { NO_VALUE, locationBlocks, locationsRow, locationsTotals, titleFill, type LocationsCell, type LocationsColumnKey } from "@/server/payroll/locations";
-import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, payrollTrail, periodChoices, type ApprovalStatus, type BlockView, type PeriodChoice } from "@/server/payroll/run";
+import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, payrollTrail, periodChoices, preparersOf, SELF_APPROVAL, type ApprovalStatus, type BlockView, type PeriodChoice } from "@/server/payroll/run";
 import { ApprovalControls } from "../../../payroll/report/approval";
 import { ApprovalNotice, PayrollTrailCard } from "../../../payroll/report/flow";
 
@@ -61,7 +61,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
   const mine = view ? view.blocks.filter((b) => ctx.shopIds.includes(b.shopId)) : [];
   const shopId = sp.shop && mine.some((b) => b.shopId === sp.shop) ? sp.shop : null;
   const blocks = view ? locationBlocks(view, (shopId ? [shopId] : mine.map((b) => b.shopId))) : [];
-  const [approval, trail] = view ? await Promise.all([approvalOf(view), payrollTrail(view.start, view.end)]) : [null, []];
+  const [approval, trail, preparers] = view ? await Promise.all([approvalOf(view), payrollTrail(view.start, view.end), preparersOf(view.start, view.end)]) : [null, [], []];
+  const selfPrepared = !ctx.isOwner && preparers.some((p) => p.staffId === ctx.actor.staffId);
   const status = view ? approvalStatus(view, approval) : "draft";
   const canApprove = can(ctx, "payroll.approve") && ctx.brandWide;
   const canExport = can(ctx, reportExport("payroll_report"));
@@ -85,7 +86,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
         }
         actions={
           view && canApprove && rates ? (
-            <ApprovalControls start={view.start} end={view.end} label={`${label} for ${view.blocks.length} shop${view.blocks.length === 1 ? "" : "s"}`} status={status} blocked={approvalBlocked(view)} />
+            <ApprovalControls start={view.start} end={view.end} label={`${label} for ${view.blocks.length} shop${view.blocks.length === 1 ? "" : "s"}`} status={status} blocked={approvalBlocked(view)} approveBlocked={selfPrepared ? SELF_APPROVAL : null} />
           ) : undefined
         }
       />
@@ -129,7 +130,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ p
             {dueLine(blocks)}
           </p>
           {status !== "locked" && <DueNotice blocks={blocks} />}
-          <ApprovalNotice view={view} approval={approval} status={status} />
+          <ApprovalNotice view={view} approval={approval} status={status} preparers={preparers} />
           {approvalBlocked(view) && status !== "locked" && (
             <Notice tone="red">
               {approvalBlocked(view)}, so the period can&apos;t be approved yet.{" "}

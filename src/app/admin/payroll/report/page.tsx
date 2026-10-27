@@ -6,7 +6,7 @@ import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, fmtHours, f
 import { formatDate, formatDateTime } from "@/lib/time";
 import { reportView } from "@/domain/permissions";
 import { can, guardPage } from "@/server/auth/staff";
-import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, hoursOpenMessage, payrollTrail, periodChoices, periodKey, RECORD_LABEL, type ApprovalStatus, type PeriodChoice, type ApprovalView, type BlockView, type PayrollView } from "@/server/payroll/run";
+import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, hoursOpenMessage, payrollTrail, periodChoices, periodKey, preparersOf, RECORD_LABEL, SELF_APPROVAL, type ApprovalStatus, type PeriodChoice, type ApprovalView, type BlockView, type PayrollView } from "@/server/payroll/run";
 import { ApprovalControls } from "./approval";
 import { LateCommissionForm, OverrideForm } from "./client";
 import { ApprovalNotice, PayrollTrailCard } from "./flow";
@@ -89,7 +89,8 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
   const current = choices.findIndex((c) => c.current);
   const chosen = choices.find((c) => c.key === sp.period) ?? choices[current + 1] ?? choices[0];
   const view = chosen ? await buildPayroll(chosen.start, chosen.end) : null;
-  const [approval, trail] = view ? await Promise.all([approvalOf(view), payrollTrail(view.start, view.end)]) : [null, []];
+  const [approval, trail, preparers] = view ? await Promise.all([approvalOf(view), payrollTrail(view.start, view.end), preparersOf(view.start, view.end)]) : [null, [], []];
+  const selfPrepared = !ctx.isOwner && preparers.some((p) => p.staffId === ctx.actor.staffId);
   const status = view ? approvalStatus(view, approval) : "draft";
   const canRun = can(ctx, "payroll.run");
   const canApprove = can(ctx, "payroll.approve");
@@ -115,6 +116,7 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
               label={`${formatDate(view.start, "MMM d")} – ${formatDate(view.end, "MMM d")} for ${view.blocks.length} shop${view.blocks.length === 1 ? "" : "s"}`}
               status={status}
               blocked={approvalBlocked(view)}
+              approveBlocked={selfPrepared ? SELF_APPROVAL : null}
             />
           ) : undefined
         }
@@ -152,6 +154,7 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
           approval={approval}
           status={status}
           trail={trail}
+          preparers={preparers}
           earlier={choices.filter((c) => c.start < view.start && c.lockedGroups > 0).slice(0, 6)}
         />
       )}
@@ -176,6 +179,7 @@ function Report({
   approval,
   status,
   trail,
+  preparers,
   earlier,
 }: {
   view: PayrollView;
@@ -184,12 +188,13 @@ function Report({
   approval: ApprovalView | null;
   status: ApprovalStatus;
   trail: Awaited<ReturnType<typeof payrollTrail>>;
+  preparers: readonly { staffId: string; label: string }[];
   earlier: readonly PeriodChoice[];
 }) {
   const filesReady = status === "approved" || status === "locked";
   return (
     <div className="space-y-4">
-      <ApprovalNotice view={view} approval={approval} status={status} />
+      <ApprovalNotice view={view} approval={approval} status={status} preparers={preparers} />
       {view.locked === "all" ? null : view.mismatches.length ? (
         <Card>
           <CardHeader title="Totals don't reconcile: approval is blocked" subtitle={`Every total has to equal the sum of its rows, each shop's export has to add up to the report, and the Locations totals to the shops.${view.tips.mismatches.length ? " Each employee's tips in the file have to match their tips and payouts (the W-2 tip check)." : ""} Tolerance: $0.00.`} />
