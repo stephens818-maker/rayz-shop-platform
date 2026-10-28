@@ -297,6 +297,7 @@ The last open day's numbers with week to date and the same day last week, today'
 | Sales | Sales summary | Gross and net, services and products, tips, card fees, refunds, tickets, average ticket; net by day this week against last, and by location. Voids need Discounts & refunds. The barber table needs Barber performance, and without **See every barber's numbers** shows only your own row |
 | Clients and bookings | KPIs | New and returning clients, bookings made (online, walk-in, front desk), appointments, cancellations, no-shows |
 | Barber utilization | Barber performance | Booked against available hours, overall and per barber, day and week to date. Average cut against booked time needs Service times |
+| Production per hour (PPH) | PPH | Service, product and total PPH and worked hours, day and week to date; per location, against the brand, and per barber, highest week-to-date service PPH first (only your own row without **See every barber's numbers**). N/A with no hours |
 | Rebook rate | Rebook rate | Visits rebooked at checkout and the rate, day and week to date against the prior period and the brand; new-client rebook rate; per barber with their week against the brand (only your own row without **See every barber's numbers**); future appointments; 2nd-visit retention of the new clients seen 60 to 89 days earlier |
 | Loyalty and gift cards | Loyalty / Gift cards | Rewards earned and redeemed; gift cards sold and redeemed, and what's still owed |
 | Campaign Center | Campaign Center (or We have openings) | Sends, clicks, bookings, coupon redemptions and attributed revenue for messages sent that day |
@@ -731,6 +732,7 @@ Replaces Charles's payroll workbook. The full rules are in [docs/payroll-report-
   - **O.T. Pay**: 1.5 × base rate × OT hours.
   - **Training Pay**: training hours × the employee's own flat training rate (Charles, Oct 28). It's its own line: never commission, Total Wages or the greater-of. The rate is per employee and effective-dated on their Staff page (**Training rate** card, brand-wide payroll admins, never their own), and each day's training is paid at the rate in effect that day. Without one, Payroll setup's training rate applies, then their hourly rate (flagged). A rate starts after the last locked pay period, and only one that hasn't started, and no locked period used, can be deleted.
   - **Labor Cost**: Total Wages + O.T. Pay + Training Pay (+ any guarantee top-up and OT premium owed on commission). The iSolved file is unchanged: training hours go in `E_Training_Hours`, and the gate checks Training Pay against them.
+  - **Service PPH, Product PPH and Total PPH** (Charles, Oct 28): review columns only, never in the iSolved file or the workbook download. Service$ and Product$ over regular plus overtime hours (not training or PTO), N/A with no hours. Gross /Hr stays the workbook's Service$ over regular hours only.
 
   The Locations view shows Employee Cost as Labor Cost. A drill-down per person shows each formula with their numbers, their FT/PT status and their week-by-week hours at every shop.
 - **Cross-shop overtime:** hours over 40 in a Sun–Sat workweek, across every shop of the same FEIN (default Ray'z Inc.), split between shops by share of hours. It works across pay periods, across Dubuque's separate calendar and through DST weeks.
@@ -1206,6 +1208,7 @@ Each report is its own page with **two permissions of its own**: `report.<key>.v
 | Call-ins and client outreach | `call_ins` | Call-ins by shop and barber, the appointments they hit, and how each ended: moved, rebooked, declined, no response, flagged |
 | Google review links | `google_reviews` | Review follow-ups sent and clicks on each location's Google review link (from receipts and follow-ups), by barber and by location |
 | Labor hours and cost | `labor` | Clocked hours and OT, sales per labor hour; with `payroll.rates`, hourly rate, labor cost and labor % of sales |
+| Production per hour (PPH) | `pph` | Service, product and total PPH (sales before tax and tips, net of discounts and refunds, over clocked worked hours; N/A with no hours), per barber, location and brand, over any range or pay period. Ranked by any of the three, highest or lowest first (click a PPH heading), with a daily, weekly, monthly or pay-period trend. Barbers see their own (`core_0145`) |
 | Attendance | `attendance` | Late, left early, early in, missed punches, forgotten clock-outs, and scheduled days with no punch |
 | Cash drawer | `cash_drawer` | Drawer closes with expected, counted, and variance |
 | Tip payouts | `tip_payouts` | Tips earned, refunded and adjusted per shop and employee, how they were paid (cash, Stripe, payroll, before tip payouts) and what's still unpaid, then every payout |

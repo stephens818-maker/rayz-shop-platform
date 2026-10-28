@@ -224,6 +224,7 @@ There are two screens over the same figures.
 - **Locations view:** per shop, Service Sales, Total Wages, O.T. Pay, Training Pay, Employee Cost (= Labor Cost), Gross Profit and Cost %, plus a total row.
 - **Anomalies** (§8).
 - **Per-shop blocks:** columns B to S, then O.T. Pay, Training Pay and Labor Cost highlighted as platform additions.
+- **PPH review columns** (Charles, Oct 28), on both screens and in the Locations view: Service PPH = Service$ (E) ÷ worked hours, Product PPH = Product$ (J) ÷ the same hours, Total PPH = both ÷ the same hours. Worked hours are Hours (B) + O.T. HRS, less overtime that came from training; training and PTO aren't production time. No worked hours shows N/A. A total row is its lines' sales over their hours, never an average. Gross /Hr (F) is unchanged: Service$ over regular hours only, as in the workbook. They're for review: never in the iSolved file (§6), the workbook-format download or the gate. The PPH report over a pay period matches them, except for Squire-era tickets (counted there, left out of payroll) a commission base with the card fee or loyalty added (I10), and figures typed over here.
 - **Per-employee drill-down:** the labor cost formula, O.T. Pay with "iSolved may compute blended OT higher.", Training Pay, FT/PT status, the cross-shop weekly breakdown, and the adjustment form (a value and a required reason).
 - **Export preview** per shop: the exact values that will go in the file.
 

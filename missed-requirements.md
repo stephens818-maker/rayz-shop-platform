@@ -1177,6 +1177,16 @@ The plan's P0 cases must all pass in the sandbox before the pilot. Status by cas
 - [ ] **Ask Charles and the CPA:** when training on top of clocked hours takes a week past 40, the overtime comes out of regular hours as any overtime does, so the hourly side of the greater-of drops by those hours. Keep that, or take the overtime from training first?
 - [ ] **Ask Charles:** My Earnings shows only the shops someone works at. Should it also show another shop where they have hours in the period, such as a day of training there? It's on the Payroll Report and in the iSolved file either way.
 
+## 55. PPH, production per hour (Charles, Oct 28)
+
+- [x] Service PPH = service sales before tax and tips, net of discounts and refunds ÷ clocked worked hours (regular plus overtime, not training or PTO). Product PPH and total PPH over the same hours. Totals are sales over hours, never an average (`tests/pph.test.ts`).
+- [x] Zero hours is N/A everywhere: not ranked, listed last.
+- [x] The PPH report: per barber, per location and for the brand, over any range or pay period, ranked by any of the three (ties share a rank), highest or lowest first, sortable from the PPH headings, with a daily, weekly, monthly or pay-period trend. Barbers see only their own (`core_0145`, `tests/db/pph.test.ts`).
+- [x] Payroll Report: three review columns on the blocks, the Locations view and the drill-down. They're never in the iSolved file or the workbook download, and they match the report over the pay period.
+- [x] Morning Dashboard email: day and week to date, per location, against the brand and per barber.
+- [x] Staff app My Earnings: `pph`, own only, top level and per shop.
+- [ ] **Ask Charles:** Squire-era tickets count toward PPH on the days they were sold, though payroll leaves them out. Keep that? And should a commission base with the card fee or loyalty added (I10) also count in PPH, as the Payroll Report's Service$ does?
+
 ## Deferred by decision
 
 - I10 is decided: separate charges and transfers (section 5), with tips to barbers' recipient accounts on (`FEATURE_TIP_TO_BARBER`, the CPA approved it on 2026-10-28), turned off per shop with the brand setting `tip_to_barber` (section 50). Live tip transfers also need `MONEY_MOVEMENT_LIVE`.
