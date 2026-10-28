@@ -283,7 +283,11 @@ A brand setting rounds export values to 2 decimals half-up instead. It's **off**
 2. Review: the anomalies and drill-downs, plus adjustments with reasons.
 3. Approve the figures (`payroll.approve`, brand-wide).
 4. Download each shop's file (`payroll.run` or `payroll.export`), or the all-shops workbook from Reports → Payroll → iSolved export. Then upload in iSolved: Timecard Import (Excel/CSV), picking that pay group.
-5. Lock the period.
+5. Lock the period, or mark it **Sent** in Reports → Payroll → iSolved export, which locks an approved period that isn't locked yet (lock on export, Charles, Oct 22; audited as `payroll.isolved_sent` with `lockedOnSend`). Later changes become flagged adjustments in the next open period.
+
+There's no iSolved API, SFTP or scheduled push (Charles, Oct 22), so the upload is always by hand.
+
+**Payroll detail and reconciliation CSV** (separate from the iSolved file, which it never changes). Download it from the Payroll Report for all shops or one shop, with the Payroll Report export plus `payroll.rates`. It has a row per employee per shop: regular, OT (as allocated across shops), training and PTO hours; hourly rate; sales; which side of the greater-of applied; hourly pay; service, product and late commission; the greater-of top-up and guarantee; OT, training and PTO pay; total wages; ticket tips; declared cash tips; Cash Tips Recd (the iSolved column); gross; card tips paid via Stripe (the paid Stripe payouts, with the transfer ids); and tips through payroll. Then come each shop's total and, with more than one shop, the all-shops total. It's refused while the §7 gate has a mismatch or the tips differ from the Stripe payouts, and each download is audited (`payroll.detail_file`).
 
 File names are Payroll setup settings (Q9). A shop's file defaults to `MM.DD.YY-MM.DD.YY <shop>.xlsx`, and the all-shops workbook to `Rayz Payroll MM.DD.YY-MM.DD.YY.xlsx`. The placeholders are `{start}`, `{end}`, `{startIso}`, `{endIso}`, `{shop}`, `{payGroup}`, `{code}` (the iSolved pay group code, blank until it's set) and `{period}`. The all-shops workbook has a sheet per shop in the workbook's tab order (Rock Island, Moline, Silvis, Coralville, Utica, Kimberly, LeClaire, then the rest by name). It's marked DRAFT until the figures are approved.
 
@@ -344,13 +348,13 @@ The flow is run → review → approve → lock. Each step is recorded.
 - **Changed since approval.** Any change that would alter what's paid or uploaded hashes differently: an adjustment, a late punch, a sale, a rate. The approval then no longer covers the figures. The screens say so, the iSolved files are held, and the lock is refused until someone approves again. Approving changed figures takes back the earlier approval ("Approved again with changed figures").
 - **Take back an approval** before the lock, with a required reason. Approvals are never edited or deleted; a database trigger refuses both. A take-back is a one-time change to the row.
 - **Lock** needs a current approval. It rechecks the hash inside the transaction and locks every pay group whose calendar has that period. It stores a snapshot per pay group: the shop block, lines, totals and export rows, plus the OT each slice was given (`payroll_locked_ot`). After locking, time entries and adjustments in the period are refused, and the report shows the snapshot. A locked period's approval can't be taken back.
-- **Audit:** `payroll.approve`, `payroll.approval_revoked`, `payroll.lock` (with the approval's id), `payroll.download`, `payroll.isolved_file` and `payroll.report_file`, plus the adjustments (`payroll.override`). Every one carries the period's dates, and the audit trail on both screens lists them.
+- **Audit:** `payroll.approve`, `payroll.approval_revoked`, `payroll.lock` (with the approval's id), `payroll.download`, `payroll.isolved_file`, `payroll.report_file`, `payroll.detail_file` and `payroll.isolved_sent`, plus the adjustments (`payroll.override`). Every one carries the period's dates, and the audit trail on both screens lists them.
 - **Hours come from the time clock** (a payroll setting, on by default; Charles decided the basic clock ships at launch). Approval and the lock wait until every shop's timesheets are locked for each day of the period. A shop's timesheets lock (Payroll → Timesheets) only after the period ends and every timesheet with hours or missed punches is approved by a manager.
 - "Approve and lock" in one step remains for the API and older callers. It records both steps.
 
 ## 10. Future: direct iSolved integration
 
-Not built, and not planned for now. The export goes through one interface, so an integration can be added without touching the payroll math:
+Not built. Charles ruled it out on Oct 22: no API, SFTP or automated push, so payroll output stays a manual download. The export goes through one interface, so an integration can be added without touching the payroll math:
 
 ```ts
 interface PayrollExporter {

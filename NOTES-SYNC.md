@@ -173,7 +173,7 @@ Each shop has a **payments mode** in `shops.payments_mode`: `connected` (the def
 
 Spec: [`docs/payroll-report-spec.md`](docs/payroll-report-spec.md). Workbook problems: [`docs/payroll-workbook-discrepancies.md`](docs/payroll-workbook-discrepancies.md).
 
-- **No iSolved connection.** Output is a per-shop xlsx in the workbook's exact format, downloaded after approve-and-lock and uploaded by hand. Nothing calls iSolved. Exports go through `PayrollExporter` in `src/server/payroll/export.ts`.
+- **No iSolved connection** (no API, SFTP or scheduled push; Charles confirmed 2026-10-22). Output is a per-shop xlsx in the workbook's exact format, downloaded once approved and uploaded by hand. Nothing calls iSolved. Exports go through `PayrollExporter` in `src/server/payroll/export.ts`. Marking the period sent to payroll locks it if it isn't yet. The payroll detail CSV is a separate download and never changes the iSolved file.
 - **Employee Numbers are sensitive.** `payroll_profiles.employee_number` lives in the database only. Please never return it from `/api/v1` or put it in logs, push payloads or fixtures.
 - **Schema** (`drizzle/core_0022_payroll.sql`): `pay_groups` (one per shop, each with its own calendar, legal entity and, from `core_0129`, iSolved pay group code and submit-by offset; each period's check and submit-by dates are in `pay_period_dates`), `payroll_profiles`, `payroll_rates`, `time_entries`, `payroll_overrides`, `payroll_runs` (locked snapshots), `payroll_locked_ot`, and `brand_settings.payroll` (jsonb). New permissions `payroll.run` and `payroll.approve` (brand-only, added to Brand Admin).
 - **Sales and tips** come from `payrollSalesBetween` in `src/server/reports.ts`, so a ticket counts at the shop it was rung up at, same as the reports.
@@ -657,6 +657,7 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
     - `payouts[].status` is now `payoutStatus`, and it's never `reversed`.
   - **Every endpoint:** `periodStatus` and `isEstimate`. Show "Estimate" while `isEstimate` is true. `fromLock` marks figures the lock kept.
   - **OT:** show OT dollars as an estimate (`otIsEstimate`, with `otDisclosure`). `workweeks[]` gives each Chicago workweek across all their shops, with `shops[]` and `basisHours`.
+  - **Gross only:** every amount is gross. There are no withholding, tax or net pay fields, and the app shouldn't estimate any. Show `taxNote` with the totals ("Gross amounts only. Taxes are withheld through payroll, …").
   - **Tip switch:** `shops[].tipToBarber` and `tipTransfersEnabled`, on `/me/earnings` and `/me/payouts`. Where the switch is off, show `payrollCopy`, not Stripe.
   - **Late changes:** these come as `adjustments[]` with `flagged: true` and `reducesPay: false`. The kinds are `late_tip`, `late_declaration` and `tip_refunded_after_export`; show `copy`. `POST /tips/declarations` for a locked day now succeeds, with `late: true` and `postedDate`. Only a correction of a locked declaration is 409.
   - **Clients:** first names only. Don't cache any My Earnings answer, errors included (`no-store`).
@@ -831,6 +832,14 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 - My Earnings, PY-RD-01: the report's Total Wages is rounded once, while the paycheck rounds each part. They can differ by 1 cent (the contract test shows it). Keep the report's figure, or round each part there too?
 
 ## Log
+
+### 2026-10-28: core, Charles's payroll clarification of Oct 22 (manual iSolved upload, detail CSV, lock on export, gross only), for the Rayz App builder and the mobile agent
+
+- **No iSolved integration, confirmed.** There's no API, SFTP or scheduled push, and there never was: no cron or job touches iSolved. Payroll output stays the per-shop iSolved timecard file, downloaded and uploaded by hand. Its format is unchanged: Key is the Employee Number, then Regular, OT 1.5 hours (no OT dollars), `E_Cash Tips Recd_Dollars`, Comm Sales, Paid Time and Training.
+- **New: payroll detail and reconciliation CSV**, web only. Download it from the Payroll Report's Downloads card, for all shops or for each shop. Route: `GET /admin/reports/payroll/report/detail?period=<start>_<end>&shop=<id>` (shop repeated or left out). It needs the Payroll Report export and "See pay rates". Each employee gets one row per shop: regular, OT (as allocated across shops), training and PTO hours; hourly rate; sales; which side of the greater-of applied; hourly pay; commission; the greater-of top-up; OT, training and PTO pay; wages; ticket tips; declared cash tips; Cash Tips Recd (the iSolved column); gross; card tips paid via Stripe, with the transfer ids; and tips through payroll. After the rows come each shop's total and the all-shops total. Every figure is the Payroll Report line's, so it ties to the report, the iSolved file and the Stripe payouts to the cent. It's refused (409) while the totals don't reconcile to $0.00 or the tips differ from the Stripe payouts. Each download is audited (`payroll.detail_file`).
+- **Lock on export:** "Mark sent" in Reports → Payroll → iSolved export now works on an approved period that isn't locked yet, and locks it through the same gate as Approve and lock. Later changes become flagged adjustments in the next open period, as before. It's audited as `payroll.isolved_sent` with `lockedOnSend`. It still needs `payroll.approve` with brand-wide access; managers don't have payroll by default (G-10).
+- **My Earnings is gross only:** `/me/earnings` adds `taxNote`; show it with the totals. There are no withholding or net pay fields, so please don't estimate any in the app (additive change).
+- **Tips:** card tips still reach barbers through Stripe transfers and payouts, and card sales go to the shop's connected account (separate charges and transfers), both unchanged. For W-2 withholding the tip totals still go into the iSolved file's `E_Cash Tips Recd_Dollars` column, unchanged. On the launch checklist: "CPA to confirm manual tip-reporting process (Stripe-paid card tips reported via the iSolved upload)." No migration; the next free number is still `core_0149`.
 
 ### 2026-10-28: core, the Payroll Report on start and end dates (Charles), for the Rayz App builder and the mobile agent
 

@@ -1232,6 +1232,17 @@ Tests: `tests/db/payroll-ranges.test.ts`, one block per rule.
 - [x] Rule 5: `/me/earnings` and `/me/earnings/tickets` take from/to as well as periodId.
 - [ ] **Ask Charles:** a workweeks run is locked with period number 0 and no check date of its own. Should iSolved get it as an off-cycle run, or is it only for closing weeks before a pay period is split?
 
+## 59. Charles's payroll clarification (Oct 22): manual iSolved upload, detail CSV, lock on export, gross only
+
+Tests: `tests/db/payroll-detail-send.test.ts`; gross only in `tests/db/my-earnings-privacy.test.ts`.
+
+- [x] 1. No iSolved integration: no API, SFTP or scheduled push exists, and none was added. The per-shop iSolved timecard file is unchanged (Key = Employee Number, Training column, OT hours with no OT dollars, Cash Tips Recd) and is downloaded for upload by hand.
+- [x] 2. A payroll detail and reconciliation CSV per period, for all shops and per shop, separate from the iSolved file. Per employee: regular, OT (cross-shop allocated) and training hours; training pay; commission; the greater-of top-up; card tips paid via Stripe; declared cash tips; and totals. It ties to the Payroll Report, the iSolved file and the Stripe payouts to the cent, and is refused until the $0.00 reconciliation passes.
+- [x] 3. Lock on export: marking an approved period "Sent to payroll" locks it, and it's audited (`lockedOnSend`). Later changes become flagged adjustments in the next open period.
+- [x] 4. My Earnings is gross only: there are no withholding or net pay fields, and `taxNote` says taxes are withheld through payroll.
+- [x] 5. Card tips go to barbers through Stripe, and card sales to the shop's connected account, both unchanged. Tip totals stay in the iSolved file's `E_Cash Tips Recd_Dollars` column.
+- [ ] **Launch checklist:** CPA to confirm manual tip-reporting process (Stripe-paid card tips reported via the iSolved upload).
+
 ## Deferred by decision
 
 - I10 is decided: separate charges and transfers (section 5), with tips to barbers' recipient accounts on (`FEATURE_TIP_TO_BARBER`, the CPA approved it on 2026-10-28), turned off per shop with the brand setting `tip_to_barber` (section 50). Live tip transfers also need `MONEY_MOVEMENT_LIVE`.

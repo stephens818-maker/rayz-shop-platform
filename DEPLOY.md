@@ -407,6 +407,12 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
     - **Commission now uses the rate in effect on each sale date** (a refund at the rate its sale was made at), and each day's hours its day's wage. Anyone who changes a rate in Payroll setup picks the date it starts; it can't start on or before a locked pay period. A period with more than one rate shows "mixed" as with compensation plans.
     - `/api/staff/v1/me/earnings` and `/me/earnings/tickets` take `from`/`to` as well as a pay period. Additive: existing calls are unchanged.
     - The next free migration is `core_0149`.
+59. Charles's payroll clarification (Oct 22): manual iSolved upload, the payroll detail CSV, lock on export and gross-only My Earnings. There's no migration, and nobody's access changes.
+    - Nothing to turn off: there's no iSolved API, SFTP or scheduled push. The per-shop iSolved file is unchanged and is still uploaded by hand.
+    - The Payroll Report's Downloads card gains **Payroll detail (CSV)**, for all shops and for each shop. It's refused until the totals reconcile to $0.00 and the tips match the Stripe payouts.
+    - **Mark sent** (Reports → Payroll → iSolved export) now locks an approved period that isn't locked yet. Approve and lock still works as before.
+    - `/api/staff/v1/me/earnings` adds `taxNote` (additive).
+    - Launch checklist: CPA to confirm manual tip-reporting process (Stripe-paid card tips reported via the iSolved upload).
 
 ## Launch day: every surface at once, at the pilot shop
 
