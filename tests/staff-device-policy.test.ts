@@ -4,7 +4,7 @@ import { OFFLINE_READABLE, STAFF_DEVICE_POLICY, WIPE_FOR, cacheRuleFor, queuedPu
 describe("the staff app's data on the phone (ST-I18)", () => {
   it("keeps only their own day's GETs, never clients, pay or anything sent", () => {
     for (const p of ["/api/staff/v1/me", "/api/staff/v1/me/calendar", "/api/staff/v1/clock", "/api/staff/v1/me/timecard/", "/config"]) expect(cacheRuleFor("GET", p), p).toBe("offline-24h");
-    for (const p of ["/api/staff/v1/clients", "/api/staff/v1/clients/abc", "/api/staff/v1/me/earnings", "/api/staff/v1/tips", "/api/staff/v1/banking", "/api/staff/v1/timecards", "/api/staff/v1/me/sessions"])
+    for (const p of ["/api/staff/v1/clients", "/api/staff/v1/clients/abc", "/api/staff/v1/me/earnings", "/api/staff/v1/me/earnings/days", "/api/staff/v1/me/earnings/tickets", "/api/staff/v1/me/payouts", "/api/staff/v1/me/pay-periods", "/api/staff/v1/tips", "/api/staff/v1/banking", "/api/staff/v1/timecards", "/api/staff/v1/me/sessions"])
       expect(cacheRuleFor("GET", p), p).toBe("none");
     expect(cacheRuleFor("POST", "/api/staff/v1/clock")).toBe("none");
     expect(OFFLINE_READABLE.some((r) => r.test("/clients"))).toBe(false);

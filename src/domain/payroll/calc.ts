@@ -948,7 +948,8 @@ export type GreaterOfCode = "hourly_higher" | "commission_higher" | "equal";
  * (the app does no pay math). Each part is one earning on their paystub, rounded once, so the parts
  * add up to grossCents exactly. Regular is their regular hours at their wage (the report's D, which is
  * E_Regular_Hours at their rate), Comm Sales is the report's M as exported (service commission above
- * hourly pay, product commission and late commission), overtime is the report's T (an estimate until
+ * hourly pay, product commission, late commission, and commSalesAdjustmentCents when payroll typed
+ * over it on the report), overtime is the report's T (an estimate until
  * iSolved runs it), training and paid time are E_Training_Hours at their training rate and
  * E_Ray'z Paid Time_Hours at their wage, then the guarantee top-up and OT premium as exported, and
  * every tip received, declared cash included (E_Cash Tips Recd).
@@ -965,8 +966,10 @@ export function employeePay(l: Line) {
   const productCommissionCents = c(l.productTotal);
   const lateCommissionCents = c(l.lateCommission ?? 0);
   const commSalesCents = c(l.netComm);
-  const commissionOverHourlyCents = commSalesCents - productCommissionCents - lateCommissionCents;
   const appliedRule: GreaterOfRule = l.serviceTotal > 0 ? "commission" : "hourly";
+  const typedCommSales = l.overridden.includes("netComm");
+  const commissionOverHourlyCents = !typedCommSales ? commSalesCents - productCommissionCents - lateCommissionCents : appliedRule === "commission" ? serviceCommissionCents - hourlyPayCents : 0;
+  const commSalesAdjustmentCents = commSalesCents - commissionOverHourlyCents - productCommissionCents - lateCommissionCents;
   const explanationCode: GreaterOfCode = serviceCommissionCents === hourlyPayCents ? "equal" : serviceCommissionCents > hourlyPayCents ? "commission_higher" : "hourly_higher";
   const trainingRate = l.input.trainingRate ?? payWage;
   const overtimePayCents = c(l.otPay);
@@ -990,6 +993,8 @@ export function employeePay(l: Line) {
     lateCommissionCents,
     commSalesCents,
     commissionOverHourlyCents,
+    /** Comm Sales typed over on the report, as exported, less what the report worked out; 0 unless payroll typed it. */
+    commSalesAdjustmentCents,
     greaterOfCents: hourlyPayCents + commissionOverHourlyCents,
     /** Hourly pay above service commission, where hourly applies: what the greater-of added. */
     topUpCents: appliedRule === "hourly" ? Math.max(0, hourlyPayCents - serviceCommissionCents) : 0,

@@ -387,17 +387,14 @@ export function appPayoutStatus(p: { status: string; stripeStatus: string | null
 
 /**
  * A card tip's transfer to their Stripe account at the sale, as the app shows it, or null for one
- * that never happened (a refund before it was sent took it all). Tip transfers are never reversed by
- * the platform: reversed means only that Stripe reversed it, or that the payout carrying it was
- * returned by their bank, and reversedBy says which. One Stripe refused at the sale is pending: it's
- * paid with their next tip payout.
+ * that never happened (a refund before it was sent took it all). Ray'z never reverses a tip transfer:
+ * reversed means only that Stripe reversed it (transfer.reversed). A payout their bank returned
+ * doesn't touch the transfer: the money is back in their Stripe balance and goes with their next
+ * payout, and the payout shows failed. One Stripe refused at the sale is pending: it's paid with their
+ * next tip payout.
  */
-export function appTransferStatus(
-  t: { status: string; stripeReversedAt: Date | null },
-  payout: { returnedAt: Date | null } | null,
-): { status: AppTransferStatus; reversedBy: "stripe" | "bank_return" | null } | null {
+export function appTransferStatus(t: { status: string; stripeReversedAt: Date | null }): { status: AppTransferStatus; reversedBy: "stripe" | null } | null {
   if (t.status === "cancelled") return null;
   if (t.stripeReversedAt) return { status: "reversed", reversedBy: "stripe" };
-  if (payout?.returnedAt) return { status: "reversed", reversedBy: "bank_return" };
   return { status: t.status === "sent" ? "paid" : "pending", reversedBy: null };
 }

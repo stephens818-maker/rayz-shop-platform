@@ -113,7 +113,8 @@ function periodIdOf(q: PeriodQuery): "current" | LocalDate | null {
 
 function periodById(cals: readonly ShopCalendar[], id: "current" | LocalDate, today: LocalDate, field: string): MyPeriod {
   const p = id === "current" ? currentPeriod(cals, today) : periodAt(cals, id);
-  if (!p) throw bad(id === "current" ? "You aren't on a shop's payroll" : "Unknown pay period: its id is the date it starts (GET /me/pay-periods lists them)", field);
+  if (!p)
+    throw new AppError("not_found", id === "current" ? "You aren't on a shop's pay calendar" : "No pay period starts then: its id is the date it starts (GET /me/pay-periods lists them)", { field });
   return p;
 }
 
@@ -293,8 +294,8 @@ function payoutBrief(p: TipPayout) {
 }
 
 /** A card tip's transfer to their Stripe account at the sale, as TipTransferView; null for one never made. */
-function transferBrief(t: Transfer, payout: TipPayout | null) {
-  const s = appTransferStatus(t, payout);
+function transferBrief(t: Transfer) {
+  const s = appTransferStatus(t);
   return s ? { status: s.status, reversedBy: s.reversedBy, amountCents: t.amountCents, arrivalDate: t.status === "sent" ? dateOf(t.sentAt) : null } : null;
 }
 
@@ -496,6 +497,7 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
     commissionCents: wages ? P((p) => p.serviceCommissionCents + p.productCommissionCents) : null,
     lateCommissionCents: wages ? P((p) => p.lateCommissionCents) : null,
     commSalesCents: wages ? P((p) => p.commSalesCents) : null,
+    commSalesAdjustmentCents: wages ? P((p) => p.commSalesAdjustmentCents) : null,
     serviceCommissionRate: wages ? sameOrNull(pays.map((p) => p.serviceCommissionRate)) : null,
     productCommissionRate: wages ? sameOrNull(pays.map((p) => p.productCommissionRate)) : null,
     greaterOfCents: wages ? P((p) => p.greaterOfCents) : null,
@@ -669,7 +671,7 @@ export async function myEarningsTickets(ctx: StaffAppContext, q: PeriodQuery & {
       giftCardTipCents: see.tips ? tender.giftCard : null,
       shared: see.tips ? mineHere.some((r) => r.shared) : null,
       tipDisposition: see.tips ? dispositionOf(tip, methodOf.get(t.shopId)) : null,
-      transfer: see.tips && tip?.transfer ? transferBrief(tip.transfer, payout) : null,
+      transfer: see.tips && tip?.transfer ? transferBrief(tip.transfer) : null,
       payout: see.tips && payout ? payoutBrief(payout) : null,
       lateDeclaration: false,
       originalDate: late ? t.date : null,
@@ -686,8 +688,8 @@ export async function myEarningsTickets(ctx: StaffAppContext, q: PeriodQuery & {
  * Stripe account at the sale in the span, with its status and when it got there, and the Stripe
  * payouts that take their tips on to their bank or debit card: Stripe's own status (pending,
  * in_transit, paid, failed, canceled) and the arrival date Stripe gives. A tip transfer is never
- * reversed by the platform: reversed appears only when Stripe reversed it or the payout carrying it
- * was returned by their bank (reversedBy says which).
+ * reversed by the platform: reversed appears only when Stripe reversed it. A payout their bank
+ * returned is failed with returned true, and its tips go out again with their next payout.
  */
 export async function myPayoutsView(ctx: StaffAppContext, q: PeriodQuery, today: LocalDate = todayLocal()) {
   const me = ctx.staff.id;
@@ -707,7 +709,7 @@ export async function myPayoutsView(ctx: StaffAppContext, q: PeriodQuery, today:
   const transfers = ledger.flatMap((r) => {
     if (r.kind !== "tip" || !r.transfer || !r.saleId) return [];
     const payout = r.payout?.method === "stripe" ? r.payout : null;
-    const t = transferBrief(r.transfer, payout);
+    const t = transferBrief(r.transfer);
     if (!t) return [];
     const po = payout ? payoutBrief(payout) : null;
     return [

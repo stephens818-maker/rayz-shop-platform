@@ -107,7 +107,7 @@ const MORE: Op[] = [
     path: "/me/pay-periods",
     tag: "Tips and pay",
     summary:
-      "My Earnings, the period picker: the signed-in employee's pay periods across their shops, newest first, current included. id is the period's start date (pass it as period or periodId). periodStatus is draft, approved, locked or exported; exportStatus is not_sent or sent; isEstimate is true until the period is locked. Always their own: any query parameter is 400.",
+      "My Earnings, the period picker: the signed-in employee's pay periods across their shops, newest first, current included. id is the period's start date (pass it as period or periodId). periodStatus is draft, approved, locked or exported; exportStatus (the iSolved file) is draft, approved or sent; payrollStatus is not_yet_processed, sent_to_payroll or paid_in_paycheck; isEstimate is true until the period is locked. Always their own: any query parameter is 400.",
     permission: "Any of timesheet.own, tips.own, compensation.own or report.my_sales.view",
     query: S.NoQuery,
   },
@@ -143,7 +143,7 @@ const MORE: Op[] = [
     path: "/me/payouts",
     tag: "Tips and pay",
     summary:
-      "Card tips on their way to the employee's bank for a pay period (periodId, period, or from and to up to 31 days). transfers: each card tip's transfer to their Stripe account, status pending, in_transit, paid or reversed with arrivalDate. Ray'z never reverses a tip transfer: reversed appears only when Stripe reversed it (reversedBy stripe) or the bank returned the payout (reversedBy bank_return). payouts: Stripe payouts to their bank, status pending, in_transit, paid, failed or canceled, with arrivalDate and bankLast4. Always their own.",
+      "Card tips on their way to the employee's bank for a pay period (periodId, period, or from and to up to 31 days). transfers: each card tip's transfer to their Stripe account, status pending or paid (in their Stripe account) with arrivalDate, and payoutStatus for the payout carrying it on. Ray'z never reverses a tip transfer: reversed (reversedBy stripe) appears only when Stripe reversed it. payouts: Stripe payouts to their bank, status pending, in_transit, paid, failed or canceled, with arrivalDate and bankLast4; a payout their bank returned is failed with returned true, and its tips go out again with the next payout. Always their own.",
     permission: "tips.own",
     query: S.MyEarningsQuery,
   },

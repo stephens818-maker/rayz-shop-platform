@@ -259,7 +259,7 @@ describe("data on the phone (ST-I18)", () => {
       expect(r.headers.get("x-staff-cache"), p).toBe("offline-24h");
       expect(r.headers.get("cache-control"), p).toBe("private, no-store");
     }
-    for (const p of ["me/earnings", "tips", "payouts", "clients?q=Od", "me/sessions", "me/notifications"]) {
+    for (const p of ["me/earnings", "me/earnings/days", "me/earnings/tickets", "me/payouts", "me/pay-periods", "tips", "payouts", "clients?q=Od", "me/sessions", "me/notifications"]) {
       const r = await call("GET", p, { token: t.accessToken });
       expect(r.headers.get("x-staff-cache"), `${p} ${r.status}`).toBe("none");
     }
@@ -451,18 +451,18 @@ describe("timecards (ST-C5)", () => {
 describe("earnings (ST-C6) and tip payouts (ST-C7)", () => {
   it("each shop's numbers are the barber's line of the payroll run, to the cent", async () => {
     const t = await login("makenna@rayz.test");
-    const r = await call("GET", `me/earnings?period=${today}`, { token: t.accessToken });
+    const r = await call("GET", "me/earnings?period=current", { token: t.accessToken });
     expect(r.status, r.text).toBe(200);
     const cv = r.json.shops.find((s: { shopId: string }) => s.shopId === shop.coralville);
     const { buildPayroll } = await import("@/server/payroll/run");
-    const run = await buildPayroll(cv.period.start, cv.period.end);
+    const run = await buildPayroll(r.json.from, r.json.to);
     const line = run!.blocks.find((b) => b.shopId === shop.coralville)?.lines.find((l) => l.staffId === ids.makenna);
     const c = (x: number | undefined) => Math.round((x ?? 0) * 100);
-    expect(cv.tips.totalCents).toBe(c(line?.tips));
-    expect(cv.tips.inPayrollCents).toBe(c(line?.tipsInPayroll));
-    expect(cv.sales).toEqual({ serviceNetCents: c(line?.service), productNetCents: c(line?.product) });
+    expect(cv.totalTipsCents).toBe(c(line?.tips) + c(line?.declaredCashTips));
+    expect(cv.tipsInPayrollCents).toBe(c(line?.tipsInPayroll));
+    expect([cv.serviceSalesCents, cv.productSalesCents]).toEqual([c(line?.service), c(line?.product)]);
     expect(cv.hours.regular).toBe(line?.hours ?? 0);
-    expect(cv.tips.cardCents + cv.tips.cashCents + cv.tips.giftCardCents + cv.tips.adjustmentsCents).toBe(cv.tips.totalCents);
+    expect(cv.cardTipsCents + cv.cashOnTicketsCents + cv.giftCardTipsCents + cv.tipAdjustmentsCents).toBe(c(line?.tips));
     expect(r.json.payout.defaultMethod).toBe("stripe");
     const block = run!.blocks.find((b) => b.shopId === shop.coralville)!;
     const { paystubLines } = await import("@/domain/payroll/calc");
@@ -474,10 +474,10 @@ describe("earnings (ST-C6) and tip payouts (ST-C7)", () => {
       await setOverrides("makenna", {});
     });
     const less = (await call("GET", "me/earnings", { token: t.accessToken })).json;
-    expect(less.shops[0].sales).toBeNull();
-    expect(less.shops[0].wages).toBeNull();
+    expect([less.serviceSalesCents, less.shops[0].serviceSalesCents]).toEqual([null, null]);
+    expect([less.hourlyPayCents, less.totalCents, less.shops[0].pay]).toEqual([null, null, null]);
     expect(less.shops[0].paystub.every((l: { group: string }) => l.group !== "wages")).toBe(true);
-    expect(less.shops[0].tips).not.toBeNull();
+    expect(less.shops[0].totalTipsCents).not.toBeNull();
   });
 
   it("year to date adds what came over from Squire", async () => {
@@ -709,8 +709,12 @@ describe("privacy across a barber's whole app", () => {
       `clients?q=${CLIENT.first}`,
       `clients/${ids.client}`,
       "me/timecard",
+      "me/pay-periods",
       "me/earnings",
+      "me/earnings/days",
+      "me/earnings/tickets",
       "me/earnings/ytd",
+      "me/payouts",
       "me/payout-setup",
       "me/payout-cutover",
       "me/milestones",
