@@ -38,6 +38,7 @@ import { addDays, endOfLocalDay, formatDate, localDateOf, startOfLocalDay, today
 import { audit, type Actor } from "@/server/audit";
 import { loadStaffAccess } from "@/server/auth/access";
 import { AppError } from "@/server/errors";
+import { serviceTickets } from "@/server/service-tickets";
 import { notSquireEra } from "@/server/squire-era";
 import { loadRolloutPlan, type PayrollSource } from "@/server/rollout-plan";
 import { guaranteeTopUps, exportExtras } from "@/domain/compensation";
@@ -126,6 +127,12 @@ export interface BlockView extends ShopBlock {
   /** Where the period's figures come from: punches and tickets here, or (during the rollout) the shop's Squire Commissions report imported for the period. */
   source: PayrollSource;
   squireImport: { fileName: string | null; importedAt: string; rows: number; notes: string[] } | null;
+  /**
+   * Completed service tickets per employee here over the period, for clients per hour (a review
+   * figure, never approved, paid or exported): as kept at the lock once locked, today's count on
+   * periods locked before it was kept.
+   */
+  serviceTickets: Record<string, number>;
 }
 
 export interface PayrollView {
@@ -172,6 +179,8 @@ interface Snapshot {
   /** Each employee on the shop's lines: their days here (dayFigures) and their workweeks across shops, as at the lock. Absent on periods locked before they were kept. */
   days?: Record<string, DayFigures[]>;
   weeks?: Record<string, WeekBreakdown[]>;
+  /** Completed service tickets per employee at the lock; absent on periods locked before it was kept. */
+  serviceTickets?: Record<string, number>;
 }
 
 /**
@@ -467,6 +476,8 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       { id: e.id, legalName: e.legalName, isolvedCompanyCode: e.isolvedCompanyCode, taxIdLast4: e.taxIdLast4 },
     ]),
   );
+  const tickets = await serviceTickets({ shopIds: [...runShops] }, start, end);
+  const ticketsAt = (shopId: string) => Object.fromEntries([...tickets].filter(([k]) => k.endsWith(`|${shopId}`)).map(([k, n]) => [k.split("|")[0], n]));
   const blocks: BlockView[] = inRun.map(({ g, p }, i) => {
     const run = runOf.get(g.id);
     const snap = run ? (run.snapshot as Snapshot) : null;
@@ -491,6 +502,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
         const q = squireImportOf.get(g.shopId);
         return q ? { fileName: q.fileName, importedAt: q.importedAt.toISOString(), rows: q.rows, notes: q.notes } : null;
       })(),
+      serviceTickets: snap?.serviceTickets ?? ticketsAt(g.shopId),
     };
   });
   const grandAndCheck = runs.length ? assembleFromBlocks(blocks) : { grand: live.grand, mismatches: live.mismatches };
@@ -1454,6 +1466,7 @@ export async function lockPayroll(start: LocalDate, end: LocalDate, actor: Actor
         source: b.source,
         days: kept(b, (id) => (figures.get(id) ?? []).filter((d) => d.shopId === b.shopId)),
         weeks: kept(b, (id) => view.weeks[id] ?? []),
+        serviceTickets: b.serviceTickets,
       };
       const [run] = await tx
         .insert(payrollRuns)

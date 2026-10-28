@@ -7,6 +7,7 @@ import {
   PPH_RANKS,
   RANK_LABEL,
   addUp,
+  clientCountsOf,
   clientKey,
   clientsText,
   linePph,
@@ -82,6 +83,9 @@ describe("PPH on the Payroll Report", () => {
     expect(linePph(b, tickets)).toMatchObject({ servicePph: null, clientsPerHour: null });
     expect(linesPph([a, b]).servicePph).toBeCloseTo(910 / 43, 10);
     expect(linesPph([a, b], tickets)).toMatchObject({ clients: 88, hours: 43 });
+    expect(clientCountsOf([{ shopId: "s", serviceTickets: { a: 86, b: 2 } }, { shopId: "t", serviceTickets: { a: 1 } }, { shopId: "u" }])).toEqual(
+      new Map([[clientKey("a", "s"), 86], [clientKey("b", "s"), 2], [clientKey("a", "t"), 1]]),
+    );
   });
 
   const input = (o: Partial<LineInput> = {}): LineInput => ({

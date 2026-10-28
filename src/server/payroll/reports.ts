@@ -6,8 +6,7 @@ import { paidLeaveYear, rulesFor, workStateOf } from "@/domain/wage-hour";
 import { EXPORT_COLUMNS, LOCATIONS_COLUMNS, PAID_TIP_COLUMNS, PAYROLL_TIP_COLUMNS, extraFromOf, inNameOrder, locationSummary, sumColumns, toCents, type Line } from "@/domain/payroll/calc";
 import { FLAG_LABEL, FT_LABEL, PUNCH_LABEL, csv, type PunchType } from "@/domain/time-clock";
 import type { Permission } from "@/domain/permissions";
-import { NA, PPH_RANKS, RANK_LABEL, linePph, linesPph, pphOf, type Pph } from "@/domain/pph";
-import { blockTickets } from "@/server/service-tickets";
+import { NA, PPH_RANKS, RANK_LABEL, clientCountsOf, linePph, linesPph, pphOf, type Pph } from "@/domain/pph";
 import type { BarChart } from "@/domain/report-charts";
 import { ABSORPTION_LABEL, TIPS_PAID_STATUS_LABEL, employerTaxIdLabel, tipsPaidStatus, type TipsPaidBuckets, type TipsPaidStatus } from "@/domain/staff-payouts";
 import { Cell, Column, ListRow, ViewCtx, listTable } from "@/domain/report-views";
@@ -1460,7 +1459,7 @@ export async function payrollReportData(i: PayrollReportInput): Promise<ReportDa
   const tables: ReportData["tables"] = [];
   for (const r of [...runs].reverse()) {
     const blocks = locationBlocks(r.view, r.blocks.map((b) => b.shopId));
-    const tickets = await blockTickets(blocks);
+    const tickets = clientCountsOf(blocks);
     for (const b of blocks) {
       const rows = [
         ...b.lines.map((l) => [...locationsRow(l).map((v, j) => cell(LOCATIONS_COLUMNS[j], v)), ...pphCells(linePph(l, tickets))]),

@@ -5,8 +5,7 @@ import { formatPayHours } from "@/lib/hours";
 import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, TRAINING_RATE_SOURCE, fmtHours, fmtMoney, type Line, type Totals } from "@/domain/payroll/calc";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { reportView } from "@/domain/permissions";
-import { type ClientCounts, type Pph, type PphRank, PPH_RANKS, RANK_LABEL, clientKey, clientsText, linePph, linesPph, pphOf, pphText, workedHoursOf } from "@/domain/pph";
-import { blockTickets } from "@/server/service-tickets";
+import { type ClientCounts, type Pph, type PphRank, PPH_RANKS, RANK_LABEL, clientCountsOf, clientKey, clientsText, linePph, linesPph, pphOf, pphText, workedHoursOf } from "@/domain/pph";
 import { can, guardPage } from "@/server/auth/staff";
 import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, hoursOpenMessage, squireMissingMessage, payrollTrail, periodChoices, periodKey, preparersOf, RECORD_LABEL, SELF_APPROVAL, type ApprovalStatus, type PeriodChoice, type ApprovalView, type BlockView, type PayrollView } from "@/server/payroll/run";
 import { ApprovalControls } from "./approval";
@@ -110,9 +109,8 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
   const current = choices.findIndex((c) => c.current);
   const chosen = choices.find((c) => c.key === sp.period) ?? choices[current + 1] ?? choices[0];
   const view = chosen ? await buildPayroll(chosen.start, chosen.end) : null;
-  const [approval, trail, preparers, tickets] = view
-    ? await Promise.all([approvalOf(view), payrollTrail(view.start, view.end), preparersOf(view.start, view.end), blockTickets(view.blocks)])
-    : [null, [], [], new Map<string, number>()];
+  const [approval, trail, preparers] = view ? await Promise.all([approvalOf(view), payrollTrail(view.start, view.end), preparersOf(view.start, view.end)]) : [null, [], []];
+  const tickets = clientCountsOf(view?.blocks ?? []);
   const selfPrepared = !ctx.isOwner && preparers.some((p) => p.staffId === ctx.actor.staffId);
   const status = view ? approvalStatus(view, approval) : "draft";
   const canRun = can(ctx, "payroll.run");

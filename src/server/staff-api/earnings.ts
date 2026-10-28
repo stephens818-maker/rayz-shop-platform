@@ -20,8 +20,7 @@ import {
   trainingLine,
   type TrainingLine,
 } from "@/domain/my-earnings";
-import { type ClientCounts, linesPph } from "@/domain/pph";
-import { blockTickets } from "@/server/service-tickets";
+import { type ClientCounts, clientCountsOf, linesPph } from "@/domain/pph";
 import { appPayoutStatus, appTransferStatus } from "@/domain/staff-payouts";
 import { employeeFeeCents, receivedCents } from "@/domain/tips";
 import { SHOP_TZ, addDays, diffDays, endOfLocalDay, isValidLocalDate, localDateOf, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
@@ -458,15 +457,15 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
   const per = earningsPeriod(cals, q, today);
   const shopIds = per.cals.map((c) => c.shop.id);
   const view = await buildPayroll(per.start, per.end, { clockChecks: false });
-  const [state, ledger, days, declared, covered, setup, tickets] = await Promise.all([
+  const [state, ledger, days, declared, covered, setup] = await Promise.all([
     periodStates([per], today, new Map([[per.start, view]])).then((m) => m.get(per.start)!),
     see.tips ? myLedger(me, shopIds, { from: per.start, to: per.end }) : [],
     see.tips ? myDays(me, shopIds, per.start, per.end, today) : [],
     see.tips ? currentDeclarationsOf(me, shopIds, per.start, per.end) : [],
     see.tips ? shopCoveredRefunds(me, shopIds, per.start, per.end) : [],
     payoutSetup(ctx),
-    see.sales && see.hours && view ? blockTickets(view.blocks.filter((b) => shopIds.includes(b.shopId)), [me]) : new Map<string, number>(),
   ]);
+  const tickets = clientCountsOf(view?.blocks ?? []);
   const routes = await tipRoutesOf(setup);
   const countsTowardOt = (view?.settings ?? DEFAULT_PAYROLL_SETTINGS).trainingCountsTowardOt;
   const trainingOf = (lines: readonly Line[]) => (see.wages ? seenTraining(trainingLine(lines, { countsTowardOt }), see.hours) : null);

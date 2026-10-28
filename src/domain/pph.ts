@@ -93,6 +93,9 @@ type PayLine = { staffId: string; shopId: string; service: number; product: numb
 /** Completed service tickets per person and shop, keyed by {@link clientKey}. */
 export type ClientCounts = ReadonlyMap<string, number>;
 export const clientKey = (staffId: string, shopId: string) => `${staffId}|${shopId}`;
+/** The Payroll Report blocks' tickets (each shop's, by employee, as at the lock once locked) as counts. */
+export const clientCountsOf = (blocks: readonly { shopId: string; serviceTickets?: Record<string, number> }[]): ClientCounts =>
+  new Map(blocks.flatMap((b) => Object.entries(b.serviceTickets ?? {}).map(([staffId, n]) => [clientKey(staffId, b.shopId), n] as const)));
 const inputOf = (l: PayLine, clients: ClientCounts): PphInput => ({ service: l.service, product: l.product, clients: clients.get(clientKey(l.staffId, l.shopId)) ?? 0, hours: workedHoursOf(l) });
 export const linePph = (l: PayLine, clients: ClientCounts = new Map()) => pph(inputOf(l, clients));
 /** Several lines (a shop's block, every shop): their sales and tickets over their worked hours. */

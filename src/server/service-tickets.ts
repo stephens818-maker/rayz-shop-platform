@@ -1,6 +1,6 @@
 import "server-only";
 import { sql } from "drizzle-orm";
-import { type ClientCounts, clientKey } from "@/domain/pph";
+import { clientKey } from "@/domain/pph";
 import type { LocalDate } from "@/lib/time";
 import { type ReportScope, rows, staffFilter, uuids } from "./report-sql";
 
@@ -31,19 +31,5 @@ export async function serviceTicketDays(
 export async function serviceTickets(s: Pick<ReportScope, "shopIds" | "staffId" | "staffIds">, from: LocalDate, to: LocalDate): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   for (const r of await serviceTicketDays(s, from, to)) out.set(clientKey(r.staffId, r.shopId), (out.get(clientKey(r.staffId, r.shopId)) ?? 0) + r.n);
-  return out;
-}
-
-/** Each Payroll Report block's tickets over its own pay period (only these people's, given staffIds): one read per period among the blocks. */
-export async function blockTickets(blocks: readonly { shopId: string; period: { start: LocalDate; end: LocalDate } }[], staffIds?: string[]): Promise<ClientCounts> {
-  const byPeriod = new Map<string, { start: LocalDate; end: LocalDate; shopIds: string[] }>();
-  for (const b of blocks) {
-    const k = `${b.period.start}_${b.period.end}`;
-    const p = byPeriod.get(k) ?? { start: b.period.start, end: b.period.end, shopIds: [] };
-    p.shopIds.push(b.shopId);
-    byPeriod.set(k, p);
-  }
-  const out = new Map<string, number>();
-  for (const m of await Promise.all([...byPeriod.values()].map((p) => serviceTickets({ shopIds: p.shopIds, staffIds }, p.start, p.end)))) for (const [k, n] of m) out.set(k, (out.get(k) ?? 0) + n);
   return out;
 }
