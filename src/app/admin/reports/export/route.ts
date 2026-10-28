@@ -5,9 +5,10 @@ import { can, reasonViewer, routeStaff } from "@/server/auth/staff";
 import { clientListDenied, clientPolicy } from "@/server/client-privacy";
 import { AppError } from "@/server/errors";
 import { reportContext } from "@/server/report-access";
-import { loadReport, tableCsv } from "@/server/report-data";
+import { loadReport, rangedTableCsv } from "@/server/report-data";
+import { RANGE_TIME_ZONE, rangeHeading } from "@/domain/report-range";
 import { reportPdf } from "@/server/report-pdf";
-import { formatDate, formatDateTime } from "@/lib/time";
+import { formatDateTime } from "@/lib/time";
 import { resolveScope } from "../scope";
 
 /** Older export links, kept working. */
@@ -50,13 +51,13 @@ export async function GET(req: Request) {
     return new Response(e instanceof AppError ? e.message : "Bad request", { status: 403 });
   }
   const data = await loadReport(key, { scope, loc: scope.loc, viewer: rctx, client: await clientPolicy(ctx), reasons: reasonViewer(ctx), params: p });
+  const range = rangeHeading({ from: scope.from, to: scope.to, label: scope.rangeLabel });
   const view = { combined: "", shops: "-by-location", barbers: "-by-barber", shops_barbers: "-by-location-and-barber" }[viewOf(scope.loc)];
   if (p.format === "pdf") {
     const meta = REPORTS.find((r) => r.key === key)!;
     const tables = key === "audit_log" && clientListDenied(ctx) ? data.tables.map(withoutClientEntries) : data.tables;
-    const range = scope.from === scope.to ? formatDate(scope.from, "MMM d, yyyy") : `${formatDate(scope.from, "MMM d, yyyy")} – ${formatDate(scope.to, "MMM d, yyyy")}`;
-    const pdf = reportPdf({ title: meta.label, subtitle: `${scope.label} · ${range}`, generated: `Generated ${formatDateTime(new Date())}`, stats: data.stats, tables, notes: data.notes });
-    await audit(ctx.actor, "report.export", "report", key, { format: "pdf", tables: tables.filter((t) => !t.exportOnly).map((t) => t.id), from: scope.from, to: scope.to, shops: scope.shopIds }, ctx.currentShopId);
+    const pdf = reportPdf({ title: meta.label, subtitle: `${scope.label} · ${range} (${RANGE_TIME_ZONE})`, generated: `Generated ${formatDateTime(new Date())}`, stats: data.stats, tables, notes: data.notes });
+    await audit(ctx.actor, "report.export", "report", key, { format: "pdf", tables: tables.filter((t) => !t.exportOnly).map((t) => t.id), from: scope.from, to: scope.to, preset: scope.preset, shops: scope.shopIds }, ctx.currentShopId);
     return new Response(new Uint8Array(pdf), {
       headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="rayz-${key.replace(/_/g, "-")}${view}-${scope.from}-to-${scope.to}.pdf"`, "Cache-Control": "no-store" },
     });
@@ -65,8 +66,8 @@ export async function GET(req: Request) {
   const found = tableId ? data.tables.find((t) => t.id === tableId) : data.tables[0];
   if (!found) return new Response("Unknown table", { status: 404 });
   const table = key === "audit_log" && clientListDenied(ctx) ? withoutClientEntries(found) : found;
-  const csv = tableCsv(table);
-  await audit(ctx.actor, "report.export", "report", key, { table: table.id, rows: table.rows.length, from: scope.from, to: scope.to, shops: scope.shopIds }, ctx.currentShopId);
+  const csv = rangedTableCsv(table, { report: REPORTS.find((r) => r.key === key)!.label, range, shops: scope.label, timeZone: RANGE_TIME_ZONE });
+  await audit(ctx.actor, "report.export", "report", key, { table: table.id, rows: table.rows.length, from: scope.from, to: scope.to, preset: scope.preset, shops: scope.shopIds }, ctx.currentShopId);
   const name =
     key === "audit_log"
       ? `rayz-audit-log${view}-${new Date().toISOString().slice(0, 10)}`

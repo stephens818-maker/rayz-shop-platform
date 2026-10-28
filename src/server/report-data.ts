@@ -1720,3 +1720,16 @@ export function tableCsv(t: ReportTable): string {
   const c = csvTable(t);
   return toCsv(c.headers, c.rows);
 }
+
+/** The lines a report CSV opens with before its table: the report, its dates, its shops and the time zone the dates are in. */
+export const RANGE_CSV_LINES = 3;
+
+/**
+ * A report table as CSV under a short heading with the date range, so a file opened later still
+ * says what it covers. Files made for importing elsewhere (a download link of their own, like the
+ * QuickBooks journal) stay exactly in their layout.
+ */
+export function rangedTableCsv(t: ReportTable, h: { report: string; range: string; shops: string; timeZone: string }): string {
+  if (t.downloadLabel) return tableCsv(t);
+  return `${toCsv(["Report", "Date range", "Shops", "Time zone"], [[`${h.report}: ${t.title}`, h.range, h.shops, h.timeZone]])}\n${tableCsv(t)}`;
+}

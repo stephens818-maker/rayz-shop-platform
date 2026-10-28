@@ -193,7 +193,7 @@ describe("Morning Dashboard formatting", () => {
 describe("Morning Dashboard layout", () => {
   it("puts exceptions and today first, then the numbers, with links into the app", () => {
     const doc = morningDoc(dash());
-    expect(doc.subject).toBe("Morning Dashboard Mon Oct 26: $1,200 net, up 20% · 1 urgent");
+    expect(doc.subject).toBe("Morning Dashboard Mon Oct 26: Sat Oct 24, $1,200 net, up 20% · 1 urgent");
     expect(doc.coverage).toBe("Numbers for Saturday, Oct 24 (Sunday closed), against last Saturday.");
     expect(doc.sections.map((s) => s.key)).toEqual(["exceptions", "today", "sales", "traffic", "utilization", "loyalty", "marketing", "reviews"]);
     expect(doc.tiles.map((t) => t.label)).toEqual(["Net sales", "Tickets", "Utilization", "No-shows"]);
@@ -273,7 +273,7 @@ describe("Morning Dashboard renderers", () => {
 
   it("renders plain text without arrows for the text part", () => {
     const t = renderMorningText(dash());
-    expect(t.subject).toBe("Morning Dashboard Mon Oct 26: $1,200 net, up 20% · 1 urgent");
+    expect(t.subject).toBe("Morning Dashboard Mon Oct 26: Sat Oct 24, $1,200 net, up 20% · 1 urgent");
     expect(t.body).not.toMatch(/[▲▼]/);
     expect(t.body).toContain("Net sales: $1,200.00 (+ 20%) · WTD $5,600.00 (+ 12%)");
     expect(t.body).toContain("NEEDS ATTENTION\n2 to handle, 1 urgent");

@@ -424,7 +424,8 @@ export function morningDoc(d: MorningDashboard, o: { barberRows?: number; except
     });
 
   const skipped = p.skipped.length ? ` (${p.skipped.map((x) => formatDate(x, "EEEE")).join(", ")} closed)` : "";
-  const headline = s ? `: ${dollars(s.net.day)} net, ${changeWords(s.net.day, s.net.prior)}` : "";
+  // The subject says which day's numbers it carries: the email comes the morning after.
+  const headline = `: ${formatDate(p.reportDay, "EEE MMM d")}${s ? `, ${dollars(s.net.day)} net, ${changeWords(s.net.day, s.net.prior)}` : ""}`;
   const flag = urgent ? ` · ${urgent} urgent` : toHandle ? ` · ${toHandle} to handle` : "";
   return {
     subject: `Morning Dashboard ${formatDate(p.today, "EEE MMM d")}${d.version.scope === "all" ? "" : ` · ${d.version.label}`}${headline}${flag}`,

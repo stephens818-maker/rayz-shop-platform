@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { notificationJobs, savedReportSends, savedReports, staff } from "@/db/schema";
 import { ReportDefinition, ReportSchedule, cellText, duePeriod, totalHeader, totalType, type ExportFormat, type ReportResult } from "@/domain/report-builder";
 import { appBaseUrl } from "@/lib/deployment";
+import { RANGE_TIME_ZONE } from "@/domain/report-range";
 import { formatDateTime, localMinutesOf, todayLocal, type LocalDate } from "@/lib/time";
 import { audit } from "../audit";
 import type { StaffContext } from "../auth/staff";
@@ -61,12 +62,12 @@ function email(r: Row, firstName: string, result: RunResult, file: ExportFile | 
   const link = `${appBaseUrl()}/admin/reports/custom/${r.id}`;
   const lines = totalsSummary(result, ReportDefinition.parse(r.definition).summary);
   const attached = file ? `The ${file.filename.split(".").pop()!.toUpperCase()} is attached.` : why ? `No file is attached: ${why.charAt(0).toLowerCase()}${why.slice(1)}.` : "";
-  const subject = `${r.name}: ${lines[0]}`;
-  const body = [`Hi ${firstName},`, "", `${r.name}`, `${result.rangeLabel} · ${result.scopeLabel}`, "", ...lines.map((l) => `- ${l}`), "", attached, `Open it: ${link}`, "", "Change or stop this email in the report's schedule."].filter((l, i, a) => l !== "" || a[i - 1] !== "").join("\n");
+  const subject = `${r.name} · ${result.rangeLabel}: ${lines[0]}`;
+  const body = [`Hi ${firstName},`, "", `${r.name}`, `${result.rangeLabel} · ${result.scopeLabel} · dates in ${RANGE_TIME_ZONE}`, "", ...lines.map((l) => `- ${l}`), "", attached, `Open it: ${link}`, "", "Change or stop this email in the report's schedule."].filter((l, i, a) => l !== "" || a[i - 1] !== "").join("\n");
   const html = `<div style="font-family:system-ui,sans-serif;font-size:14px;color:#18181b;max-width:560px">
 <p>Hi ${escapeHtml(firstName)},</p>
 <h2 style="font-size:18px;margin:16px 0 4px">${escapeHtml(r.name)}</h2>
-<p style="color:#71717a;margin:0 0 12px">${escapeHtml(result.rangeLabel)} · ${escapeHtml(result.scopeLabel)}</p>
+<p style="color:#71717a;margin:0 0 12px">${escapeHtml(result.rangeLabel)} · ${escapeHtml(result.scopeLabel)} · dates in ${RANGE_TIME_ZONE}</p>
 <ul style="padding-left:18px">${lines.map((l) => `<li>${escapeHtml(l)}</li>`).join("")}</ul>
 ${attached ? `<p>${escapeHtml(attached)}</p>` : ""}
 <p><a href="${escapeHtml(link)}" style="display:inline-block;background:#18181b;color:#fff;padding:8px 14px;border-radius:8px;text-decoration:none">Open the report</a></p>
