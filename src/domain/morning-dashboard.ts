@@ -31,7 +31,7 @@ export const SECTION_HINT: Record<MorningSection, string> = {
   sales: "Gross and net sales, services and products, tips, card fees, refunds and voids, tickets and average ticket, by location and barber",
   traffic: "New and returning clients, bookings made online, walk-in and at the desk, visits, cancellations and no-shows",
   utilization: "Booked against available hours per barber, and average time in the chair against the booked time",
-  pph: "Service PPH (the default), clients per hour, and product and total sales per clocked worked hour, by location, against the brand, and per barber",
+  pph: "Service PPH (the default), clients per hour, and product and total sales per clocked worked hour, plus product sales per client, by location, against the brand, and per barber",
   rebook: "Rebooked at checkout and the new-client rebook rate against the brand average, per barber, future appointments booked and 2nd-visit retention",
   loyalty: "Rewards issued and redeemed, gift cards sold and redeemed, and what's still owed on gift cards",
   marketing: "Campaign Center sends, clicks, bookings, coupon redemptions and attributed revenue",
@@ -253,21 +253,27 @@ export interface UtilizationBlock {
   cutTimes: { avgActualMin: number | null; avgBookedMin: number | null; n: number } | null;
 }
 
-/** Worked centi-hours, sales in cents and completed service tickets: a PPH is worked out from these (src/domain/pph.ts), never averaged. */
+/**
+ * Worked centi-hours, sales in cents and completed service tickets: a PPH is worked out from these
+ * (src/domain/pph.ts), never averaged. `served` is the unique clients behind product sales per client,
+ * counted across the group (so never added up).
+ */
 export interface PphFigures {
   centi: number;
   service: number;
   product: number;
   clients: number;
+  served: number;
 }
 
 export interface PphBlock {
   shops: ShopRef[];
-  /** Worked centi-hours, service and product sales in cents, and completed service tickets, for each period. */
+  /** Worked centi-hours, service and product sales in cents, completed service tickets and unique clients, for each period. */
   centi: Cmp;
   service: Cmp;
   product: Cmp;
   clients: Cmp;
+  served: Cmp;
   /** Each location, when there's more than one. */
   byShop: { shop: ShopRef; day: PphFigures; wtd: PphFigures }[];
   /** The whole brand; null when this version is the whole brand or their own numbers only. */

@@ -58,7 +58,7 @@ import { loadMilestoneSettings, teamAt, upcomingFor } from "./milestones/engine"
 import { processDueJobs } from "./notifications/queue";
 import { brandShopIds, rebookAt } from "./rebook-report";
 import { type PphRow, pphRows } from "./pph-report";
-import { pphCents, rankPph } from "@/domain/pph";
+import { pphCents, rankPph, uniqueClients } from "@/domain/pph";
 import { loadSettings as loadPayrollSettings } from "./payroll/groups";
 import { ZERO_SALES, availableMinutesAt, dailyTotals, giftCardTotalsByShop, kpisAt, loyaltyActivity, refundTotals, salesTotalsAt } from "./reports";
 import { stockLevels } from "./inventory/stock";
@@ -806,12 +806,13 @@ const figuresOf = (xs: readonly PphRow[]): PphFigures => ({
   service: xs.reduce((a, r) => a + r.serviceCents, 0),
   product: xs.reduce((a, r) => a + r.productCents, 0),
   clients: xs.reduce((a, r) => a + r.clients, 0),
+  served: uniqueClients(xs.map((r) => r.served)),
 });
 
 /**
- * Productivity Per Hour (src/domain/pph.ts) and clients per hour on the day and week to date, as the
- * PPH report works them out: per location, against the whole brand, and per barber. Without "every
- * barber's numbers" at a shop, it's their own numbers, as in the report.
+ * Productivity Per Hour (src/domain/pph.ts), clients per hour and product sales per client on the day
+ * and week to date, as the PPH report works them out: per location, against the whole brand, and per
+ * barber. Without "every barber's numbers" at a shop, it's their own numbers, as in the report.
  */
 async function pphBlock(c: Ctx): Promise<PphBlock | null> {
   const shops = c.allowed(reportView("pph"));
@@ -837,6 +838,7 @@ async function pphBlock(c: Ctx): Promise<PphBlock | null> {
     service: cmpOf((p) => f(p).service),
     product: cmpOf((p) => f(p).product),
     clients: cmpOf((p) => f(p).clients),
+    served: cmpOf((p) => f(p).served),
     byShop: shops.length > 1 ? shops.map((s) => ({ shop: s, day: figuresOf(t.day.filter((x) => x.shopId === s.id)), wtd: figuresOf(t.wtd.filter((x) => x.shopId === s.id)) })) : [],
     brand: brandDay && brandWtd ? { day: figuresOf(brandDay), wtd: figuresOf(brandWtd) } : null,
     byBarber: ranked,

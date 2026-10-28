@@ -32,7 +32,7 @@ import {
   reportLink,
   urgentCount,
 } from "./morning-dashboard";
-import { PPH_RANKS, RANK_LABEL, type PphRank, clientsText, pphCents, pphOf, pphText } from "./pph";
+import { PER_CLIENT_LABEL, PPH_RANKS, RANK_LABEL, type PphRank, clientsText, perClientCents, pphCents, pphOf, pphText } from "./pph";
 import { ptsLabel } from "./rebook";
 
 /** `hours` values are minutes, shown as hours. */
@@ -289,40 +289,42 @@ export function morningDoc(d: MorningDashboard, o: { barberRows?: number; except
   if (d.pph) {
     const x = d.pph;
     const P = (f: PphFigures) => pphCents(f.service, f.product, f.centi, f.clients);
-    const at = (per: "day" | "prior" | "wtd" | "wtdPrior"): PphFigures => ({ centi: x.centi[per], service: x.service[per], product: x.product[per], clients: x.clients[per] });
-    const shown = (m: PphRank, v: number | null) => (m === "clients" ? clientsText(v) : pphText(v, money));
-    const row = (m: PphRank): MetricRow => {
-      const v = (per: "day" | "prior" | "wtd" | "wtdPrior") => pphOf(P(at(per)), m);
+    type Per = "day" | "prior" | "wtd" | "wtdPrior";
+    const at = (per: Per): PphFigures => ({ centi: x.centi[per], service: x.service[per], product: x.product[per], clients: x.clients[per], served: x.served[per] });
+    const PC = (f: PphFigures) => pphText(perClientCents(f.product, f.served), money);
+    const rateRow = (label: string, v: (per: Per) => number | null, shown: (v: number | null) => string): MetricRow => {
       const ch = (cur: number | null, prev: number | null) => (cur === null || prev === null ? "—" : changeLabel(cur, prev));
       const tn = (cur: number | null, prev: number | null) => (cur === null || prev === null ? "neutral" : tone(cur, prev, false));
-      return { label: RANK_LABEL[m], day: shown(m, v("day")), dayChange: ch(v("day"), v("prior")), dayTone: tn(v("day"), v("prior")), wtd: shown(m, v("wtd")), wtdChange: ch(v("wtd"), v("wtdPrior")), wtdTone: tn(v("wtd"), v("wtdPrior")) };
+      return { label, day: shown(v("day")), dayChange: ch(v("day"), v("prior")), dayTone: tn(v("day"), v("prior")), wtd: shown(v("wtd")), wtdChange: ch(v("wtd"), v("wtdPrior")), wtdTone: tn(v("wtd"), v("wtdPrior")) };
     };
+    const row = (m: PphRank) => rateRow(RANK_LABEL[m], (per) => pphOf(P(at(per)), m), (v) => (m === "clients" ? clientsText(v) : pphText(v, money)));
+    const perClientRow = () => rateRow(PER_CLIENT_LABEL, (per) => perClientCents(x.product[per], x.served[per]), (v) => pphText(v, money));
     const blocks: Block[] = [
       {
         kind: "metrics",
-        rows: [...PPH_RANKS.map(row), metric("Worked hours", cmpOf((per) => x.centi[per] * 0.6), "hours")],
+        rows: [...PPH_RANKS.map(row), perClientRow(), metric("Worked hours", cmpOf((per) => x.centi[per] * 0.6), "hours")],
       },
     ];
     if (x.brand)
       blocks.push({
         kind: "note",
-        text: `Brand service PPH: ${pphText(P(x.brand.day).servicePph, money)} on the day, ${pphText(P(x.brand.wtd).servicePph, money)} week to date. Brand clients per hour: ${clientsText(P(x.brand.day).clientsPerHour)} on the day, ${clientsText(P(x.brand.wtd).clientsPerHour)} week to date.`,
+        text: `Brand service PPH: ${pphText(P(x.brand.day).servicePph, money)} on the day, ${pphText(P(x.brand.wtd).servicePph, money)} week to date. Brand clients per hour: ${clientsText(P(x.brand.day).clientsPerHour)} on the day, ${clientsText(P(x.brand.wtd).clientsPerHour)} week to date. Brand product sales per client: ${PC(x.brand.day)} on the day, ${PC(x.brand.wtd)} week to date.`,
       });
     if (x.byShop.length > 1)
       blocks.push({
         kind: "table",
         title: "By location",
-        columns: ["Location", `Service PPH ${L.dayShort}`, "WTD service PPH", "WTD clients/hr", "WTD total PPH"],
-        numeric: [false, true, true, true, true],
-        rows: x.byShop.map((s) => [s.shop.name, pphText(P(s.day).servicePph, money), pphText(P(s.wtd).servicePph, money), clientsText(P(s.wtd).clientsPerHour), pphText(P(s.wtd).totalPph, money)]),
+        columns: ["Location", `Service PPH ${L.dayShort}`, "WTD service PPH", "WTD clients/hr", "WTD total PPH", "WTD product/client"],
+        numeric: [false, true, true, true, true, true],
+        rows: x.byShop.map((s) => [s.shop.name, pphText(P(s.day).servicePph, money), pphText(P(s.wtd).servicePph, money), clientsText(P(s.wtd).clientsPerHour), pphText(P(s.wtd).totalPph, money), PC(s.wtd)]),
       });
     const c = cap(x.byBarber);
     if (x.byBarber.length)
       blocks.push({
         kind: "table",
         title: x.ownOnly ? "Your PPH" : "By barber, highest week-to-date service PPH first",
-        columns: ["Barber", `Service PPH ${L.dayShort}`, "WTD service PPH", "WTD clients/hr", "WTD product PPH", "WTD total PPH", "WTD hours"],
-        numeric: [false, true, true, true, true, true, true],
+        columns: ["Barber", `Service PPH ${L.dayShort}`, "WTD service PPH", "WTD clients/hr", "WTD product PPH", "WTD total PPH", "WTD product/client", "WTD hours"],
+        numeric: [false, true, true, true, true, true, true, true],
         narrow: [0, 1, 2, 3],
         rows: c.rows.map((b) => [
           b.label,
@@ -331,6 +333,7 @@ export function morningDoc(d: MorningDashboard, o: { barberRows?: number; except
           clientsText(P(b.wtd).clientsPerHour),
           pphText(P(b.wtd).productPph, money),
           pphText(P(b.wtd).totalPph, money),
+          PC(b.wtd),
           hoursLabel(b.wtd.centi * 0.6),
         ]),
       });
@@ -338,7 +341,7 @@ export function morningDoc(d: MorningDashboard, o: { barberRows?: number; except
     sections.push({
       key: "pph",
       title: SECTION_LABEL.pph,
-      subtitle: "Service PPH, the default, is service sales before tax and tips per clocked worked hour; clients per hour is completed service tickets over the same hours; N/A with no hours",
+      subtitle: "Service PPH, the default, is service sales before tax and tips per clocked worked hour; clients per hour is completed service tickets over the same hours; N/A with no hours. Product sales per client is product sales over unique clients served (a walk-in once per ticket); N/A with no clients",
       link: { label: "PPH report", href: reportLink(d, "/admin/reports/pph", p.wtdFrom, p.reportDay, x.shops) },
       blocks: [...blocks, ...partial(d, x.shops)],
     });
