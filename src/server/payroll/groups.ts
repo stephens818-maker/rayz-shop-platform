@@ -1,7 +1,7 @@
 import { and, eq, gte, inArray, lte } from "drizzle-orm";
 import { db, type DBorTx } from "@/db";
 import { payGroups, payrollEmployerStates, payrollEmployers, payrollRuns, shops, timesheetLocks } from "@/db/schema";
-import { DEFAULT_BRAND_CALENDAR, periodOf, type PayCalendar } from "@/domain/payroll/calendar";
+import { DEFAULT_BRAND_CALENDAR, type PayCalendar } from "@/domain/payroll/calendar";
 import type { PayrollSettings } from "@/domain/payroll/calc";
 import { workStateOf } from "@/domain/wage-hour";
 import { settingAt } from "../brand-sync/settings";
@@ -92,12 +92,14 @@ export async function loadSettings(): Promise<PayrollSettings> {
   return stripePayoutsOn() && !s.markPaidTips ? { ...s, markPaidTips: true } : s;
 }
 
-/** Whether a shop's pay period holding `date` is locked; time and overrides in it can't change then. */
+/** Whether a locked run of the shop (a pay period, or whole workweeks) holds `date`; time and overrides on it can't change then. */
 export async function isLockedOn(shopId: string, date: LocalDate, tx: DBorTx = db): Promise<boolean> {
   const [g] = await tx.select().from(payGroups).where(eq(payGroups.shopId, shopId));
   if (!g) return false;
-  const p = periodOf(groupCalendar(g), date);
-  const [r] = await tx.select({ id: payrollRuns.id }).from(payrollRuns).where(and(eq(payrollRuns.payGroupId, g.id), eq(payrollRuns.periodStart, p.start)));
+  const [r] = await tx
+    .select({ id: payrollRuns.id })
+    .from(payrollRuns)
+    .where(and(eq(payrollRuns.payGroupId, g.id), lte(payrollRuns.periodStart, date), gte(payrollRuns.periodEnd, date)));
   return !!r;
 }
 

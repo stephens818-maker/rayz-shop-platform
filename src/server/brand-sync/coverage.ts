@@ -143,6 +143,7 @@ export const TABLES: Record<string, Coverage> = {
   payroll_squire_imports: is("record", "A shop's Squire Commissions report imported for one pay period during the rollout"),
   payroll_squire_inputs: is("record", "One person's figures from that report"),
   payroll_rates: is("person", "One person's pay rates"),
+  payroll_rate_versions: is("person", "One person's effective-dated pay rates"),
   payroll_runs: REC,
   platform_loss_recoveries: PAY,
   platform_losses: PAY,

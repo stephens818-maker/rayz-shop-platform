@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, payGroups, payrollApprovals, payrollCommissionAdjustments, payrollEmployers, payrollFinalPays, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, payrollSquireImports, payrollSquireInputs, sales as salesTable, shopHours, shops as shopsTable, staff, timeEntries, timePunches, tipLedger, type PayrollApprovalTotals } from "@/db/schema";
+import { auditLog, payGroups, payrollApprovals, payrollCommissionAdjustments, payrollEmployers, payrollFinalPays, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRateVersions, payrollRuns, payrollSquireImports, payrollSquireInputs, sales as salesTable, shopHours, shops as shopsTable, staff, timeEntries, timePunches, tipLedger, type PayrollApprovalTotals } from "@/db/schema";
 import { calendarProblem, periodOf, periodStarting, periodsAround, sameCalendar, workweeksOf, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
 import {
   OVERRIDABLE,
@@ -34,7 +34,7 @@ import {
 } from "@/domain/payroll/calc";
 import { minimumWageCents, minimumWageShortfallCents, rulesFor } from "@/domain/wage-hour";
 import { dailyHours, overtimeSlices, sliceKey, trainingOtCenti, weekStartOf, type DayHours, type Slice, type TimeEntry } from "@/domain/payroll/overtime";
-import { addDays, endOfLocalDay, formatDate, localDateOf, startOfLocalDay, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
+import { addDays, endOfLocalDay, formatDate, isValidLocalDate, localDateOf, startOfLocalDay, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
 import { loadStaffAccess } from "@/server/auth/access";
 import { AppError } from "@/server/errors";
@@ -42,7 +42,7 @@ import { clientVisits, serviceTickets } from "@/server/service-tickets";
 import { notSquireEra } from "@/server/squire-era";
 import { loadRolloutPlan, type PayrollSource } from "@/server/rollout-plan";
 import { guaranteeTopUps, exportExtras } from "@/domain/compensation";
-import { loadCompensationSettings, payrollPlans, setupRates } from "@/server/compensation";
+import { loadCompensationSettings, lockedThrough, payrollPlans, setupRateBook } from "@/server/compensation";
 import { payrollSalesBetween, unassignedSalesBetween, type PayrollSalesRow } from "@/server/reports";
 import { declaredByDay, declaredTipsBetween } from "@/server/tips/declarations";
 import { syncTipLedger } from "@/server/tips/ledger";
@@ -56,6 +56,7 @@ import { trainingRatesFor } from "./training-rates";
 import { trainingRateFor } from "@/domain/payroll/training-rate";
 import { ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type LegalEntity, type PayGroup } from "./groups";
 import { groupCalendar, resyncPeriodDates, savePeriodDates as savePeriodDatesFor } from "./period-dates";
+import { rangeText, wholeWorkweeks, workweekProblem } from "@/domain/report-range";
 
 export { DEFAULT_CALENDAR, ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type PayGroup } from "./groups";
 
@@ -95,6 +96,8 @@ export async function periodChoices(now = new Date()): Promise<PeriodChoice[]> {
 
 export interface WeekBreakdown {
   weekStart: LocalDate;
+  /** A review: the week is only partly in the dates, so the OT on their days is an estimate. */
+  partial?: boolean;
   /** Hours that count toward the 40, across every shop of the entity. */
   basis: number;
   ot: number;
@@ -159,8 +162,30 @@ export interface PayrollView {
   hoursOpen: { shopId: string; shop: string; periods: { start: LocalDate; end: LocalDate }[]; waiting: string[] }[];
   /** Shops still open whose payroll for the period comes from Squire and whose Squire report isn't imported yet. Approve and lock waits for them. */
   squireMissing: { shopId: string; shop: string }[];
-  /** A review of dates that aren't one official pay period: never approved, locked or exported. */
+  /** A review of dates that aren't whole workweeks: never approved, locked or exported. */
   review: ReviewInfo | null;
+  kind: RunKind;
+  /** What an approval of these dates covers: "" for a pay period (every shop on it) and a review, the shops' ids for a run of whole workweeks. */
+  scope: string;
+  /** A run of whole workweeks: the shops it covers. Null for a pay period and a review. */
+  scopeShopIds: string[] | null;
+  /** Shops picked but left out (payroll from Squire's reports is per pay period). */
+  excluded: { shopId: string; shop: string; reason: string }[];
+  /** Locked runs of these shops that overlap the dates without being them: approve, lock and the files wait until the dates don't overlap one. */
+  lockOverlaps: LockOverlap[];
+}
+
+/**
+ * What a set of dates is on the Payroll Report: one pay group's pay period (the usual run), a run of
+ * whole Sunday–Saturday workweeks for the shops picked, or a review of any other dates.
+ */
+export type RunKind = "pay_period" | "weeks" | "review";
+
+export interface LockOverlap {
+  shopId: string;
+  shop: string;
+  start: LocalDate;
+  end: LocalDate;
 }
 
 export interface ReviewInfo {
@@ -168,9 +193,31 @@ export interface ReviewInfo {
   partialWeeks: { weekStart: LocalDate; from: LocalDate; to: LocalDate }[];
   /** Shops left out of the review, and why (payroll from Squire's reports is per pay period). */
   excluded: { shopId: string; shop: string; reason: string }[];
+  /** OT hours on the range's days of partial weeks, by `staffId|shopId`: an estimate, since the rest of the week is outside the range. */
+  otEstimates: Record<string, number>;
 }
 
-export const NOT_OFFICIAL = "Not an official pay period: approve and lock and the iSolved files work only on a full pay period of a pay group (Dubuque runs on its own calendar).";
+export const NOT_OFFICIAL =
+  "Not an official pay period: approve, lock and the iSolved files need whole Sunday–Saturday workweeks in America/Chicago (a pay period is the usual run; Dubuque runs on its own calendar).";
+
+/** Why these dates can't be approved, locked or exported: not whole workweeks. */
+export function notWholeWeeksMessage(start: LocalDate, end: LocalDate): string {
+  const why = workweekProblem(start, end);
+  return why
+    ? `Not an official pay period: approve, lock and the iSolved files need whole Sunday–Saturday workweeks in America/Chicago, and ${rangeText(start, end)} ${why}. Pick a pay period, or dates from a Sunday to a Saturday.`
+    : NOT_OFFICIAL;
+}
+
+/** Why these dates can't be approved, locked or exported: they overlap a run that's already locked. */
+export function overlapMessage(list: readonly LockOverlap[]): string {
+  const by = new Map<string, string[]>();
+  for (const o of list) by.set(rangeText(o.start, o.end), [...(by.get(rangeText(o.start, o.end)) ?? []), o.shop]);
+  const parts = [...by].map(([dates, shops]) => `${dates} is locked at ${listed(shops, 4, ", ")}`);
+  return `These dates overlap a locked run: ${parts.join("; ")}. Approve, lock and the iSolved files need dates that don't overlap one: pick dates after it, or the locked dates themselves to see them as locked.`;
+}
+
+const scopeOf = (shopIds: readonly string[]) => [...shopIds].sort().join(",");
+const scopeDetail = (view: Pick<PayrollView, "kind" | "scopeShopIds">) => (view.kind === "weeks" ? { run: "weeks", shopIds: view.scopeShopIds } : {});
 
 /** The pay groups whose calendar has exactly this pay period (numbered), or an empty list for any other dates. */
 export async function officialGroups(start: LocalDate, end: LocalDate): Promise<PayGroup[]> {
@@ -178,6 +225,25 @@ export async function officialGroups(start: LocalDate, end: LocalDate): Promise<
     const p = periodStarting(g.calendar, start);
     return p !== null && p.end === end && p.number >= 1;
   });
+}
+
+/**
+ * The view approve, lock and the iSolved files act on for these dates: a pay period of a pay group
+ * (of one of `shopIds`, when given), else a run of whole workweeks for `shopIds`, else null.
+ */
+export async function payrollRunView(start: LocalDate, end: LocalDate, shopIds: readonly string[] | null = null, o: { clockChecks?: boolean } = {}): Promise<PayrollView | null> {
+  const groups = await officialGroups(start, end);
+  if (groups.length && (!shopIds || groups.some((g) => shopIds.includes(g.shopId)))) return buildPayroll(start, end, o);
+  if (shopIds?.length && wholeWorkweeks(start, end)) return buildPayroll(start, end, { ...o, weeks: { shopIds } });
+  return null;
+}
+
+/** Why approve, lock and the iSolved files can't act on these dates and shops, or null when they can. */
+export async function runRefusal(start: LocalDate, end: LocalDate, shopIds: readonly string[] | null = null): Promise<string | null> {
+  const view = await payrollRunView(start, end, shopIds, { clockChecks: false });
+  if (!view) return notWholeWeeksMessage(start, end);
+  if (view.lockOverlaps.length) return overlapMessage(view.lockOverlaps);
+  return null;
 }
 
 /** The same view cut down to some of its shops: their blocks, totals, checks and flags. */
@@ -288,37 +354,60 @@ export function driftOf(locked: readonly Pick<Line, "staffId" | "name" | "input"
 const centi = (x: number) => x / 100;
 
 /**
- * Everything on the Payroll Report for one pay period: each shop (pay group) whose calendar has this
- * period, with its rows, totals, export rows, the reconciliation result and anomalies. A locked shop
+ * Everything on the Payroll Report for one run: each shop (pay group) whose calendar has this pay
+ * period, or (`weeks`) the shops picked over whole workweeks, or (`review`) the shops picked over any
+ * dates, with its rows, totals, export rows, the reconciliation result and anomalies. A locked shop
  * comes back exactly as it was approved. Without `clockChecks` (an employee's own pay), the time
  * clock's flags and hours gate are left out.
  */
-export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockChecks?: boolean; review?: { shopIds: readonly string[] } } = {}): Promise<PayrollView | null> {
+export async function buildPayroll(
+  start: LocalDate,
+  end: LocalDate,
+  o: { clockChecks?: boolean; review?: { shopIds: readonly string[] }; weeks?: { shopIds: readonly string[] } } = {},
+): Promise<PayrollView | null> {
   const groups = await ensurePayGroups();
   const review = o.review ?? null;
+  const weeksRun = !review && o.weeks && wholeWorkweeks(start, end) ? o.weeks : null;
+  const picked = review ?? weeksRun;
+  const kind: RunKind = review ? "review" : weeksRun ? "weeks" : "pay_period";
   const rollout = await loadRolloutPlan();
   const excluded: ReviewInfo["excluded"] = [];
-  const inRun = review
+  const inRun = picked
     ? groups
-        .filter((g) => review.shopIds.includes(g.shopId))
+        .filter((g) => picked.shopIds.includes(g.shopId))
         .filter((g) => {
           const squire = rollout.sourceOf(g.shopId, start) === "squire" || rollout.sourceOf(g.shopId, end) === "squire";
           if (squire) excluded.push({ shopId: g.shopId, shop: g.shop, reason: "its payroll comes from Squire's Commissions report, which is per pay period" });
           return !squire;
         })
-        .map((g) => ({ g, p: reviewPeriod(start, end) }))
+        .map((g) => ({ g, p: review ? reviewPeriod(start, end) : weeksPeriod(g.calendar, start, end) }))
     : groups.map((g) => ({ g, p: periodStarting(g.calendar, start) })).filter((x): x is { g: PayGroup; p: CalendarPeriod } => x.p !== null && x.p.end === end && x.p.number >= 1);
   if (!inRun.length) return null;
   const settings = await loadSettings();
   const groupOf = new Map(groups.map((g) => [g.shopId, g]));
   const calOf = (shopId: string) => groupOf.get(shopId)?.calendar ?? settings.calendar;
   const runShops = new Set(inRun.map((x) => x.g.shopId));
-  const runs = review ? [] : await db.select().from(payrollRuns).where(and(eq(payrollRuns.periodStart, start), eq(payrollRuns.periodEnd, end)));
+  const runGroups = new Set(inRun.map((x) => x.g.id));
+  const runs = review ? [] : (await db.select().from(payrollRuns).where(and(eq(payrollRuns.periodStart, start), eq(payrollRuns.periodEnd, end)))).filter((r) => runGroups.has(r.payGroupId));
   const runOf = new Map(runs.map((r) => [r.payGroupId, r]));
+  const lockOverlaps: LockOverlap[] = review
+    ? []
+    : (
+        await db
+          .select({ g: payrollRuns.payGroupId, s: payrollRuns.periodStart, e: payrollRuns.periodEnd })
+          .from(payrollRuns)
+          .where(and(inArray(payrollRuns.payGroupId, [...runGroups]), lte(payrollRuns.periodStart, end), gte(payrollRuns.periodEnd, start)))
+      )
+        .filter((r) => r.s !== start || r.e !== end)
+        .map((r) => {
+          const g = inRun.find((x) => x.g.id === r.g)!.g;
+          return { shopId: g.shopId, shop: g.shop, start: r.s, end: r.e };
+        })
+        .sort((a, b) => a.start.localeCompare(b.start) || a.shop.localeCompare(b.shop));
   const sourceOf = new Map(
     inRun.map(({ g }) => {
       const run = runOf.get(g.id);
-      return [g.shopId, run ? ((run.snapshot as Snapshot).source ?? "platform") : review ? "platform" : rollout.sourceOf(g.shopId, start)] as const;
+      return [g.shopId, run ? ((run.snapshot as Snapshot).source ?? "platform") : picked ? "platform" : rollout.sourceOf(g.shopId, start)] as const;
     }),
   );
   const squireShops = new Set([...runShops].filter((id) => sourceOf.get(id) === "squire"));
@@ -349,8 +438,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
     trainingCountsTowardOt: settings.trainingCountsTowardOt,
     dailyThresholdCenti: settings.dailyOtHours ? Math.round(settings.dailyOtHours * 100) : null,
     entityOf: (shopId) => groupOf.get(shopId)?.legalEntity ?? "",
-    // A review splits each workweek at the range's edges: the week's overtime is worked out over the whole week, and the range gets what's worked inside it.
-    periodOf: review ? (_, date) => (date < start ? REVIEW_BEFORE : date > end ? REVIEW_AFTER : start) : (shopId, date) => periodOf(calOf(shopId), date).start,
+    periodOf: slicePeriodOf(kind, start, end, runShops, calOf),
     locked,
   });
   const mine = slices.filter((s) => s.periodStart === start && runShops.has(s.shopId) && s.weekStart >= weeks[0] && s.weekStart <= weeks[weeks.length - 1]);
@@ -377,9 +465,11 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
     : [[], []];
   const squireOf = new Map(squireRows.map((r) => [`${r.staffId}|${r.shopId}`, r]));
   const squireImportOf = new Map(squireImports.map((r) => [r.shopId, r]));
-  const overrides = review ? [] : await db.select().from(payrollOverrides).where(and(eq(payrollOverrides.periodStart, start), inArray(payrollOverrides.shopId, [...runShops])));
-  const lateOf = review ? new Map<string, LateCommission[]>() : await lateCommissionsFor([...runShops], start, settings);
-  const finals = review ? [] : await db.select().from(payrollFinalPays).where(eq(payrollFinalPays.periodStart, start));
+  // Adjustments, late commission and final pay are keyed by the pay period they're entered on.
+  const adjusted = kind === "pay_period";
+  const overrides = adjusted ? await db.select().from(payrollOverrides).where(and(eq(payrollOverrides.periodStart, start), inArray(payrollOverrides.shopId, [...runShops]))) : [];
+  const lateOf = adjusted ? await lateCommissionsFor([...runShops], start, settings) : new Map<string, LateCommission[]>();
+  const finals = adjusted ? await db.select().from(payrollFinalPays).where(eq(payrollFinalPays.periodStart, start)) : [];
   const finalIds = new Set(finals.map((f) => f.staffId));
   const finalInputs: LineInput[] = [];
   const [tipSplit, declared] = await Promise.all([payrollTipSplit(platformShops, start, end), declaredTipsBetween(platformShops, start, end)]);
@@ -405,7 +495,9 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
   const profile = new Map(profiles.map((p) => [p.staffId, p]));
   const rateOf = (staffId: string, shopId: string) => rates.find((r) => r.staffId === staffId && r.shopId === shopId) ?? rates.find((r) => r.staffId === staffId && r.shopId === null);
   const comp = await loadCompensationSettings();
-  const plans = comp.enabled && comp.payrollUsesPlans && staffIds.length ? await payrollPlans({ staffIds, start, end, days, fallbackOf: await setupRates(staffIds) }) : null;
+  const usePlans = comp.enabled && comp.payrollUsesPlans;
+  const book = staffIds.length ? await setupRateBook(staffIds) : null;
+  const plans = book && (usePlans || book.dated.size) ? await payrollPlans({ staffIds: usePlans ? staffIds : [], dated: book.dated, start, end, days, fallbackOf: book.fallbackOf }) : null;
   const trainingRates = await trainingRatesFor(staffIds);
   const trainingDays = new Map<string, { date: LocalDate; centi: number }[]>();
   for (const d of days) if (d.training > 0 && d.date >= start && d.date <= end) trainingDays.set(`${d.staffId}|${d.shopId}`, [...(trainingDays.get(`${d.staffId}|${d.shopId}`) ?? []), { date: d.date, centi: d.training }]);
@@ -599,6 +691,9 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
 
   const refundedAfterExport = review ? [] : await tipsRefundedAfterExport(blocks, start, end);
   const partialWeeks = review ? weeks.filter((w) => w < start || addDays(w, 6) > end).map((w) => ({ weekStart: w, from: w < start ? start : w, to: addDays(w, 6) > end ? end : addDays(w, 6) })) : [];
+  const partialStarts = new Set(partialWeeks.map((w) => w.weekStart));
+  const otEstimates: Record<string, number> = {};
+  for (const s of mine) if (partialStarts.has(s.weekStart) && s.ot) otEstimates[`${s.staffId}|${s.shopId}`] = r2(centi(s.ot) + (otEstimates[`${s.staffId}|${s.shopId}`] ?? 0));
   const flaggedAfterExport = new Set(refundedAfterExport.map((a) => `${a.staffId}|${a.shopId}`));
   return {
     start,
@@ -625,7 +720,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
     byEntityState: byEntityState(blocks),
     finalPays,
     ft,
-    weeks: lockedWeeks(runs, inRun.length) ?? weekBreakdowns(slices, staffIds, weeks, start, runShops, (id) => groupOf.get(id)?.shop ?? "Other shop"),
+    weeks: lockedWeeks(runs, inRun.length) ?? weekBreakdowns(slices, staffIds, weeks, start, runShops, (id) => groupOf.get(id)?.shop ?? "Other shop", partialStarts),
     locked: runs.length === 0 ? "none" : runs.length === inRun.length ? "all" : "some",
     hoursOpen: hoursCheck.unlocked.map((u) => ({
       shopId: u.shopId,
@@ -634,16 +729,38 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       waiting: [...new Set(hoursCheck.waiting.filter((w) => w.shopId === u.shopId).map((w) => w.label))],
     })),
     squireMissing: blocks.filter((b) => !b.locked && b.source === "squire" && !b.squireImport).map((b) => ({ shopId: b.shopId, shop: b.shop })),
-    review: review ? { partialWeeks, excluded } : null,
+    review: review ? { partialWeeks, excluded, otEstimates } : null,
+    kind,
+    scope: weeksRun ? scopeOf([...runShops]) : "",
+    scopeShopIds: weeksRun ? [...runShops].sort() : null,
+    excluded,
+    lockOverlaps,
   };
 }
 
 const REVIEW_BEFORE = "before";
 const REVIEW_AFTER = "after";
+const r2 = (x: number) => Math.round(x * 100) / 100;
+
+/**
+ * Which run each day's hours go to, for the overtime split. A pay period: each shop's own calendar.
+ * A run of whole weeks or a review: the run's shops split at its edges (each workweek's overtime is
+ * worked out over the whole week, and the run gets what's worked inside it), other shops by their calendar.
+ */
+function slicePeriodOf(kind: RunKind, start: LocalDate, end: LocalDate, runShops: ReadonlySet<string>, calOf: (shopId: string) => PayCalendar) {
+  if (kind === "pay_period") return (shopId: string, date: LocalDate) => periodOf(calOf(shopId), date).start;
+  return (shopId: string, date: LocalDate) => (!runShops.has(shopId) ? periodOf(calOf(shopId), date).start : date < start ? REVIEW_BEFORE : date > end ? REVIEW_AFTER : start);
+}
 
 /** A review's dates in a period's shape: no number, check or due date, never locked. */
 function reviewPeriod(start: LocalDate, end: LocalDate): CalendarPeriod {
   return { index: -1, number: 0, start, end, checkDate: end, submitBy: end, datesMoved: false, startsAt: startOfLocalDay(start), endsAt: endOfLocalDay(end) };
+}
+
+/** A run of whole workweeks in a period's shape: no iSolved period number (00 in a file name), and the check and due dates of the pay period its last day is in. */
+function weeksPeriod(cal: PayCalendar, start: LocalDate, end: LocalDate): CalendarPeriod {
+  const p = periodOf(cal, end);
+  return { index: -1, number: 0, start, end, checkDate: p.checkDate, submitBy: p.submitBy, datesMoved: p.datesMoved, startsAt: startOfLocalDay(start), endsAt: endOfLocalDay(end) };
 }
 
 /** Each person whose overtime fell in a workweek only partly in the review's range: the week's OT is the whole week's, and the range gets the part worked inside it. */
@@ -662,7 +779,7 @@ function partialWeekAnomalies(slices: readonly Slice[], partial: ReviewInfo["par
         staffId,
         shopId: here[0]?.shopId ?? null,
         kind: "partial_workweek",
-        message: `${name(staffId)}: the week of ${formatDate(w.weekStart, "MMM d")} is only partly in this range (${formatDate(w.from, "MMM d")} – ${formatDate(w.to, "MMM d")}). Its overtime is worked out over the whole Sunday–Saturday week: ${fmtHours(centi(weekOt))} of overtime that week, ${fmtHours(centi(inRange))} of it on days in the range${at ? ` (${at})` : ""}.`,
+        message: `${name(staffId)}: the week of ${formatDate(w.weekStart, "MMM d")} is only partly in this range (${formatDate(w.from, "MMM d")} – ${formatDate(w.to, "MMM d")}). Its overtime is worked out over the whole Sunday–Saturday week: ${fmtHours(centi(weekOt))} of overtime that week, an estimated ${fmtHours(centi(inRange))} of it on days in the range${at ? ` (${at})` : ""}.`,
       });
     }
   }
@@ -1308,7 +1425,7 @@ function lockedWeeks(runs: readonly { snapshot: unknown }[], shops: number): Rec
   return Object.assign({}, ...kept);
 }
 
-function weekBreakdowns(slices: Slice[], staffIds: string[], weeks: LocalDate[], start: LocalDate, runShops: Set<string>, shopName: (id: string) => string): Record<string, WeekBreakdown[]> {
+function weekBreakdowns(slices: Slice[], staffIds: string[], weeks: LocalDate[], start: LocalDate, runShops: Set<string>, shopName: (id: string) => string, partial: ReadonlySet<LocalDate>): Record<string, WeekBreakdown[]> {
   const out: Record<string, WeekBreakdown[]> = {};
   for (const id of staffIds) {
     out[id] = weeks
@@ -1316,6 +1433,7 @@ function weekBreakdowns(slices: Slice[], staffIds: string[], weeks: LocalDate[],
         const list = slices.filter((s) => s.staffId === id && s.weekStart === w);
         return {
           weekStart: w,
+          ...(partial.has(w) ? { partial: true } : {}),
           basis: centi(list.reduce((a, s) => a + s.basis, 0)),
           ot: centi(list.reduce((a, s) => a + s.ot, 0)),
           slices: list.map((s) => ({
@@ -1380,12 +1498,12 @@ export interface ApprovalView {
 }
 
 /** The period's active approval, and whether the figures still match it. */
-export async function approvalOf(view: Pick<PayrollView, "start" | "end" | "blocks">): Promise<ApprovalView | null> {
+export async function approvalOf(view: Pick<PayrollView, "start" | "end" | "blocks" | "scope">): Promise<ApprovalView | null> {
   const [a] = await db
     .select({ a: payrollApprovals, by: staff.displayLabel })
     .from(payrollApprovals)
     .leftJoin(staff, eq(staff.id, payrollApprovals.approvedBy))
-    .where(and(eq(payrollApprovals.periodStart, view.start), eq(payrollApprovals.periodEnd, view.end), isNull(payrollApprovals.revokedAt)));
+    .where(and(eq(payrollApprovals.periodStart, view.start), eq(payrollApprovals.periodEnd, view.end), eq(payrollApprovals.scope, view.scope), isNull(payrollApprovals.revokedAt)));
   if (!a) return null;
   const open = view.blocks.filter((b) => !b.locked);
   return { id: a.a.id, approvedAt: a.a.approvedAt.toISOString(), approvedBy: a.by, note: a.a.note, totals: a.a.totals, current: !open.length || figuresHash(open) === a.a.figuresHash };
@@ -1401,6 +1519,7 @@ export function approvalStatus(view: Pick<PayrollView, "locked">, a: Pick<Approv
 
 /** Why the period can't be approved or locked right now, in a line, or null. */
 export function approvalBlocked(view: PayrollView): string | null {
+  if (view.lockOverlaps.length) return "These dates overlap a locked run";
   if (view.mismatches.length) return `${view.mismatches.length} total${view.mismatches.length === 1 ? " doesn't" : "s don't"} reconcile`;
   if (view.squireMissing.length) return `Squire's report isn't imported for ${view.squireMissing.map((x) => x.shop).join(", ")}`;
   if (view.settings.hoursFromClock && view.hoursOpen.length) return `Hours aren't locked on the time clock at ${view.hoursOpen.length} shop${view.hoursOpen.length === 1 ? "" : "s"}`;
@@ -1410,10 +1529,18 @@ export function approvalBlocked(view: PayrollView): string | null {
 type Refusal = { error: string; mismatches?: Mismatch[] };
 
 /** What stops a period being approved or locked as it stands. */
-function gate(view: PayrollView | null): Refusal | null {
-  if (!view) return { error: NOT_OFFICIAL };
-  if (view.review) return { error: NOT_OFFICIAL };
-  if (view.locked !== "none") return { error: "This pay period is already locked." };
+function gate(view: PayrollView | null, start: LocalDate, end: LocalDate): Refusal | null {
+  if (!view || view.review) return { error: notWholeWeeksMessage(start, end) };
+  if (view.lockOverlaps.length) return { error: overlapMessage(view.lockOverlaps) };
+  if (view.locked !== "none")
+    return {
+      error:
+        view.kind === "weeks" && view.locked === "some"
+          ? `These dates are already locked at ${view.blocks.filter((b) => b.locked).map((b) => b.shop).join(", ")}. Pick the shops that aren't to run them.`
+          : view.kind === "weeks"
+            ? "These dates are already locked."
+            : "This pay period is already locked.",
+    };
   if (view.mismatches.length) return { error: "Totals don't reconcile, so the period can't be approved or locked.", mismatches: view.mismatches };
   if (view.squireMissing.length) return { error: squireMissingMessage(view.squireMissing) };
   if (view.settings.hoursFromClock && view.hoursOpen.length) return { error: hoursOpenMessage(view.hoursOpen) };
@@ -1460,9 +1587,9 @@ export async function preparersOf(start: LocalDate, end: LocalDate): Promise<{ s
  * figures revokes the earlier approval. The period still has to be locked; until then, a change
  * to the figures needs a new approval.
  */
-export async function approvePayroll(start: LocalDate, end: LocalDate, actor: Actor, note: string | null = null): Promise<Refusal | { approvalId: string }> {
-  const view = await buildPayroll(start, end);
-  const refused = gate(view);
+export async function approvePayroll(start: LocalDate, end: LocalDate, actor: Actor, note: string | null = null, shopIds: readonly string[] | null = null): Promise<Refusal | { approvalId: string }> {
+  const view = await payrollRunView(start, end, shopIds);
+  const refused = gate(view, start, end);
   if (refused || !view) return refused!;
   const selfApproved = actor.staffId ? (await preparersOf(start, end)).some((p) => p.staffId === actor.staffId) : false;
   if (selfApproved && !(await loadStaffAccess(actor.staffId!))?.isOwner) return { error: SELF_APPROVAL };
@@ -1473,20 +1600,20 @@ export async function approvePayroll(start: LocalDate, end: LocalDate, actor: Ac
     const [active] = await tx
       .select()
       .from(payrollApprovals)
-      .where(and(eq(payrollApprovals.periodStart, start), eq(payrollApprovals.periodEnd, end), isNull(payrollApprovals.revokedAt)))
+      .where(and(eq(payrollApprovals.periodStart, start), eq(payrollApprovals.periodEnd, end), eq(payrollApprovals.scope, view.scope), isNull(payrollApprovals.revokedAt)))
       .for("update");
     if (active?.figuresHash === hash) return { error: "These figures are already approved. Lock the period to finish." };
     if (active) {
       await tx.update(payrollApprovals).set({ revokedAt: new Date(), revokedBy: actor.staffId ?? null, revokeReason: "Approved again with changed figures" }).where(eq(payrollApprovals.id, active.id));
-      await audit(actor, "payroll.approval_revoked", "payroll_approval", active.id, { periodStart: start, periodEnd: end, reason: "Approved again with changed figures", figuresHash: active.figuresHash }, null, tx);
+      await audit(actor, "payroll.approval_revoked", "payroll_approval", active.id, { periodStart: start, periodEnd: end, ...scopeDetail(view), reason: "Approved again with changed figures", figuresHash: active.figuresHash }, null, tx);
     }
-    const [row] = await tx.insert(payrollApprovals).values({ periodStart: start, periodEnd: end, figuresHash: hash, totals, note: text, approvedBy: actor.staffId ?? null }).returning({ id: payrollApprovals.id });
+    const [row] = await tx.insert(payrollApprovals).values({ periodStart: start, periodEnd: end, scope: view.scope, figuresHash: hash, totals, note: text, approvedBy: actor.staffId ?? null }).returning({ id: payrollApprovals.id });
     await audit(
       actor,
       "payroll.approve",
       "payroll_approval",
       row.id,
-      { periodStart: start, periodEnd: end, figuresHash: hash, ...totals, anomalies: view.anomalies.length, note: text, ...(active ? { supersedes: active.id } : {}), ...(selfApproved ? { selfApproved: true } : {}) },
+      { periodStart: start, periodEnd: end, ...scopeDetail(view), figuresHash: hash, ...totals, anomalies: view.anomalies.length, note: text, ...(active ? { supersedes: active.id } : {}), ...(selfApproved ? { selfApproved: true } : {}) },
       null,
       tx,
     );
@@ -1495,19 +1622,20 @@ export async function approvePayroll(start: LocalDate, end: LocalDate, actor: Ac
 }
 
 /** Take back an approval before the lock, with a reason. A locked period stays as approved. */
-export async function revokeApproval(start: LocalDate, end: LocalDate, reason: string, actor: Actor): Promise<string | null> {
+export async function revokeApproval(start: LocalDate, end: LocalDate, reason: string, actor: Actor, shopIds: readonly string[] | null = null): Promise<string | null> {
   const why = reason.trim().slice(0, 300);
   if (!why) return "Say why the approval is taken back.";
-  const runs = await db.select({ id: payrollRuns.id }).from(payrollRuns).where(and(eq(payrollRuns.periodStart, start), eq(payrollRuns.periodEnd, end)));
-  if (runs.length) return "This pay period is locked, so its approval stands.";
+  const view = await payrollRunView(start, end, shopIds, { clockChecks: false });
+  if (!view) return notWholeWeeksMessage(start, end);
+  if (view.locked !== "none") return view.kind === "weeks" ? "These dates are locked, so their approval stands." : "This pay period is locked, so its approval stands.";
   return db.transaction(async (tx) => {
     const [active] = await tx
       .update(payrollApprovals)
       .set({ revokedAt: new Date(), revokedBy: actor.staffId ?? null, revokeReason: why })
-      .where(and(eq(payrollApprovals.periodStart, start), eq(payrollApprovals.periodEnd, end), isNull(payrollApprovals.revokedAt)))
+      .where(and(eq(payrollApprovals.periodStart, start), eq(payrollApprovals.periodEnd, end), eq(payrollApprovals.scope, view.scope), isNull(payrollApprovals.revokedAt)))
       .returning({ id: payrollApprovals.id, figuresHash: payrollApprovals.figuresHash });
-    if (!active) return "This pay period isn't approved.";
-    await audit(actor, "payroll.approval_revoked", "payroll_approval", active.id, { periodStart: start, periodEnd: end, reason: why, figuresHash: active.figuresHash }, null, tx);
+    if (!active) return view.kind === "weeks" ? "These dates aren't approved." : "This pay period isn't approved.";
+    await audit(actor, "payroll.approval_revoked", "payroll_approval", active.id, { periodStart: start, periodEnd: end, ...scopeDetail(view), reason: why, figuresHash: active.figuresHash }, null, tx);
     return null;
   });
 }
@@ -1516,9 +1644,9 @@ export async function revokeApproval(start: LocalDate, end: LocalDate, reason: s
  * Lock every shop in an approved period: the figures of record and the iSolved files are kept as
  * approved from then on. Needs a current approval: if anything changed since, approve again first.
  */
-export async function lockPayroll(start: LocalDate, end: LocalDate, actor: Actor): Promise<Refusal | { locked: number }> {
-  const view = await buildPayroll(start, end);
-  const refused = gate(view);
+export async function lockPayroll(start: LocalDate, end: LocalDate, actor: Actor, shopIds: readonly string[] | null = null): Promise<Refusal | { locked: number }> {
+  const view = await payrollRunView(start, end, shopIds);
+  const refused = gate(view, start, end);
   if (refused || !view) return refused!;
   const approval = await approvalOf(view);
   if (!approval) return { error: "Approve the period's figures before locking it." };
@@ -1545,9 +1673,9 @@ export async function lockPayroll(start: LocalDate, end: LocalDate, actor: Actor
     trainingCountsTowardOt: settings.trainingCountsTowardOt,
     dailyThresholdCenti: settings.dailyOtHours ? Math.round(settings.dailyOtHours * 100) : null,
     entityOf: (shopId) => groupOf.get(shopId)?.legalEntity ?? "",
-    periodOf: (shopId, date) => periodOf(groupOf.get(shopId)?.calendar ?? settings.calendar, date).start,
+    periodOf: slicePeriodOf(view.kind, start, end, runShops, (id) => groupOf.get(id)?.calendar ?? settings.calendar),
     locked: new Map(lockedRows.map((l) => [sliceKey({ ...l }), l.otCenti])),
-  }).filter((s) => s.periodStart === start && runShops.has(s.shopId));
+  }).filter((s) => s.periodStart === start && runShops.has(s.shopId) && s.weekStart >= weeks[0] && s.weekStart <= weeks[weeks.length - 1]);
   const figures = await dayFigures(null, [...runShops], start, end);
   const kept = <T>(b: (typeof view.blocks)[number], f: (staffId: string) => T) => Object.fromEntries(b.lines.map((l) => [l.staffId, f(l.staffId)]));
 
@@ -1570,7 +1698,7 @@ export async function lockPayroll(start: LocalDate, end: LocalDate, actor: Actor
         .values({ payGroupId: b.payGroupId, periodStart: start, periodEnd: end, periodNumber: b.period.number, checkDate: b.period.checkDate, settings, snapshot, lockedBy: actor.staffId ?? null })
         .onConflictDoNothing()
         .returning({ id: payrollRuns.id });
-      if (!run) throw new Error("This pay period was locked by someone else just now.");
+      if (!run) throw new AppError("conflict", view.kind === "weeks" ? "These dates were locked by someone else just now." : "This pay period was locked by someone else just now.");
       const mine = slices.filter((s) => s.shopId === b.shopId);
       if (mine.length) {
         await tx
@@ -1583,7 +1711,7 @@ export async function lockPayroll(start: LocalDate, end: LocalDate, actor: Actor
         "payroll.lock",
         "payroll_run",
         run.id,
-        { payGroup: b.payGroup, periodStart: start, periodEnd: end, periodNumber: b.period.number, rows: b.lines.length, laborCost: b.totals.laborCost, service: b.totals.service, inputsHash: snapshot.inputsHash, approvalId: approval.id, source: b.source },
+        { payGroup: b.payGroup, periodStart: start, periodEnd: end, ...scopeDetail(view), periodNumber: b.period.number, rows: b.lines.length, laborCost: b.totals.laborCost, service: b.totals.service, inputsHash: snapshot.inputsHash, approvalId: approval.id, source: b.source },
         b.shopId,
         tx,
       );
@@ -1595,15 +1723,15 @@ export async function lockPayroll(start: LocalDate, end: LocalDate, actor: Actor
 }
 
 /** Approve and lock in one step (both recorded): what the Payroll Report's two steps do back to back. */
-export async function approveAndLock(start: LocalDate, end: LocalDate, actor: Actor): Promise<Refusal | { locked: number }> {
-  const view = await buildPayroll(start, end);
-  const refused = gate(view);
+export async function approveAndLock(start: LocalDate, end: LocalDate, actor: Actor, shopIds: readonly string[] | null = null): Promise<Refusal | { locked: number }> {
+  const view = await payrollRunView(start, end, shopIds);
+  const refused = gate(view, start, end);
   if (refused || !view) return refused!;
   if (!(await approvalOf(view))?.current) {
-    const a = await approvePayroll(start, end, actor);
+    const a = await approvePayroll(start, end, actor, null, shopIds);
     if ("error" in a) return a;
   }
-  return lockPayroll(start, end, actor);
+  return lockPayroll(start, end, actor, shopIds);
 }
 
 /** The approved file for one shop. Only locked periods download; the file is built from what was approved. */
@@ -1625,11 +1753,11 @@ export async function lockedExport(payGroupId: string, start: LocalDate, end: Lo
  * built from the live figures while they still match the approval. Null before approval, or after a
  * change that needs approving again.
  */
-export async function approvedExport(payGroupId: string, start: LocalDate, end: LocalDate, exporter: PayrollExporter = isolvedTimecardExporter) {
+export async function approvedExport(payGroupId: string, start: LocalDate, end: LocalDate, exporter: PayrollExporter = isolvedTimecardExporter, shopIds: readonly string[] | null = null) {
   const locked = await lockedExport(payGroupId, start, end, exporter);
   if (locked) return locked;
-  const view = await buildPayroll(start, end, { clockChecks: false });
-  if (!view) return null;
+  const view = await payrollRunView(start, end, shopIds, { clockChecks: false });
+  if (!view || view.lockOverlaps.length) return null;
   const b = view.blocks.find((x) => x.payGroupId === payGroupId);
   const approval = await approvalOf(view);
   if (!b || b.locked || !approval?.current) return null;
@@ -1740,19 +1868,47 @@ export async function saveProfile(
   return null;
 }
 
-export async function saveRate(staffId: string, shopId: string | null, v: { hourlyRate: number; servicePct: number; productPct: number; trainingRate: number | null }, actor: Actor): Promise<string | null> {
+/** The first version of anyone's Payroll setup rates applies to every date before a change. */
+export const FIRST_RATE_DATE = "2000-01-01";
+
+/**
+ * Save an employee's Payroll setup rates, effective from a date (America/Chicago): each sale is paid
+ * at the version in effect on its sale date, each day's hours at that day's wage. Without a date,
+ * the latest version is changed, or a new one starts the day after the last locked pay period.
+ * Never on or before a locked pay period. Training rate isn't dated here (it's on the Staff page).
+ */
+export async function saveRate(
+  staffId: string,
+  shopId: string | null,
+  v: { hourlyRate: number; servicePct: number; productPct: number; trainingRate: number | null; effectiveFrom?: LocalDate | null },
+  actor: Actor,
+): Promise<string | null> {
+  const { effectiveFrom: picked = null, ...rates } = v;
   const bad = (x: number, max: number) => !Number.isFinite(x) || x < 0 || x > max;
-  if (bad(v.hourlyRate, 500)) return "Hourly wage is 0 to 500.";
-  if (bad(v.servicePct, 1) || bad(v.productPct, 1)) return "Percentages are 0% to 100%.";
-  if (v.trainingRate !== null && bad(v.trainingRate, 500)) return "Training rate is 0 to 500.";
-  const existing = await db
-    .select({ id: payrollRates.id })
-    .from(payrollRates)
-    .where(and(eq(payrollRates.staffId, staffId), shopId ? eq(payrollRates.shopId, shopId) : sql`${payrollRates.shopId} is null`));
-  if (existing[0]) await db.update(payrollRates).set({ ...v, updatedAt: new Date() }).where(eq(payrollRates.id, existing[0].id));
-  else await db.insert(payrollRates).values({ staffId, shopId, ...v });
-  await audit(actor, "payroll.rate", "staff", staffId, { shopId, ...v }, shopId);
-  return null;
+  if (bad(rates.hourlyRate, 500)) return "Hourly wage is 0 to 500.";
+  if (bad(rates.servicePct, 1) || bad(rates.productPct, 1)) return "Percentages are 0% to 100%.";
+  if (rates.trainingRate !== null && bad(rates.trainingRate, 500)) return "Training rate is 0 to 500.";
+  if (picked !== null && !isValidLocalDate(picked)) return "Pick the date the rates start.";
+  const same = (t: typeof payrollRates | typeof payrollRateVersions) => and(eq(t.staffId, staffId), shopId ? eq(t.shopId, shopId) : isNull(t.shopId));
+  return db.transaction(async (tx) => {
+    const locked = await lockedThrough(tx);
+    const versions = await tx.select().from(payrollRateVersions).where(same(payrollRateVersions)).orderBy(asc(payrollRateVersions.effectiveFrom));
+    const floor = locked ? addDays(locked, 1) : FIRST_RATE_DATE;
+    const latest = versions.at(-1)?.effectiveFrom ?? null;
+    const from = picked ?? (latest && latest > floor ? latest : floor);
+    if (locked && from <= locked) return `Rates can't change on or before a locked pay period: pick a date after ${formatDate(locked, "MMM d, yyyy")}.`;
+    const values = { hourlyRate: rates.hourlyRate, servicePct: rates.servicePct, productPct: rates.productPct };
+    const onDate = versions.find((x) => x.effectiveFrom === from);
+    if (onDate) await tx.update(payrollRateVersions).set({ ...values, createdBy: actor.staffId ?? null, createdAt: new Date() }).where(eq(payrollRateVersions.id, onDate.id));
+    else await tx.insert(payrollRateVersions).values({ staffId, shopId, effectiveFrom: from, ...values, createdBy: actor.staffId ?? null });
+    const newest = latest && latest > from ? versions[versions.length - 1] : { ...values };
+    const mirror = { hourlyRate: newest.hourlyRate, servicePct: newest.servicePct, productPct: newest.productPct, trainingRate: rates.trainingRate };
+    const [existing] = await tx.select({ id: payrollRates.id }).from(payrollRates).where(same(payrollRates));
+    if (existing) await tx.update(payrollRates).set({ ...mirror, updatedAt: new Date() }).where(eq(payrollRates.id, existing.id));
+    else await tx.insert(payrollRates).values({ staffId, shopId, ...mirror });
+    await audit(actor, "payroll.rate", "staff", staffId, { shopId, ...rates, effectiveFrom: from }, shopId, tx);
+    return null;
+  });
 }
 
 /** An employee's hours worked and overtime at a shop for the pay period starting then, as the punches give them (C6). */

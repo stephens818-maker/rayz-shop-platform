@@ -224,13 +224,14 @@ export interface BaseRates {
   servicePct: number;
   productPct: number;
 }
-export type Fallback = (shopId: string | null) => BaseRates;
+/** Payroll setup's rates at a shop (null: every shop) on a date: they're effective-dated. Without a date, the latest saved. */
+export type Fallback = (shopId: string | null, date?: LocalDate) => BaseRates;
 export const NO_RATES: BaseRates = { hourlyRate: 0, servicePct: 0, productPct: 0 };
 
 /** Dollars an hour at a shop on a version: its rate for that shop, else its rate, else Payroll setup's. */
-export function hourlyOn(v: CompVersion | null, shopId: string, fb: Fallback): number {
+export function hourlyOn(v: CompVersion | null, shopId: string, fb: Fallback, date?: LocalDate): number {
   const cents = v ? (v.shopHourlyRates.find((r) => r.shopId === shopId)?.cents ?? v.hourlyRateCents) : null;
-  return cents === null || cents === undefined ? fb(shopId).hourlyRate : cents / 100;
+  return cents === null || cents === undefined ? fb(shopId, date).hourlyRate : cents / 100;
 }
 
 /**
@@ -238,8 +239,8 @@ export function hourlyOn(v: CompVersion | null, shopId: string, fb: Fallback): n
  * hours × rate is what each day's hours earned. With no hours, the rate on the last day.
  */
 export function blendedHourly(days: readonly { date: LocalDate; centi: number }[], sorted: readonly CompVersion[], shopId: string, fb: Fallback, end: LocalDate): number {
-  const rated = days.filter((d) => d.centi).map((d) => ({ ...d, rate: hourlyOn(versionOn(sorted, d.date), shopId, fb) }));
-  if (!rated.length || rated.every((d) => d.rate === rated[0].rate)) return rated[0]?.rate ?? hourlyOn(versionOn(sorted, end), shopId, fb);
+  const rated = days.filter((d) => d.centi).map((d) => ({ ...d, rate: hourlyOn(versionOn(sorted, d.date), shopId, fb, d.date) }));
+  if (!rated.length || rated.every((d) => d.rate === rated[0].rate)) return rated[0]?.rate ?? hourlyOn(versionOn(sorted, end), shopId, fb, end);
   return rated.reduce((a, d) => a + d.centi * d.rate, 0) / rated.reduce((a, d) => a + d.centi, 0);
 }
 
@@ -264,11 +265,11 @@ export function mixedRates(
       .filter((l) => l.kind === kind)
       .map((l) => {
         const v = versionOn(sorted, l.saleDate);
-        const r = lineRate(v, { kind, refId: null, category: null, shopId }, fb);
+        const r = lineRate(v, { kind, refId: null, category: null, shopId }, fb, l.saleDate);
         return r.source === "tier" ? `tiers from ${v?.effectiveFrom}` : String(r.pct);
       });
   return [
-    ...(differ(days.filter((d) => d.centi && d.date >= start && d.date <= end).map((d) => hourlyOn(versionOn(sorted, d.date), shopId, fb))) ? (["wage"] as const) : []),
+    ...(differ(days.filter((d) => d.centi && d.date >= start && d.date <= end).map((d) => hourlyOn(versionOn(sorted, d.date), shopId, fb, d.date))) ? (["wage"] as const) : []),
     ...(differ(pctOf("service")) ? (["servicePct"] as const) : []),
     ...(differ(pctOf("product")) ? (["productPct"] as const) : []),
   ];
@@ -314,8 +315,8 @@ export interface CommissionLine {
 
 export type LineRate = { pct: number; source: "override" | "flat" | "product" } | { source: "tier" };
 
-export function lineRate(v: CompVersion | null, l: Pick<CommissionLine, "kind" | "refId" | "category" | "shopId">, fb: Fallback): LineRate {
-  if (l.kind === "product") return { pct: v?.productPct ?? fb(l.shopId).productPct, source: "product" };
+export function lineRate(v: CompVersion | null, l: Pick<CommissionLine, "kind" | "refId" | "category" | "shopId">, fb: Fallback, date?: LocalDate): LineRate {
+  if (l.kind === "product") return { pct: v?.productPct ?? fb(l.shopId, date).productPct, source: "product" };
   if (v) {
     const o =
       v.serviceOverrides.find((x) => x.kind === "service" && l.refId !== null && x.ref === l.refId) ??
@@ -323,7 +324,7 @@ export function lineRate(v: CompVersion | null, l: Pick<CommissionLine, "kind" |
     if (o) return { pct: o.pct, source: "override" };
     if (v.serviceTiers.length) return { source: "tier" };
   }
-  return { pct: v?.servicePct ?? fb(l.shopId).servicePct, source: "flat" };
+  return { pct: v?.servicePct ?? fb(l.shopId, date).servicePct, source: "flat" };
 }
 
 export interface CommissionTotals {
@@ -378,7 +379,7 @@ export function monthsBetween(from: LocalDate, to: LocalDate): { start: LocalDat
 export function commissionBetween(lines: readonly CommissionLine[], sorted: readonly CompVersion[], fb: Fallback, from: LocalDate, to: LocalDate): Map<string, CommissionTotals> {
   const out = new Map<string, CommissionTotals>();
   const at = (shopId: string) => out.get(shopId) ?? out.set(shopId, zeroTotals()).get(shopId)!;
-  const rated = lines.map((l) => ({ l, r: lineRate(versionOn(sorted, l.saleDate), l, fb) }));
+  const rated = lines.map((l) => ({ l, r: lineRate(versionOn(sorted, l.saleDate), l, fb, l.saleDate) }));
   for (const { l, r } of rated) {
     if (l.date < from || l.date > to) continue;
     const t = at(l.shopId);
@@ -407,7 +408,7 @@ export function commissionBetween(lines: readonly CommissionLine[], sorted: read
       const tiered = month.filter(({ l, r }) => r.source === "tier" && l.date <= x).reduce((a, { l }) => a + l.netCents, 0);
       if (!tiered) return 0;
       const v = versionOn(sorted, x);
-      const base = v?.servicePct ?? fb(null).servicePct;
+      const base = v?.servicePct ?? fb(null, x).servicePct;
       return (v?.serviceTiers.length ? tierRate(v.serviceTiers, v.tierMode, base, sales) : base) * tiered;
     };
     const amount = upTo(m.end) - upTo(addDays(m.start, -1));

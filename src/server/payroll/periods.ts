@@ -1,5 +1,5 @@
 import { periodByNumber, periodOf, periodByIndex, sameCalendar, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
-import { parsePayPeriodNumber, payPeriodNumberPreset } from "@/domain/report-range";
+import { PAYROLL_PRESETS, parsePayGroupPeriod, parsePayPeriodNumber, payGroupPeriodPreset, payPeriodNumberPreset } from "@/domain/report-range";
 import { addDays, formatDate, isValidLocalDate, todayLocal, type LocalDate } from "@/lib/time";
 import { brandCalendar, ensurePayGroups } from "./groups";
 
@@ -139,6 +139,40 @@ export async function payPeriodByNumber(preset: string): Promise<{ id: string; f
   const on = groups.filter((x) => sameCalendar(x.calendar, g.calendar));
   const where = [...(on.length < groups.length ? [on.map((x) => x.shop).join(", ")] : []), ...(n.year !== Number(todayLocal().slice(0, 4)) ? [String(n.year)] : [])];
   return { id: preset, from: p.start, to: p.end, payGroupId: g.id, number: p.number, label: `Pay period ${String(p.number).padStart(2, "0")}${where.length ? ` (${where.join(", ")})` : ""}` };
+}
+
+/** One pay group's current (the whole period holding today) or last pay period, on its own calendar: `ppg:<pay group>:current|last`, or null. */
+export async function payGroupPeriod(preset: string, today: LocalDate = todayLocal()): Promise<{ id: string; from: LocalDate; to: LocalDate; payGroupId: string; label: string } | null> {
+  const n = parsePayGroupPeriod(preset);
+  if (!n) return null;
+  const groups = await ensurePayGroups();
+  const g = groups.find((x) => x.id === n.payGroupId);
+  if (!g) return null;
+  const cur = periodOf(g.calendar, today);
+  const p = n.which === "current" ? cur : periodOf(g.calendar, addDays(cur.start, -1));
+  const on = groups.filter((x) => sameCalendar(x.calendar, g.calendar));
+  return { id: preset, from: p.start, to: p.end, payGroupId: g.id, label: `${n.which === "current" ? "Current" : "Last"} pay period (${on.map((x) => x.shop).join(", ")})` };
+}
+
+/**
+ * The Payroll Report's date chips for a set of shops: current and last pay period (on the calendar
+ * the shops share, else the brand's), this and last week, month to date; then each other pay
+ * calendar's own current and last pay period (Dubuque runs on its own).
+ */
+export async function payrollPresetChips(shopIds: readonly string[], today: LocalDate = todayLocal()): Promise<{ id: string; label: string }[]> {
+  const main = await calendarForShops(shopIds);
+  const groups = (await ensurePayGroups()).filter((g) => shopIds.includes(g.shopId) && !sameCalendar(g.calendar, main));
+  const own: { id: string; label: string }[] = [];
+  const seen: PayCalendar[] = [];
+  for (const g of groups) {
+    if (seen.some((c) => sameCalendar(c, g.calendar))) continue;
+    seen.push(g.calendar);
+    for (const which of ["current", "last"] as const) {
+      const p = await payGroupPeriod(payGroupPeriodPreset(g.id, which), today);
+      if (p) own.push({ id: p.id, label: p.label });
+    }
+  }
+  return [...PAYROLL_PRESETS, ...own];
 }
 
 /**

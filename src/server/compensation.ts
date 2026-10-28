@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { db, type DBorTx } from "@/db";
 import { markNewListItem, offeredAt } from "./brand-sync/lists";
 import { settingAt } from "./brand-sync/settings";
-import { payrollRates, payrollRuns, services, staff, staffCompensation, staffCustomFields, staffCustomValues, staffShops } from "@/db/schema";
+import { payrollRates, payrollRateVersions, payrollRuns, services, staff, staffCompensation, staffCustomFields, staffCustomValues, staffShops } from "@/db/schema";
 import {
   NO_RATES,
   blendedHourly,
@@ -159,13 +159,39 @@ const versionDetails = (v: VersionInput) => ({
 
 // ───────────────────────────── Payroll setup's rates, the fallback ─────────────────────────────
 
-/** Payroll setup's rates per employee, for whatever a plan leaves blank (and for anyone without one). */
-export async function setupRates(staffIds: readonly string[], tx: DBorTx = db): Promise<(staffId: string) => Fallback> {
-  const list = staffIds.length ? await tx.select().from(payrollRates).where(inArray(payrollRates.staffId, [...staffIds])) : [];
-  return (staffId) => (shopId) => {
-    const r = list.find((x) => x.staffId === staffId && x.shopId === shopId) ?? list.find((x) => x.staffId === staffId && x.shopId === null);
-    return r ? ({ hourlyRate: r.hourlyRate, servicePct: r.servicePct, productPct: r.productPct } satisfies BaseRates) : NO_RATES;
+type RateRow = BaseRates & { staffId: string; shopId: string | null };
+type RateVersionRow = RateRow & { effectiveFrom: LocalDate };
+
+/**
+ * Payroll setup's rates per employee, for whatever a plan leaves blank (and for anyone without one),
+ * effective-dated: on a date, the version in effect then (the first one before it starts); without a
+ * date, the latest saved. A shop's own rates beat the every-shop ones. `dated`: who has more than one
+ * version, so a range can mix rates.
+ */
+export async function setupRateBook(staffIds: readonly string[], tx: DBorTx = db): Promise<{ fallbackOf: (staffId: string) => Fallback; dated: Set<string> }> {
+  const ids = [...staffIds];
+  const [list, versions]: [RateRow[], RateVersionRow[]] = ids.length
+    ? await Promise.all([tx.select().from(payrollRates).where(inArray(payrollRates.staffId, ids)), tx.select().from(payrollRateVersions).where(inArray(payrollRateVersions.staffId, ids))])
+    : [[], []];
+  const byKey = new Map<string, RateVersionRow[]>();
+  for (const v of [...versions].sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))) byKey.set(`${v.staffId}|${v.shopId ?? ""}`, [...(byKey.get(`${v.staffId}|${v.shopId ?? ""}`) ?? []), v]);
+  const at = (staffId: string, shopId: string | null, date: LocalDate | undefined): BaseRates | null => {
+    const vs = byKey.get(`${staffId}|${shopId ?? ""}`);
+    if (vs?.length) return date ? (vs.filter((v) => v.effectiveFrom <= date).at(-1) ?? vs[0]) : vs[vs.length - 1];
+    return list.find((x) => x.staffId === staffId && x.shopId === shopId) ?? null;
   };
+  const dated = new Set([...byKey].filter(([, vs]) => vs.length > 1).map(([k]) => k.split("|")[0]));
+  return {
+    fallbackOf: (staffId) => (shopId, date) => {
+      const r = (shopId ? at(staffId, shopId, date) : null) ?? at(staffId, null, date);
+      return r ? ({ hourlyRate: r.hourlyRate, servicePct: r.servicePct, productPct: r.productPct } satisfies BaseRates) : NO_RATES;
+    },
+    dated,
+  };
+}
+
+export async function setupRates(staffIds: readonly string[], tx: DBorTx = db): Promise<(staffId: string) => Fallback> {
+  return (await setupRateBook(staffIds, tx)).fallbackOf;
 }
 
 // ───────────────────────────── Sales lines ─────────────────────────────
@@ -231,25 +257,49 @@ export interface PayrollPlans {
  * Total (J × K) are what the plan earned, overrides and tiers included. Per employee, the guaranteed
  * minimum for the period. Anyone without a version keeps Payroll setup's rates and no guarantee.
  */
-export async function payrollPlans(o: { staffIds: readonly string[]; start: LocalDate; end: LocalDate; days: readonly DayHours[]; fallbackOf: (staffId: string) => Fallback }): Promise<PayrollPlans> {
+export async function payrollPlans(o: {
+  staffIds: readonly string[];
+  /** Without a plan, but with Payroll setup rates that changed: each sale at the setup rate on its sale date, each day's hours at that day's wage. */
+  dated?: ReadonlySet<string>;
+  start: LocalDate;
+  end: LocalDate;
+  days: readonly DayHours[];
+  fallbackOf: (staffId: string) => Fallback;
+}): Promise<PayrollPlans> {
   const versions = await versionsFor(o.staffIds);
   const planned = o.staffIds.filter((id) => versions.get(id)?.length);
-  const lines = planned.length ? await commissionLines(planned, monthStart(o.start), o.end) : new Map<string, CommissionLine[]>();
-  const comm = new Map(planned.map((id) => [id, commissionBetween(lines.get(id) ?? [], versions.get(id)!, o.fallbackOf(id), o.start, o.end)]));
+  const dated = [...(o.dated ?? [])].filter((id) => !planned.includes(id));
+  const lines = planned.length || dated.length ? await commissionLines([...planned, ...dated], monthStart(o.start), o.end) : new Map<string, CommissionLine[]>();
+  const comm = new Map([...planned, ...dated].map((id) => [id, commissionBetween(lines.get(id) ?? [], versions.get(id) ?? [], o.fallbackOf(id), o.start, o.end)]));
   const periodDays = diffDays(o.end, o.start) + 1;
+  /** One rate per column for the range: the setup rate when every sale (and day) was at the same one, else commission ÷ sales and hours-weighted wage. */
+  const datedSetupRate = (staffId: string, shopId: string): BaseRates & { mixed: MixedRate[] } => {
+    const fb = o.fallbackOf(staffId);
+    const mine = (lines.get(staffId) ?? []).filter((l) => l.shopId === shopId && l.date >= o.start && l.date <= o.end);
+    const c = comm.get(staffId)?.get(shopId);
+    const pctOf = (kind: "service" | "product") => {
+      const pcts = [...new Set(mine.filter((l) => l.kind === kind).map((l) => (kind === "service" ? fb(shopId, l.saleDate).servicePct : fb(shopId, l.saleDate).productPct)))];
+      if (pcts.length === 1) return pcts[0];
+      const [net, commission] = kind === "service" ? [c?.serviceNetCents ?? 0, c?.serviceCommissionCents ?? 0] : [c?.productNetCents ?? 0, c?.productCommissionCents ?? 0];
+      return pcts.length && net ? commission / net : kind === "service" ? fb(shopId, o.end).servicePct : fb(shopId, o.end).productPct;
+    };
+    const days = daysOf(staffId, shopId);
+    return { hourlyRate: blendedHourly(days, [], shopId, fb, o.end), servicePct: pctOf("service"), productPct: pctOf("product"), mixed: mixedRates([], shopId, fb, days, mine, o.start, o.end) };
+  };
+  const daysOf = (staffId: string, shopId: string) => o.days.filter((d) => d.staffId === staffId && d.shopId === shopId && d.date >= o.start && d.date <= o.end).map((d) => ({ date: d.date, centi: d.worked }));
   return {
     rateFor(staffId, shopId) {
       const vs = versions.get(staffId);
-      if (!vs?.length) return null;
+      if (!vs?.length) return dated.includes(staffId) ? datedSetupRate(staffId, shopId) : null;
       const fb = o.fallbackOf(staffId);
       const v = versionOn(vs, o.end);
       const c = comm.get(staffId)?.get(shopId);
-      const flat = lineRate(v, { kind: "service", refId: null, category: null, shopId }, fb);
-      const days = o.days.filter((d) => d.staffId === staffId && d.shopId === shopId && d.date >= o.start && d.date <= o.end).map((d) => ({ date: d.date, centi: d.worked }));
+      const flat = lineRate(v, { kind: "service", refId: null, category: null, shopId }, fb, o.end);
+      const days = daysOf(staffId, shopId);
       return {
         hourlyRate: blendedHourly(days, vs, shopId, fb, o.end),
-        servicePct: c?.serviceNetCents ? c.serviceCommissionCents / c.serviceNetCents : flat.source === "tier" ? (v?.servicePct ?? fb(null).servicePct) : flat.pct,
-        productPct: c?.productNetCents ? c.productCommissionCents / c.productNetCents : (v?.productPct ?? fb(shopId).productPct),
+        servicePct: c?.serviceNetCents ? c.serviceCommissionCents / c.serviceNetCents : flat.source === "tier" ? (v?.servicePct ?? fb(null, o.end).servicePct) : flat.pct,
+        productPct: c?.productNetCents ? c.productCommissionCents / c.productNetCents : (v?.productPct ?? fb(shopId, o.end).productPct),
         mixed: mixedRates(vs, shopId, fb, days, lines.get(staffId) ?? [], o.start, o.end),
       };
     },

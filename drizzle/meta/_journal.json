@@ -1037,6 +1037,13 @@
       "when": 1796639040000,
       "tag": "core_0147_report_ranges",
       "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "7",
+      "when": 1796640840000,
+      "tag": "core_0148_payroll_ranges",
+      "breakpoints": true
     }
   ]
 }

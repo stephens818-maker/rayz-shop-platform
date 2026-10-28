@@ -23,6 +23,35 @@ export const PRESETS: { id: string; label: string }[] = [
 export const STANDARD_PRESET_IDS = ["today", "yesterday", "week", "lastweek", "payperiod", "lastpayperiod", "month", "lastmonth", "quarter", "ytd"] as const;
 export const STANDARD_PRESETS: { id: string; label: string }[] = STANDARD_PRESET_IDS.map((id) => PRESETS.find((p) => p.id === id)!);
 
+/** The Payroll Report's ranges: a pay period first (the expected run), then weeks and the month. Custom dates and a pay period by number sit beside them. */
+export const PAYROLL_PRESETS: { id: string; label: string }[] = [
+  { id: "payperiod", label: "Current pay period" },
+  { id: "lastpayperiod", label: "Last pay period" },
+  { id: "week", label: "This week" },
+  { id: "lastweek", label: "Last week" },
+  { id: "month", label: "Month to date" },
+];
+
+/** One pay group's current or last pay period, on its own calendar (Dubuque's): `ppg:<pay group id>:current|last`. */
+export const PAY_GROUP_PERIOD_PRESET = "ppg:";
+export const payGroupPeriodPreset = (payGroupId: string, which: "current" | "last") => `${PAY_GROUP_PERIOD_PRESET}${payGroupId}:${which}`;
+export function parsePayGroupPeriod(id: string | null | undefined): { payGroupId: string; which: "current" | "last" } | null {
+  const m = id?.match(/^ppg:([0-9a-f-]{36}):(current|last)$/i);
+  return m ? { payGroupId: m[1], which: m[2] as "current" | "last" } : null;
+}
+
+/** Whole Chicago workweeks: from a Sunday to a Saturday. Approve, lock and the iSolved files need them. */
+export const wholeWorkweeks = (from: LocalDate, to: LocalDate) => from <= to && weekdayOf(from) === 0 && weekdayOf(to) === 6;
+
+/** Why dates aren't whole workweeks, for the message that blocks a run: "starts on a Wednesday and ends on a Tuesday". */
+export function workweekProblem(from: LocalDate, to: LocalDate): string | null {
+  if (wholeWorkweeks(from, to)) return null;
+  const day = (d: LocalDate) => formatDate(d, "EEEE");
+  const starts = weekdayOf(from) !== 0 ? `starts on a ${day(from)}` : null;
+  const ends = weekdayOf(to) !== 6 ? `ends on a ${day(to)}` : null;
+  return [starts, ends].filter(Boolean).join(" and ");
+}
+
 /** Report dates are calendar days in the shops' time zone. */
 export const RANGE_TIME_ZONE = "America/Chicago";
 export const RANGE_TIME_ZONE_LABEL = "Central time (America/Chicago)";

@@ -3700,6 +3700,29 @@ export const payrollRates = pgTable(
   (t) => [unique("payroll_rates_uq").on(t.staffId, t.shopId).nullsNotDistinct()],
 );
 
+/**
+ * Payroll setup's rates, effective-dated: each sale's commission is at the version in effect on its
+ * sale date, and each day's hours at that day's wage. payroll_rates keeps the latest saved. A version
+ * can't start on or before the last locked pay period (a trigger refuses).
+ */
+export const payrollRateVersions = pgTable(
+  "payroll_rate_versions",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
+    effectiveFrom: date("effective_from", { mode: "string" }).notNull(),
+    hourlyRate: doublePrecision("hourly_rate").notNull().default(0),
+    servicePct: doublePrecision("service_pct").notNull().default(0),
+    productPct: doublePrecision("product_pct").notNull().default(0.15),
+    createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [unique("payroll_rate_versions_uq").on(t.staffId, t.shopId, t.effectiveFrom).nullsNotDistinct()],
+);
+
 /** Each employee's flat hourly training rate, effective-dated (src/domain/payroll/training-rate.ts). Never edited (a trigger refuses): a change starts after the last locked pay period. */
 export const staffTrainingRates = pgTable(
   "staff_training_rates",
@@ -3909,6 +3932,8 @@ export const payrollApprovals = pgTable(
     id: id(),
     periodStart: date("period_start", { mode: "string" }).notNull(),
     periodEnd: date("period_end", { mode: "string" }).notNull(),
+    /** What the approval covers: "" for a pay period (every shop on it), else the sorted shop ids of a run of whole workweeks. */
+    scope: text("scope").notNull().default(""),
     /** Every shop's rows, totals and iSolved file as approved: a lock or download needs the live figures to hash the same. */
     figuresHash: text("figures_hash").notNull(),
     totals: jsonb("totals").$type<PayrollApprovalTotals>().notNull(),
@@ -3920,7 +3945,7 @@ export const payrollApprovals = pgTable(
     revokeReason: text("revoke_reason"),
   },
   (t) => [
-    uniqueIndex("payroll_approvals_active_uq").on(t.periodStart, t.periodEnd).where(sql`${t.revokedAt} is null`),
+    uniqueIndex("payroll_approvals_active_uq").on(t.periodStart, t.periodEnd, t.scope).where(sql`${t.revokedAt} is null`),
     index("payroll_approvals_period_idx").on(t.periodStart, t.periodEnd, t.approvedAt),
     check("payroll_approvals_dates", sql`${t.periodEnd} >= ${t.periodStart}`),
   ],
