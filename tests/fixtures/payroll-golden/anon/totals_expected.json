@@ -1,0 +1,13 @@
+{
+ "source": "Anonymized copy: worked out from golden.json's cached row values and shop tabs (fictional figures), the counterpart of the real audit's totals",
+ "grand": {"hours": 1631.67, "otHours": 2.84, "service": 65190.2, "employeeCost": 34359.78, "grossProfit": 30830.42, "tips": 14110.84, "netComm": 2123.64, "topUp": 1806.53, "productCommission": 180.31, "netCommTypedOver": 136.8, "employeeCostWithTypedNetComm": 34496.59, "ptoHours": 0.0, "trainingHours": 39.5},
+ "shopTabs": {
+  "Utica": {"regular": 229.73, "ot": 0.0, "tips": 1881.45, "netComm": 411.61, "pto": 0.0, "training": 2.0},
+  "Moline": {"regular": 346.48, "ot": 0.0, "tips": 2882.16, "netComm": 1295.28, "pto": 0.0, "training": 0.0},
+  "Kimberly": {"regular": 336.58, "ot": 1.93, "tips": 1865.41, "netComm": 16.86, "pto": 0.0, "training": 3.0},
+  "Rock Island": {"regular": 215.15, "ot": 0.43, "tips": 3145.97, "netComm": 28.57, "pto": 0.0, "training": 15.0},
+  "Silvis": {"regular": 182.14, "ot": 0.48, "tips": 1719.93, "netComm": 18.12, "pto": 0.0, "training": 12.5},
+  "Coralville": {"regular": 234.09, "ot": 0.0, "tips": 1288.77, "netComm": 157.09, "pto": 0.0, "training": 0.0},
+  "LeClaire": {"regular": 87.5, "ot": 0.0, "tips": 1327.15, "netComm": 196.11, "pto": 0, "training": 7.0}
+ }
+}

@@ -27,6 +27,74 @@ export interface TotalsProblem {
 
 const SUM = /^=\s*SUM\(\s*\$?([A-Z]{1,3})\$?(\d+)\s*:\s*\$?([A-Z]{1,3})\$?(\d+)\s*\)$/i;
 
+/** A cell as the workbook would compute it: a number, or the error Excel would show. "circular" is a range that reaches its own cell. */
+export type CellResult = number | { error: "#DIV/0!" | "#N/A" | "circular" };
+
+const isError = (v: CellResult): v is { error: "#DIV/0!" | "#N/A" | "circular" } => typeof v !== "number";
+
+/**
+ * Works out a totals formula the way the workbook does: `SUM(X1:X9)` over one column, cell references,
+ * and + − × ÷. `ref` gives each cell's value (blank and text cells are 0). Any error propagates, as in
+ * Excel, so a total built on a circular cell is itself unknown.
+ */
+export function evaluateWorkbookFormula(formula: string, ref: (column: string, row: number) => CellResult): CellResult {
+  const src = formula.trim().replace(/^=/, "").replace(/\$/g, "");
+  const tokens = src.match(/SUM\([A-Z]+\d+:[A-Z]+\d+\)|[A-Z]+\d+|\d+(?:\.\d+)?|[-+*/()]/gi);
+  if (!tokens || tokens.join("") !== src.replace(/\s+/g, "")) throw new Error(`Can't read the formula ${formula}`);
+  let i = 0;
+  const atom = (): CellResult => {
+    const t = tokens[i++];
+    if (t === "(") {
+      const v = sum();
+      i++;
+      return v;
+    }
+    if (t === "-") {
+      const v = atom();
+      return isError(v) ? v : -v;
+    }
+    const range = /^SUM\(([A-Z]+)(\d+):([A-Z]+)(\d+)\)$/i.exec(t);
+    if (range) {
+      if (range[1].toUpperCase() !== range[3].toUpperCase()) throw new Error(`${t} spans columns`);
+      let total = 0;
+      for (let r = Math.min(+range[2], +range[4]); r <= Math.max(+range[2], +range[4]); r++) {
+        const v = ref(range[1].toUpperCase(), r);
+        if (isError(v)) return v;
+        total += v;
+      }
+      return total;
+    }
+    const cell = /^([A-Z]+)(\d+)$/i.exec(t);
+    if (cell) return ref(cell[1].toUpperCase(), +cell[2]);
+    return Number(t);
+  };
+  const product = (): CellResult => {
+    let v = atom();
+    while (tokens[i] === "*" || tokens[i] === "/") {
+      const op = tokens[i++];
+      const w = atom();
+      if (isError(v)) continue;
+      if (isError(w)) v = w;
+      else if (op === "/" && w === 0) v = { error: "#DIV/0!" };
+      else v = op === "*" ? v * w : v / w;
+    }
+    return v;
+  };
+  const sum = (): CellResult => {
+    let v = product();
+    while (tokens[i] === "+" || tokens[i] === "-") {
+      const op = tokens[i++];
+      const w = product();
+      if (isError(v)) continue;
+      v = isError(w) ? w : op === "+" ? v + w : v - w;
+    }
+    return v;
+  };
+  const out = sum();
+  if (i !== tokens.length) throw new Error(`Can't read the formula ${formula}`);
+  return out;
+}
+
 /**
  * A totals cell's problems: a range that takes in the cell itself (circular: Excel keeps whatever
  * it last cached), one that reaches past its own block into the next shop's rows, and employees of
