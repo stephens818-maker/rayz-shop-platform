@@ -8,7 +8,7 @@
  */
 import { DateTime } from "luxon";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_PAYROLL_SETTINGS, assemble, computeLine, reconcile, regularRateAdjustments, totalsOf, type LineInput, type PayrollSettings } from "@/domain/payroll/calc";
+import { DEFAULT_PAYROLL_SETTINGS, assemble, computeLine, employeePay, reconcile, regularRateAdjustments, toCents, totalsOf, type LineInput, type PayrollSettings } from "@/domain/payroll/calc";
 import { dailyHours, overtimeSlices, trainingOtCenti, type OtOptions, type Slice, type TimeEntry } from "@/domain/payroll/overtime";
 
 const at = (local: string) => DateTime.fromISO(local, { zone: "America/Chicago" }).toJSDate();
@@ -88,6 +88,49 @@ describe("golden: 38 production hours + 4 training hours = 2 OT hours", () => {
     const rr = regularRateAdjustments([l], DEFAULT_PAYROLL_SETTINGS);
     expect(rr.get("e1|A")).toBeCloseTo(0.5 * 2 * (260 / 42), 9);
     expect(regularRateAdjustments([l], { otMultiplier: 1.5, trainingCountsTowardOt: false }).get("e1|A")).toBeCloseTo(0.5 * 2 * (260 / 38), 9);
+  });
+});
+
+describe("the default, with a control (Q11; pending CPA confirmation)", () => {
+  it("training counts toward weekly OT unless a brand turns it off", () => {
+    expect(DEFAULT_PAYROLL_SETTINGS.trainingCountsTowardOt).toBe(true);
+  });
+
+  it("38 production + 4 training in the same Sun–Sat week: 2 OT hours, with the default settings", () => {
+    const entries = [...production(), entry("A", "2026-10-10", "09:00", "13:00", "training")];
+    const slices = overtimeSlices(dailyHours(entries), opts({ trainingCountsTowardOt: DEFAULT_PAYROLL_SETTINGS.trainingCountsTowardOt }));
+    expect(slices.map((s) => [s.weekStart, s.basis, s.ot])).toEqual([["2026-10-04", 4200, 200]]);
+    expect(run(entries).blocks[0].lines[0]).toMatchObject({ otHours: 2, hours: 36, trainingHours: 4, trainingPay: 40 });
+  });
+
+  it("control: the same 4 training hours in the next week (Monday Oct 12) give 0 OT; each week is under 40", () => {
+    const entries = [...production(), entry("A", "2026-10-12", "09:00", "13:00", "training")];
+    const slices = overtimeSlices(dailyHours(entries), opts({ trainingCountsTowardOt: DEFAULT_PAYROLL_SETTINGS.trainingCountsTowardOt }));
+    expect(slices.map((s) => [s.weekStart, s.basis, s.ot])).toEqual([
+      ["2026-10-04", 3800, 0],
+      ["2026-10-11", 400, 0],
+    ]);
+    // One line per workweek here (buildPayroll adds a shop's weeks into one line).
+    const lines = run(entries).blocks[0].lines;
+    const total = (k: "otHours" | "hours" | "trainingHours" | "trainingPay" | "otPay" | "trainingOtHours") => lines.reduce((s, l) => s + l[k], 0);
+    expect({ otHours: total("otHours"), hours: total("hours"), trainingHours: total("trainingHours"), trainingPay: total("trainingPay"), otPay: total("otPay"), trainingOtHours: total("trainingOtHours") }).toEqual({ otHours: 0, hours: 38, trainingHours: 4, trainingPay: 40, otPay: 0, trainingOtHours: 0 });
+  });
+
+  it("training pay stays at its flat rate, outside the greater-of, whichever side wins and wherever the hours fall", () => {
+    for (const day of ["2026-10-10", "2026-10-12"]) {
+      const entries = [...production(), entry("A", day, "09:00", "13:00", "training")];
+      for (const serviceSales of [0, 2000]) {
+        const lines = run(entries, DEFAULT_PAYROLL_SETTINGS, { serviceSales }).blocks[0].lines;
+        expect(lines.reduce((s, l) => s + l.trainingPay, 0), `${day} ${serviceSales}`).toBe(40);
+        for (const l of lines) {
+          const p = employeePay(l);
+          expect(l.trainingPay, `${day} ${serviceSales}`).toBe(l.trainingHours * 10);
+          expect(l.totalWages, `${day} ${serviceSales}`).toBe(Math.max(l.hourlyTotal, l.commission));
+          expect(p.greaterOfCents, `${day} ${serviceSales}`).toBe(toCents(Math.max(l.hourlyTotal, l.commission)));
+          expect(p.wagesCents, `${day} ${serviceSales}`).toBe(p.greaterOfCents + p.trainingPayCents + p.overtimePayCents);
+        }
+      }
+    }
   });
 });
 
