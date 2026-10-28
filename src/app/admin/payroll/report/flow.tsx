@@ -66,7 +66,7 @@ function describe(r: Trail[number], names: Map<string, string>): string {
     case "payroll.detail_file":
       return `Downloaded the payroll detail file${d.status ? ` (${str(d.status)})` : ""}`;
     case "payroll.isolved_sent":
-      return "Marked the iSolved file sent";
+      return d.lockedOnSend ? "Marked the iSolved file sent to payroll, which locked the period" : "Marked the iSolved file sent";
     case "payroll.isolved_unsent":
       return `Took off the sent mark: ${str(d.reason)}`;
     default:

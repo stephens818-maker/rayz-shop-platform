@@ -42,7 +42,7 @@ function rowActions(data: ReportData, ctx: StaffContext): Record<string, (row: n
               iSolved export
             </a>
           )}
-          {approve && <IsolvedSentControl start={p.start} end={p.end} label={p.label} sent={p.status === "sent"} blocked={p.blocked} />}
+          {approve && <IsolvedSentControl start={p.start} end={p.end} label={p.label} sent={p.status === "sent"} blocked={p.blocked} locks={!p.locked} />}
         </span>
       );
     },

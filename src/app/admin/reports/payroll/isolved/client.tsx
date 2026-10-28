@@ -5,8 +5,8 @@ import { Button, Input } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { markIsolvedSentAction, undoIsolvedSentAction } from "./actions";
 
-/** "Mark sent" once the period is approved and reconciled, and "Undo" with a reason if the upload didn't go through. */
-export function IsolvedSentControl({ start, end, label, sent, blocked }: { start: string; end: string; label: string; sent: boolean; blocked: string | null }) {
+/** "Mark sent" once the period is approved and reconciled (locking it, if it isn't yet), and "Undo" with a reason if the upload didn't go through. */
+export function IsolvedSentControl({ start, end, label, sent, blocked, locks = false }: { start: string; end: string; label: string; sent: boolean; blocked: string | null; locks?: boolean }) {
   const { pending, error, run } = useAction();
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
@@ -17,13 +17,18 @@ export function IsolvedSentControl({ start, end, label, sent, blocked }: { start
           size="sm"
           variant="secondary"
           disabled={!sent && !!blocked}
-          title={!sent && blocked ? blocked : sent ? `Take the sent mark off ${label}` : `Mark ${label}'s iSolved file uploaded`}
+          title={!sent && blocked ? blocked : sent ? `Take the sent mark off ${label}` : `Mark ${label}'s iSolved file uploaded${locks ? ": this locks the period" : ""}`}
           onClick={() => setOpen(true)}
           data-testid={sent ? "isolved-undo" : "isolved-mark-sent"}
         >
           {sent ? "Undo sent" : "Mark sent"}
         </Button>
         {!sent && blocked && <span className="max-w-[16rem] text-right text-[11px] text-zinc-500">{blocked}</span>}
+        {!sent && !blocked && locks && (
+          <span className="max-w-[16rem] text-right text-[11px] text-zinc-500" data-testid="isolved-send-locks">
+            Marking it sent locks the period. Later changes go to the next open period as flagged adjustments.
+          </span>
+        )}
       </span>
     );
   const submit = () =>
@@ -33,7 +38,7 @@ export function IsolvedSentControl({ start, end, label, sent, blocked }: { start
         setOpen(false);
         setText("");
       },
-      sent ? `${label} is back to approved` : `${label} marked sent to iSolved`,
+      sent ? `${label} is back to approved` : `${label} marked sent to iSolved${locks ? " and locked" : ""}`,
     );
   return (
     <span className="inline-flex flex-col items-end gap-1">

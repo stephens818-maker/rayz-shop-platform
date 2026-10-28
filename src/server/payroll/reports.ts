@@ -25,7 +25,7 @@ import { addIsolvedSheet, exportFileName } from "./export";
 import { loadSettings } from "./groups";
 import { locationBlocks, locationsRow, locationsTotals, type LocationsCell } from "./locations";
 import { MAX_REPORT_PERIODS, payPeriodPresets, periodLabel, periodsEnding, type PayPeriodRef } from "./periods";
-import { approvalOf, buildPayroll, type BlockView, type PayrollView } from "./run";
+import { approvalOf, buildPayroll, lockPayroll, type BlockView, type PayrollView } from "./run";
 
 /**
  * The payroll reports (Reports → Payroll). iSolved is the payroll company and stays the system of
@@ -1254,12 +1254,16 @@ export interface IsolvedPeriod {
   status: ExportStatus;
   /** Why it can't be marked sent yet, or null. */
   blocked: string | null;
+  /** Every shop is locked. An approved period that isn't is locked by marking it sent. */
+  locked: boolean;
   sentAt: string | null;
   sentBy: string | null;
 }
 
-function blockedReason(view: PayrollView): string | null {
-  if (view.locked !== "all") return view.locked === "some" ? "Some shops in this period aren't approved and locked yet." : "Approve and lock this period on the Payroll Report first.";
+/** Why the period can't be marked sent yet. An approved period that isn't locked yet is locked by marking it sent. */
+function blockedReason(view: PayrollView, approved: boolean): string | null {
+  if (view.locked === "some") return "Some shops in this period aren't locked yet.";
+  if (view.locked === "none" && !approved) return "Approve this period on the Payroll Report first. Marking it sent then locks it.";
   if (view.tips.mismatches.length) return `${view.tips.mismatches.length} tip difference${view.tips.mismatches.length === 1 ? "" : "s"} against the Stripe payouts: fix them first.`;
   return null;
 }
@@ -1337,7 +1341,8 @@ export async function payrollIsolvedData(i: PayrollReportInput): Promise<ReportD
       end: r.ref.end,
       label: r.label,
       status,
-      blocked: status === "sent" ? null : blockedReason(r.view),
+      blocked: status === "sent" ? null : blockedReason(r.view, status === "approved"),
+      locked: r.view.locked === "all",
       sentAt: sent ? sent.sentAt.toISOString() : null,
       sentBy: sent?.by ?? null,
     });
@@ -1531,12 +1536,23 @@ export async function isolvedWorkbook(start: LocalDate, end: LocalDate, shopIds:
 
 const bad = (msg: string) => new AppError("bad_request", msg);
 
-/** Marks a pay period's iSolved file uploaded. Only once every shop is approved and locked and the tips reconcile to the cent. */
+/**
+ * Marks a pay period's iSolved file sent to payroll (uploaded by hand). Lock on export: a period
+ * that's approved but not locked yet is locked first, through the same gate as Approve and lock
+ * (a current approval, the $0.00 reconciliation), so later changes become flagged adjustments in
+ * the next open period. Refused until the tips reconcile to the cent.
+ */
 export async function markIsolvedSent(start: LocalDate, end: LocalDate, actor: Actor, note: string | null): Promise<void> {
-  const view = await buildPayroll(start, end, { clockChecks: false });
+  let view = await buildPayroll(start, end, { clockChecks: false });
   if (!view) throw bad("No shop has a pay period with those dates.");
-  const why = blockedReason(view);
+  const why = blockedReason(view, !!(await approvalOf(view))?.current);
   if (why) throw bad(why);
+  const lockedOnSend = view.locked === "none";
+  if (lockedOnSend) {
+    const r = await lockPayroll(start, end, actor);
+    if ("error" in r) throw bad(r.error);
+    view = (await buildPayroll(start, end, { clockChecks: false }))!;
+  }
   const shops: PayrollSendShop[] = view.blocks.map((b) => {
     const headers = b.exportHeaders ?? EXPORT_COLUMNS.map((c) => c.header);
     return {
@@ -1558,7 +1574,7 @@ export async function markIsolvedSent(start: LocalDate, end: LocalDate, actor: A
     .onConflictDoNothing()
     .returning({ id: payrollExportSends.id });
   if (!row) throw new AppError("conflict", "This pay period is already marked sent.");
-  await audit(actor, "payroll.isolved_sent", "payroll_period", `${start}_${end}`, { periodStart: start, periodEnd: end, shops: shops.map((s) => ({ payGroup: s.payGroup, employer: s.employer, rows: s.rows })), note: note?.trim() || null });
+  await audit(actor, "payroll.isolved_sent", "payroll_period", `${start}_${end}`, { periodStart: start, periodEnd: end, shops: shops.map((s) => ({ payGroup: s.payGroup, employer: s.employer, rows: s.rows })), note: note?.trim() || null, lockedOnSend });
 }
 
 /** Takes the sent mark off (say, the upload failed in iSolved). The period goes back to approved. */
