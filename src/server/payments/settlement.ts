@@ -346,14 +346,15 @@ export async function settlementCron(limit = 200) {
  * Where a tip ledger entry's money is (TipRoute), as a column of a select from tip_ledger: with the
  * barber (a tip row pending or sent), with the shop (a card charge to its connected account with no
  * tip row, or a cash tip at a shop not on the brand's account), or on the platform (everything else,
- * a tip row that failed too).
+ * a tip row that failed too). The columns are spelled out because drizzle leaves a selected expression's
+ * columns unqualified in a one-table select, where the subqueries would read them as their own.
  */
 export const tipRoute = sql<TipRoute>`(case
-  when exists (select 1 from payment_transfers pt where pt.kind = 'tip' and pt.payment_id = ${tipLedger.paymentId} and pt.staff_id = ${tipLedger.staffId} and pt.status in ('pending', 'sent')) then 'barber'
-  when exists (select 1 from payments rp where rp.id = ${tipLedger.paymentId} and rp.method = 'card') then
-    case when exists (select 1 from payments rp where rp.id = ${tipLedger.paymentId} and rp.settlement = 'connected')
-      and not exists (select 1 from payment_transfers pt where pt.kind = 'tip' and pt.payment_id = ${tipLedger.paymentId} and pt.staff_id = ${tipLedger.staffId}) then 'shop' else 'platform' end
-  when (select rs.payments_mode from shops rs where rs.id = ${tipLedger.shopId}) = 'brand' then 'platform'
+  when exists (select 1 from payment_transfers pt where pt.kind = 'tip' and pt.payment_id = "tip_ledger"."payment_id" and pt.staff_id = "tip_ledger"."staff_id" and pt.status in ('pending', 'sent')) then 'barber'
+  when exists (select 1 from payments rp where rp.id = "tip_ledger"."payment_id" and rp.method = 'card') then
+    case when exists (select 1 from payments rp where rp.id = "tip_ledger"."payment_id" and rp.settlement = 'connected')
+      and not exists (select 1 from payment_transfers pt where pt.kind = 'tip' and pt.payment_id = "tip_ledger"."payment_id" and pt.staff_id = "tip_ledger"."staff_id") then 'shop' else 'platform' end
+  when (select rs.payments_mode from shops rs where rs.id = "tip_ledger"."shop_id") = 'brand' then 'platform'
   else 'shop' end)`;
 
 export async function tipRoutes(tx: DBorTx, entryIds: readonly string[]): Promise<Map<string, TipRoute>> {

@@ -218,9 +218,12 @@ describe("FEATURE_TIP_TO_BARBER on", () => {
     onTestFinished(async () => void (await m.db.db.update(s().shops).set({ tipPayouts: { schedule: "manual", cardDelayDays: 0, defaultMethod: "cash" } }).where(eq(s().shops.id, shop.id))));
     await m.db.db.delete(s().staffPayoutAccounts).where(eq(s().staffPayoutAccounts.staffId, staffId));
     const before = await payrollLine(shop.id, staffId);
-    const { pay, shopRow, tipRows } = await cardSale(shop.id, staffId, 700);
+    const { saleId, pay, shopRow, tipRows } = await cardSale(shop.id, staffId, 700);
     expect(tipRows).toEqual([]);
     expect(shopRow!.amountCents).toBe(pay.amountCents - pay.applicationFeeCents);
+    // Other barbers' tip transfers (earlier tests) don't make this one the barber's.
+    const [entry] = await m.db.db.select().from(s().tipLedger).where(and(eq(s().tipLedger.saleId, saleId), eq(s().tipLedger.kind, "tip")));
+    expect((await settlement.tipRoutes(m.db.db, [entry.id])).get(entry.id)).toBe("shop");
     const after = await payrollLine(shop.id, staffId);
     expect(after.tips - before.tips).toBeCloseTo(7);
     expect(after.tipsInPayroll - before.tipsInPayroll).toBeCloseTo(7);
