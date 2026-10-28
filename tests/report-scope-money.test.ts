@@ -37,13 +37,15 @@ describe("templates Charles asked for", () => {
     expect(names.bookkeeper).toBe("Bookkeeper / Accountant");
   });
 
-  it("Apprentice: own column, no discounts, refunds or blocks, and no dollar amounts", () => {
+  it("Apprentice: everything a barber has, less checkout discounts, price changes and refunds", () => {
     const a = effectiveAccess(tpl("apprentice"), {}, null, "one");
-    for (const p of ["pos.discount", "pos.price_override", "sales.refund", "sales.void", "blocks.own", "reports.money", "reports.all_staff", "calendar.view_all", "checkout.any"])
+    const b = effectiveAccess(tpl("barber"), {}, null, "one");
+    for (const p of ["pos.discount", "pos.price_override", "sales.refund", "sales.void", "reports.all_staff", "calendar.view_all", "checkout.any"])
       expect(a.permissions.has(p as Permission), p).toBe(false);
     expect(a.maxDiscountPct).toBe(0);
-    expect(a.permissions.has(reportView("my_sales"))).toBe(true);
-    expect([...a.permissions].some((p) => p.endsWith(".export"))).toBe(false);
+    expect([...b.permissions].filter((p) => !a.permissions.has(p))).toEqual([]);
+    expect([...a.permissions].sort()).toEqual([...b.permissions].sort());
+    for (const p of ["blocks.own", "reports.money", "timeclock.punch", "tips.own", reportView("my_sales")]) expect(a.permissions.has(p as Permission), p).toBe(true);
     expect(tpl("apprentice").defaultScope).toBe("one");
   });
 
@@ -60,9 +62,9 @@ describe("templates Charles asked for", () => {
     expect(wide.sort()).toEqual(["bookkeeper", "brand_admin"]);
   });
 
-  it("every template that sees reports today still sees dollar amounts, except Apprentice", () => {
+  it("every template that sees reports sees dollar amounts", () => {
     const noMoney = ROLE_TEMPLATES.filter((t) => t.key !== "brand_owner" && !effectiveAccess(t).permissions.has("reports.money")).map((t) => t.key);
-    expect(noMoney).toEqual(["apprentice"]);
+    expect(noMoney).toEqual([]);
   });
 });
 

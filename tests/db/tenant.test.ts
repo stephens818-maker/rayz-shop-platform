@@ -856,7 +856,7 @@ describe("server actions aimed at another shop's records", () => {
       .update(m.schema.staff)
       .set({
         permissionOverrides: {
-          ...Object.fromEntries(["settings.taxes", "giftcards.void", "giftcards.issue", "checkout.any", "permissions.manage", "clients.merge", "po.approve", "payments.accounts", "payments.banking"].map((p) => [p, true])),
+          ...Object.fromEntries(["settings.taxes", "giftcards.void", "giftcards.issue", "checkout.any", "permissions.manage", "clients.merge", "po.approve", "payments.accounts", "payments.banking", "tips.approve"].map((p) => [p, true])),
           ...Object.fromEntries(["promos.manage", "campaign_center.view", "campaign_center.create", "campaign_center.send"].map((p) => [p, true])),
         },
       })

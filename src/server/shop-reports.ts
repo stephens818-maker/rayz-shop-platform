@@ -49,7 +49,8 @@ const inSegment = (s: ReportScope, v: string, b: string) =>
  * tips, refunds and voids, and every shop's cash drawer. The drawer is the shop's whatever barbers
  * are picked.
  */
-export async function endOfDayData(scope: ReportScope, loc: ViewCtx): Promise<ReportData> {
+export async function endOfDayData(scope: ReportScope, loc: ViewCtx, opts: { personTips?: boolean } = {}): Promise<ReportData> {
+  const personTips = opts.personTips ?? true;
   const lv = noBarbers(loc);
   const g = grainsFor(lv);
   const bv: ViewCtx = { ...loc, byBarber: true };
@@ -113,14 +114,16 @@ export async function endOfDayData(scope: ReportScope, loc: ViewCtx): Promise<Re
       metricTable(bv, {
         id: "barbers",
         title: loc.view === "shops" ? "Each barber's day by location" : "Each barber's day",
-        subtitle: "Tickets and tips go to the barber on the ticket. Reassigned tickets count for the barber they were moved to.",
+        subtitle: personTips
+          ? "Tickets and tips go to the barber on the ticket. Reassigned tickets count for the barber they were moved to."
+          : "Tickets go to the barber on the ticket. Each person's tips are pay data, shown at the brand level. Reassigned tickets count for the barber they were moved to.",
         metrics: [
           m("Tickets", "int", bx, (v) => v.tickets),
           m("Services", "money", bx, (v) => v.netServicesCents),
           m("Products", "money", bx, (v) => v.netProductsCents),
-          m("Card tips", "money", btender, (v) => v.cardTipsCents),
-          m("Cash tips", "money", btender, (v) => v.cashTipsCents),
-          m("Total tips", "money", bx, (v) => v.tipsCents),
+          ...(personTips
+            ? [m("Card tips", "money", btender, (v) => v.cardTipsCents), m("Cash tips", "money", btender, (v) => v.cashTipsCents), m("Total tips", "money", bx, (v) => v.tipsCents)]
+            : []),
           m("Discounts", "money", bx, (v) => v.discountCents),
           m("Refunds", "money", bx, (v) => v.refundCents),
           m("Avg ticket", "money", bx, (v) => v.avgTicketCents, false),

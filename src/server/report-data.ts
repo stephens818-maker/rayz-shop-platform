@@ -171,6 +171,12 @@ export interface ReportInput {
 }
 
 const pct = (x: number | null) => (x === null ? "—" : `${Math.round(x * 100)}%`);
+
+/**
+ * Each person's tips are pay data, the brand's like payroll: they show with "Tips and payroll" (as in
+ * the report builder), or when the viewer only sees their own numbers. Shop totals always show.
+ */
+const seesPersonTips = (viewer: ReportInput["viewer"]) => !viewer.permissions || viewer.permissions.has("report.tips_payroll.view") || !viewer.permissions.has("reports.all_staff");
 const ratio = (a: number, b: number) => (b ? a / b : null);
 const money = (label: string): Column => ({ label, kind: "money" });
 const int = (label: string): Column => ({ label, kind: "int" });
@@ -309,7 +315,7 @@ async function salesData(scope: ReportScope, loc: ViewCtx, withQuickbooks: boole
  * barber (or barber at each shop) and the total. Counts and amounts add up to the shop and brand
  * totals; rates, averages and client counts are worked out for each row on its own.
  */
-async function barberPerformance(scope: ReportScope, loc: ViewCtx): Promise<ReportData> {
+async function barberPerformance(scope: ReportScope, loc: ViewCtx, personTips = true): Promise<ReportData> {
   const g = grainsFor(loc, { split: true });
   const [x, tender, k, avail, rated] = await Promise.all([salesTotalsAt(scope, g), tenderAt(scope, g), kpisAt(scope, g), availableMinutesAt(scope, g), ratingsGivenAt(scope, g)]);
   const keys = [...new Set([...Object.keys(x), ...Object.keys(tender), ...Object.keys(k), ...Object.keys(avail), ...Object.keys(rated)])];
@@ -321,9 +327,7 @@ async function barberPerformance(scope: ReportScope, loc: ViewCtx): Promise<Repo
     m("Tickets", "int", x, (v) => v.tickets),
     m("Service sales", "money", x, (v) => v.netServicesCents),
     m("Product sales", "money", x, (v) => v.netProductsCents),
-    m("Card tips", "money", tender, (v) => v.cardTipsCents),
-    m("Cash tips", "money", tender, (v) => v.cashTipsCents),
-    m("Total tips", "money", x, (v) => v.tipsCents),
+    ...(personTips ? [m("Card tips", "money", tender, (v) => v.cardTipsCents), m("Cash tips", "money", tender, (v) => v.cashTipsCents), m("Total tips", "money", x, (v) => v.tipsCents)] : []),
     m("Discounts", "money", x, (v) => v.discountCents),
     m("Refunds", "money", x, (v) => v.refundCents),
     m("Avg ticket", "money", x, (v) => v.avgTicketCents, false),
@@ -365,8 +369,10 @@ async function barberPerformance(scope: ReportScope, loc: ViewCtx): Promise<Repo
     tables: [
       metricTable(loc, {
         id: "sales",
-        title: titled(loc, "Sales and tips"),
-        subtitle: "Service credit and tips go to the barber on the ticket, at the shop where it was rung up. Refunds count when they were issued; the average ticket is before refunds.",
+        title: titled(loc, personTips ? "Sales and tips" : "Sales"),
+        subtitle: personTips
+          ? "Service credit and tips go to the barber on the ticket, at the shop where it was rung up. Refunds count when they were issued; the average ticket is before refunds."
+          : "Service credit goes to the barber on the ticket, at the shop where it was rung up. Each person's tips are pay data, shown at the brand level. Refunds count when they were issued; the average ticket is before refunds.",
         metrics: sales,
       }),
       metricTable(loc, {
@@ -764,12 +770,12 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
     return salesData(scope, loc, !!viewer.permissions?.has("exports.accounting"));
   },
 
-  async end_of_day({ scope, loc }) {
-    return endOfDayData(scope, loc);
+  async end_of_day({ scope, loc, viewer }) {
+    return endOfDayData(scope, loc, { personTips: seesPersonTips(viewer) });
   },
 
-  async sales_by_barber({ scope, loc }) {
-    return barberPerformance(scope, loc);
+  async sales_by_barber({ scope, loc, viewer }) {
+    return barberPerformance(scope, loc, seesPersonTips(viewer));
   },
 
   async leaderboard({ scope, loc, params }) {

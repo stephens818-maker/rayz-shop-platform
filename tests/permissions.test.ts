@@ -83,14 +83,17 @@ describe("permission catalog and templates", () => {
     expect(access("brand_admin").permissions.has("clients.privacy")).toBe(true);
   });
 
-  it("tip payouts: everyone sees their own tips, managers approve payouts, only brand-level roles change the settings", () => {
-    for (const k of ["brand_admin", "regional_manager", "shop_manager", "front_desk", "barber"]) {
+  it("tip payouts: everyone sees their own tips, the brand approves payouts (managers only by a grant), only brand-level roles change the settings", () => {
+    for (const k of ["brand_admin", "regional_manager", "shop_manager", "front_desk", "barber", "apprentice"]) {
       expect(access(k).permissions.has("tips.own"), k).toBe(true);
       expect(pageAllowed(access(k).permissions, "/admin/my-tips"), k).toBe(true);
       expect(pageAllowed(access(k).permissions, "/admin/my-banking"), k).toBe(true);
     }
-    for (const k of ["brand_admin", "regional_manager", "shop_manager"]) expect(pageAllowed(access(k).permissions, "/admin/tips"), k).toBe(true);
-    for (const k of ["front_desk", "barber"]) expect(pageAllowed(access(k).permissions, "/admin/tips"), k).toBe(false);
+    for (const k of ["brand_admin", "franchisee_owner"]) expect(pageAllowed(access(k).permissions, "/admin/tips"), k).toBe(true);
+    for (const k of ["regional_manager", "shop_manager", "franchisee_manager", "front_desk", "barber"]) expect(pageAllowed(access(k).permissions, "/admin/tips"), k).toBe(false);
+    for (const k of ["regional_manager", "shop_manager", "franchisee_manager"])
+      for (const p of ["tips.approve", "payouts.view", "payouts.manage"] as Permission[]) expect(access(k).permissions.has(p), `${k} ${p}`).toBe(false);
+    expect(pageAllowed(access("shop_manager", { "tips.approve": true }).permissions, "/admin/tips")).toBe(true);
     for (const k of ["regional_manager", "shop_manager", "front_desk", "barber"]) expect(access(k).permissions.has("tips.settings"), k).toBe(false);
     expect(access("brand_admin").permissions.has("tips.settings")).toBe(true);
     expect(effectiveAccess(role("brand_admin"), {}, null, "selected").permissions.has("tips.settings")).toBe(false);
@@ -157,8 +160,10 @@ describe("permission catalog and templates", () => {
     for (const p of pay) expect(access("bookkeeper").permissions.has(p), p).toBe(true);
     expect(access("shop_manager", { "report.tips_payroll.view": true }).permissions.has("report.tips_payroll.view")).toBe(true);
     expect(sharedLoginAccess(effectiveAccess(role("shop_login"), { "report.tips_payroll.view": true }, null, "one")).permissions.has("report.tips_payroll.view")).toBe(false);
-    // Approving and locking hours and tip payouts is the manager's job; it isn't the report.
-    for (const p of ["timesheet.approve", "tips.approve"] as Permission[]) expect(access("shop_manager").permissions.has(p), p).toBe(true);
+    // Approving hours stays the manager's job; tip payouts are the brand's unless granted (Charles, Oct 28).
+    expect(access("shop_manager").permissions.has("timesheet.approve")).toBe(true);
+    expect(access("shop_manager").permissions.has("tips.approve")).toBe(false);
+    expect(access("shop_manager", { "tips.approve": true }).permissions.has("tips.approve")).toBe(true);
   });
 
   it("the migrations seed exactly the templates in code", () => {

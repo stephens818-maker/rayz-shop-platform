@@ -153,25 +153,61 @@ describe("every-shop reports", () => {
 });
 
 describe("Apprentice", () => {
-  it("sees their own sales without dollar amounts and can't download them", async () => {
+  it("sees and downloads their own sales like a barber, and nothing of the shop's", async () => {
     const abe = await person("Abe", "apprentice", { scope: "one", shopId: shop.coralville });
     await signInAs(abe);
     const mine = await open("/admin/reports/my-sales");
     expect(mine.kind).toBe("ok");
-    expect(mine.text).toContain("Dollar amounts are hidden");
-    expect(mine.text).not.toMatch(/\$\d/);
-    expect((await csv({ type: "my_sales" })).status).toBe(403);
+    expect(mine.text).not.toContain("Dollar amounts are hidden");
+    expect((await csv({ type: "my_sales" })).status).toBe(200);
     expect((await open("/admin/reports/sales")).kind).toBe("denied");
+    expect((await open("/admin/settings")).kind).toBe("denied");
   });
 
   it("View as shows the report scope and whether dollar amounts show", async () => {
     await signInAs(who.admin);
     const apprentice = await open("/admin/permissions/view-as", {}, { as: `role:${(await roleOf("apprentice")).id}` });
     expect(apprentice.text).toMatch(/Scope: Own numbers/);
-    expect(apprentice.text).toMatch(/Dollar amounts: Hidden/);
+    expect(apprentice.text).toMatch(/Dollar amounts: Shown/);
     const book = await open("/admin/permissions/view-as", {}, { as: `role:${(await roleOf("bookkeeper")).id}` });
     expect(book.text).toMatch(/Scope: All shops/);
     expect(book.text).toMatch(/Dollar amounts: Shown/);
+  });
+});
+
+describe("each person's tips are the brand's", () => {
+  it("a Shop Manager sees the shop's tips but not each barber's, until granted Tips and payroll", async () => {
+    const cols = async (path: string) => {
+      const r = await open(path);
+      expect(r.kind, path).toBe("ok");
+      return r.text;
+    };
+    await signInAs(who.michelle);
+    expect(await cols("/admin/reports/barbers")).not.toContain("Card tips");
+    expect(await cols("/admin/reports/end-of-day")).not.toContain("Cash tips");
+    expect((await open("/admin/tips")).kind).not.toBe("ok");
+    expect((await open("/admin/tips/tracker")).kind).not.toBe("ok");
+
+    await signInAs(who.admin);
+    expect(await cols("/admin/reports/barbers")).toContain("Card tips");
+    ok(await access(who.michelle, { overrides: { "report.tips_payroll.view": true, "tips.approve": true } }));
+    await signInAs(who.michelle);
+    expect(await cols("/admin/reports/barbers")).toContain("Card tips");
+    expect(await cols("/admin/reports/end-of-day")).toContain("Cash tips");
+    expect((await open("/admin/tips")).kind).toBe("ok");
+    await signInAs(who.admin);
+    ok(await access(who.michelle));
+  });
+});
+
+describe("Bookkeeper / Accountant", () => {
+  it("reads every payroll and tips report and the iSolved download, with no POS, payroll run or settings", async () => {
+    const bk = await person("Bk", "bookkeeper", { scope: "all" });
+    await signInAs(bk);
+    for (const path of ["/admin/reports/payroll/report", "/admin/reports/payroll/isolved", "/admin/reports/payroll/tips", "/admin/reports/payroll/tips-paid", "/admin/reports/sales", "/admin/payroll"])
+      expect((await open(path)).kind, path).toBe("ok");
+    for (const path of ["/admin/walk-ins", "/admin/drawer", "/admin/calendar/board", "/admin/settings", "/admin/permissions", "/admin/payroll/hours", "/admin/payroll/setup", "/admin/tips", "/admin/services"])
+      expect((await open(path)).kind, path).not.toBe("ok");
   });
 });
 

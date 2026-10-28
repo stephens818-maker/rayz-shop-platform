@@ -1139,14 +1139,31 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "timesheet.edit",
   "timesheet.approve",
   "tips.own",
-  "tips.approve",
-  "payouts.view",
-  "payouts.manage",
   "devices.approve",
   "report_builder.view",
   "report_builder.build",
   "report_builder.export",
 ];
+/**
+ * Their own column, clients and sales. An Apprentice starts from the same list less checkout
+ * discounts and refunds (Charles, Oct 28), whatever Barber gains later.
+ */
+const BARBER_FEATURES: Permission[] = [
+  "clients.rate",
+  "clients.message",
+  "notes.view",
+  "notes.write",
+  "blocks.own",
+  "timeoff.request",
+  "timeclock.punch",
+  "timesheet.own",
+  "tips.own",
+  "reports.money",
+  ...reports(["my_sales", "service_times"]),
+  reportView("rebook_rate"),
+];
+const NOT_FOR_APPRENTICES = new Set<Permission>(["pos.discount", "pos.price_override", "sales.refund", "sales.void"]);
+
 /** Regional managers also approve big orders and run the shop logins for their shops. */
 const REGIONAL_FEATURES: FeaturePermission[] = [...MANAGER_FEATURES, "logins.manage", "po.approve"];
 
@@ -1179,13 +1196,23 @@ const TEMPLATES: RoleTemplate[] = [
     description:
       "Owns a franchisee business (an owner entity) and runs all its locations: everything a regional manager does there, plus voiding gift cards and managing its people's access. Brand-wide settings, the catalog, client exports and Stripe setup stay the brand's.",
     defaultScope: "entity",
-    permissions: [...REGIONAL_FEATURES, "giftcards.void", "permissions.manage", "exports.accounting", ...reports(LOCATION_REPORTS), ...reports(["tips_payroll", "tip_payouts"])],
+    permissions: [
+      ...REGIONAL_FEATURES,
+      "giftcards.void",
+      "permissions.manage",
+      "exports.accounting",
+      "tips.approve",
+      "payouts.view",
+      "payouts.manage",
+      ...reports(LOCATION_REPORTS),
+      ...reports(["tips_payroll", "tip_payouts"]),
+    ],
     maxDiscountPct: 100,
   },
   {
     key: "franchisee_manager",
     name: "Franchisee Manager",
-    description: "Manages a franchisee's locations day to day: front desk, POS, clients, staff and shop settings, with every report for those locations but the brand's marketing and pay reports (each person's tips, payroll, payouts and commission).",
+    description: "Manages a franchisee's locations day to day: front desk, POS, clients, staff and shop settings, with every report for those locations but the brand's marketing and pay reports (each person's tips, payroll, payouts and commission) and tip payout approval, unless granted.",
     defaultScope: "entity",
     permissions: [...REGIONAL_FEATURES, ...reports(LOCATION_REPORTS)],
     maxDiscountPct: 100,
@@ -1193,7 +1220,7 @@ const TEMPLATES: RoleTemplate[] = [
   {
     key: "regional_manager",
     name: "Regional / District Manager",
-    description: "Manages several shops: front desk, POS, clients, staff and shop settings, the Campaign Center's We have openings, with every report for those shops but the brand's marketing and pay reports (each person's tips, payroll, payouts and commission).",
+    description: "Manages several shops: front desk, POS, clients, staff and shop settings, the Campaign Center's We have openings, with every report for those shops but the brand's marketing and pay reports (each person's tips, payroll, payouts and commission) and tip payout approval, unless granted.",
     defaultScope: "selected",
     permissions: [...REGIONAL_FEATURES, "giftcards.void", ...reports(LOCATION_REPORTS)],
     maxDiscountPct: 100,
@@ -1201,7 +1228,7 @@ const TEMPLATES: RoleTemplate[] = [
   {
     key: "shop_manager",
     name: "Shop Manager",
-    description: "Manages one shop: front desk, POS, clients, staff and shop settings, the Campaign Center's We have openings, with that shop's reports but the brand's marketing and pay reports (each person's tips, payroll, payouts and commission).",
+    description: "Manages one shop: front desk, POS, clients, staff and shop settings, the Campaign Center's We have openings, with that shop's reports but the brand's marketing and pay reports (each person's tips, payroll, payouts and commission) and tip payout approval, unless granted.",
     defaultScope: "one",
     permissions: [...MANAGER_FEATURES, ...reports(LOCATION_REPORTS)],
     maxDiscountPct: 100,
@@ -1310,29 +1337,16 @@ const TEMPLATES: RoleTemplate[] = [
     name: "Barber",
     description: "Their own column, their own clients and their own sales.",
     defaultScope: "selected",
-    permissions: [
-      "clients.rate",
-      "clients.message",
-      "notes.view",
-      "notes.write",
-      "blocks.own",
-      "timeoff.request",
-      "timeclock.punch",
-      "timesheet.own",
-      "tips.own",
-      "reports.money",
-      ...reports(["my_sales", "service_times"]),
-      reportView("rebook_rate"),
-    ],
+    permissions: BARBER_FEATURES,
     maxDiscountPct: 0,
   },
   {
     key: "apprentice",
     name: "Apprentice",
     description:
-      "Learning the trade: their own column and clients at menu prices, client notes to read, the time clock, their own timesheet and tips. No discounts, refunds or blocking time, and their own reports show counts and times but no dollar amounts.",
+      "Learning the trade: everything a barber has (their own column, clients, notes, blocks, time clock, timesheet, tips and sales), with no checkout discounts, price changes or refunds. The brand can edit it like any role.",
     defaultScope: "one",
-    permissions: ["notes.view", "timeoff.request", "timeclock.punch", "timesheet.own", "tips.own", reportView("my_sales"), reportView("service_times")],
+    permissions: BARBER_FEATURES.filter((p) => !NOT_FOR_APPRENTICES.has(p)),
     maxDiscountPct: 0,
   },
   {
