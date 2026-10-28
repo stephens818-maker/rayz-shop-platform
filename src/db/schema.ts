@@ -214,7 +214,7 @@ export const shops = pgTable("shops", {
   productTaxRate: numeric("product_tax_rate", { precision: 7, scale: 5 }).notNull().default("0"),
   taxRatesVerified: boolean("tax_rates_verified").notNull().default(false),
   /** The shop's card fee as it stands (the brand policy with card_fee_override), kept in step on every save for the tax and fee summary. Checkout reads the policy. */
-  cardFeeEnabled: boolean("card_fee_enabled").notNull().default(true),
+  cardFeeEnabled: boolean("card_fee_enabled").notNull().default(false),
   cardFeeRate: numeric("card_fee_rate", { precision: 6, scale: 5 }).notNull().default("0.03"),
   cardFeeAppliesToTip: boolean("card_fee_applies_to_tip").notNull().default(false),
   /** This shop's changes to the brand's card fee policy (CardFeeOverride in src/domain/card-fee-policy.ts); null follows the brand. */

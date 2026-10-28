@@ -181,12 +181,12 @@ describe("paying a ticket in the app (C7, C8)", () => {
     process.env.FEATURE_WALLET_FEE = "true";
     try {
       expect((await quote("ctoken_sim_google_pay")).feeReason).toBe("wallet_fee_off");
-      await cf.saveBrandFeePolicy(actor, { ...DEFAULT_CARD_FEE_POLICY, funding: { ...DEFAULT_CARD_FEE_POLICY.funding, googlePay: true } });
+      await cf.saveBrandFeePolicy(actor, { ...DEFAULT_CARD_FEE_POLICY, enabled: true, funding: { ...DEFAULT_CARD_FEE_POLICY.funding, googlePay: true } });
       expect((await quote("ctoken_sim_google_pay")).feeReason).toBe("applies");
       expect((await quote("ctoken_sim_apple_pay")).feeReason).toBe("wallet_fee_off");
     } finally {
       delete process.env.FEATURE_WALLET_FEE;
-      await cf.saveBrandFeePolicy(actor, DEFAULT_CARD_FEE_POLICY);
+      await cf.saveBrandFeePolicy(actor, { ...DEFAULT_CARD_FEE_POLICY, enabled: true });
     }
     const r = await quoteRoute.POST(
       req(`/api/v1/me/tickets/${t.id}/quote`, { method: "POST", headers: await auth(c.id), body: JSON.stringify({ tipChoice: "none", paymentMethodId: "pm_card_amex" }) }),

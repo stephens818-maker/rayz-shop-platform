@@ -77,8 +77,11 @@ describe("cardFeeFor: fee types, cap and minimum", () => {
 });
 
 describe("the card fee policy", () => {
-  it("defaults to 3% on credit everywhere surcharges are allowed, debit, prepaid and wallets off", () => {
-    const p = brandCardFeePolicy({});
+  it("is off until the brand turns it on, then 3% on credit everywhere surcharges are allowed, debit, prepaid and wallets off", () => {
+    expect(brandCardFeePolicy({}).enabled).toBe(false);
+    expect(brandCardFeePolicy(null).enabled).toBe(false);
+    expect(feeConfigFor(brandCardFeePolicy({}), "IA", "pos").enabled).toBe(false);
+    const p = brandCardFeePolicy({ enabled: true });
     expect(p).toMatchObject({
       enabled: true,
       type: "percent",
@@ -95,7 +98,7 @@ describe("the card fee policy", () => {
   });
 
   it("turns into a config for a shop's state and channel", () => {
-    const p = brandCardFeePolicy({ channels: { deposit: false } });
+    const p = brandCardFeePolicy({ enabled: true, channels: { deposit: false } });
     expect(feeConfigFor(p, "IA", "pos")).toMatchObject({ enabled: true, rate: 0.03, maxRate: 0.03 });
     expect(feeConfigFor(p, "IA", "pos").off).toBeUndefined();
     expect(feeConfigFor(p, "IA", "deposit").off).toBe("channel_off");
@@ -104,7 +107,7 @@ describe("the card fee policy", () => {
   });
 
   it("lets a shop override only its own keys, and keeps only what differs", () => {
-    const brand = brandCardFeePolicy({ rate: 0.025 });
+    const brand = brandCardFeePolicy({ enabled: true, rate: 0.025 });
     const raw = { rate: 0.02, enabled: true, waiverAllowed: false, refundRule: "keep", states: ["MA"], channels: { app: false, pos: true } };
     expect(cleanOverride(brand, raw)).toEqual({ rate: 0.02, channels: { app: false } });
     const merged = shopCardFeePolicy(brand, raw);
@@ -114,7 +117,7 @@ describe("the card fee policy", () => {
   });
 
   it("refuses settings that break the rules", () => {
-    const p = DEFAULT_CARD_FEE_POLICY;
+    const p = { ...DEFAULT_CARD_FEE_POLICY, enabled: true };
     expect(policyProblem(p)).toBeNull();
     expect(policyProblem({ ...p, funding: { ...p.funding, debit: true } })).toMatch(/only allowed on credit/);
     expect(policyProblem({ ...p, funding: { ...p.funding, prepaid: true } })).toMatch(/only allowed on credit/);
@@ -147,14 +150,14 @@ describe("which shops use the fee", () => {
   });
 
   it("turns the fee off where the brand doesn't apply it, whatever the shop's own setting", () => {
-    const brand = brandCardFeePolicy({ appliesTo: "selected", shopIds: [A] });
+    const brand = brandCardFeePolicy({ enabled: true, appliesTo: "selected", shopIds: [A] });
     expect(effectiveShopPolicy(brand, null, A).enabled).toBe(true);
     expect(effectiveShopPolicy(brand, { enabled: true, rate: 0.02 }, B)).toMatchObject({ enabled: false, rate: 0.02 });
     expect(effectiveShopPolicy({ ...brand, appliesTo: "none" }, null, A).enabled).toBe(false);
   });
 
   it("says why a shop is off and whether it follows the brand", () => {
-    const brand = brandCardFeePolicy({ appliesTo: "selected", shopIds: [A, C] });
+    const brand = brandCardFeePolicy({ enabled: true, appliesTo: "selected", shopIds: [A, C] });
     expect(shopFeeState(brand, null, A, "IA")).toMatchObject({ on: true, off: null, applied: true, inherits: true, ownKeys: [], fee: "3%" });
     expect(shopFeeState(brand, null, B, "IA")).toMatchObject({ on: false, off: "not_applied", applied: false });
     expect(shopFeeState(brand, { enabled: false }, A, "IA")).toMatchObject({ on: false, off: "turned_off", inherits: false, ownKeys: ["enabled"] });
@@ -172,7 +175,7 @@ describe("which shops use the fee", () => {
   });
 
   it("changes a shop's override per bulk action", () => {
-    const brand = brandCardFeePolicy({ rate: 0.03 });
+    const brand = brandCardFeePolicy({ enabled: true, rate: 0.03 });
     const own = { enabled: false, rate: 0.02, notice: "A 2% surcharge applies to credit cards." };
     expect(bulkOverride("enable", brand, own)).toEqual({ rate: 0.02, notice: own.notice });
     expect(bulkOverride("enable", brand, { rate: 0.02 })).toEqual({ rate: 0.02 });

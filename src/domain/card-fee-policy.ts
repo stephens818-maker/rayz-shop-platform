@@ -75,8 +75,9 @@ export type CardFeeOverride = Partial<Pick<CardFeePolicy, "enabled" | "type" | "
 };
 export const OVERRIDE_KEYS = ["enabled", "type", "rate", "flatCents", "appliesToTip", "capCents", "minCents", "notice", "channels", "funding"] as const;
 
+/** Off until the owner turns it on: a surcharge needs the card networks' notice, signs at the door and counter, a rate at most the shop's card cost, and the CPA's word on sales tax first. */
 export const DEFAULT_CARD_FEE_POLICY: CardFeePolicy = {
-  enabled: true,
+  enabled: false,
   type: "percent",
   rate: 0.03,
   flatCents: 0,

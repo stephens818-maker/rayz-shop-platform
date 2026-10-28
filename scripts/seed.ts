@@ -62,7 +62,8 @@ async function main() {
   const roleRows = await db.insert(t.roles).values(ROLE_TEMPLATES.map(templateRow)).returning();
   const roleId = (key: string) => roleRows.find((r) => r.key === key)!.id;
 
-  await db.insert(t.brandSettings).values({ id: 1, loyalty: DEFAULT_LOYALTY, staffTime: { ...DEFAULT_STAFF_TIME_RULES } });
+  // The sample brand shows the surcharge at work; a real brand starts with it off (DEFAULT_CARD_FEE_POLICY).
+  await db.insert(t.brandSettings).values({ id: 1, loyalty: DEFAULT_LOYALTY, staffTime: { ...DEFAULT_STAFF_TIME_RULES }, cardFee: { enabled: true } });
   const reasonRows = await db.insert(t.blockReasons).values(DEFAULT_BLOCK_REASONS.map((r) => ({ ...r }))).returning();
   const reason = (key: string) => {
     const r = reasonRows.find((x) => x.key === key)!;
@@ -91,6 +92,7 @@ async function main() {
         productTaxRate: s.productTaxRate,
         description: SHOP_DESCRIPTION,
         ownerEntityId: brandOwner.id,
+        cardFeeEnabled: true,
       })),
     )
     .returning();

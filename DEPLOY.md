@@ -426,7 +426,10 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
 62. TCPA express consent wording on the record (claude bot, Oct 28; migration `core_0151_consent_wording`). It's additive, and nobody's access changes.
     - The migration adds `consent_events.consent_text`. From the deploy on, each yes on the current wording (the web booking form's text box, the app's consent screen) keeps the exact text the client agreed to, beside its version, source, IP and time. Earlier rows keep their version, which names the wording in `src/domain/consent-texts.ts`.
     - The web booking form's text box starts unchecked (since `94d32e4`), and booking never depends on it.
-    - The next free migration is `core_0152`.
+63. The credit card surcharge is off by default at the brand (Oct 28; migration `core_0152_surcharge_off_by_default`).
+    - A brand that never saved its own surcharge setting gets `enabled: false` stored, and each shop's mirrored `card_fee_enabled` follows. A brand's saved choice and a shop's own setting are kept. New shops' `card_fee_enabled` defaults to off.
+    - After the deploy, **Setup → Credit card surcharge** should show it off. Leave it off until Charles confirms: the 3% is at most the actual card cost, 30 days' notice went to Stripe and the card brands, the door and counter signs are up, and the CPA confirmed Iowa sales tax on the surcharge.
+    - The next free migration is `core_0153`.
 
 ## Launch day: every surface at once, at the pilot shop
 

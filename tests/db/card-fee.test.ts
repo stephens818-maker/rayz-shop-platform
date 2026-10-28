@@ -46,7 +46,8 @@ afterAll(async () => {
   await m?.db.closeDb();
 });
 
-const brand = (over: Partial<import("@/domain/card-fee-policy").CardFeePolicy> = {}) => ({ ...policy.DEFAULT_CARD_FEE_POLICY, ...over });
+/** The seeded brand: the default policy, turned on. */
+const brand = (over: Partial<import("@/domain/card-fee-policy").CardFeePolicy> = {}) => ({ ...policy.DEFAULT_CARD_FEE_POLICY, enabled: true, ...over });
 
 beforeEach(async () => {
   await fee.saveBrandFeePolicy(actor, brand());
@@ -103,6 +104,31 @@ describe("settings", () => {
     expect((await fee.cardFeeConfigFor(shopId, "app")).off).toBe("channel_off");
     await fee.saveShopFeeOverride(actor, shopId, null);
     expect((await fee.shopFeePolicy(shopId)).override).toBeNull();
+  });
+
+  it("is off at a brand that never turned it on (core_0152), and the migration keeps a saved choice and a shop's own", async () => {
+    const { readFileSync } = await import("node:fs");
+    const S = m.schema;
+    const migrate = async () => {
+      for (const q of readFileSync("drizzle/core_0152_surcharge_off_by_default.sql", "utf8").split("--> statement-breakpoint")) await m.db.db.execute(m.drizzle.sql.raw(q));
+    };
+    const enabled = async (id: string) => (await m.db.db.query.shops.findFirst({ where: m.drizzle.eq(S.shops.id, id) }))!.cardFeeEnabled;
+    await m.db.db.update(S.brandSettings).set({ cardFee: {} });
+    await m.db.db.update(S.shops).set({ cardFeeEnabled: true });
+    await m.db.db.update(S.shops).set({ cardFeeOverride: { enabled: true } }).where(m.drizzle.eq(S.shops.id, otherId));
+    expect(await fee.cardFeeConfigFor(shopId, "pos")).toMatchObject({ enabled: false });
+    expect(await fee.computeCardFee(shopId, "credit", { chargeCents: 5000 })).toMatchObject({ feeCents: 0, reason: "disabled" });
+
+    await migrate();
+    expect((await m.db.db.query.brandSettings.findFirst())!.cardFee).toEqual({ enabled: false });
+    expect(await enabled(shopId)).toBe(false);
+    expect(await enabled(otherId)).toBe(true);
+
+    await m.db.db.update(S.brandSettings).set({ cardFee: { enabled: true } });
+    await m.db.db.update(S.shops).set({ cardFeeEnabled: true }).where(m.drizzle.eq(S.shops.id, shopId));
+    await migrate();
+    expect((await m.db.db.query.brandSettings.findFirst())!.cardFee).toEqual({ enabled: true });
+    expect(await enabled(shopId)).toBe(true);
   });
 });
 

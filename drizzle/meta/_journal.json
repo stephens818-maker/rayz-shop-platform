@@ -1065,6 +1065,13 @@
       "when": 1796642760000,
       "tag": "core_0151_consent_wording",
       "breakpoints": true
+    },
+    {
+      "idx": 152,
+      "version": "7",
+      "when": 1796642820000,
+      "tag": "core_0152_surcharge_off_by_default",
+      "breakpoints": true
     }
   ]
 }
