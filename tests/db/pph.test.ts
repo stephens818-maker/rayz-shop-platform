@@ -1,9 +1,10 @@
 /**
- * Production per hour (Charles, Oct 28) against a real database, in a pay period no other test
- * reaches: service and product sales before tax and tips over clocked worked hours, per barber,
- * location and brand; N/A with no hours; ranks with ties; the trend; a barber seeing only their own;
- * the Payroll Report's review columns matching the report (and never in the iSolved file); the
- * Morning Dashboard section; /me/earnings' own PPH; and the migration's grants.
+ * Productivity Per Hour (Charles, Oct 28) against a real database, in a pay period no other test
+ * reaches: service and product sales before tax and tips over clocked worked hours, and clients per
+ * hour (completed service tickets over the same hours), per barber, location and brand; N/A with no
+ * hours; ranks with ties; the trend; a barber seeing only their own; the Payroll Report's review
+ * columns matching the report (and never in the iSolved file); the Morning Dashboard section;
+ * /me/earnings' own PPH; and the migration's grants.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ReportTable } from "@/domain/report-views";
@@ -46,6 +47,14 @@ async function sale(staffId: string, shopId: string, n: number, serviceNetCents:
     isImported: o.imported ?? false,
   });
 }
+/** A ticket with no sales on it, only lines: a comp service counts as a client; refunded, voided or product-only ones don't. */
+async function ticket(staffId: string, shopId: string, n: number, status: "paid" | "refunded" | "partially_refunded" | "voided", lines: { kind: "service" | "product"; refunded?: boolean }[]) {
+  const [s] = await m.db.db
+    .insert(m.schema.sales)
+    .values({ shopId, staffId, businessDate: day(n), status, serviceNetCents: 0, productNetCents: 0, paidAt: m.time.zonedWallTime(day(n), 12 * 60).toJSDate() })
+    .returning({ id: m.schema.sales.id });
+  await m.db.db.insert(m.schema.saleItems).values(lines.map((l) => ({ saleId: s.id, kind: l.kind, name: l.kind, unitPriceCents: 0, grossCents: 0, netCents: 0, qty: 1, refundedQty: l.refunded ? 1 : 0 })));
+}
 async function bookable(shopId: string, except: string[]) {
   const links = await m.db.db
     .select({ id: m.schema.staffShops.staffId })
@@ -87,6 +96,13 @@ beforeAll(async () => {
   await sale(barberM, shop.moline, 2, 30_000, 2_500);
   // A ticket imported from Squire in week two: payroll leaves it out, PPH counts it.
   await sale(ids.makenna, shop.coralville, 10, 4_800, 0, { imported: true });
+  // Clients: Makenna's three tickets and three comp services in week one (6 over 24 hours, 0.25 an
+  // hour), barber B's one ticket (1 over 4, a tie), and tickets that aren't clients.
+  for (const n of [1, 2, 3]) await ticket(ids.makenna, shop.coralville, n, "paid", [{ kind: "service" }]);
+  await ticket(ids.makenna, shop.coralville, 1, "refunded", [{ kind: "service" }]);
+  await ticket(ids.makenna, shop.coralville, 2, "voided", [{ kind: "service" }]);
+  await ticket(ids.makenna, shop.coralville, 3, "paid", [{ kind: "product" }]);
+  await ticket(ids.makenna, shop.coralville, 3, "partially_refunded", [{ kind: "service", refunded: true }, { kind: "product" }]);
 }, 240_000);
 
 afterAll(async () => {
@@ -113,26 +129,43 @@ describe("the PPH report", () => {
   it("ranks barbers by service PPH, ties sharing a rank and no hours N/A last, with the brand alongside", async () => {
     const d = await load("owner", { shop: shop.coralville, to: day(6) });
     const b = table(d, "barbers");
-    const row = (id: string) => (id === ids.makenna ? [24, 96_000, 5_000, 4_000, 208, 4_208] : [4, 16_000, 0, 4_000, 0, 4_000]);
+    const row = (id: string) => (id === ids.makenna ? [24, 96_000, 5_000, 6, 4_000, 0.25, 208, 4_208] : [4, 16_000, 0, 1, 4_000, 0.25, 0, 4_000]);
     const tied = [ids.makenna, barberB].sort((x, y) => label[x].localeCompare(label[y]));
-    expect(cells(b, "Rank", "Barber", "Worked hours", "Service sales", "Product sales", "Service PPH", "Product PPH", "Total PPH")).toEqual([
+    expect(cells(b, "Rank", "Barber", "Worked hours", "Service sales", "Product sales", "Service tickets", "Service PPH", "Clients per hour", "Product PPH", "Total PPH")).toEqual([
       [1, label[tied[0]], ...row(tied[0])],
       [1, label[tied[1]], ...row(tied[1])],
-      [null, label[barberC], 0, 10_000, 0, "N/A", "N/A", "N/A"],
-      [null, expect.any(String), 28, 122_000, 5_000, 4_357, 179, 4_536],
-      [null, "Brand", 33, 152_000, 7_500, 4_606, 227, 4_833],
+      [null, label[barberC], 0, 10_000, 0, 1, "N/A", "N/A", "N/A", "N/A"],
+      [null, expect.any(String), 28, 122_000, 5_000, 8, 4_357, 0.29, 179, 4_536],
+      [null, "Brand", 33, 152_000, 7_500, 9, 4_606, 0.27, 227, 4_833],
     ]);
     expect(b.sorted).toEqual({ column: col(b, "Service PPH"), dir: "desc" });
     expect(b.sortBy?.[col(b, "Service PPH")]).toEqual({ rank: "service", order: "low" });
     expect(b.sortBy?.[col(b, "Total PPH")]).toEqual({ rank: "total", order: "high" });
     expect(d.stats.map((s) => [s.label, s.value])).toEqual([
       ["Service PPH", "$43.57"],
+      ["Clients per hour", "0.29"],
       ["Product PPH", "$1.79"],
       ["Total PPH", "$45.36"],
       ["Worked hours", "28"],
     ]);
-    expect(d.stats[0].hint).toContain("brand $46.06");
-    expect(d.stats[3].hint).toBe("1 with sales but no worked hours: N/A");
+    expect(d.stats[0].hint).toContain("PPH, the default: service sales per worked hour · brand $46.06");
+    expect(d.stats[1].hint).toBe("8 completed service tickets per worked hour · brand 0.27 (+0.02)");
+    expect(d.stats[4].hint).toBe("1 with sales but no worked hours: N/A");
+    expect(d.notes?.join(" ")).toContain("Productivity Per Hour (PPH)");
+  });
+
+  it("ranks by clients per hour: completed service tickets over the same hours, ties sharing a rank", async () => {
+    const d = await load("owner", { shop: shop.coralville, to: day(6), rank: "clients" });
+    const b = table(d, "barbers");
+    expect(b.title).toBe("Barber leaderboard: Clients per hour");
+    expect(cells(b, "Rank", "Service tickets", "Clients per hour").slice(0, 3)).toEqual([
+      [1, expect.any(Number), 0.25],
+      [1, expect.any(Number), 0.25],
+      [null, 1, "N/A"],
+    ]);
+    expect(b.columns[col(b, "Clients per hour")].kind).toBe("decimal");
+    expect(b.sorted).toEqual({ column: col(b, "Clients per hour"), dir: "desc" });
+    expect(d.options?.find((o) => o.param === "rank")?.choices.map((c) => c.label)).toEqual(["Service PPH", "Clients per hour", "Product PPH", "Total PPH"]);
   });
 
   it("counts Squire-era tickets on the days they were sold, over a pay period", async () => {
@@ -142,7 +175,7 @@ describe("the PPH report", () => {
       [1, label[ids.makenna]],
       [2, label[barberB]],
     ]);
-    expect(b.rows[0].slice(2)).toEqual([24, 100_800, 5_000, 4_200, 208, 4_408]);
+    expect(b.rows[0].slice(2)).toEqual([24, 100_800, 5_000, 7, 4_200, 0.29, 208, 4_408]);
   });
 
   it("ranks by product or total PPH, lowest first when asked", async () => {
@@ -184,9 +217,15 @@ describe("the PPH report", () => {
       [expect.stringMatching(/^Week of /), 0, "N/A"],
     ]);
     expect(t.columns.at(-1)!.label).toBe("Brand Service PPH");
+    expect(cells(t, "Clients per hour")).toEqual([[0.29], ["N/A"]]);
     expect(d.charts?.map((c) => [c.id, c.kind])).toEqual([
       ["trend_pph", "money"],
+      ["trend_clients", "number"],
       ["trend_total", "money"],
+    ]);
+    expect(d.charts?.find((c) => c.id === "trend_clients")?.series.map((x) => x.values)).toEqual([
+      [0.29, null],
+      [0.27, null],
     ]);
     const pp = await load("owner", { shop: shop.coralville, trend: "period" });
     expect(cells(table(pp, "trend"), "Worked hours", "Service PPH")).toEqual([[28, 4_529]]);
@@ -217,12 +256,12 @@ describe("the Payroll Report", () => {
     const report = await payrollReportData({ scope: { shopIds: [shop.coralville], from: fx.start, to: fx.end }, loc: { view: "combined", shops: [{ id: shop.coralville, name: "Coralville" }] } as never, perms: new Set(["payroll.rates"]) as never });
     const t = report.tables.find((x) => x.id === `loc-${fx.start}_${fx.end}-${shop.coralville}`)!;
     const labels = t.columns.map((c) => c.label);
-    expect(labels.slice(-3)).toEqual(["Service PPH", "Product PPH", "Total PPH"]);
+    expect(labels.slice(-4)).toEqual(["Service PPH", "Clients per hour", "Product PPH", "Total PPH"]);
     const row = (name: string) => t.rows.find((r) => r[0] === name)!;
-    expect(row(mk.name).slice(-3)).toEqual([4_000, 208, 4_208]);
+    expect(row(mk.name).slice(-4)).toEqual([4_000, 0.29, 208, 4_208]);
     const c = lineOf(barberC);
-    if (c) expect(row(c.name).slice(-3)).toEqual([NA, NA, NA]);
-    expect(report.notes?.join(" ")).toMatch(/PPH/);
+    if (c) expect(row(c.name).slice(-4)).toEqual([NA, NA, NA, NA]);
+    expect(report.notes?.join(" ")).toContain("Productivity Per Hour");
 
     const d = await load("owner", { shop: shop.coralville });
     expect(table(d, "barbers").rows.find((r) => r[1] === label[ids.makenna])![col(table(d, "barbers"), "Service PPH")]).toBe(4_200);
@@ -242,20 +281,22 @@ describe("other places", () => {
     expect(d.periods.reportDay).toBe(day(3));
     const p = d.pph!;
     expect([p.centi.day, p.service.day, p.centi.wtd, p.service.wtd, p.product.wtd]).toEqual([800, 24_000, 2_800, 122_000, 5_000]);
-    expect(p.brand?.wtd).toEqual({ centi: 3_300, service: 152_000, product: 7_500 });
+    expect([p.clients.day, p.clients.wtd]).toEqual([2, 8]);
+    expect(p.brand?.wtd).toEqual({ centi: 3_300, service: 152_000, product: 7_500, clients: 9 });
     expect(p.byShop).toEqual([]);
     expect(p.byBarber.map((b) => b.staffId)).toEqual([...[ids.makenna, barberB].sort((a, b) => label[a].localeCompare(label[b])), barberC]);
     expect(p.ownOnly).toBe(false);
     const { renderMorningText } = await import("@/domain/morning-render");
     expect(renderMorningText(d).body).toContain("Service PPH: $30.00");
+    expect(renderMorningText(d).body).toContain("Clients per hour: 0.25");
   });
 
   it("/me/earnings: their own PPH for the period and per shop; none without sales or hours", async () => {
     const token = (await api.login("makenna@rayz.test")).accessToken;
     const r = await api.call("GET", `me/earnings?periodId=${fx.start}`, { token });
     expect(r.status, r.text).toBe(200);
-    expect(r.json.pph).toEqual({ workedHours: 24, servicePphCents: 4_000, productPphCents: 208, totalPphCents: 4_208, na: false });
-    expect((r.json.shops as J[]).find((s) => s.shopId === shop.coralville).pph).toMatchObject({ servicePphCents: 4_000 });
+    expect(r.json.pph).toEqual({ workedHours: 24, servicePphCents: 4_000, productPphCents: 208, totalPphCents: 4_208, clients: 7, clientsPerHour: 0.29, na: false });
+    expect((r.json.shops as J[]).find((s) => s.shopId === shop.coralville).pph).toMatchObject({ servicePphCents: 4_000, clients: 7 });
     expect(JSON.stringify(r.json)).not.toContain(barberB);
     await m.db.db.update(m.schema.staff).set({ permissionOverrides: { "reports.money": false } }).where(eq(m.schema.staff.id, ids.makenna));
     try {
