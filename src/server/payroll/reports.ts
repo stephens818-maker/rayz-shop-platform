@@ -1,7 +1,7 @@
 import { and, eq, gt, gte, inArray, lt, lte, sql } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { db } from "@/db";
-import { payGroups, payrollEmployers, payrollExportSends, payrollProfiles, shops, staff, timeEntries, tipAbsorptions, tipLedger, tipPayouts, type PayrollSendShop } from "@/db/schema";
+import { payGroups, paymentTransfers, payrollEmployers, payrollExportSends, payrollProfiles, shops, staff, timeEntries, tipAbsorptions, tipLedger, tipPayouts, type PayrollSendShop } from "@/db/schema";
 import { paidLeaveYear, rulesFor, workStateOf } from "@/domain/wage-hour";
 import { EXPORT_COLUMNS, LOCATIONS_COLUMNS, PAID_TIP_COLUMNS, PAYROLL_TIP_COLUMNS, extraFromOf, inNameOrder, locationSummary, sumColumns, toCents, type Line } from "@/domain/payroll/calc";
 import { FLAG_LABEL, FT_LABEL, PUNCH_LABEL, csv, type PunchType } from "@/domain/time-clock";
@@ -610,7 +610,7 @@ export interface TipsPaidPeriod {
 
 const NO_EMPLOYER = "No employer set";
 
-/** Where a ledger entry's tip stands, by the payout it's in (none: not paid yet). */
+/** Where a ledger entry's tip stands, by the payout it's in (none: not paid yet). A card tip with a tip transfer is paid via Stripe at the sale, whatever its payout. */
 function bucketOf(method: string | null, status: string | null): keyof Omit<TipsPaidBuckets, "earnedCents"> {
   if (status === "paid") return method === "stripe" ? "transferredCents" : method === "payroll" ? "payrollCents" : "cashCents";
   if (status === "approved" || status === "processing") return "inFlightCents";
@@ -640,12 +640,17 @@ async function tipsPaidPeriod(r: Pick<PeriodRun, "ref" | "label" | "blocks">, se
         kind: tipLedger.kind,
         method: tipPayouts.method,
         status: tipPayouts.status,
+        toBarber: sql<boolean>`(${paymentTransfers.id} is not null)`,
         cents: sql<number>`sum(${tipLedger.amountCents})::int`,
       })
       .from(tipLedger)
       .leftJoin(tipPayouts, eq(tipPayouts.id, tipLedger.payoutId))
+      .leftJoin(
+        paymentTransfers,
+        and(eq(tipLedger.kind, "tip"), eq(paymentTransfers.paymentId, tipLedger.paymentId), eq(paymentTransfers.staffId, tipLedger.staffId), eq(paymentTransfers.kind, "tip"), inArray(paymentTransfers.status, ["pending", "sent"])),
+      )
       .where(inPeriod(tipLedger))
-      .groupBy(tipLedger.shopId, tipLedger.staffId, tipLedger.employerId, tipLedger.kind, tipPayouts.method, tipPayouts.status),
+      .groupBy(tipLedger.shopId, tipLedger.staffId, tipLedger.employerId, tipLedger.kind, tipPayouts.method, tipPayouts.status, sql`(${paymentTransfers.id} is not null)`),
     db
       .select({ shopId: tipAbsorptions.shopId, staffId: tipAbsorptions.staffId, employerId: tipAbsorptions.employerId, cents: sql<number>`sum(${tipAbsorptions.amountCents})::int` })
       .from(tipAbsorptions)
@@ -689,7 +694,7 @@ async function tipsPaidPeriod(r: Pick<PeriodRun, "ref" | "label" | "blocks">, se
   for (const e of entries) {
     const row = rowOf(e.staffId, e.employerId, e.shopId);
     row.earnedCents += e.cents;
-    row[bucketOf(e.method, e.status)] += e.cents;
+    row[e.toBarber ? "transferredCents" : bucketOf(e.method, e.status)] += e.cents;
     if (e.kind === "refund") row.reversedCents -= e.cents;
   }
   for (const a of absorbed) rowOf(a.staffId, a.employerId, a.shopId).absorbedCents += a.cents;
@@ -1264,7 +1269,7 @@ export interface IsolvedPeriod {
 function blockedReason(view: PayrollView, approved: boolean): string | null {
   if (view.locked === "some") return "Some shops in this period aren't locked yet.";
   if (view.locked === "none" && !approved) return "Approve this period on the Payroll Report first. Marking it sent then locks it.";
-  if (view.tips.mismatches.length) return `${view.tips.mismatches.length} tip difference${view.tips.mismatches.length === 1 ? "" : "s"} against the Stripe payouts: fix them first.`;
+  if (view.tips.mismatches.length) return `${view.tips.mismatches.length} tip difference${view.tips.mismatches.length === 1 ? "" : "s"} against the Stripe payouts and tip transfers: fix them first.`;
   return null;
 }
 
@@ -1286,10 +1291,7 @@ export async function payrollIsolvedData(i: PayrollReportInput): Promise<ReportD
       const from = extraFromOf(b);
       for (const row of b.exportRows.filter((x) => !sel || sel.includes(x.staffId))) {
         const c = checks.find((x) => x.staffId === row.staffId && x.shopId === b.shopId);
-        const stripe = sumOf(
-          (c?.payouts ?? []).filter((p) => p.method === "stripe" && p.status === "paid"),
-          (p) => p.tipsCents + p.adjustCents,
-        );
+        const stripe = (c?.transferredCents ?? 0) + (c?.otherStripeCents ?? 0);
         const v = row.values;
         fileRows.push({
           shopId: b.shopId,

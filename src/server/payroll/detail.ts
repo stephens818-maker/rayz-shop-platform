@@ -70,19 +70,24 @@ const totalRow = (label: string, s: Sums) => [label, "", "Total", ...s.hours.map
  * shops), hourly pay, commission, the greater-of and its top-up, training, PTO, tips by how they were
  * paid, total wages and gross, then each shop's total and (with more than one shop) every shop's.
  * Every pay figure is the Payroll Report line's, so it ties to the report and the iSolved file to the
- * cent. Card tips paid via Stripe are the period's paid Stripe payouts (as the iSolved preview's tip
- * check has them), with the transfers that carried them.
+ * cent. Card tips paid via Stripe are read from the tip transfers: the period's tips transferred to
+ * the barber's Stripe account at the sale (pending or sent), plus any other tips a paid Stripe payout
+ * carried, as the iSolved preview's tip check has them; then the transfers that carried them.
  */
 export function detailRows(blocks: readonly BlockView[], tipRows: readonly TipCheckRow[]): (string | number)[][] {
-  const stripeOf = new Map(tipRows.map((r) => [`${r.staffId}|${r.shopId}`, r.payouts.filter((p) => p.method === "stripe")] as const));
+  const tipsOf = new Map(tipRows.map((r) => [`${r.staffId}|${r.shopId}`, r] as const));
   const out: (string | number)[][] = [];
   const all = zero();
   for (const b of blocks) {
     const shop = zero();
     for (const l of b.lines) {
       const p = employeePay(l);
-      const stripe = stripeOf.get(`${l.staffId}|${b.shopId}`) ?? [];
-      const paidByStripe = stripe.filter((x) => x.status === "paid").reduce((a, x) => a + x.tipsCents + x.adjustCents, 0);
+      const t = tipsOf.get(`${l.staffId}|${b.shopId}`);
+      const paidByStripe = (t?.transferredCents ?? 0) + (t?.otherStripeCents ?? 0);
+      const carried = [
+        ...(t?.tipTransfers ?? []).filter((x) => x.status === "pending" || x.status === "sent").map((x) => x.stripeTransferId),
+        ...(t?.payouts ?? []).filter((x) => x.method === "stripe" && x.status === "paid").map((x) => x.stripeTransferId),
+      ];
       const s: Sums = { hours: HOURS.map(([, f]) => centi(f(l))), sales: SALES.map(([, f]) => toCents(f(l))), money: MONEY.map(([, f]) => f(p)), tips: [paidByStripe, toCents(l.tipsInPayroll)] };
       add(shop, s);
       out.push([
@@ -95,7 +100,7 @@ export function detailRows(blocks: readonly BlockView[], tipRows: readonly TipCh
         p.appliedRule,
         ...s.money.map(money),
         ...s.tips.map(money),
-        [...new Set(stripe.map((x) => x.stripeTransferId).filter(Boolean))].join(" "),
+        [...new Set(carried.filter(Boolean))].join(" "),
       ]);
     }
     out.push(totalRow(b.shop, shop));
@@ -114,10 +119,10 @@ async function statusOf(view: PayrollView): Promise<DetailStatus> {
   return (await approvalOf(view))?.current ? "approved" : "draft";
 }
 
-/** Why the detail file can't be made: the Payroll Report's $0.00 reconciliation gate, and the tips against the Stripe payouts. */
+/** Why the detail file can't be made: the Payroll Report's $0.00 reconciliation gate, and the tips against the Stripe payouts and tip transfers. */
 export function detailRefusal(view: PayrollView): string | null {
   if (view.mismatches.length) return `Totals don't reconcile to $0.00, so the payroll detail file isn't made: ${view.mismatches.slice(0, 3).map((m) => m.detail).join("; ")}${view.mismatches.length > 3 ? `; and ${view.mismatches.length - 3} more` : ""}.`;
-  if (view.tips.mismatches.length) return `${view.tips.mismatches.length} tip difference${view.tips.mismatches.length === 1 ? "" : "s"} against the Stripe payouts: fix them before downloading the payroll detail file.`;
+  if (view.tips.mismatches.length) return `${view.tips.mismatches.length} tip difference${view.tips.mismatches.length === 1 ? "" : "s"} against the Stripe payouts and tip transfers: fix them before downloading the payroll detail file.`;
   return null;
 }
 

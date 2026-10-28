@@ -867,7 +867,7 @@ export interface PayrollTipSplit {
   owedInPayrollCents: number;
   /** Tips already paid out in cash or by Stripe, or before tip payouts. */
   paidOutCents: number;
-  /** Of those, paid by Stripe. */
+  /** Of those, paid by Stripe: a card tip transferred to the barber's Stripe account at the sale (its tip transfer, pending or sent), or a paid Stripe payout. */
   paidByStripeCents: number;
 }
 
@@ -963,6 +963,10 @@ export async function payrollTipSplit(shopIds: readonly string[], start: LocalDa
     if (viaPayroll) {
       v.inPayrollCents += r.amountCents;
       if (owedHere) v.owedInPayrollCents += r.amountCents;
+    } else if (withBarber) {
+      // Read from its tip transfer: in their Stripe account since the sale, whenever their payout to the bank goes.
+      v.paidOutCents += r.amountCents;
+      v.paidByStripeCents += r.amountCents;
     } else if (r.status === "paid") {
       v.paidOutCents += r.amountCents;
       if (r.method === "stripe") v.paidByStripeCents += r.amountCents;
