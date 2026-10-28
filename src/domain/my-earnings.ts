@@ -13,6 +13,9 @@ export const CASH_TIPS_COPY = "Tips paid in cash at the shop.";
 export const LATE_TIP_COPY = "Came in after that pay period closed, so it's paid in this one.";
 export const SHOP_COVERS_REFUND_COPY = "Refunded to the client after it reached you. The shop covers it; your pay isn't reduced.";
 export const LATE_DECLARATION_COPY = "Declared after that pay period closed, so it's paid in this one.";
+export const TRAINING_LABEL = "Training: your training hours at your training rate. Paid on top of hourly or commission pay, never part of the greater-of.";
+export const TRAINING_OT_COPY = "Training on top of your clocked hours counts toward the 40 hours for overtime.";
+export const TRAINING_NO_OT_COPY = "Training doesn't count toward overtime.";
 export const REFUNDED_AFTER_EXPORT_COPY = "Refunded to the client after that pay period was sent to payroll. The shop covers it: your pay isn't reduced and nothing is taken back.";
 
 export type EarningsRule = "hourly" | "commission" | "mixed";
@@ -86,3 +89,27 @@ export function periodPay(lines: readonly Line[]) {
 }
 
 export type PeriodPay = ReturnType<typeof periodPay>;
+
+/**
+ * Training as its own line of My Earnings (Charles, Oct 28): the report's Training Pay, training hours
+ * at the training rate, outside the greater-of and part of wagesCents. rateCents is null when it
+ * differs between their shops or changed during the period. paidAsOvertimeHours: training on top of
+ * clocked hours that went over the 40 at a shop where they clocked less, paid as OT hours instead.
+ */
+export function trainingLine(lines: readonly Line[], o: { countsTowardOt: boolean }) {
+  const pays = lines.map(employeePay);
+  const trained = pays.filter((_, i) => lines[i].trainingHours > 0);
+  return {
+    code: "training" as const,
+    label: TRAINING_LABEL,
+    hours: r2(sum(lines, (l) => l.trainingHours)),
+    rateCents: sameOrNull((trained.length ? trained : pays).map((p) => p.trainingRateCents)),
+    payCents: sum(pays, (p) => p.trainingPayCents),
+    inGreaterOf: false as const,
+    paidAsOvertimeHours: r2(sum(lines, (l) => l.otFromTraining ?? 0)),
+    countsTowardOt: o.countsTowardOt,
+    otNote: o.countsTowardOt ? TRAINING_OT_COPY : TRAINING_NO_OT_COPY,
+  };
+}
+
+export type TrainingLine = ReturnType<typeof trainingLine>;

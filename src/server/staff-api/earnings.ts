@@ -3,7 +3,7 @@ import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from "drizzle-
 import { db } from "@/db";
 import { payrollApprovals, payrollExportSends, payrollRuns, paymentTransfers, sales, shops, tipAbsorptions, tipLedger, tipPayouts } from "@/db/schema";
 import { periodOf, periodStarting, periodsAround, type PayCalendar } from "@/domain/payroll/calendar";
-import { employeePay, exportRowChecks, paystubLines, toCents, type Line, type ShopBlock } from "@/domain/payroll/calc";
+import { DEFAULT_PAYROLL_SETTINGS, employeePay, exportRowChecks, paystubLines, toCents, type Line, type ShopBlock } from "@/domain/payroll/calc";
 import {
   CASH_TIPS_COPY,
   GROSS_LABEL,
@@ -17,6 +17,8 @@ import {
   cashTipReminder,
   hoursOf,
   periodPay,
+  trainingLine,
+  type TrainingLine,
 } from "@/domain/my-earnings";
 import { appPayoutStatus, appTransferStatus } from "@/domain/staff-payouts";
 import { employeeFeeCents, receivedCents } from "@/domain/tips";
@@ -463,6 +465,8 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
     payoutSetup(ctx),
   ]);
   const routes = await tipRoutesOf(setup);
+  const countsTowardOt = (view?.settings ?? DEFAULT_PAYROLL_SETTINGS).trainingCountsTowardOt;
+  const trainingOf = (lines: readonly Line[]) => (see.wages ? seenTraining(trainingLine(lines, { countsTowardOt }), see.hours) : null);
 
   const slices = per.cals.map((c) => {
     const block = view?.blocks.find((b) => b.shopId === c.shop.id);
@@ -499,6 +503,7 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
         locked: !!block?.locked,
         fromLock: !!block?.locked,
         pay: see.wages ? pay : null,
+        training: trainingOf(line ? [line] : []),
         hours: see.hours ? shopHours(line) : null,
         reconciliation: reconciliationOf(see, block, line),
       },
@@ -529,6 +534,7 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
     computedAt: state.computedAt,
 
     ...nulled(total.wages, wages),
+    training: trainingOf(slices.flatMap((s) => (s.line ? [s.line] : []))),
     otIsEstimate: true,
     otDisclosure: OT_PAY_LABEL,
     ...nulled(total.hours, see.hours),
@@ -553,6 +559,9 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
     payout: setup,
   };
 }
+
+/** The training line with its hours left out for someone who may see pay but not their hours. */
+const seenTraining = (t: TrainingLine, hours: boolean) => (hours ? t : { ...t, hours: null, paidAsOvertimeHours: null });
 
 function shopHours(l: Line | undefined) {
   const h = hoursOf(l ? [l] : []);
