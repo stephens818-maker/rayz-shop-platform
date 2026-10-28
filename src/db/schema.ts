@@ -4778,6 +4778,30 @@ export const reportViews = pgTable(
 );
 
 /**
+ * The date range each person last picked on each report (a report key, "dashboard" or
+ * "payroll_run"): a preset id, or custom from/to dates (America/Chicago calendar days). A report
+ * opened without dates in its link opens on it.
+ */
+export const staffReportRanges = pgTable(
+  "staff_report_ranges",
+  {
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    report: text("report").notNull(),
+    preset: text("preset"),
+    from: date("from_date", { mode: "string" }),
+    to: date("to_date", { mode: "string" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.staffId, t.report] }),
+    check("staff_report_ranges_report", sql`length(${t.report}) between 1 and 40`),
+    check("staff_report_ranges_range", sql`(${t.preset} is not null and length(${t.preset}) <= 80) or (${t.from} is not null and ${t.to} is not null and ${t.from} <= ${t.to})`),
+  ],
+);
+
+/**
  * A report built in the report builder: its data source and definition (ReportDefinition in
  * src/domain/report-builder.ts). Private to its owner, shared with roles, or a brand template
  * everyone with "open saved reports" sees. Whoever opens it gets it under their own access: their
