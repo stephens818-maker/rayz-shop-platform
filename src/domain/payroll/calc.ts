@@ -178,7 +178,7 @@ export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
   dailyOtHours: null,
   otMultiplier: 1.5,
   trainingCountsTowardOt: true,
-  trainingPayInCost: true,
+  trainingPayInCost: false,
   roundExport2dp: false,
   ftHoursPerWeek: 32,
   ftBasis: "worked",
@@ -296,10 +296,6 @@ export function payrollSettings(raw: unknown): PayrollSettings {
 
 /** The six standard columns' headers as the brand set them. */
 export const earningHeaders = (s: Pick<PayrollSettings, "earningCodes">) => EXPORT_COLUMNS.map((c) => s.earningCodes?.[c.from] ?? c.header);
-
-/** Card tips get their own column only when their earning code isn't the tips column's. */
-export const cardTipsSplit = (s: Pick<PayrollSettings, "earningCodes" | "cardTipsHeader">) =>
-  !!s.cardTipsHeader && s.cardTipsHeader.trim().toLowerCase() !== (s.earningCodes?.tipsOutside ?? EXPORT_COLUMNS[2].header).trim().toLowerCase();
 
 const letters = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 /** Shops in a configured order by name (spaces and case aside, so "Le Claire" is "LeClaire"); the rest after, by name. */
@@ -755,11 +751,7 @@ export interface ExportRow {
   values: number[];
 }
 
-/** A shop's file gets the tips-in-payroll column only when someone there has tips paid through payroll, so the usual file is unchanged. */
-export const hasPayrollTips = (lines: readonly Pick<Line, "tipsInPayroll">[]) => lines.some((l) => l.tipsInPayroll !== 0);
-export const hasPaidTips = (lines: readonly Pick<Line, "tipsPaidOut">[]) => lines.some((l) => l.tipsPaidOut !== 0);
 const hasGuarantee = (lines: readonly Pick<Line, "guaranteeTopUp">[]) => lines.some((l) => (l.guaranteeTopUp ?? 0) !== 0);
-export const hasDeclaredTips = (lines: readonly Pick<Line, "declaredCashTips">[]) => lines.some((l) => (l.declaredCashTips ?? 0) !== 0);
 
 /** What a column after the standard six carries. */
 export type ExtraFrom =
@@ -804,35 +796,14 @@ export interface ExportOptions {
   guaranteeHeader?: string;
 }
 
-const someHave = (lines: readonly Line[], k: "tipsInPayrollOwed" | "tipsInPayrollChosen" | "tipsPaidOutStripe" | "tipsPaidOutCash") => lines.some((l) => (l[k] ?? 0) !== 0);
-
 /**
- * Tips paid through payroll and tips already paid out, each in one column, or split (ST-C13) where
- * anyone in the file has owed tips in payroll or was paid by Stripe: the employee's chosen payroll
- * tips apart from owed ones, and tips paid out by Stripe apart from cash. The usual file is unchanged.
+ * The columns after the standard six. Never a tip column: Charles keeps the file at the workbook's 8
+ * columns with every tip in E_Cash Tips Recd_Dollars (separate tip codes declined). Only the
+ * guarantee top-up when someone in the file has one, the OT premium when the brand adjusts it, and
+ * the brand's own columns, each a compensation choice the brand makes.
  */
-function tipColumns(lines: readonly Line[], s: PayrollSettings): ExtraColumn[] {
-  const payroll: ExtraColumn[] = !someHave(lines, "tipsInPayrollOwed")
-    ? hasPayrollTips(lines)
-      ? [{ header: s.tipsInPayrollHeader, from: "tipsInPayroll" }]
-      : []
-    : [...(someHave(lines, "tipsInPayrollChosen") ? [{ header: s.tipsInPayrollHeader, from: "tipsInPayrollChosen" as const }] : []), { header: s.owedTipsInPayrollHeader, from: "tipsInPayrollOwed" }];
-  const paid: ExtraColumn[] = !s.markPaidTips
-    ? []
-    : !someHave(lines, "tipsPaidOutStripe")
-      ? hasPaidTips(lines)
-        ? [{ header: s.tipsPaidOutHeader, from: "tipsPaidOut" }]
-        : []
-      : [...(someHave(lines, "tipsPaidOutCash") ? [{ header: s.tipsPaidOutHeader, from: "tipsPaidOutCash" as const }] : []), { header: s.stripeTipsPaidHeader, from: "tipsPaidOutStripe" }];
-  return [...payroll, ...paid];
-}
-
-/** The columns after the standard six: card tips (with their own earning code), tips in payroll, tips already paid out (where marked), declared cash tips and the guarantee top-up when someone in the file has them, then the brand's. */
 export function exportExtraColumns(lines: readonly Line[], s: PayrollSettings, o: ExportOptions = {}): ExtraColumn[] {
   return [
-    ...(cardTipsSplit(s) && lines.some((l) => (l.cardTipsOutside ?? 0) !== 0) ? [{ header: s.cardTipsHeader, from: "cardTipsOutside" as const }] : []),
-    ...tipColumns(lines, s),
-    ...(hasDeclaredTips(lines) ? [{ header: s.cashTipsDeclaredHeader, from: "declaredCashTips" as const }] : []),
     ...(hasGuarantee(lines) ? [{ header: o.guaranteeHeader ?? COLUMN_LABEL.guaranteeTopUp, from: "guaranteeTopUp" as const }] : []),
     ...(s.otRegularRate === "adjust" && lines.some((l) => (l.otPremiumAdj ?? 0) !== 0) ? [{ header: s.otPremiumHeader, from: "otPremiumAdj" as const }] : []),
     ...(o.extras ?? []),
@@ -843,18 +814,18 @@ export function exportHeaders(lines: readonly Line[], s: PayrollSettings, o: Exp
   return [...earningHeaders(s), ...exportExtraColumns(lines, s, o).map((c) => c.header)];
 }
 
-/** A standard column's value: the tips column leaves out card tips when they have a column of their own. */
-const standardValue = (l: Line, from: EarningFrom, cardSplit: boolean) => (from === "tipsOutside" && cardSplit ? l.tipsOutside - (l.cardTipsOutside ?? 0) : l[from]);
+/** A standard column's value. E_Cash Tips Recd_Dollars is every tip: ticket tips however they're paid (drawer, Stripe or payroll) and declared cash tips. */
+const standardValue = (l: Line, from: EarningFrom) => (from === "tipsOutside" ? cashTipsRecd(l) : l[from]);
+export const cashTipsRecd = (l: Pick<Line, "tips" | "declaredCashTips">) => l.tips + (l.declaredCashTips ?? 0);
 
 export function exportRows(lines: readonly Line[], s: PayrollSettings, o: ExportOptions = {}): ExportRow[] {
   const extra = exportExtraColumns(lines, s, o);
-  const cardSplit = extra.some((c) => c.from === "cardTipsOutside");
   const out = (x: number) => (s.roundExport2dp ? roundHalfUp2(x) : x);
   return lines.map((l) => ({
     staffId: l.staffId,
     key: l.input.employeeNumber === null ? null : l.input.keyIsText || !/^\d+$/.test(l.input.employeeNumber) ? l.input.employeeNumber : Number(l.input.employeeNumber),
     isolvedName: l.input.isolvedName,
-    values: [...EXPORT_COLUMNS.map((c) => out(standardValue(l, c.from, cardSplit))), ...extra.map((c) => out(l[c.from] ?? 0))],
+    values: [...EXPORT_COLUMNS.map((c) => out(standardValue(l, c.from))), ...extra.map((c) => out(l[c.from] ?? 0))],
   }));
 }
 
@@ -885,6 +856,9 @@ export interface ShopBlock {
   /** Sales at the shop with no employee on them (Squire's "Unassigned sales"): credited to nobody, shown as a warning. */
   unassigned?: { serviceSales: number; productSales: number; salesTax: number };
 }
+
+/** A file from before the 8-column rule, with tips split across their own columns: checked against its own layout. */
+export const hasTipColumns = (from: readonly ExtraFrom[]) => from.some((k) => PAYROLL_TIP_COLUMNS.includes(k) || PAID_TIP_COLUMNS.includes(k) || k === "cardTipsOutside" || k === "declaredCashTips");
 
 /** Locked before exportFrom existed, a seventh column could only be tips paid in payroll. */
 export const extraFromOf = (b: Pick<ShopBlock, "exportFrom" | "exportHeaders">): ExtraFrom[] => b.exportFrom ?? ((b.exportHeaders?.length ?? EXPORT_COLUMNS.length) > EXPORT_COLUMNS.length ? ["tipsInPayroll"] : []);
@@ -953,9 +927,10 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
     }
     const from = extraFromOf(b);
     const cardSplit = from.includes("cardTipsOutside");
+    const tipColumns = hasTipColumns(from);
     EXPORT_COLUMNS.forEach((c, i) => {
       const header = b.exportHeaders?.[i] ?? c.header;
-      const want = c.from === "tipsOutside" && cardSplit ? b.totals.tipsOutside - (b.totals.cardTipsOutside ?? 0) : b.totals[c.from];
+      const want = c.from !== "tipsOutside" ? b.totals[c.from] : !tipColumns ? cashTipsRecd(b.totals) : cardSplit ? b.totals.tipsOutside - (b.totals.cardTipsOutside ?? 0) : b.totals.tipsOutside;
       const sum = b.exportRows.reduce((a, r) => a + r.values[i], 0);
       if (!sameToTheCent(want, sum)) out.push({ shopId: b.shopId, column: header, check: "export", report: want, other: sum, detail: `${b.shop}: export ${header} adds up to a different total than the report's ${COLUMN_LABEL[c.from]}` });
     });
@@ -964,13 +939,13 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
       return i < 0 ? 0 : b.exportRows.reduce((a, r) => a + (r.values[EXPORT_COLUMNS.length + i] ?? 0), 0);
     };
     const payrollTips = PAYROLL_TIP_COLUMNS.reduce((a, k) => a + exported(k), 0);
-    if (!sameToTheCent(b.totals.tipsInPayroll, payrollTips))
+    if (tipColumns && !sameToTheCent(b.totals.tipsInPayroll, payrollTips))
       out.push({ shopId: b.shopId, column: COLUMN_LABEL.tipsInPayroll, check: "export", report: b.totals.tipsInPayroll, other: payrollTips, detail: `${b.shop}: the export's tips paid in payroll add up to a different total than the report's` });
     const topUps = exported("guaranteeTopUp");
     if (!sameToTheCent(b.totals.guaranteeTopUp ?? 0, topUps))
       out.push({ shopId: b.shopId, column: COLUMN_LABEL.guaranteeTopUp, check: "export", report: b.totals.guaranteeTopUp ?? 0, other: topUps, detail: `${b.shop}: the export's guarantee top-ups add up to a different total than the report's` });
     const declared = exported("declaredCashTips");
-    if (!sameToTheCent(b.totals.declaredCashTips ?? 0, declared))
+    if (tipColumns && !sameToTheCent(b.totals.declaredCashTips ?? 0, declared))
       out.push({ shopId: b.shopId, column: COLUMN_LABEL.declaredCashTips, check: "export", report: b.totals.declaredCashTips ?? 0, other: declared, detail: `${b.shop}: the export's declared cash tips add up to a different total than the report's` });
     for (const k of ["tipsPaidOut", "commission", "productTotal", "cardTipsOutside", "otPremiumAdj"] as const) {
       if (!from.includes(k)) continue;
@@ -1072,7 +1047,8 @@ export type AnomalyKind =
   | "mixed_rates"
   | "hours_source"
   | "cross_source_ot"
-  | "rollout_source";
+  | "rollout_source"
+  | "tips_in_payroll_memo";
 
 export const MIXED_RATE_NAME: Record<MixedRate, string> = { wage: "hourly wage", servicePct: "service %", productPct: "product %" };
 
@@ -1147,6 +1123,13 @@ export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Ano
           shopId: b.shopId,
           kind: "refund_written_off",
           message: `${who}: refunds this period came to more than the commission they'd earned, by ${fmtMoney(off)}. Commission is $0.00 (never negative) and the ${fmtMoney(off)} is written off: the shop absorbs it and it's never taken from a later check.`,
+        });
+      if (l.tipsInPayroll > 0)
+        out.push({
+          staffId: l.staffId,
+          shopId: b.shopId,
+          kind: "tips_in_payroll_memo",
+          message: `${who}: ${fmtMoney(l.tipsInPayroll)} of tips to be paid through payroll. The iSolved file reports every tip in E_Cash Tips Recd_Dollars, which iSolved doesn't pay in the check, so pay these outside payroll (drawer or Stripe) before locking.`,
         });
       const late = l.lateTipRefunds ?? 0;
       if (late > 0) {

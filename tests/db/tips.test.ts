@@ -524,7 +524,7 @@ describe("Stripe payouts and webhooks", () => {
 });
 
 describe("payroll export shows tips already paid", () => {
-  it("tips paid outside payroll go to iSolved as received; tips paid through payroll get their own column and are locked as paid", async () => {
+  it("every tip goes to iSolved in E_Cash Tips Recd, the file stays the workbook's 8 columns; tips paid through payroll are flagged and locked as paid", async () => {
     const { shop: sh, barbers: [a, c] } = await barbers("rock-island", ["Garrett", "Mercedez"]);
     await m.db.db.update(s().brandSettings).set({ staffPayouts: { ...savedPayouts, reversalRule: "full_refund_in_window", reversalWindowDays: 7, tipsOnPaycheck: true } });
     onTestFinished(async () => void (await m.db.db.update(s().brandSettings).set({ staffPayouts: { ...savedPayouts, reversalRule: "full_refund_in_window", reversalWindowDays: 7 } })));
@@ -546,12 +546,15 @@ describe("payroll export shows tips already paid", () => {
     expect(lc.tipsInPayroll).toBe(0);
     expect(lc.tipsOutside).toBe(lc.tips);
     expect(lc.tipsPaidOut).toBe(lc.tips);
-    expect(block.exportHeaders!.slice(6)).toEqual([v.settings.tipsInPayrollHeader, v.settings.tipsPaidOutHeader]);
-    expect(block.exportFrom).toEqual(["tipsInPayroll", "tipsPaidOut"]);
+    expect(block.exportHeaders).toHaveLength(6);
+    expect(block.exportFrom).toEqual([]);
     const row = (staffId: string) => block.exportRows.find((x) => x.staffId === staffId)!.values;
-    expect([row(a.id)[2], row(a.id)[6], row(a.id)[7]]).toEqual([la.tipsOutside, 8, la.tipsPaidOut]);
-    expect([row(c.id)[2], row(c.id)[6], row(c.id)[7]]).toEqual([lc.tips, 0, lc.tips]);
+    expect([row(a.id)[2], row(a.id).length]).toEqual([la.tips, 6]);
+    expect([row(c.id)[2], row(c.id).length]).toEqual([lc.tips, 6]);
     expect(v.mismatches, JSON.stringify(v.mismatches)).toEqual([]);
+    const flagged = v.anomalies.filter((x) => x.kind === "tips_in_payroll_memo" && x.shopId === sh.id).map((x) => x.staffId);
+    expect(flagged).toContain(a.id);
+    expect(flagged).not.toContain(c.id);
 
     await lockHours(period.start, period.end);
     expect(await run.approveAndLock(period.start, period.end, actor)).toMatchObject({ locked: expect.any(Number) });
@@ -568,40 +571,30 @@ describe("payroll export shows tips already paid", () => {
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(f.body as unknown as ArrayBuffer);
     const ws = wb.getWorksheet("Rock Island")!;
-    expect(ws.getCell(1, 9).value).toBe(v.settings.tipsInPayrollHeader);
-    expect(ws.getCell(1, 10).value).toBe("M_Tips Paid Out_Dollars");
+    expect(ws.columnCount).toBe(8);
     expect(ws.getCell(1, 5).value).toBe("E_Cash Tips Recd_Dollars");
     const values: unknown[] = [];
-    const paid: unknown[] = [];
     ws.eachRow((rw, n) => {
-      if (n > 1) values.push(rw.getCell(9).value);
-      if (n > 1) paid.push(rw.getCell(10).value);
+      if (n > 1) values.push(rw.getCell(5).value);
     });
-    expect(values).toContain(8);
-    expect(paid).toContain(lc.tips);
+    expect(values).toEqual(expect.arrayContaining([la.tips, lc.tips]));
   });
 
-  it("marking paid tips is required while Stripe pays tips direct, can be turned off where payroll pays them, and its column can't take another column's name", async () => {
+  it("no setting adds a tip column (Charles kept the 8 columns): marked paid or not, with Stripe payouts on or off; an earning code still can't take another's name", async () => {
     const before = await m.db.db.query.brandSettings.findFirst();
     const def = (await import("@/server/brand-sync/settings")).settingDef("payroll")!;
     type P = import("@/domain/payroll/calc").PayrollSettings;
     const base = def.read(before?.payroll) as P;
-    await expect(Promise.resolve().then(() => def.parse({ tipsPaidOutHeader: "E_Cash Tips Recd_Dollars" }, base, actor as never, m.db.db as never))).rejects.toThrow(/its own name/);
-    await expect(Promise.resolve().then(() => def.parse({ stripeTipsPaidHeader: base.tipsPaidOutHeader }, base, actor as never, m.db.db as never))).rejects.toThrow(/tips paid by Stripe needs its own name/);
-    await expect(Promise.resolve().then(() => def.parse({ owedTipsInPayrollHeader: base.tipsInPayrollHeader }, base, actor as never, m.db.db as never))).rejects.toThrow(/owed tips paid in payroll needs its own name/);
-    await expect(Promise.resolve().then(() => def.parse({ markPaidTips: false }, base, actor as never, m.db.db as never))).rejects.toThrow(/can't be turned off while Stripe payouts are on/);
-    process.env.FEATURE_STAFF_STRIPE_PAYOUTS = "false";
-    onTestFinished(() => void delete process.env.FEATURE_STAFF_STRIPE_PAYOUTS);
+    await expect(Promise.resolve().then(() => def.parse({ earningCodes: { ...base.earningCodes, hours: base.earningCodes.netComm } }, base, actor as never, m.db.db as never))).rejects.toThrow(/its own name/);
     const off = (await def.parse({ markPaidTips: false }, base, actor as never, m.db.db as never)) as P;
     expect(off).toMatchObject({ markPaidTips: false });
     const calc = await import("@/domain/payroll/calc");
     const period = (await run.periodChoices()).find((p) => p.current)!;
     const lines = (await run.buildPayroll(period.start, period.end))!.blocks.flatMap((b) => b.lines);
     expect(lines.some((l) => l.tipsPaidOut > 0)).toBe(true);
-    const paidCols = (p: P) => calc.exportExtraColumns(lines, p).filter((c) => calc.PAID_TIP_COLUMNS.includes(c.from));
-    expect(paidCols(base).length).toBeGreaterThan(0);
-    expect(paidCols(off)).toEqual([]);
-    expect(calc.exportHeaders(lines, off)).not.toContain(base.tipsPaidOutHeader);
-    expect(calc.exportHeaders(lines, off)).not.toContain(base.stripeTipsPaidHeader);
+    for (const p of [base, off, { ...base, cardTipsHeader: "E_Card Tips_Dollars" }]) {
+      expect(calc.exportExtraColumns(lines, p)).toEqual([]);
+      expect(calc.exportHeaders(lines, p)).toEqual(calc.earningHeaders(p));
+    }
   });
 });

@@ -48,7 +48,7 @@ export function SettingsForm({ initial, memoRequired }: { initial: PayrollSettin
       />
       <Check
         label="Training pay is labor cost on the Payroll Report"
-        hint="Training hours × training rate (or the hourly rate). The workbook leaves it out; the platform includes it by default."
+        hint="Training hours × training rate (or the hourly rate). Off until Charles answers Q11 (do clocked hours already include training?), like the workbook, so labor cost excludes training pay."
         checked={v.trainingPayInCost}
         onChange={(x) => setV({ ...v, trainingPayInCost: x })}
       />
@@ -100,46 +100,14 @@ export function SettingsForm({ initial, memoRequired }: { initial: PayrollSettin
           <span className="block text-xs text-zinc-500">Report OT multiplier</span>
           <Input type="number" step="0.1" value={v.otMultiplier} onChange={num("otMultiplier")} className="h-9 w-24" />
         </label>
-        <label>
-          <span className="block text-xs text-zinc-500">iSolved column for tips paid in payroll</span>
-          <Input value={v.tipsInPayrollHeader} onChange={(e) => setV({ ...v, tipsInPayrollHeader: e.target.value })} className="h-9 w-72" />
-        </label>
-        <label>
-          <span className="block text-xs text-zinc-500">iSolved column for owed tips paid in payroll</span>
-          <Input value={v.owedTipsInPayrollHeader} onChange={(e) => setV({ ...v, owedTipsInPayrollHeader: e.target.value })} className="h-9 w-72" />
-        </label>
-        <label className="flex items-center gap-2 self-end text-sm" title={memoRequired ? "Required while tips are paid straight to employees through Stripe" : undefined}>
-          <input type="checkbox" checked={v.markPaidTips || memoRequired} disabled={memoRequired} onChange={(e) => setV({ ...v, markPaidTips: e.target.checked })} />
-          Mark tips already paid out{memoRequired && " (required with Stripe payouts)"}
-        </label>
-        {(v.markPaidTips || memoRequired) && (
-          <label>
-            <span className="block text-xs text-zinc-500">iSolved memo column for tips already paid out</span>
-            <Input value={v.tipsPaidOutHeader} onChange={(e) => setV({ ...v, tipsPaidOutHeader: e.target.value })} className="h-9 w-72" />
-          </label>
-        )}
-        {(v.markPaidTips || memoRequired) && (
-          <label>
-            <span className="block text-xs text-zinc-500">iSolved memo column for tips paid by Stripe</span>
-            <Input value={v.stripeTipsPaidHeader} onChange={(e) => setV({ ...v, stripeTipsPaidHeader: e.target.value })} className="h-9 w-72" />
-          </label>
-        )}
       </div>
       <p className="text-xs text-zinc-500">
-        Tips paid out in cash or by Stripe go to iSolved as E_Cash Tips Recd_Dollars (tips the employee already has). Tips paid through payroll go in this column instead, which a shop&apos;s
-        file gets only when someone there has such tips. Owed Stripe tips paid on the paycheck at the cutoff, because the employee couldn&apos;t be paid directly, get their own earning
-        apart from tips the employee chose to get there. The earning codes are to confirm with Charles.
-      </p>
-      <p className="text-xs text-zinc-500">
-        Marked, the tips already paid out by the time the period is locked (cash from the drawer, or Stripe to the employee&apos;s card or bank) also go in the memo column: part of the tips
-        received, never paid again. Where anyone in the file was paid by Stripe, those tips go in their own memo column, and this one keeps the tips paid out another way. A shop&apos;s file gets these
-        only when someone there was paid tips. The memo codes are to confirm with Charles before the first upload.
-        {memoRequired &&
-          " With tips paid straight to employees through Stripe, the column can't be turned off, and approve and lock checks it per employee against every payout in the period, to the cent (the Payroll tip report shows it)."}
+        The iSolved file is always the workbook&apos;s 8 columns. Every tip goes in E_Cash Tips Recd_Dollars: card and cash tips, tips paid out from the drawer or by Stripe, and declared cash
+        tips. There are no separate tip codes (Charles declined them). iSolved doesn&apos;t pay that column in the check, so tips owed through payroll are flagged on the run to pay outside it.
       </p>
       <IsolvedFileFields v={v} onChange={(x) => setV({ ...v, ...x })} />
       <BrandCalendarFields cal={v.calendar} onChange={(calendar) => setV({ ...v, calendar })} />
-      <DeclarationFields d={v.declarations} header={v.cashTipsDeclaredHeader} onChange={(declarations) => setV({ ...v, declarations })} onHeader={(cashTipsDeclaredHeader) => setV({ ...v, cashTipsDeclaredHeader })} />
+      <DeclarationFields d={v.declarations} onChange={(declarations) => setV({ ...v, declarations })} />
       <TipTaxFields t={v.tipTax} onChange={(tipTax) => setV({ ...v, tipTax })} />
       <p className="text-xs text-zinc-500">Full time / part time: exactly {v.ftHoursPerWeek} is part time. Defaults (clocked worked hours over a rolling 4 weeks) are pending Charles. Overtime is weekly over 40 (federal FLSA); Iowa and
         Illinois appear to add no daily rule, which is to confirm before a daily threshold is set.</p>
@@ -205,10 +173,6 @@ function IsolvedFileFields({ v, onChange }: { v: PayrollSettings; onChange: (x: 
             <Input aria-label={`iSolved earning code for ${c.header}`} value={v.earningCodes[c.from]} onChange={(e) => onChange({ earningCodes: { ...v.earningCodes, [c.from]: e.target.value } })} className="h-9 w-56" />
           </label>
         ))}
-        <label>
-          <span className="block text-xs text-zinc-500">Card tips paid outside payroll go under</span>
-          <Input aria-label="iSolved earning code for card tips" value={v.cardTipsHeader} onChange={(e) => onChange({ cardTipsHeader: e.target.value })} className="h-9 w-56" />
-        </label>
         <label>
           <span className="block text-xs text-zinc-500">Card surcharge, for commission (I10)</span>
           <Select value={v.commissionBase.cardFee} onChange={(e) => onChange({ commissionBase: { ...v.commissionBase, cardFee: e.target.value as CommissionBase["cardFee"] } })} className="h-9 w-80">
@@ -340,13 +304,13 @@ function BrandCalendarFields({ cal, onChange }: { cal: PayCalendar; onChange: (c
   );
 }
 
-function DeclarationFields({ d, header, onChange, onHeader }: { d: TipDeclarationSettings; header: string; onChange: (d: TipDeclarationSettings) => void; onHeader: (h: string) => void }) {
+function DeclarationFields({ d, onChange }: { d: TipDeclarationSettings; onChange: (d: TipDeclarationSettings) => void }) {
   return (
     <fieldset className="rounded-lg border border-zinc-200 p-3">
       <legend className="px-1 text-sm font-medium">Cash tip declarations</legend>
       <p className="mb-2 text-xs text-zinc-500">
-        Employees declare the cash tips handed to them (never rung up) in the staff app and at clock-out. The IRS wants them monthly by the 10th once they reach $20; they go to iSolved as their
-        own earning, reported and taxed, never paid by the shop. The CPA and iSolved confirm the electronic declaration meets the IRS tip report rules.
+        Employees declare the cash tips handed to them (never rung up) in the staff app and at clock-out. The IRS wants them monthly by the 10th once they reach $20; they go to iSolved in
+        E_Cash Tips Recd_Dollars with their other tips, reported and taxed, never paid by the shop. The CPA and iSolved confirm the electronic declaration meets the IRS tip report rules.
       </p>
       <div className="space-y-2">
         <Check label="Employees declare cash tips" checked={d.enabled} onChange={(enabled) => onChange({ ...d, enabled })} />
@@ -354,10 +318,6 @@ function DeclarationFields({ d, header, onChange, onHeader }: { d: TipDeclaratio
         <div className="flex flex-wrap items-end gap-3 text-sm">
           <Num label="Remind from the 1st through day" value={d.remindUntilDay} onChange={(remindUntilDay) => onChange({ ...d, remindUntilDay })} />
           <Num label="Last month closes after day" value={d.lockDay} onChange={(lockDay) => onChange({ ...d, lockDay })} />
-          <label>
-            <span className="block text-xs text-zinc-500">iSolved earning for declared cash tips</span>
-            <Input value={header} onChange={(e) => onHeader(e.target.value)} className="h-9 w-72" />
-          </label>
         </div>
         <label className="block text-sm">
           <span className="block text-xs text-zinc-500">What the employee attests to</span>

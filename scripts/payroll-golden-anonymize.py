@@ -13,7 +13,8 @@ iSolved name quirks (case, comma, missing space, trailing space, middle initial)
 typed over formulas, which values are zero, who has OT, which regular hours aren't exact in binary
 (total − OT), and the sign of every Service Total (so each row takes the same branch of the IF
 formulas). The expected values are recomputed with the
-workbook's formulas (the reference calculator's), after checking those reproduce the real golden.
+workbook's formulas (the reference calculator's), after checking those reproduce the real golden,
+plus the Payroll Report's OT pay and labor cost (scripts/payroll-golden-labor-cost.py).
 
 The output is checked for every real name, key and pay rate before it's written. Prints counts only.
 """
@@ -45,7 +46,10 @@ def calc(i):
     M = (I + L if I > 0 else L) if i["netcomm_override"] is None else i["netcomm_override"]
     N = (D + I if I > 0 else D) + L
     O = (N / E) if E else None
-    return dict(hourly_total=D, gross_per_hr=F, commission=H, service_total=I, product_commission=L, net_comm=M, total_wages=N, pct_of_gross=O)
+    pay_wage = 0.0 if i["hourly_total_override"] == 0 else i["wage"]
+    T = 1.5 * pay_wage * i["ot_hours"]
+    U = pay_wage * i["training_hours"]
+    return dict(hourly_total=D, gross_per_hr=F, commission=H, service_total=I, product_commission=L, net_comm=M, total_wages=N, pct_of_gross=O, ot_pay=T, training_pay=U, labor_cost=N + T)
 
 
 def cached(out):
@@ -218,6 +222,8 @@ def main():
         cE, cN = sum(x["inputs"]["service"] for x in anon_rows), s("total_wages")
         correct[loc] = dict(hours=sum(x["inputs"]["hours"] for x in anon_rows), hourly_total=s("hourly_total"), service=cE, commission=s("commission"), net_comm=s("net_comm"),
                             total_wages=cN, tips=sum(x["inputs"]["tips"] for x in anon_rows), gross_profit=cE - cN)
+        ot_pay, training_pay = float(s("ot_pay")), float(s("training_pay"))
+        correct[loc].update(ot_pay=ot_pay, training_pay=training_pay, labor_cost=cN + ot_pay, labor_cost_with_training=cN + ot_pay + training_pay, gross_profit_after_labor=cE - (cN + ot_pay))
     for loc in g["workbook_summary_cached"]:
         if loc in cached_totals:
             c = cached_totals[loc]

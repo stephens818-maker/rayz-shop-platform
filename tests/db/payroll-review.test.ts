@@ -290,7 +290,7 @@ describe("SB-C3: cash tip declarations", () => {
     expect(await jobs()).toHaveLength(0);
   });
 
-  it("count in payroll under their own iSolved column and in the tips report; a correction replaces, and rows never change", async () => {
+  it("count in payroll in E_Cash Tips Recd with their ticket tips (no column of their own) and in the tips report; a correction replaces, and rows never change", async () => {
     const { shop: sh, b } = await barberAt("moline", 1);
     const { cur } = await periods();
     const base = { staffId: b.id, shopId: sh.id, businessDate: today, source: "staff_app" as const, actor };
@@ -302,8 +302,10 @@ describe("SB-C3: cash tip declarations", () => {
     const v = await run.buildPayroll(cur.start, cur.end);
     expect(lineOf(v, sh.id, b.id)!.declaredCashTips).toBe(45);
     const block = blockOf(v, sh.id);
-    const col = block.exportHeaders!.indexOf("E_Cash Tips Declared_Dollars");
-    expect(col).toBeGreaterThanOrEqual(0);
+    expect(block.exportHeaders).not.toContain("E_Cash Tips Declared_Dollars");
+    expect(block.exportHeaders).toHaveLength(6);
+    const line = lineOf(v, sh.id, b.id)!;
+    expect(block.exportRows.find((x) => x.staffId === b.id)!.values[2]).toBeCloseTo(line.tips + 45, 6);
     expect(v!.mismatches).toEqual([]);
     const r = await m.reports.payrollTips({ shopIds: [sh.id], staffId: b.id, from: cur.start, to: cur.end });
     expect(r.rows.find((x) => x.staffId === b.id)!.declaredCashTipsCents).toBe(4500);

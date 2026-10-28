@@ -17,7 +17,7 @@ import { morningSettings, parseMorningSettings } from "@/domain/morning-dashboar
 import { BrandNetworkSchema, brandNetworkSettings } from "@/domain/network-access";
 import { OpeningsSettingsSchema, openingsSettings, openingsTemplatesProblem } from "@/domain/openings";
 import { cleanOutreachRules, outreachRules, outreachRulesProblem } from "@/domain/outreach";
-import { CARD_FEE_BASE_LABEL, EXPORT_FORMAT_LABEL, FT_BASIS_LABEL, HOURS_SOURCE_LABEL, LOYALTY_BASE_LABEL, OT_REGULAR_RATE_LABEL, cardTipsSplit, earningHeaders, payrollSettings } from "@/domain/payroll/calc";
+import { CARD_FEE_BASE_LABEL, EXPORT_FORMAT_LABEL, FT_BASIS_LABEL, HOURS_SOURCE_LABEL, LOYALTY_BASE_LABEL, OT_REGULAR_RATE_LABEL, earningHeaders, payrollSettings } from "@/domain/payroll/calc";
 import { calendarProblem, sameCalendar, sameDates, type PayCalendar } from "@/domain/payroll/calendar";
 import { groupCalendar, resyncPeriodDates } from "../payroll/period-dates";
 import type { Permission } from "@/domain/permissions";
@@ -50,7 +50,6 @@ import { intervalProblem } from "@/domain/timing";
 import { REMINDER_DAYS, REMINDER_MAX, TIP_METHODS, brandTipPolicy, portalUrl } from "@/domain/tips";
 import { PAYROLL_HOURS_LABEL, PAYROLL_HOURS_STYLES, displaySettings, timeFormatOf, type PayrollHoursStyle } from "@/domain/display";
 import { TIME_FORMATS, TIME_FORMAT_LABEL, hhmmLabel, type TimeFormat } from "@/lib/time";
-import { stripePayoutsOn } from "../tips/payout-model";
 import { forgetDisplay } from "../display";
 import { audit } from "../audit";
 import { AppError } from "../errors";
@@ -525,15 +524,7 @@ export const SETTINGS: readonly SettingDef[] = [
         taken.push(h.toLowerCase());
       };
       earningHeaders(v).forEach((h) => own(h, h));
-      own(v.tipsInPayrollHeader, "tips paid in payroll");
-      if (cardTipsSplit(v)) own(v.cardTipsHeader, "card tips");
-      own(v.owedTipsInPayrollHeader, "owed tips paid in payroll");
-      if (v.markPaidTips) own(v.tipsPaidOutHeader, "tips already paid out");
-      if (v.markPaidTips) own(v.stripeTipsPaidHeader, "tips paid by Stripe");
-      own(v.cashTipsDeclaredHeader, "declared cash tips");
       if (v.otRegularRate === "adjust") own(v.otPremiumHeader, "the overtime premium adjustment");
-      if (!v.markPaidTips && stripePayoutsOn())
-        bad("Tips are paid straight to employees through Stripe, so the iSolved file has to mark the tips already paid out; that column can't be turned off while Stripe payouts are on.");
       if (v.declarations.remindUntilDay > v.declarations.lockDay) bad("Reminders stop by the day declarations close.");
       return v;
     },
@@ -579,7 +570,7 @@ export const SETTINGS: readonly SettingDef[] = [
       const clean = compensationSettings({ ...before, ...obj(raw) });
       const [b] = await tx.select({ p: brandSettings.payroll }).from(brandSettings).where(eq(brandSettings.id, 1));
       const ps = payrollSettings(b?.p);
-      const problem = compensationProblem(clean, [...earningHeaders(ps), ...(cardTipsSplit(ps) ? [ps.cardTipsHeader] : []), ps.tipsInPayrollHeader, ps.owedTipsInPayrollHeader, ps.cashTipsDeclaredHeader, ...(ps.markPaidTips ? [ps.tipsPaidOutHeader, ps.stripeTipsPaidHeader] : [])]);
+      const problem = compensationProblem(clean, [...earningHeaders(ps), ...(ps.otRegularRate === "adjust" ? [ps.otPremiumHeader] : [])]);
       if (problem) bad(problem);
       return clean;
     },

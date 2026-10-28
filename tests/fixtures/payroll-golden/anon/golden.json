@@ -37,7 +37,10 @@
     "product_commission": 3.326,
     "net_comm": 65.10100000000003,
     "total_wages": 524.686,
-    "pct_of_gross": 0.3824241982507289
+    "pct_of_gross": 0.3824241982507289,
+    "ot_pay": 0.0,
+    "training_pay": 31.5,
+    "labor_cost": 524.686
    }
   },
   {
@@ -76,7 +79,10 @@
     "product_commission": 0.0,
     "net_comm": 0.0,
     "total_wages": 950.88,
-    "pct_of_gross": 0.4446148522906867
+    "pct_of_gross": 0.4446148522906867,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 950.88
    }
   },
   {
@@ -115,7 +121,10 @@
     "product_commission": 2.9868,
     "net_comm": 346.5135999999999,
     "total_wages": 1886.5935999999997,
-    "pct_of_gross": 0.3806025588779993
+    "pct_of_gross": 0.3806025588779993,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 1886.5935999999997
    }
   },
   {
@@ -154,7 +163,10 @@
     "product_commission": 0.0,
     "net_comm": 0.0,
     "total_wages": 623.5425,
-    "pct_of_gross": 0.47506914127677086
+    "pct_of_gross": 0.47506914127677086,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 623.5425
    }
   },
   {
@@ -193,7 +205,10 @@
     "product_commission": 0.0,
     "net_comm": 0.0,
     "total_wages": 315.52250000000004,
-    "pct_of_gross": 0.5766549089845749
+    "pct_of_gross": 0.5766549089845749,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 315.52250000000004
    }
   },
   {
@@ -232,7 +247,10 @@
     "product_commission": 0.0,
     "net_comm": 0.0,
     "total_wages": 1223.3700000000001,
-    "pct_of_gross": "#DIV/0!"
+    "pct_of_gross": "#DIV/0!",
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 1223.3700000000001
    }
   },
   {
@@ -271,7 +289,10 @@
     "product_commission": 8.42,
     "net_comm": 240.0916000000001,
     "total_wages": 837.2266000000001,
-    "pct_of_gross": 0.3838604904931983
+    "pct_of_gross": 0.3838604904931983,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 837.2266000000001
    }
   },
   {
@@ -310,7 +331,10 @@
     "product_commission": 17.534000000000002,
     "net_comm": 285.1130999999999,
     "total_wages": 1125.8456,
-    "pct_of_gross": 0.44696100266387184
+    "pct_of_gross": 0.44696100266387184,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 1125.8456
    }
   },
   {
@@ -349,7 +373,10 @@
     "product_commission": 13.404599999999999,
     "net_comm": 346.8399000000001,
     "total_wages": 1350.6174,
-    "pct_of_gross": 0.42421019900497514
+    "pct_of_gross": 0.42421019900497514,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 1350.6174
    }
   },
   {
@@ -388,7 +415,10 @@
     "product_commission": 9.048,
     "net_comm": 305.87879999999984,
     "total_wages": 1032.8987999999997,
-    "pct_of_gross": 0.42371163454675226
+    "pct_of_gross": 0.42371163454675226,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 1032.8987999999997
    }
   },
   {
@@ -427,7 +457,10 @@
     "product_commission": 11.508000000000001,
     "net_comm": 94.59449999999988,
     "total_wages": 1458.2994999999999,
-    "pct_of_gross": 0.35278395332015705
+    "pct_of_gross": 0.35278395332015705,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 1458.2994999999999
    }
   },
   {
@@ -466,7 +499,10 @@
     "product_commission": 22.762,
     "net_comm": 22.762,
     "total_wages": 1047.812,
-    "pct_of_gross": 0.42941882814837273
+    "pct_of_gross": 0.42941882814837273,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 1047.812
    }
   },
   {
@@ -505,7 +541,10 @@
     "product_commission": 0.0,
     "net_comm": 0.0,
     "total_wages": 0.0,
-    "pct_of_gross": "#DIV/0!"
+    "pct_of_gross": "#DIV/0!",
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 0.0
    }
   },
   {
@@ -544,7 +583,10 @@
     "product_commission": 0.0,
     "net_comm": 0.0,
     "total_wages": 1810.205,
-    "pct_of_gross": 0.5541641793329353
+    "pct_of_gross": 0.5541641793329353,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 1810.205
    }
   },
   {
@@ -583,7 +625,10 @@
     "product_commission": 6.1259999999999994,
     "net_comm": 6.1259999999999994,
     "total_wages": 2477.7560000000003,
-    "pct_of_gross": 0.5949036847804426
+    "pct_of_gross": 0.5949036847804426,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 2477.7560000000003
    }
   },
   {
@@ -622,7 +667,10 @@
     "product_commission": 0.0,
     "net_comm": 0.0,
     "total_wages": 1517.25,
-    "pct_of_gross": 0.4969164813498705
+    "pct_of_gross": 0.4969164813498705,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 1517.25
    }
   },
   {
@@ -661,7 +709,10 @@
     "product_commission": 4.338,
     "net_comm": 4.338,
     "total_wages": 663.7905,
-    "pct_of_gross": 1.140357161263722
+    "pct_of_gross": 1.140357161263722,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 663.7905
    }
   },
   {
@@ -700,7 +751,10 @@
     "product_commission": 6.3948,
     "net_comm": 6.3948,
     "total_wages": 1230.3647999999998,
-    "pct_of_gross": 0.5734522777482591
+    "pct_of_gross": 0.5734522777482591,
+    "ot_pay": 47.7675,
+    "training_pay": 49.5,
+    "labor_cost": 1278.1322999999998
    }
   },
   {
@@ -739,7 +793,10 @@
     "product_commission": 17.2908,
     "net_comm": 17.2908,
     "total_wages": 1230.0408,
-    "pct_of_gross": 0.858092168599054
+    "pct_of_gross": 0.858092168599054,
+    "ot_pay": 10.15875,
+    "training_pay": 78.75,
+    "labor_cost": 1240.19955
    }
   },
   {
@@ -778,7 +835,10 @@
     "product_commission": 2.0376,
     "net_comm": 2.0376,
     "total_wages": 985.2051,
-    "pct_of_gross": 0.45755604475220485
+    "pct_of_gross": 0.45755604475220485,
+    "ot_pay": 0.0,
+    "training_pay": 30.5,
+    "labor_cost": 985.2051
    }
   },
   {
@@ -817,7 +877,10 @@
     "product_commission": 5.0832,
     "net_comm": 5.0832,
     "total_wages": 529.9882,
-    "pct_of_gross": 0.5113001784766774
+    "pct_of_gross": 0.5113001784766774,
+    "ot_pay": 0.0,
+    "training_pay": 45.75,
+    "labor_cost": 529.9882
    }
   },
   {
@@ -856,7 +919,10 @@
     "product_commission": 4.1616,
     "net_comm": 4.1616,
     "total_wages": 602.8765999999999,
-    "pct_of_gross": 0.6059853046126629
+    "pct_of_gross": 0.6059853046126629,
+    "ot_pay": 0.0,
+    "training_pay": 76.25,
+    "labor_cost": 602.8765999999999
    }
   },
   {
@@ -895,7 +961,10 @@
     "product_commission": 0.0,
     "net_comm": 0.0,
     "total_wages": 0.0,
-    "pct_of_gross": "#DIV/0!"
+    "pct_of_gross": "#DIV/0!",
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 0.0
    }
   },
   {
@@ -934,7 +1003,10 @@
     "product_commission": 0.0,
     "net_comm": 0.0,
     "total_wages": 647.4250000000001,
-    "pct_of_gross": 0.8039350817066508
+    "pct_of_gross": 0.8039350817066508,
+    "ot_pay": 0.0,
+    "training_pay": 70.5,
+    "labor_cost": 647.4250000000001
    }
   },
   {
@@ -973,7 +1045,10 @@
     "product_commission": 18.122,
     "net_comm": 18.122,
     "total_wages": 1400.0720000000001,
-    "pct_of_gross": 0.4912516096434749
+    "pct_of_gross": 0.4912516096434749,
+    "ot_pay": 13.32,
+    "training_pay": 55.5,
+    "labor_cost": 1413.392
    }
   },
   {
@@ -1012,7 +1087,10 @@
     "product_commission": 0.0,
     "net_comm": 0.0,
     "total_wages": 1204.14,
-    "pct_of_gross": 0.46568847361663296
+    "pct_of_gross": 0.46568847361663296,
+    "ot_pay": 0.0,
+    "training_pay": 42.0,
+    "labor_cost": 1204.14
    }
   },
   {
@@ -1051,7 +1129,10 @@
     "product_commission": 0.0,
     "net_comm": 0.0,
     "total_wages": 355.1625,
-    "pct_of_gross": 0.5370102968081407
+    "pct_of_gross": 0.5370102968081407,
+    "ot_pay": 0.0,
+    "training_pay": 70.875,
+    "labor_cost": 355.1625
    }
   },
   {
@@ -1090,7 +1171,10 @@
     "product_commission": 13.1562,
     "net_comm": 149.96,
     "total_wages": 2446.6562,
-    "pct_of_gross": 0.5137195625106296
+    "pct_of_gross": 0.5137195625106296,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 2446.6562
    }
   },
   {
@@ -1129,7 +1213,10 @@
     "product_commission": 0.5744,
     "net_comm": 0.5744,
     "total_wages": 1124.1094,
-    "pct_of_gross": 1.1101109015316855
+    "pct_of_gross": 1.1101109015316855,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 1124.1094
    }
   },
   {
@@ -1168,7 +1255,10 @@
     "product_commission": 5.638000000000001,
     "net_comm": 5.638000000000001,
     "total_wages": 492.488,
-    "pct_of_gross": 0.7497039168227002
+    "pct_of_gross": 0.7497039168227002,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 492.488
    }
   },
   {
@@ -1207,7 +1297,10 @@
     "product_commission": 0.9168,
     "net_comm": 0.9168,
     "total_wages": 1343.3118,
-    "pct_of_gross": 0.5607646837820914
+    "pct_of_gross": 0.5607646837820914,
+    "ot_pay": 0.0,
+    "training_pay": 0.0,
+    "labor_cost": 1343.3118
    }
   },
   {
@@ -1246,7 +1339,10 @@
     "product_commission": 7.4792,
     "net_comm": 196.10669999999993,
     "total_wages": 606.6266999999999,
-    "pct_of_gross": 0.3543690743932003
+    "pct_of_gross": 0.3543690743932003,
+    "ot_pay": 0.0,
+    "training_pay": 33.0,
+    "labor_cost": 606.6266999999999
    }
   },
   {
@@ -1285,7 +1381,10 @@
     "product_commission": 0.0,
     "net_comm": 0.0,
     "total_wages": 1315.02,
-    "pct_of_gross": 0.7757223251259423
+    "pct_of_gross": 0.7757223251259423,
+    "ot_pay": 0.0,
+    "training_pay": 105.0,
+    "labor_cost": 1315.02
    }
   }
  ],
@@ -2209,7 +2308,12 @@
    "net_comm": 411.6145999999999,
    "total_wages": 5524.5946,
    "tips": 1881.45,
-   "gross_profit": 4802.615399999999
+   "gross_profit": 4802.615399999999,
+   "ot_pay": 0.0,
+   "training_pay": 31.5,
+   "labor_cost": 5524.5946,
+   "labor_cost_with_training": 5556.0946,
+   "gross_profit_after_labor": 4802.615399999999
   },
   "Moline": {
    "hours": 346.48,
@@ -2219,7 +2323,12 @@
    "net_comm": 1295.2798999999998,
    "total_wages": 6852.6999,
    "tips": 2882.16,
-   "gross_profit": 10042.6001
+   "gross_profit": 10042.6001,
+   "ot_pay": 0.0,
+   "training_pay": 0.0,
+   "labor_cost": 6852.6999,
+   "labor_cost_with_training": 6852.6999,
+   "gross_profit_after_labor": 10042.6001
   },
   "Kimberly": {
    "hours": 336.58,
@@ -2229,7 +2338,12 @@
    "net_comm": 16.8588,
    "total_wages": 7699.3663,
    "tips": 1865.41,
-   "gross_profit": 5513.1137
+   "gross_profit": 5513.1137,
+   "ot_pay": 47.7675,
+   "training_pay": 49.5,
+   "labor_cost": 7747.1338,
+   "labor_cost_with_training": 7796.6338,
+   "gross_profit_after_labor": 5465.3462
   },
   "Rock Island": {
    "hours": 215.15,
@@ -2239,7 +2353,12 @@
    "net_comm": 28.5732,
    "total_wages": 3348.1107,
    "tips": 3145.97,
-   "gross_profit": 2269.9592999999995
+   "gross_profit": 2269.9592999999995,
+   "ot_pay": 10.15875,
+   "training_pay": 231.25,
+   "labor_cost": 3358.2694500000002,
+   "labor_cost_with_training": 3589.5194500000002,
+   "gross_profit_after_labor": 2259.8005499999995
   },
   "Silvis": {
    "hours": 182.14000000000001,
@@ -2249,7 +2368,12 @@
    "net_comm": 18.122,
    "total_wages": 3606.7995,
    "tips": 1719.93,
-   "gross_profit": 3295.6205
+   "gross_profit": 3295.6205,
+   "ot_pay": 13.32,
+   "training_pay": 238.875,
+   "labor_cost": 3620.1195000000002,
+   "labor_cost_with_training": 3858.9945000000002,
+   "gross_profit_after_labor": 3282.3005
   },
   "Coralville": {
    "hours": 234.09,
@@ -2259,7 +2383,12 @@
    "net_comm": 157.0892,
    "total_wages": 5406.5653999999995,
    "tips": 1288.77,
-   "gross_profit": 3421.0846
+   "gross_profit": 3421.0846,
+   "ot_pay": 0.0,
+   "training_pay": 0.0,
+   "labor_cost": 5406.5653999999995,
+   "labor_cost_with_training": 5406.5653999999995,
+   "gross_profit_after_labor": 3421.0846
   },
   "LeClaire": {
    "hours": 87.5,
@@ -2269,7 +2398,12 @@
    "net_comm": 196.10669999999993,
    "total_wages": 1921.6466999999998,
    "tips": 1327.15,
-   "gross_profit": 1485.4233
+   "gross_profit": 1485.4233,
+   "ot_pay": 0.0,
+   "training_pay": 138.0,
+   "labor_cost": 1921.6466999999998,
+   "labor_cost_with_training": 2059.6467,
+   "gross_profit_after_labor": 1485.4233
   }
  }
 }

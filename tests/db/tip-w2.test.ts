@@ -1,6 +1,7 @@
 /**
  * The W-2 safeguards on tips paid straight to employees: every payout records its employee, shop,
- * pay period and tips; the iSolved file's tips match each employee's tips and payouts to the cent,
+ * pay period and tips; the iSolved file's E_Cash Tips Recd (every tip, the file being the workbook's
+ * 8 columns) matches each employee's tip ledger and declared cash tips to the cent,
  * and a difference blocks approve and lock; an adjustment never lands in a locked pay period; and
  * the payroll-period tip report as a CSV.
  */
@@ -107,8 +108,8 @@ describe("the W-2 tip check", () => {
     const row = v.tips.rows.find((r) => r.staffId === b.id && r.shopId === sh.id)!;
     expect(row.problems).toEqual([]);
     expect(row.directCents).toBe(row.earnedCents - row.inPayrollCents);
-    expect(row.exportCashTipsCents).toBe(row.directCents);
-    expect(row.exportPaidMemoCents).toBe(row.paidCents);
+    expect(row.exportCashTipsCents).toBe(row.earnedCents + row.declaredCents);
+    expect(row.exportPaidMemoCents).toBe(0);
     expect(row.paidCents).toBeGreaterThanOrEqual(900);
     const p = row.payouts.find((x) => x.tipsCents === 900)!;
     expect(p).toMatchObject({ method: "cash", status: "paid", adjustCents: 0, split: true });
@@ -133,8 +134,8 @@ describe("the W-2 tip check", () => {
 
     const bad = (await run.buildPayroll(cur.start, cur.end))!;
     const diff = bad.mismatches.filter((x) => x.check === "tips");
-    expect(diff).toEqual([expect.objectContaining({ shopId: sh.id, column: "E_Cash Tips Recd_Dollars", report: expect.closeTo(line.tipsOutside + 5, 2), other: expect.closeTo(line.tipsOutside, 2) })]);
-    expect(diff[0].detail).toMatch(/Garrett: the iSolved file has \$[\d.]+ of tips already received; the tip ledger has/);
+    expect(diff).toEqual([expect.objectContaining({ shopId: sh.id, column: "E_Cash Tips Recd_Dollars", report: expect.closeTo(line.tips + 5, 2), other: expect.closeTo(line.tips, 2) })]);
+    expect(diff[0].detail).toMatch(/Garrett: the iSolved file has \$[\d.]+ of tips received; the tip ledger has/);
     expect(bad.tips.rows.find((r) => r.staffId === b.id && r.shopId === sh.id)!.problems).toHaveLength(1);
     expect(await run.approveAndLock(cur.start, cur.end, actor)).toMatchObject({ error: expect.stringMatching(/reconcile/), mismatches: expect.arrayContaining(diff) });
 
@@ -147,7 +148,7 @@ describe("the W-2 tip check", () => {
 });
 
 describe("a locked pay period stays as it went to iSolved", () => {
-  it("an adjustment is dated today, not in the locked period; a payout paid after the lock isn't in the locked file's memo, and still matches", async () => {
+  it("an adjustment is dated today, not in the locked period; a payout paid after the lock leaves the locked file as it was, and still matches", async () => {
     const { shop: sh, b } = await barber("rock-island", "Mercedez");
     const { cur, prev } = await periods();
     await adjustOn(sh.id, b.id, 300, prev.end);

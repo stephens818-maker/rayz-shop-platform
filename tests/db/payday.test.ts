@@ -375,15 +375,16 @@ describe("sandbox pay period: Stripe test mode, tips straight to Jamie's bank", 
     const mol = await isolvedFile(p, shop.moline);
     expect(mol.sheet).toBe("Moline");
     expect(mol.name).toMatch(/Moline\.xlsx$/);
-    expect(mol.header).toEqual(["Key", undefined, "E_Regular_Hours", "E_Overtime 1.5_Hours", "E_Cash Tips Recd_Dollars", "E_Comm Sales_Dollars", "E_Ray'z Paid Time_Hours", "E_Training_Hours", "E_Owed Tips Paid In Payroll_Dollars", "M_Tips Paid By Stripe_Dollars"]);
+    // The workbook's 8 columns, every tip in E_Cash Tips Recd however it's paid (Charles declined separate tip codes).
+    expect(mol.header).toEqual(["Key", undefined, "E_Regular_Hours", "E_Overtime 1.5_Hours", "E_Cash Tips Recd_Dollars", "E_Comm Sales_Dollars", "E_Ray'z Paid Time_Hours", "E_Training_Hours"]);
     const productComm = Math.round(0.15 * 2 * price.product * 100) / 100;
-    expect(mol.rows.get(String(jamieNo))!.slice(2)).toEqual([46.57, 1.43, 100, productComm, 0, 0, 0, 100]);
-    expect(mol.rows.get(String(katNo))!.slice(2)).toEqual([24, 0, 0, 0, 0, 0, 30, 0]);
+    expect(mol.rows.get(String(jamieNo))!.slice(2)).toEqual([46.57, 1.43, 100, productComm, 0, 0]);
+    expect(mol.rows.get(String(katNo))!.slice(2)).toEqual([24, 0, 30, 0, 0, 0]);
 
     const lc = await isolvedFile(p, shop.leclaire);
     expect(lc.sheet).toBe("LeClaire");
-    expect(lc.header.at(-1)).toBe("M_Tips Paid By Stripe_Dollars");
-    expect(lc.rows.get(String(jamieNo))!.slice(2)).toEqual([11.43, 0.57, 150, 87.12, 0, 0, 150]);
+    expect(lc.header.at(-1)).toBe("E_Training_Hours");
+    expect(lc.rows.get(String(jamieNo))!.slice(2)).toEqual([11.43, 0.57, 150, 87.12, 0, 0]);
     expect(lc.rows.has(String(katNo))).toBe(false);
 
     expect(await actions.lockPayrollAction(p.start, p.end)).toMatchObject({ ok: true });
@@ -457,8 +458,9 @@ describe("production with live keys before MONEY_MOVEMENT_LIVE: direct payouts w
     expect(await actions.approvePayrollAction(p.start, p.end, "Launch period")).toMatchObject({ ok: true });
     expect(await actions.lockPayrollAction(p.start, p.end)).toMatchObject({ ok: true });
     const f = await isolvedFile(p, shop.moline);
-    expect(f.header.at(-1)).toBe("E_Owed Tips Paid In Payroll_Dollars");
-    expect(f.rows.get(String(await employeeNumber(who.jamie)))!.slice(2)).toEqual([12, 0, 0, 0, 0, 0, 20]);
+    expect(f.header).toHaveLength(8);
+    expect(f.rows.get(String(await employeeNumber(who.jamie)))!.slice(2)).toEqual([12, 0, 20, 0, 0, 0]);
+    expect(v.anomalies.filter((a) => a.kind === "tips_in_payroll_memo").map((a) => a.staffId)).toContain(who.jamie.id);
     expect((await m.db.db.query.tipPayouts.findFirst({ where: eq(s().tipPayouts.id, held.id) }))!.status).toBe("cancelled");
     expect(calls.filter((c) => MONEY.includes(c.op))).toEqual([]);
   });

@@ -7,7 +7,6 @@ import { dailyHours, largestRemainder, overtimeSlices, sliceKey, splitByLocalDay
 import {
   DEFAULT_PAYROLL_SETTINGS,
   EXPORT_COLUMNS,
-  cardTipsSplit,
   earningHeaders,
   inNameOrder,
   locationSummary,
@@ -20,6 +19,7 @@ import {
   reconcile,
   roundHalfUp2,
   totalsOf,
+  type ExtraFrom,
   type LineInput,
 } from "@/domain/payroll/calc";
 
@@ -359,13 +359,15 @@ describe("workbook line math", () => {
     expect(l.totalWages).toBe(computeLine(input(), DEFAULT_PAYROLL_SETTINGS).totalWages);
   });
 
-  it("training pay at the training rate is labor cost unless switched off", () => {
-    const on = computeLine(input({ trainingHours: 3.5, trainingRate: 12 }), DEFAULT_PAYROLL_SETTINGS);
+  it("training pay at the training rate is labor cost when switched on; off by default until Q11", () => {
+    const withPay = { ...DEFAULT_PAYROLL_SETTINGS, trainingPayInCost: true };
+    const on = computeLine(input({ trainingHours: 3.5, trainingRate: 12 }), withPay);
     expect(on.trainingPay).toBe(42);
     expect(on.laborCost).toBe(on.totalWages + 42);
-    const off = computeLine(input({ trainingHours: 3.5, trainingRate: 12 }), { ...DEFAULT_PAYROLL_SETTINGS, trainingPayInCost: false });
-    expect(off.trainingPay).toBe(0);
-    expect(computeLine(input({ trainingHours: 2 }), DEFAULT_PAYROLL_SETTINGS).trainingPay).toBe(29);
+    expect(DEFAULT_PAYROLL_SETTINGS.trainingPayInCost).toBe(false);
+    const off = computeLine(input({ trainingHours: 3.5, trainingRate: 12 }), DEFAULT_PAYROLL_SETTINGS);
+    expect([off.trainingPay, off.laborCost]).toEqual([0, off.totalWages]);
+    expect(computeLine(input({ trainingHours: 2 }), withPay).trainingPay).toBe(29);
   });
 
   it("a typed-over NetComm goes to the export but is flagged against the formula, never fixed", () => {
@@ -440,8 +442,9 @@ describe("iSolved export values", () => {
       "E_Ray'z Paid Time_Hours",
       "E_Training_Hours",
     ]);
-    const lines = [computeLine(input({ workedHours: 87.5, otHours: 7.5, tips: 0, productSales: 0, serviceSales: 0, trainingHours: 2 }), DEFAULT_PAYROLL_SETTINGS)];
-    const [row] = exportRows(lines, DEFAULT_PAYROLL_SETTINGS);
+    const withPay = { ...DEFAULT_PAYROLL_SETTINGS, trainingPayInCost: true };
+    const lines = [computeLine(input({ workedHours: 87.5, otHours: 7.5, tips: 0, productSales: 0, serviceSales: 0, trainingHours: 2 }), withPay)];
+    const [row] = exportRows(lines, withPay);
     expect(row.values).toEqual([80, 7.5, 0, 0, 0, 2]);
     expect(lines[0].otPay).toBe(163.125);
     expect(row.values).not.toContain(lines[0].otPay);
@@ -471,25 +474,17 @@ describe("Payroll Report settings (Charles's open questions, configurable)", () 
     const d = payrollSettings({});
     expect(d).toMatchObject({ roundExport2dp: false, exportFormat: "uniform", ptoSource: "both", trainingSource: "both", cardTipsHeader: "E_Cash Tips Recd_Dollars" });
     expect(earningHeaders(d)).toEqual(EXPORT_COLUMNS.map((c) => c.header));
-    expect(cardTipsSplit(d)).toBe(false);
     expect(payrollSettings({ exportFormat: "nope", ptoSource: "nope", reportOrder: "x" })).toMatchObject({ exportFormat: "uniform", ptoSource: "both", reportOrder: d.reportOrder });
   });
 
-  it("earning codes rename the file's columns; card tips under their own code get their own column", () => {
+  it("earning codes rename the file's columns; card tips stay in E_Cash Tips Recd, never a code of their own (8 columns, Charles)", () => {
     const s = payrollSettings({ earningCodes: { hours: "E_Reg_Hours" }, cardTipsHeader: "E_Card Tips_Dollars" });
-    expect(cardTipsSplit(s)).toBe(true);
     const lines = [input({ tips: 100, chargedTips: 70 }), input({ staffId: "b2", tips: 50, chargedTips: 0 })].map((i) => computeLine(i, s));
     expect(lines.map((l) => l.cardTipsOutside)).toEqual([70, 0]);
     const { blocks, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs: lines.map((l) => l.input) }], s);
     expect(mismatches).toEqual([]);
-    expect(blocks[0].exportHeaders).toEqual(["E_Reg_Hours", ...EXPORT_COLUMNS.slice(1).map((c) => c.header), "E_Card Tips_Dollars"]);
-    expect(blocks[0].exportRows.map((r) => [r.values[2], r.values[6]])).toEqual([
-      [30, 70],
-      [50, 0],
-    ]);
-    const same = assemble([{ shopId: "A", shop: "Shop A", inputs: lines.map((l) => l.input) }], DEFAULT_PAYROLL_SETTINGS).blocks[0];
-    expect(same.exportHeaders).toHaveLength(EXPORT_COLUMNS.length);
-    expect(same.exportRows.map((r) => r.values[2])).toEqual([100, 50]);
+    expect(blocks[0].exportHeaders).toEqual(["E_Reg_Hours", ...EXPORT_COLUMNS.slice(1).map((c) => c.header)]);
+    expect(blocks[0].exportRows.map((r) => r.values[2])).toEqual([100, 50]);
   });
 
   it("the $0 hourly flag keeps the hours in the file with no hourly pay; a typed Hourly Total is an adjustment", () => {
@@ -531,39 +526,35 @@ describe("Payroll Report settings (Charles's open questions, configurable)", () 
 });
 
 describe("tips already paid out", () => {
-  it("tips paid outside payroll go to E_Cash Tips Recd; those already paid out are marked in a memo column, which can be turned off", () => {
+  const CASH_TIPS = EXPORT_COLUMNS.findIndex((c) => c.from === "tipsOutside");
+  it("tips already paid out (drawer or Stripe) stay in E_Cash Tips Recd with no memo column: the file is always the workbook's 8 columns", () => {
     const lines = [computeLine(input({ tips: 395.25, tipsPaidOut: 300 }), DEFAULT_PAYROLL_SETTINGS)];
     expect(lines[0]).toMatchObject({ tips: 395.25, tipsInPayroll: 0, tipsOutside: 395.25, tipsPaidOut: 300 });
-    const { blocks, grand, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 395.25, tipsPaidOut: 300 })] }], DEFAULT_PAYROLL_SETTINGS);
-    expect(blocks[0].exportHeaders).toEqual([...EXPORT_COLUMNS.map((c) => c.header), "M_Tips Paid Out_Dollars"]);
-    expect(blocks[0].exportFrom).toEqual(["tipsPaidOut"]);
-    expect(blocks[0].exportRows[0].values.slice(2, 3).concat(blocks[0].exportRows[0].values.slice(6))).toEqual([395.25, 300]);
-    expect(mismatches).toEqual([]);
-    expect(reconcile([{ ...blocks[0], exportRows: blocks[0].exportRows.map((r) => ({ ...r, values: [...r.values.slice(0, 6), 250] })) }], grand).map((m) => m.column)).toContain("Tips paid out");
-
-    const off = { ...DEFAULT_PAYROLL_SETTINGS, markPaidTips: false };
-    const plain = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 395.25, tipsPaidOut: 300 })] }], off);
-    expect(plain.blocks[0].exportHeaders).toEqual(EXPORT_COLUMNS.map((c) => c.header));
-    expect(plain.blocks[0].exportRows[0].values).toHaveLength(EXPORT_COLUMNS.length);
-    expect(plain.mismatches).toEqual([]);
-    const none = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 395.25 })] }], DEFAULT_PAYROLL_SETTINGS);
-    expect(none.blocks[0].exportHeaders).toEqual(EXPORT_COLUMNS.map((c) => c.header));
+    for (const markPaidTips of [true, false]) {
+      const { blocks, grand, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 395.25, tipsPaidOut: 300 })] }], { ...DEFAULT_PAYROLL_SETTINGS, markPaidTips });
+      expect(blocks[0].exportHeaders).toEqual(EXPORT_COLUMNS.map((c) => c.header));
+      expect(blocks[0].exportFrom).toEqual([]);
+      expect(blocks[0].exportRows[0].values).toHaveLength(EXPORT_COLUMNS.length);
+      expect(blocks[0].exportRows[0].values[CASH_TIPS]).toBe(395.25);
+      expect(mismatches).toEqual([]);
+      const short = { ...blocks[0], exportRows: blocks[0].exportRows.map((r) => ({ ...r, values: r.values.map((v, k) => (k === CASH_TIPS ? 95.25 : v)) })) };
+      expect(reconcile([short], grand).map((m) => m.column)).toContain("E_Cash Tips Recd_Dollars");
+    }
   });
 
-  it("tips paid through payroll leave E_Cash Tips Recd and get their own column, so nobody is paid twice", () => {
+  it("tips to be paid through payroll stay in E_Cash Tips Recd too, and are flagged: iSolved doesn't pay that column in the check", () => {
     const inputs = [input({ tips: 395.25, tipsInPayroll: 395.25 }), input({ staffId: "b2", employeeNumber: "1002", tips: 100, tipsPaidOut: 100 })];
     const { blocks, grand, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs }], DEFAULT_PAYROLL_SETTINGS);
-    expect(blocks[0].exportHeaders).toEqual([...EXPORT_COLUMNS.map((c) => c.header), DEFAULT_PAYROLL_SETTINGS.tipsInPayrollHeader, DEFAULT_PAYROLL_SETTINGS.tipsPaidOutHeader]);
-    expect(blocks[0].exportRows.map((r) => [r.values[2], r.values[6], r.values[7]])).toEqual([
-      [0, 395.25, 0],
-      [100, 0, 100],
-    ]);
+    expect(blocks[0].exportHeaders).toEqual(EXPORT_COLUMNS.map((c) => c.header));
+    expect(blocks[0].exportRows.map((r) => r.values[CASH_TIPS])).toEqual([395.25, 100]);
     expect(grand).toMatchObject({ tips: 495.25, tipsInPayroll: 395.25, tipsOutside: 100, tipsPaidOut: 100 });
     expect(mismatches).toEqual([]);
-    expect(reconcile([{ ...blocks[0], exportRows: blocks[0].exportRows.map((r, i) => (i ? r : { ...r, values: [...r.values.slice(0, 6), 400] })) }], grand).map((m) => m.check)).toContain("export");
+    const flags = anomalies(blocks, DEFAULT_PAYROLL_SETTINGS).filter((a) => a.kind === "tips_in_payroll_memo");
+    expect(flags.map((a) => a.staffId)).toEqual(["b1"]);
+    expect(flags[0].message).toContain("$395.25 of tips to be paid through payroll");
   });
 
-  it("owed tips paid on the paycheck and tips paid by Stripe get their own codes; a file with neither is unchanged (ST-C13)", () => {
+  it("owed tips and tips paid by Stripe add no codes (ST-C13's split declined); a period locked with the old tip columns still checks against them", () => {
     const s = DEFAULT_PAYROLL_SETTINGS;
     const inputs = [
       input({ tips: 300, tipsInPayroll: 300, owedTipsInPayroll: 120 }),
@@ -571,32 +562,27 @@ describe("tips already paid out", () => {
       input({ staffId: "b3", employeeNumber: "1003", tips: 50, tipsPaidOut: 50 }),
     ];
     const { blocks, grand, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs }], s);
-    expect(blocks[0].exportFrom).toEqual(["tipsInPayrollChosen", "tipsInPayrollOwed", "tipsPaidOutCash", "tipsPaidOutStripe"]);
-    expect(blocks[0].exportHeaders!.slice(6)).toEqual([s.tipsInPayrollHeader, "E_Owed Tips Paid In Payroll_Dollars", s.tipsPaidOutHeader, "M_Tips Paid By Stripe_Dollars"]);
-    expect(blocks[0].exportRows.map((r) => r.values.slice(6))).toEqual([
-      [180, 120, 0, 0],
-      [0, 0, 50, 150],
-      [0, 0, 50, 0],
-    ]);
+    expect(blocks[0].exportFrom).toEqual([]);
+    expect(blocks[0].exportRows.map((r) => r.values)).toEqual(blocks[0].lines.map((l) => [l.hours, l.otHours, l.tips, l.netComm, l.ptoHours, l.trainingHours]));
     expect(grand).toMatchObject({ tipsInPayroll: 300, tipsPaidOut: 250 });
     expect(mismatches).toEqual([]);
-    const off = blocks[0].exportRows.map((r, i) => (i ? r : { ...r, values: [...r.values.slice(0, 7), 100, ...r.values.slice(8)] }));
-    expect(reconcile([{ ...blocks[0], exportRows: off }], grand).map((m) => m.column)).toEqual(expect.arrayContaining(["Tips in payroll", "Owed tips in payroll"]));
-
     // Never more than the tips they're part of.
     expect(computeLine(input({ tips: 10, tipsInPayroll: 10, owedTipsInPayroll: 25, tipsPaidOut: 0, tipsPaidByStripe: 5 }), s)).toMatchObject({ tipsInPayrollOwed: 10, tipsInPayrollChosen: 0, tipsPaidOutStripe: 0 });
-    const plain = assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 300, tipsInPayroll: 300 }), input({ staffId: "b2", employeeNumber: "1002", tips: 50, tipsPaidOut: 50 })] }], s);
-    expect(plain.blocks[0].exportFrom).toEqual(["tipsInPayroll", "tipsPaidOut"]);
+
+    const locked = {
+      ...blocks[0],
+      exportFrom: ["tipsInPayroll"] as ExtraFrom[],
+      exportHeaders: [...EXPORT_COLUMNS.map((c) => c.header), s.tipsInPayrollHeader],
+      exportRows: blocks[0].exportRows.map((r, i) => ({ ...r, values: [...r.values.slice(0, CASH_TIPS), blocks[0].lines[i].tipsOutside, ...r.values.slice(CASH_TIPS + 1), blocks[0].lines[i].tipsInPayroll] })),
+    };
+    expect(reconcile([locked], grand)).toEqual([]);
+    expect(reconcile([{ ...locked, exportRows: locked.exportRows.map((r, i) => (i ? r : { ...r, values: [...r.values.slice(0, 6), 100] })) }], grand).map((m) => m.column)).toContain("Tips in payroll");
   });
 
   it("45B starts in 2025 at the $7.25 federal minimum wage for barbering (2025 Form 8846)", () => {
     expect(DEFAULT_PAYROLL_SETTINGS.tipTax).toMatchObject({ creditFrom: "2025-01-01", creditWageCentsPerHour: 725 });
   });
 
-  it("the column's header is a setting, defaulting until it's confirmed", () => {
-    expect(payrollSettings(null).tipsInPayrollHeader).toBe(DEFAULT_PAYROLL_SETTINGS.tipsInPayrollHeader);
-    expect(payrollSettings({ tipsInPayrollHeader: "E_Tips_Dollars" }).tipsInPayrollHeader).toBe("E_Tips_Dollars");
-  });
 });
 
 describe("2-decimal half-up rounding (toggle, off by default)", () => {
@@ -664,18 +650,17 @@ describe("payroll review (SB-C2, SB-C3, SB-I2)", () => {
     expect(payrollSettings({ tipTax: { qualifiedTipsCode: "tp", overtimeCode: "not a code", ficaRate: 2, creditFrom: "soon" } }).tipTax).toEqual({ ...DEFAULT_PAYROLL_SETTINGS.tipTax, qualifiedTipsCode: "TP" });
   });
 
-  it("declared cash tips get their own export column, are not labor cost, and the export must match the report", () => {
+  it("declared cash tips go in E_Cash Tips Recd with the ticket tips (no column of their own), are not labor cost, and the export must match the report", () => {
     const inputs = [input({ declaredCashTips: 45 }), input({ staffId: "b2", employeeNumber: "1002" })];
     const { blocks, grand, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs }], DEFAULT_PAYROLL_SETTINGS);
-    expect(blocks[0].exportHeaders).toContain(DEFAULT_PAYROLL_SETTINGS.cashTipsDeclaredHeader);
-    const j = blocks[0].exportHeaders!.indexOf(DEFAULT_PAYROLL_SETTINGS.cashTipsDeclaredHeader);
-    expect(blocks[0].exportRows.map((r) => r.values[j])).toEqual([45, 0]);
+    const cash = EXPORT_COLUMNS.findIndex((c) => c.from === "tipsOutside");
+    expect(blocks[0].exportHeaders).toEqual(EXPORT_COLUMNS.map((c) => c.header));
+    expect(blocks[0].exportRows.map((r) => r.values[cash])).toEqual([395.25 + 45, 395.25]);
     expect(blocks[0].lines[0].laborCost).toBe(blocks[0].lines[1].laborCost);
     expect(grand.declaredCashTips).toBe(45);
     expect(mismatches).toEqual([]);
-    const off = { ...blocks[0], exportRows: blocks[0].exportRows.map((r) => ({ ...r, values: r.values.map((v, k) => (k === j ? 40 : v)) })) };
-    expect(reconcile([off], grand).map((x) => x.column)).toContain("Cash tips declared");
-    expect(assemble([{ shopId: "A", shop: "Shop A", inputs: [input()] }], DEFAULT_PAYROLL_SETTINGS).blocks[0].exportHeaders).not.toContain(DEFAULT_PAYROLL_SETTINGS.cashTipsDeclaredHeader);
+    const off = { ...blocks[0], exportRows: blocks[0].exportRows.map((r, i) => (i ? r : { ...r, values: r.values.map((v, k) => (k === cash ? 395.25 : v)) })) };
+    expect(reconcile([off], grand).map((x) => x.column)).toContain("E_Cash Tips Recd_Dollars");
   });
 
   it("a refund of tips already paid is flagged and always the shop's cost (ST-C15)", () => {

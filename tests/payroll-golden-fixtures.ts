@@ -34,7 +34,9 @@ export interface GoldenRow {
     netcomm_override: number | null;
     manual: Record<"B" | "E" | "J" | "R" | "D" | "M", boolean>;
   };
-  expected_raw: Record<"hourly_total" | "gross_per_hr" | "commission" | "service_total" | "product_commission" | "net_comm" | "total_wages" | "pct_of_gross", Cached>;
+  expected_raw: Record<"hourly_total" | "gross_per_hr" | "commission" | "service_total" | "product_commission" | "net_comm" | "total_wages" | "pct_of_gross", Cached> &
+    /** The Payroll Report's additions (scripts/payroll-golden-labor-cost.py): labor cost = Total Wages + OT pay; training pay stays out until Q11. */
+    Record<"ot_pay" | "training_pay" | "labor_cost", number>;
 }
 export interface GoldenExportRow {
   row: number;
@@ -56,7 +58,10 @@ export interface Golden {
   workbook_location_totals_cached: Record<string, { E: number; N: number; formula_E: string }>;
   workbook_total_ranges?: Record<string, { E: [number, number]; N: [number, number] }>;
   workbook_summary_cached: Record<string, { service_sales: number; employee_cost: number; gross_profit: number }>;
-  corrected_location_totals_all_rows: Record<string, Record<"hours" | "hourly_total" | "service" | "commission" | "net_comm" | "total_wages" | "tips" | "gross_profit", number>>;
+  corrected_location_totals_all_rows: Record<
+    string,
+    Record<"hours" | "hourly_total" | "service" | "commission" | "net_comm" | "total_wages" | "tips" | "gross_profit" | "ot_pay" | "training_pay" | "labor_cost" | "labor_cost_with_training" | "gross_profit_after_labor", number>
+  >;
 }
 
 /** The workbook's cached value as the platform has it: a blank cell is 0, #DIV/0! is no value. */

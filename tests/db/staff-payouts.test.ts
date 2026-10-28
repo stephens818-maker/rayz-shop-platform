@@ -153,7 +153,7 @@ describe("owed tips go through payroll at the cutoff, once (ST-C14), and the tip
   const rockIslandMode = (mode: "brand" | "connected") => m.db.db.update(s().shops).set({ paymentsMode: mode }).where(eq(s().shops.slug, "rock-island"));
   beforeAll(() => rockIslandMode("brand"));
   afterAll(() => rockIslandMode("connected"));
-  it("owed Stripe tips are paid on the paycheck at lock and never again; the export is a draft until locked and adds up, then final", async () => {
+  it("owed Stripe tips move to payroll at lock and never again (flagged: the 8-column file can't pay them in the check); the export is a draft until locked and adds up, then final", async () => {
     const { shop: sh, ids: [g, mz] } = await barbers("rock-island", ["Garrett", "Mercedez"]);
     await groups.ensurePayGroups();
     const [pg] = await m.db.db.select().from(s().payGroups).where(eq(s().payGroups.shopId, sh.id));
@@ -202,11 +202,13 @@ describe("owed tips go through payroll at the cutoff, once (ST-C14), and the tip
     const block = v.blocks.find((x) => x.shopId === sh.id)!;
     expect(block.lines.find((l) => l.staffId === g)!.tipsInPayroll).toBe(9);
     expect(block.lines.find((l) => l.staffId === mz)!.tipsInPayroll).toBe(7);
-    // Owed Stripe tips paid on the paycheck have their own earning, apart from tips anyone chose to get there (ST-C13).
+    // Owed Stripe tips are told apart on the report; the file keeps them in E_Cash Tips Recd (8 columns, no separate tip codes), flagged so they're paid outside the check.
     expect(block.lines.find((l) => l.staffId === g)).toMatchObject({ tipsInPayrollOwed: 9, tipsInPayrollChosen: 0 });
-    expect(block.exportHeaders).toContain(v.settings.owedTipsInPayrollHeader);
-    const owedAt = (b: typeof block) => 6 + b.exportFrom!.indexOf("tipsInPayrollOwed");
-    expect(block.exportRows.find((r) => r.staffId === g)!.values[owedAt(block)]).toBe(9);
+    expect(block.exportHeaders).not.toContain(v.settings.owedTipsInPayrollHeader);
+    const cashAt = 2;
+    const gTips = block.lines.find((l) => l.staffId === g)!.tips;
+    expect(block.exportRows.find((r) => r.staffId === g)!.values[cashAt]).toBe(gTips);
+    expect(v.anomalies.filter((a) => a.kind === "tips_in_payroll_memo" && a.shopId === sh.id).map((a) => a.staffId).sort()).toEqual([g, mz].sort());
     expect(v.mismatches.filter((x) => x.shopId === sh.id)).toEqual([]);
 
     const draft = (await reports.tipsPaidFile(period.start, period.end, [sh.id]))!;
@@ -234,7 +236,7 @@ describe("owed tips go through payroll at the cutoff, once (ST-C14), and the tip
     const moved = await m.db.db.select().from(s().auditLog).where(and(eq(s().auditLog.action, "tips.owed_to_payroll"), eq(s().auditLog.shopId, sh.id)));
     expect(moved.map((a) => (a.details as { holdKind: string }).holdKind).sort()).toEqual(["stripe_setup", "transfers_pending"]);
     const lockedBlock = (await run.buildPayroll(period.start, period.end))!.blocks.find((x) => x.shopId === sh.id)!;
-    expect(lockedBlock.exportRows.find((r) => r.staffId === g)!.values[owedAt(lockedBlock)]).toBe(9);
+    expect(lockedBlock.exportRows.find((r) => r.staffId === g)!.values[cashAt]).toBe(gTips);
 
     // Never twice: a later batch, a transfer path turning on and the employee finishing setup send nothing.
     mm.registerMoneyMovement({

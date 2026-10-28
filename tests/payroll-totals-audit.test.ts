@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import ExcelJS from "exceljs";
-import { DEFAULT_PAYROLL_SETTINGS, LOCATIONS_COLUMNS, anomalies, assemble, inNameOrder, locationSummary, type Line } from "@/domain/payroll/calc";
+import { DEFAULT_PAYROLL_SETTINGS, LOCATIONS_COLUMNS, anomalies, assemble, computeLine, inNameOrder, locationSummary, type Line } from "@/domain/payroll/calc";
 import { evaluateWorkbookFormula, totalsFormulaProblems, type CellResult } from "@/domain/payroll/workbook-audit";
 import { renderIsolvedWorkbook } from "@/server/payroll/export";
 import { locationsWorkbook } from "@/server/payroll/locations";
@@ -301,7 +301,27 @@ for (const fx of FIXTURES) {
     const expectedFile = path.join(fx.dir, "totals_expected.json");
     it.skipIf(!existsSync(expectedFile))("the golden period's grand totals and per-shop tab totals are the audit's correct values", () => {
       const want = JSON.parse(readFileSync(expectedFile, "utf8")) as {
-        grand: Record<"hours" | "otHours" | "service" | "employeeCost" | "grossProfit" | "tips" | "netComm" | "topUp" | "productCommission" | "netCommTypedOver" | "employeeCostWithTypedNetComm" | "ptoHours" | "trainingHours", number>;
+        grand: Record<
+          | "hours"
+          | "otHours"
+          | "service"
+          | "employeeCost"
+          | "grossProfit"
+          | "tips"
+          | "netComm"
+          | "topUp"
+          | "productCommission"
+          | "netCommTypedOver"
+          | "employeeCostWithTypedNetComm"
+          | "ptoHours"
+          | "trainingHours"
+          | "otPay"
+          | "trainingPay"
+          | "laborCost"
+          | "laborCostWithTraining"
+          | "grossProfitAfterLabor",
+          number
+        >;
         shopTabs: Record<string, Record<"regular" | "ot" | "tips" | "netComm" | "pto" | "training", number>>;
       };
       const { blocks } = g();
@@ -311,6 +331,7 @@ for (const fx of FIXTURES) {
       const topUp = sum((l) => Math.max(l.serviceTotal, 0));
       const product = sum((l) => l.productTotal);
       const typedOver = sum((l) => l.netComm - l.netCommComputed);
+      const trainingPayIfCounted = sum((l) => computeLine(l.input, { ...DEFAULT_PAYROLL_SETTINGS, trainingPayInCost: true }).trainingPay);
       const got = {
         hours: sum((l) => l.hours),
         otHours: sum((l) => l.otHours),
@@ -325,6 +346,11 @@ for (const fx of FIXTURES) {
         employeeCostWithTypedNetComm: total.employeeCost + typedOver,
         ptoHours: sum((l) => l.ptoHours),
         trainingHours: sum((l) => l.trainingHours),
+        otPay: sum((l) => l.otPay),
+        trainingPay: trainingPayIfCounted,
+        laborCost: sum((l) => l.laborCost),
+        laborCostWithTraining: sum((l) => l.laborCost) + trainingPayIfCounted,
+        grossProfitAfterLabor: total.service - sum((l) => l.laborCost),
       };
       for (const [k, v] of Object.entries(want.grand)) expect(toCent(got[k as keyof typeof got], v), `${k}: ${got[k as keyof typeof got]} vs ${v}`).toBe(true);
       expect(near(got.netComm, topUp + product + typedOver)).toBe(true);

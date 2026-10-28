@@ -1,7 +1,7 @@
 import { and, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { staff, tipLedger, tipPayoutPeriods, tipPayouts, type TipPayoutMethod, type TipPayoutStatus } from "@/db/schema";
-import { EXPORT_COLUMNS, PAID_TIP_COLUMNS, PAYROLL_TIP_COLUMNS, extraFromOf, sumColumns, toCents, type ExportRow, type ExtraFrom, type Line, type Mismatch } from "@/domain/payroll/calc";
+import { EXPORT_COLUMNS, PAID_TIP_COLUMNS, PAYROLL_TIP_COLUMNS, extraFromOf, hasTipColumns, sumColumns, toCents, type ExportRow, type ExtraFrom, type Line, type Mismatch } from "@/domain/payroll/calc";
 import type { LocalDate } from "@/lib/time";
 import { toCsv } from "@/server/reports";
 import { recordMissingPayoutPeriods } from "@/server/tips/pay-periods";
@@ -11,7 +11,7 @@ import { payrollTipSplit } from "@/server/tips/payouts";
 export interface TipCheckBlock {
   shopId: string;
   shop: string;
-  lines: readonly Pick<Line, "staffId" | "name">[];
+  lines: readonly (Pick<Line, "staffId" | "name"> & Partial<Pick<Line, "declaredCashTips">>)[];
   /** A row with its own `from` was filed separately (a final pay, N9), with that file's columns. */
   exportRows: readonly (ExportRow & { from?: ExtraFrom[] })[];
   exportHeaders?: string[];
@@ -58,6 +58,8 @@ export interface TipCheckRow {
   inFlightCents: number;
   /** Not paid yet: waiting for approval, held (their Stripe setup, or a manager), or not in a batch. */
   owedCents: number;
+  /** Cash tips they declared for the period: in E_Cash Tips Recd_Dollars with their ticket tips. */
+  declaredCents: number;
   /** In the shop's iSolved file. Null: they have no row in it. */
   exportCashTipsCents: number | null;
   exportPaidMemoCents: number;
@@ -78,11 +80,12 @@ const dollars = (c: number) => c / 100;
 const usd = (c: number) => `$${(c / 100).toFixed(2)}`;
 
 /**
- * The W-2 check on a pay period, per employee and shop, to the cent: the tips the iSolved file reports
- * as already received (E_Cash Tips Recd) are the tip ledger's tips that weren't paid through payroll;
- * the file's tips-already-paid memo is exactly the direct payouts of the period that were paid (by the
- * lock, for a locked period); the tips-in-payroll column is the ledger's. Every direct payout is listed
- * with its Stripe ids, so each one can be traced into the file it was reported in.
+ * The W-2 check on a pay period, per employee and shop, to the cent: E_Cash Tips Recd in the iSolved
+ * file is every tip in the tip ledger plus their declared cash tips (the file is the workbook's 8
+ * columns; Charles declined separate tip codes). A period locked when the file still had tip columns
+ * is checked against its own columns: cash tips without payroll tips, the paid-out memo against the
+ * payouts paid by the lock, the tips-in-payroll column against the ledger. Every direct payout is
+ * listed with its Stripe ids, so each one can be traced into the file it was reported in.
  */
 export async function checkPayrollTips(blocks: readonly TipCheckBlock[], start: LocalDate, end: LocalDate, tx: DBorTx = db): Promise<TipCheck> {
   const shopIds = blocks.map((b) => b.shopId);
@@ -105,6 +108,7 @@ export async function checkPayrollTips(blocks: readonly TipCheckBlock[], start: 
   const keys = new Set<string>([...earned.map((e) => key(e.shopId, e.staffId)), ...recorded.map((x) => key(x.r.shopId, x.r.staffId))]);
   for (const b of blocks) for (const r of b.exportRows) keys.add(key(b.shopId, r.staffId));
   const nameOf = new Map(blocks.flatMap((b) => b.lines.map((l) => [l.staffId, l.name] as const)));
+  const declaredOf = new Map(blocks.flatMap((b) => b.lines.map((l) => [key(b.shopId, l.staffId), toCents(l.declaredCashTips ?? 0)] as const)));
   const missing = [...new Set([...keys].map((k) => k.split("|")[0]).filter((id) => !nameOf.has(id)))];
   if (missing.length) for (const s of await tx.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, missing))) nameOf.set(s.id, s.label);
 
@@ -127,12 +131,15 @@ export async function checkPayrollTips(blocks: readonly TipCheckBlock[], start: 
       const paidCents = paid.reduce((a, x) => a + cents(x), 0);
       const paidAtLockCents = lockedAt ? paid.filter((x) => x.p.paidAt && x.p.paidAt <= lockedAt).reduce((a, x) => a + cents(x), 0) : paidCents;
       const inFlightCents = mine.filter((x) => x.p.status === "approved" || x.p.status === "processing").reduce((a, x) => a + cents(x), 0);
+      const declaredCents = declaredOf.get(k) ?? 0;
+      const oldLayout = hasTipColumns(row?.from ?? from);
       const r: TipCheckRow = {
         shopId: b.shopId,
         shop: b.shop,
         staffId,
         name: nameOf.get(staffId) ?? "Unknown",
         earnedCents,
+        declaredCents,
         inPayrollCents,
         directCents,
         paidCents,
@@ -165,15 +172,22 @@ export async function checkPayrollTips(blocks: readonly TipCheckBlock[], start: 
         mismatches.push({ shopId: b.shopId, column, check: "tips", report: dollars(report), other: dollars(other), detail: `${b.shop}: ${r.name}: ${detail}` });
       };
       const exported = r.exportCashTipsCents ?? 0;
-      if (exported !== directCents)
+      const wantCash = oldLayout ? directCents : Math.max(0, earnedCents) + declaredCents;
+      if (exported !== wantCash)
         flag(
           CASH_TIPS_HEADER,
           exported,
-          directCents,
+          wantCash,
           r.exportCashTipsCents === null
-            ? `${usd(directCents)} of tips paid outside payroll, and no row in the iSolved file`
-            : `the iSolved file has ${usd(exported)} of tips already received; the tip ledger has ${usd(directCents)} paid outside payroll`,
+            ? `${usd(wantCash)} of tips, and no row in the iSolved file`
+            : oldLayout
+              ? `the iSolved file has ${usd(exported)} of tips already received; the tip ledger has ${usd(directCents)} paid outside payroll`
+              : `the iSolved file has ${usd(exported)} of tips received; the tip ledger has ${usd(Math.max(0, earnedCents))}${declaredCents ? ` and they declared ${usd(declaredCents)} in cash` : ""}`,
         );
+      if (!oldLayout) {
+        if (r.earnedCents || r.inFlightCents || r.paidCents || r.problems.length || exported) rows.push(r);
+        continue;
+      }
       if (r.exportPaidMemoCents !== paidAtLockCents)
         flag(
           "Tips already paid out",
