@@ -20,6 +20,11 @@ export interface PayCalendar {
   numberResetsYearly: boolean;
   /** Each period's stored dates, by its first day, where they differ from the offsets (a holiday moved the check). */
   dates?: Readonly<Record<LocalDate, PeriodDates>>;
+  /**
+   * The last day of the pay group's last period in iSolved's Payroll Run Schedule (with an admin's
+   * extensions). Periods starting after it aren't scheduled in iSolved yet. Absent with no schedule.
+   */
+  scheduledThrough?: LocalDate;
 }
 
 export interface PeriodDates {
@@ -37,6 +42,8 @@ export interface CalendarPeriod {
   submitBy: LocalDate;
   /** The check or submit-by date was moved by hand from the calendar's offsets. */
   datesMoved: boolean;
+  /** Starts after the end of the pay group's iSolved schedule: approve and lock wait until an admin extends it. */
+  beyondSchedule: boolean;
   startsAt: Date;
   /** Exclusive: local midnight after `end`. */
   endsAt: Date;
@@ -114,7 +121,7 @@ function numberOf(c: PayCalendar, index: number, checkDate: LocalDate): number {
 
 export function periodByIndex(c: PayCalendar, index: number): CalendarPeriod {
   const r = raw(c, index);
-  return { index, number: numberOf(c, index, r.checkDate), ...r, startsAt: startOfLocalDay(r.start), endsAt: endOfLocalDay(r.end) };
+  return { index, number: numberOf(c, index, r.checkDate), ...r, beyondSchedule: !!c.scheduledThrough && r.start > c.scheduledThrough, startsAt: startOfLocalDay(r.start), endsAt: endOfLocalDay(r.end) };
 }
 
 export function periodOf(c: PayCalendar, date: LocalDate): CalendarPeriod {

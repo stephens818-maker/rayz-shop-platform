@@ -124,6 +124,8 @@ export interface BlockView extends ShopBlock {
   /** The shop's work state: its wage-hour rules, and the state its hours are withheld for. */
   workState: string | null;
   period: CalendarPeriod;
+  /** The last day of the pay group's iSolved schedule, or null when it has none. */
+  scheduledThrough: LocalDate | null;
   locked: { at: string; by: string | null } | null;
   /** Locked shops: the hash of the inputs of record as approved, and what's changed in the live data since. */
   lockCheck: { hash: string; liveHash: string; drift: LockDrift[]; importedAfterLock: number } | null;
@@ -654,6 +656,7 @@ export async function buildPayroll(
       employer: employerOf.get((run ? run.employerId : g.employerId) ?? "") ?? null,
       workState: g.workState,
       period: run ? { ...p, checkDate: run.checkDate } : p,
+      scheduledThrough: g.calendar.scheduledThrough ?? null,
       locked: run ? { at: run.lockedAt.toISOString(), by: run.lockedBy ? (lockedBy.get(run.lockedBy) ?? null) : null } : null,
       lockCheck,
       source: sourceOf.get(g.shopId) ?? "platform",
@@ -761,13 +764,13 @@ function slicePeriodOf(kind: RunKind, start: LocalDate, end: LocalDate, runShops
 
 /** A review's dates in a period's shape: no number, check or due date, never locked. */
 function reviewPeriod(start: LocalDate, end: LocalDate): CalendarPeriod {
-  return { index: -1, number: 0, start, end, checkDate: end, submitBy: end, datesMoved: false, startsAt: startOfLocalDay(start), endsAt: endOfLocalDay(end) };
+  return { index: -1, number: 0, start, end, checkDate: end, submitBy: end, datesMoved: false, beyondSchedule: false, startsAt: startOfLocalDay(start), endsAt: endOfLocalDay(end) };
 }
 
 /** A run of whole workweeks in a period's shape: no iSolved period number (00 in a file name), and the check and due dates of the pay period its last day is in. */
 function weeksPeriod(cal: PayCalendar, start: LocalDate, end: LocalDate): CalendarPeriod {
   const p = periodOf(cal, end);
-  return { index: -1, number: 0, start, end, checkDate: p.checkDate, submitBy: p.submitBy, datesMoved: p.datesMoved, startsAt: startOfLocalDay(start), endsAt: endOfLocalDay(end) };
+  return { index: -1, number: 0, start, end, checkDate: p.checkDate, submitBy: p.submitBy, datesMoved: p.datesMoved, beyondSchedule: p.beyondSchedule, startsAt: startOfLocalDay(start), endsAt: endOfLocalDay(end) };
 }
 
 /** Each person whose overtime fell in a workweek only partly in the review's range: the week's OT is the whole week's, and the range gets the part worked inside it. */
@@ -1524,9 +1527,21 @@ export function approvalStatus(view: Pick<PayrollView, "locked">, a: Pick<Approv
   return a.current ? "approved" : "stale";
 }
 
+/** Open shops whose pay period starts after the end of their pay group's iSolved schedule. */
+const pastSchedule = (view: Pick<PayrollView, "blocks">) => view.blocks.filter((b) => !b.locked && b.period.beyondSchedule);
+
+/** Why these dates can't be approved or locked: iSolved hasn't scheduled the period yet. */
+export function beyondScheduleMessage(blocks: readonly Pick<BlockView, "shop" | "scheduledThrough">[]): string {
+  const by = new Map<string, string[]>();
+  for (const b of blocks) by.set(b.scheduledThrough ?? "", [...(by.get(b.scheduledThrough ?? "") ?? []), b.shop]);
+  const parts = [...by].map(([through, shops]) => `${listed(shops, 4, ", ")} (its last scheduled period ends ${formatDate(through, "EEE MMM d, yyyy")})`);
+  return `Past the end of iSolved's pay schedule for ${parts.join("; ")}. Extend the schedule on Payroll setup once iSolved has the period, then approve and lock.`;
+}
+
 /** Why the period can't be approved or locked right now, in a line, or null. */
 export function approvalBlocked(view: PayrollView): string | null {
   if (view.lockOverlaps.length) return "These dates overlap a locked run";
+  if (pastSchedule(view).length) return `Past the end of iSolved's pay schedule for ${pastSchedule(view).map((b) => b.shop).join(", ")}`;
   if (view.mismatches.length) return `${view.mismatches.length} total${view.mismatches.length === 1 ? " doesn't" : "s don't"} reconcile`;
   if (view.squireMissing.length) return `Squire's report isn't imported for ${view.squireMissing.map((x) => x.shop).join(", ")}`;
   if (view.settings.hoursFromClock && view.hoursOpen.length) return `Hours aren't locked on the time clock at ${view.hoursOpen.length} shop${view.hoursOpen.length === 1 ? "" : "s"}`;
@@ -1548,6 +1563,7 @@ function gate(view: PayrollView | null, start: LocalDate, end: LocalDate): Refus
             ? "These dates are already locked."
             : "This pay period is already locked.",
     };
+  if (pastSchedule(view).length) return { error: beyondScheduleMessage(pastSchedule(view)) };
   if (view.mismatches.length) return { error: "Totals don't reconcile, so the period can't be approved or locked.", mismatches: view.mismatches };
   if (view.squireMissing.length) return { error: squireMissingMessage(view.squireMissing) };
   if (view.settings.hoursFromClock && view.hoursOpen.length) return { error: hoursOpenMessage(view.hoursOpen) };
@@ -1818,7 +1834,7 @@ export async function savePayGroup(
     const p = periodOf(v.calendar, cur.anchorStart);
     if (p.start !== cur.anchorStart) return "This pay group has locked periods; its calendar can only be renumbered, not moved to different dates.";
   }
-  const { dates: _dates, ...cal } = v.calendar;
+  const { dates: _dates, scheduledThrough: _through, ...cal } = v.calendar;
   await db.transaction(async (tx) => {
     await tx
       .update(payGroups)

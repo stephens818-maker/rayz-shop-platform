@@ -35,6 +35,7 @@ import {
 import { parseTimeCsv } from "@/domain/payroll/time-csv";
 import { removeEmployerState, saveEmployer, saveEmployerState } from "@/server/payroll/groups";
 import { approveFinalPay } from "@/server/payroll/final-pay";
+import { extendPaySchedule } from "@/server/payroll/schedule";
 import { addTrainingRate, deleteTrainingRate } from "@/server/payroll/training-rates";
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -213,6 +214,19 @@ export async function savePeriodDatesAction(input: { start: string; end: string;
     const ctx = await authorize("payroll.run");
     const v = z.object({ start: date, end: date, checkDate: date, submitBy: date, reason: z.string().max(300) }).parse(input);
     fail(await savePeriodDates(v.start, v.end, v, ctx.actor));
+    refresh();
+    return null;
+  });
+}
+
+/** Periods past the end of iSolved's pay schedule, on its pattern, for the pay groups picked (each one's shop has to be the actor's). */
+export async function extendPayScheduleAction(input: { payGroupIds: string[]; through: string }) {
+  return safe(async () => {
+    const ctx = await authorize("payroll.run");
+    const v = z.object({ payGroupIds: z.array(z.string().uuid()).min(1, "Pick the pay groups to extend.").max(50), through: date }).parse(input);
+    const groups = (await ensurePayGroups()).filter((g) => v.payGroupIds.includes(g.id));
+    if (groups.some((g) => !ctx.shopIds.includes(g.shopId))) throw new AppError("forbidden", "You don't have access to every pay group picked.");
+    fail(await extendPaySchedule(v.payGroupIds, v.through, ctx.actor));
     refresh();
     return null;
   });

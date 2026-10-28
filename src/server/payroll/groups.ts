@@ -10,6 +10,7 @@ import type { LocalDate } from "@/lib/time";
 import { audit, type Actor } from "../audit";
 import { TEMPLATE_TABS } from "./export";
 import { groupCalendar, storedPeriodDates } from "./period-dates";
+import { syncPaySchedule, type ScheduleSpan } from "./schedule";
 
 export { groupCalendar } from "./period-dates";
 
@@ -33,8 +34,10 @@ export interface PayGroup {
   exportTab: string;
   /** iSolved's pay group code (B is Rock Island), picked at upload. Null until entered. */
   code: string | null;
-  /** With each period's stored check and submit-by dates. */
+  /** With each period's stored check and submit-by dates, and the end of its iSolved schedule. */
   calendar: PayCalendar;
+  /** Its part of iSolved's Payroll Run Schedule, or null when the schedule doesn't have it. */
+  schedule: ScheduleSpan | null;
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
@@ -69,7 +72,11 @@ export async function ensurePayGroups(): Promise<PayGroup[]> {
       )
       .onConflictDoNothing();
   }
-  const rows = await db.select({ g: payGroups, shop: shops.name, state: shops.state }).from(payGroups).innerJoin(shops, eq(shops.id, payGroups.shopId)).where(and(eq(shops.active, true), eq(shops.isDemo, false))).orderBy(shops.name);
+  const open = () => db.select({ g: payGroups, shop: shops.name, state: shops.state }).from(payGroups).innerJoin(shops, eq(shops.id, payGroups.shopId)).where(and(eq(shops.active, true), eq(shops.isDemo, false))).orderBy(shops.name);
+  let rows = await open();
+  const { spans, synced } = await syncPaySchedule(rows.map((r) => ({ id: r.g.id, shop: r.shop, code: r.g.isolvedCode })));
+  // A sync may have given a pay group its code or realigned its calendar to the schedule.
+  if (synced) rows = await open();
   const dates = await storedPeriodDates(rows.map((r) => r.g));
   return rows.map(({ g, shop, state }) => ({
     id: g.id,
@@ -81,7 +88,8 @@ export async function ensurePayGroups(): Promise<PayGroup[]> {
     workState: workStateOf(state),
     exportTab: g.exportTab,
     code: g.isolvedCode,
-    calendar: groupCalendar(g, dates.get(g.id)),
+    calendar: { ...groupCalendar(g, dates.get(g.id)), ...(spans.get(g.id) ? { scheduledThrough: spans.get(g.id)!.through } : {}) },
+    schedule: spans.get(g.id) ?? null,
   }));
 }
 
