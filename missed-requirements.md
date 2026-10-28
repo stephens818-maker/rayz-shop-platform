@@ -128,7 +128,8 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 - [x] Effective-dated rates by checkout date from Staff → Compensation, shown as "mixed" when they change inside a period (needs compensation plans on and Payroll using them).
 - [x] iSolved employee number (Key) and iSolved name on Payroll → Setup and the Staff page.
 - [x] Golden tests: all 33 rows, the totals and the iSolved file cell for cell, on anonymized committed fixtures; the real ones stay in a gitignored folder. Tests: `tests/payroll-golden.test.ts`, `tests/db/payroll-approval.test.ts`, `tests/db/payroll-reports.test.ts`.
-- [ ] Charles (settings until he answers): rounding (unrounded), file names, PTO and training hours from the time clock or a manager (both), and the earning code for card tips (`E_Cash Tips Recd_Dollars`).
+- [x] L66, pay day end to end: raw punches at two shops through sign-off, approval, locked hours, Payroll Report approval and lock, each shop's iSolved file cell for cell, and Stripe tip payouts (paid in test mode, held and paid on the paycheck with live keys and the flag off). `tests/db/payday.test.ts`. Run in the sandbox too: the Oct 4–17 period, all 8 shops, locked.
+- [ ] Charles (settings until he answers): rounding (unrounded; a NetComm of $307.605 goes out as 307.6049999999999), file names, PTO and training hours from the time clock or a manager (both), and the earning code for card tips (`E_Cash Tips Recd_Dollars`).
 - [ ] Enter the real Employee Numbers, iSolved names and rates on Payroll → Setup (they're never in the repo).
 
 ## 7. Service time tracking

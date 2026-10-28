@@ -576,6 +576,13 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-27: core, staff pay first: the pay day test and the sandbox pay run (FYI, nothing to do)
+- **Staff getting paid correctly is the top launch priority (Charles).** PR #1's launch-readiness list now starts with **Staff pay**: the time clock, the Payroll Report, approve and lock, the per-shop iSolved files and Stripe tip payouts. The L numbers stay the same; L66 is new (pay day end to end).
+- **`tests/db/payday.test.ts`:** a whole pay period by hand, from raw punches at two shops to each shop's iSolved file, cell for cell, then locked. Tip payouts are paid through Stripe (the stand-in records the transfers and payouts), and a held payout goes on the paycheck. It also runs the next period in production's launch setup: live keys with `MONEY_MOVEMENT_LIVE` unset hold every payout, and the tips land in `E_Owed Tips Paid In Payroll_Dollars`. `MONEY_MOVEMENT_LIVE` isn't set in any Vercel environment.
+- **Sandbox pay run:** the Oct 4–17 period (Dubuque's period 01) was signed off, approved, locked at all 8 shops, approved on the Payroll Report and locked. Its 8 iSolved files match the report's row counts and column sums, and the locked files match the approved ones. That period is locked for good in the sandbox, so test payroll on a later period. A Coralville tip batch was approved on Oct 27: Makenna's Stripe payout is paid, and the cash payouts wait at the drawer for testers to acknowledge.
+- **Payroll Report approval notice:** the approved total is now labelled Total Wages (the workbook's Employee Cost, before O.T. and training pay), so it doesn't clash with the Locations table's labor cost.
+- **Rounding (Q4, Charles):** the iSolved file sends values unrounded, so a NetComm the report shows as $307.605 goes out as 307.6049999999999. Two-decimal rounding is a setting, off until Charles decides.
+
 ### 2026-10-27: core, payroll launch items (I8, N7, N9, N6), staff app approved devices and shop goals, Demo Shop clients, the review push and file links that don't prefetch
 - **Migrations `core_0131_payroll_final_pay` and `core_0132_aca_report`.** The next free one is `core_0133`. `core_0131` adds `payroll_final_pays` (approved off-cycle final pay, can't be edited or deleted; the note is scrubbed like every other). `core_0132` gives the ACA hours report to Brand Admin and Bookkeeper.
 - **Preparer isn't approver (I8):** whoever changed a period's figures by hand can't approve it; the Brand Owner may, recorded as self-approved.
