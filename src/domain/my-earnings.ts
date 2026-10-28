@@ -1,4 +1,4 @@
-import { employeePay, type EmployeePay, type GreaterOfCode, type Line } from "@/domain/payroll/calc";
+import { employeePay, type EmployeePay, type GreaterOfCode, type Line, type ShopBlock } from "@/domain/payroll/calc";
 
 /**
  * The staff app's My Earnings copy (the Rayz App builder's contract, 2026-10-28). The server sends
@@ -90,6 +90,22 @@ export function periodPay(lines: readonly Line[]) {
 }
 
 export type PeriodPay = ReturnType<typeof periodPay>;
+
+/**
+ * One employee's pay from the Payroll Report's shop blocks (buildPayroll: overtimeSlices, then
+ * computeLine for each line): their line at each shop and the whole through periodPay. Every pay
+ * figure /api/staff/v1 sends comes through here, so hours, overtime, the greater-of and product
+ * commission on top of it are the report's and the iSolved file's, never worked out again.
+ */
+export function payFromReport(blocks: readonly Pick<ShopBlock, "shopId" | "lines">[], staffId: string) {
+  const byShop = new Map<string, Line>();
+  for (const b of blocks) {
+    const l = b.lines.find((x) => x.staffId === staffId);
+    if (l) byShop.set(b.shopId, l);
+  }
+  const lines = [...byShop.values()];
+  return { byShop, lines, total: periodPay(lines) };
+}
 
 /**
  * Training as its own line of My Earnings (Charles, Oct 28): the report's Training Pay, training hours

@@ -17,7 +17,7 @@ import {
   TAX_NOTE,
   cashTipReminder,
   hoursOf,
-  periodPay,
+  payFromReport,
   trainingLine,
   type TrainingLine,
 } from "@/domain/my-earnings";
@@ -466,6 +466,28 @@ function weeksOf(view: PayrollView | null, staffId: string, p: MyPeriod) {
   });
 }
 
+/** The Payroll Report run for these dates, as the report page builds it: the pay period's own run, or whole workweeks or a review over a from/to at their shops. */
+function reportFor(per: MyPeriod, range: boolean) {
+  const shopIds = per.cals.map((c) => c.shop.id);
+  return !range
+    ? buildPayroll(per.start, per.end, { clockChecks: false })
+    : buildPayroll(per.start, per.end, { clockChecks: false, ...(wholeWorkweeks(per.start, per.end) ? { weeks: { shopIds } } : { review: { shopIds } }) });
+}
+
+const theirBlocks = (view: PayrollView | null, per: MyPeriod) => (view?.blocks ?? []).filter((b) => per.cals.some((c) => c.shop.id === b.shopId));
+
+/**
+ * Their pay over from/to (up to MAX_EARNINGS_RANGE_DAYS) from the same Payroll Report run as GET
+ * /me/earnings, for GET /earnings. Null when they aren't on a shop's pay calendar.
+ */
+export async function myPayOver(staffId: string, from: LocalDate, to: LocalDate, today: LocalDate = todayLocal()) {
+  const { cals } = await myCalendars(staffId);
+  if (!cals.length) return null;
+  const { per, range } = earningsPeriod(cals, { from, to }, today);
+  const view = await reportFor(per, range);
+  return { ...payFromReport(theirBlocks(view, per), staffId), isEstimate: range ? rangeState(view).isEstimate : (await periodStates([per], today, new Map([[per.start, view]]))).get(per.start)!.isEstimate };
+}
+
 /**
  * GET /me/earnings?period=current|<id> (or periodId=<id>): one pay period at every shop of theirs on
  * it, from their line of the Payroll Report. Parts they may not see are null: pay without
@@ -479,9 +501,8 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
   const { cals } = await myCalendars(me);
   const { per, range } = earningsPeriod(cals, q, today);
   const shopIds = per.cals.map((c) => c.shop.id);
-  const view = !range
-    ? await buildPayroll(per.start, per.end, { clockChecks: false })
-    : await buildPayroll(per.start, per.end, { clockChecks: false, ...(wholeWorkweeks(per.start, per.end) ? { weeks: { shopIds } } : { review: { shopIds } }) });
+  const view = await reportFor(per, range);
+  const mine = payFromReport(theirBlocks(view, per), me);
   const [state, ledger, days, declared, covered, setup] = await Promise.all([
     range ? rangeState(view) : periodStates([per], today, new Map([[per.start, view]])).then((m) => m.get(per.start)!),
     see.tips ? myLedger(me, shopIds, { from: per.start, to: per.end }) : [],
@@ -498,7 +519,7 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
 
   const slices = per.cals.map((c) => {
     const block = view?.blocks.find((b) => b.shopId === c.shop.id);
-    const line = block?.lines.find((l) => l.staffId === me);
+    const line = mine.byShop.get(c.shop.id);
     const pay = line ? employeePay(line) : null;
     const here = days.filter((d) => d.shopId === c.shop.id);
     const t = { card: sum(here, (d) => d.cardTipsCents), cash: sum(here, (d) => d.cashTipsCents), giftCard: sum(here, (d) => d.giftCardTipsCents) };
@@ -540,7 +561,7 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
     };
   });
 
-  const total = periodPay(slices.flatMap((s) => (s.line ? [s.line] : [])));
+  const total = mine.total;
   const tipsOf = (k: "cardTipsCents" | "cashTipsCents" | "giftCardTipsCents" | "cashOnTicketsCents" | "declaredCashTipsCents" | "tipAdjustmentsCents" | "totalTipsCents") =>
     see.tips ? sum(slices, (s) => s.out[k] ?? 0) : null;
   const wages = see.wages;
@@ -567,7 +588,7 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
     computedAt: state.computedAt,
 
     ...nulled(total.wages, wages),
-    training: trainingOf(slices.flatMap((s) => (s.line ? [s.line] : []))),
+    training: trainingOf(mine.lines),
     otIsEstimate: true,
     otDisclosure: OT_PAY_LABEL,
     ...nulled(total.hours, see.hours),
@@ -575,12 +596,12 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
     serviceSalesCents: see.sales ? sum(slices, (s) => s.out.serviceSalesCents ?? 0) : null,
     productSalesCents: see.sales ? sum(slices, (s) => s.out.productSalesCents ?? 0) : null,
     pph: pphOut(
-      slices.flatMap((s) => (s.line ? [s.line] : [])),
+      mine.lines,
       see,
       tickets,
     ),
     productPerClient: perClientOut(
-      slices.flatMap((s) => (s.line ? [s.line] : [])),
+      mine.lines,
       see,
       servedAt(shopIds),
     ),

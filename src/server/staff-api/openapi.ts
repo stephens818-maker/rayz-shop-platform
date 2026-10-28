@@ -378,7 +378,7 @@ const OPS: Op[] = [
     summary: "Their tip payouts: method, status and what they got after fees. waitingForSetup marks a payout held until they finish Stripe payout setup; it goes out on its own then.",
     permission: "tips.own",
   },
-  { method: "get", path: "/earnings", tag: "Tips and pay", summary: "Day by day: net sales (report.my_sales.view with reports.money), tips (tips.own) and commission (compensation.own, where the brand has compensation on). Parts they may not see are null.", permission: "Any of those", query: S.EarningsQuery },
+  { method: "get", path: "/earnings", tag: "Tips and pay", summary: "Day by day: net sales (report.my_sales.view with reports.money) and tips (tips.own); over the dates, commission and pay (compensation.own) from their lines of the Payroll Report, as GET /me/earnings: pay is its wages object (greaterOfCents is hourly or service commission, productCommissionCents is on top of it, otEstimatedCents and trainingPayCents apart) with isEstimate. Parts they may not see are null.", permission: "Any of those", query: S.EarningsQuery },
   {
     method: "get",
     path: "/banking",

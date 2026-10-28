@@ -3,7 +3,7 @@ import { and, count, eq, gte, inArray, lt, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, shops, type tipPayouts } from "@/db/schema";
 import { BANKING_STATUS_LABEL, BankingStatus, destinationLabel, requirementLabels } from "@/domain/banking";
-import { addTotals, commissionBetween, zeroTotals } from "@/domain/compensation";
+import { periodPay, type PeriodPay } from "@/domain/my-earnings";
 import { reportView } from "@/domain/permissions";
 import { ACCOUNT_STATE_LABEL, ONBOARDING_LABEL as ONBOARDING_MODE_LABEL, heldLabel } from "@/domain/staff-payouts";
 import {
@@ -25,7 +25,7 @@ import { formatCents } from "@/lib/money";
 import { LocalDate, addDays, diffDays, endOfLocalDay, isValidLocalDate, startOfLocalDay, todayLocal } from "@/lib/time";
 import { workShopIds } from "@/server/auth/access";
 import { can } from "@/server/auth/staff";
-import { commissionLines, loadCompensationSettings, setupRates, tipOverrides, versionsFor } from "@/server/compensation";
+import { commissionLines, tipOverrides } from "@/server/compensation";
 import { AppError, forbidden } from "@/server/errors";
 import { connectMode } from "@/server/payments/connect";
 import {
@@ -50,6 +50,7 @@ import {
 } from "@/server/tips/accounts";
 import { ledgerRows, myTips, shopTipConfigs, staffPayoutConfig } from "@/server/tips/ledger";
 import { waitingForSetup } from "@/server/tips/payouts";
+import { myPayOver } from "./earnings";
 import type { StaffAppContext } from "./http";
 
 const MAX_DAYS = 62;
@@ -145,22 +146,23 @@ export function earningsRange(from: string | undefined, to: string | undefined, 
 
 /**
  * What they earned over [from, to], day by day, in the parts they may see: their own net sales (the
- * My sales report with dollar amounts), their tips (their own tips), and their commission (their own
- * pay, where the brand has compensation on). Nobody else's numbers are ever in it.
+ * My sales report with dollar amounts), their tips (their own tips), and their commission and pay
+ * (their own pay). Commission and pay are their lines of the Payroll Report over the same dates
+ * (myPayOver, as GET /me/earnings), never worked out apart from it. Nobody else's numbers are ever in it.
  */
 export async function myEarnings(ctx: StaffAppContext, from: LocalDate, to: LocalDate) {
   const me = ctx.staff.id;
   const sees = {
     sales: can(ctx, "reports.money") && can(ctx, reportView("my_sales")),
     tips: can(ctx, "tips.own"),
-    commission: can(ctx, "compensation.own") && (await loadCompensationSettings()).enabled,
+    commission: can(ctx, "compensation.own"),
   };
   if (!sees.sales && !sees.tips && !sees.commission) throw forbidden("You don't have permission to see earnings");
   const dates: LocalDate[] = [];
   for (let d = from; d <= to; d = addDays(d, 1)) dates.push(d);
   const day = new Map(dates.map((d) => [d, { date: d, serviceNetCents: 0, productNetCents: 0, tipsCents: 0 }]));
 
-  const lines = sees.sales || sees.commission ? ((await commissionLines([me], from, to)).get(me) ?? []) : [];
+  const lines = sees.sales ? ((await commissionLines([me], from, to)).get(me) ?? []) : [];
   for (const l of lines) {
     const row = day.get(l.date);
     if (row) row[l.kind === "product" ? "productNetCents" : "serviceNetCents"] += l.netCents;
@@ -173,12 +175,12 @@ export async function myEarnings(ctx: StaffAppContext, from: LocalDate, to: Loca
     }
   }
   let commission: { serviceCents: number; productCents: number; totalCents: number } | null = null;
+  let pay: (PeriodPay["wages"] & { isEstimate: boolean }) | null = null;
   if (sees.commission) {
-    const [vs, fallbackOf] = await Promise.all([versionsFor([me]).then((m) => m.get(me) ?? []), setupRates([me])]);
-    const t = [...commissionBetween(lines, vs, fallbackOf(me), from, to).values()].reduce(addTotals, zeroTotals());
-    const serviceCents = Math.round(t.serviceCommissionCents);
-    const productCents = Math.round(t.productCommissionCents);
-    commission = { serviceCents, productCents, totalCents: serviceCents + productCents };
+    const p = await myPayOver(me, from, to);
+    const w = (p?.total ?? periodPay([])).wages;
+    commission = { serviceCents: w.serviceCommissionCents, productCents: w.productCommissionCents, totalCents: w.serviceCommissionCents + w.productCommissionCents };
+    pay = { ...w, isEstimate: p?.isEstimate ?? true };
   }
   const [{ n: completed }] = await db
     .select({ n: count() })
@@ -200,6 +202,7 @@ export async function myEarnings(ctx: StaffAppContext, from: LocalDate, to: Loca
       tipsCents: sees.tips ? tipsTotal : null,
     },
     commission,
+    pay,
     days: rows.map((r) => ({ date: r.date, serviceNetCents: sees.sales ? r.serviceNetCents : null, productNetCents: sees.sales ? r.productNetCents : null, tipsCents: sees.tips ? r.tipsCents : null })),
   };
 }
