@@ -1688,6 +1688,8 @@ export const staffAppTokens = pgTable(
     replacedBy: uuid("replaced_by"),
     /** On the session's first row: when they last proved it's them (sign-in or step-up), for reveal, export and refund. */
     stepUpAt: ts("step_up_at"),
+    /** On the session's first row (core_0142): when this session last passed a second factor (an authenticator code); My Earnings needs one. A password never sets it. */
+    mfaAt: ts("mfa_at"),
     createdAt: createdAt(),
   },
   (t) => [index("staff_app_tokens_session_idx").on(t.sessionId).where(sql`${t.revokedAt} is null`), index("staff_app_tokens_staff_live_idx").on(t.staffId).where(sql`${t.revokedAt} is null`)],

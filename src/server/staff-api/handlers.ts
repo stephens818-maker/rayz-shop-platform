@@ -13,7 +13,7 @@ import { requireInTenant } from "@/server/tenant";
 import { clockState } from "@/server/time-clock";
 import { declareCashTips, myDeclarations } from "@/server/tips/declarations";
 import { assertStripePayouts } from "@/server/tips/payout-model";
-import { appDeviceStatus, recordStaffAppWipe, refreshStaffTokens, requestAppDevice, requestWhere, staffAppSession, staffCodeLogin, staffLogout, staffPasswordLogin } from "./auth";
+import { appDeviceStatus, finishAppTwoFactorSetup, recordStaffAppWipe, startAppTwoFactorSetup, refreshStaffTokens, requestAppDevice, requestWhere, staffAppSession, staffCodeLogin, staffLogout, staffPasswordLogin } from "./auth";
 import { block, book, move, myCalendar, openings, runningLate, seesEveryColumn, setStatus, unblock } from "./calendar";
 import { clientCard, contactForApp, findClientsFor, revealForApp } from "./clients";
 import { KioskCaller, appPunch, clockOverview, kioskHome, kioskPunch, kioskQr, kioskQueueView, kioskStatus, kioskTeam, pairKiosk, pairedKiosk, registerKiosk, setMyPin, signedInKiosk } from "./clock";
@@ -37,7 +37,7 @@ import {
 } from "./front";
 import { StaffAppContext, guardedStaff, shopOf, signInRoute, staffRoute, withCacheRule } from "./http";
 import { accountSession, bankingView, dashboardLink, earningsRange, myEarnings as myRangeEarnings, myExternalAccounts, myPayouts, myTipsView, onboardingLink, setMyDepositConsent, setMyPayoutMethod } from "./money";
-import { myEarnings, myEarningsDays, myEarningsTickets, myPayPeriodList, myPayoutsView } from "./earnings";
+import { logEarningsView, myEarnings, myEarningsDays, myEarningsTickets, myPayPeriodList, myPayoutsView } from "./earnings";
 import { myYearToDate, payoutSetup } from "./pay";
 import { markPopupsSeen, popupsFor } from "./popups";
 import { addAppointmentNote, appointmentNotes, dayRange, myAppointment, myAppointments, mySchedule } from "./schedule";
@@ -223,29 +223,42 @@ export const postTimecardSignOff = staffRoute({ perms: "timesheet.own", person: 
 const PAY = { perms: ["timesheet.own", "tips.own", "compensation.own", "report.my_sales.view"], person: true, message: "You can't see your earnings" } as const;
 const TIPS = { perms: "tips.own", person: true, message: "You can't see tips" } as const;
 
+/** My Earnings: this session passed MFA, and every view goes in the audit log (staff.earnings_view). */
+const EARNINGS = { ...PAY, mfa: true } as const;
+const EARNED_TIPS = { ...TIPS, mfa: true } as const;
+const earningsRoute = (guard: typeof EARNINGS | typeof EARNED_TIPS, endpoint: string, fn: (req: Request, ctx: StaffAppContext) => Promise<unknown>) =>
+  staffRoute(guard, async (req, ctx) => {
+    const out = await fn(req, ctx);
+    await logEarningsView(ctx, endpoint, new URL(req.url).searchParams);
+    return json(out);
+  });
+
 /** GET /me/pay-periods: their pay periods (id = start date) with each one's status. */
-export const getMyPayPeriods = staffRoute(PAY, async (req, ctx) => {
+export const getMyPayPeriods = earningsRoute(EARNINGS, "me/pay-periods", async (req, ctx) => {
   query(req, S.NoQuery);
-  return json(await myPayPeriodList(ctx));
+  return myPayPeriodList(ctx);
 });
 
 /** GET /me/earnings?period=current|<id>: one pay period from their line of the Payroll Report, the greater-of worked out here. */
-export const getPeriodEarnings = staffRoute(PAY, async (req, ctx) => json(await myEarnings(ctx, query(req, S.MyEarningsQuery))));
+export const getPeriodEarnings = earningsRoute(EARNINGS, "me/earnings", (req, ctx) => myEarnings(ctx, query(req, S.MyEarningsQuery)));
 
 /** GET /me/earnings/days?periodId=: each day's tips, sales and hours, adding up to the period. */
-export const getEarningsDays = staffRoute(PAY, async (req, ctx) => json(await myEarningsDays(ctx, query(req, S.MyEarningsQuery))));
+export const getEarningsDays = earningsRoute(EARNINGS, "me/earnings/days", (req, ctx) => myEarningsDays(ctx, query(req, S.MyEarningsQuery)));
 
 /** GET /me/earnings/tickets?periodId=&date=: their tickets on one Chicago day of that pay period, their own tip on each and how it reaches them. */
-export const getEarningsTickets = staffRoute(PAY, async (req, ctx) => json(await myEarningsTickets(ctx, query(req, S.MyTicketsQuery))));
+export const getEarningsTickets = earningsRoute(EARNINGS, "me/earnings/tickets", (req, ctx) => myEarningsTickets(ctx, query(req, S.MyTicketsQuery)));
 
 /** GET /me/payouts?periodId=: their card tips' transfers to their Stripe account and the Stripe payouts to their bank. */
-export const getMyPayouts = staffRoute(TIPS, async (req, ctx) => json(await myPayoutsView(ctx, query(req, S.MyEarningsQuery))));
+export const getMyPayouts = earningsRoute(EARNED_TIPS, "me/payouts", (req, ctx) => myPayoutsView(ctx, query(req, S.MyEarningsQuery)));
 
 /** GET /me/earnings/ytd?year= */
-export const getYearToDate = staffRoute(PAY, async (req, ctx) => {
-  const q = query(req, S.YtdQuery);
-  return json(await myYearToDate(ctx, q.year));
-});
+export const getYearToDate = earningsRoute(EARNINGS, "me/earnings/ytd", (req, ctx) => myYearToDate(ctx, query(req, S.YtdQuery).year));
+
+/** POST /me/two-factor/setup: a new authenticator key for someone without one (needs a step-up in the last 15 minutes). */
+export const postTwoFactorSetup = staffRoute({ perms: null, person: true }, async (_req, ctx) => json(await startAppTwoFactorSetup(ctx)));
+
+/** POST /me/two-factor/verify: the first code from the new key; two-step sign-in on, and this session counts as MFA. */
+export const postTwoFactorVerify = staffRoute({ perms: null, person: true }, async (req, ctx) => json(await finishAppTwoFactorSetup(ctx, await body(req, S.TwoFactorVerifyBody))));
 
 /** GET /me/payout-setup: how each shop pays their tips (payroll by default) and the payroll portal link. */
 export const getPayoutSetup = staffRoute({ perms: "tips.own", person: true, message: "You can't see tips" }, async (_req, ctx) => json(await payoutSetup(ctx)));

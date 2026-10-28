@@ -100,6 +100,10 @@ export const StepUpBody = z.object({
   password: z.string().max(200).optional().describe("Their password, when they have no authenticator set up"),
   code: z.string().max(12).optional().describe("The 6-digit code from their authenticator app, once set up"),
 });
+export const TwoFactorVerifyBody = z.object({
+  ticket: z.string().max(4000).describe("The ticket from POST /me/two-factor/setup"),
+  code: z.string().max(12).describe("The first 6-digit code the authenticator app shows for the new key"),
+});
 export const KioskPairBody = z.object({
   code: z.string().max(20).describe("The pairing code from the manager's QR code (its `code` query value), e.g. K7QD-M3XP"),
   deviceId: z.string().min(8).max(128).describe("This install's own random id; send it as X-Device-Id on every kiosk call"),

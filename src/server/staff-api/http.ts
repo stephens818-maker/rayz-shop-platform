@@ -6,7 +6,7 @@ import { STAFF_CACHE_HEADER, cacheRuleFor } from "@/domain/staff-device-policy";
 import { DEMO_BLOCKED_MESSAGE, demoBlocked } from "@/server/demo-shop";
 import { loadDisplay } from "@/server/display";
 import { AppError, forbidden } from "@/server/errors";
-import { requireStaffApp } from "./auth";
+import { assertStaffMfa, requireStaffApp } from "./auth";
 import { assertSupportedStaffClient } from "./config";
 
 export type StaffAppContext = StaffContext & { sessionId: string };
@@ -16,6 +16,8 @@ interface Guard {
   perms: Permission | readonly Permission[] | null;
   /** Their own records (tips, pay, the clock): a shop's shared login is refused. */
   person?: boolean;
+  /** This session passed a second factor (My Earnings): else 403 with details.mfaRequired. */
+  mfa?: boolean;
   message?: string;
 }
 
@@ -64,6 +66,7 @@ export async function guardedStaff(req: Request, guard: Guard): Promise<StaffApp
   authorizeContext(ctx, guard.perms ?? [], guard.message);
   if (guard.person && ctx.staff.kind !== "person") throw new AppError("forbidden", "A shop login can't do that. Sign in to the app as yourself.");
   if (ctx.staff.demo && demoBlocked(req.method, new URL(req.url).pathname)) throw new AppError("forbidden", DEMO_BLOCKED_MESSAGE, { reason: "demo_shop" });
+  if (guard.mfa) await assertStaffMfa(ctx);
   return ctx;
 }
 

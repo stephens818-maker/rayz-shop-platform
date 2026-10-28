@@ -100,9 +100,13 @@ describe("every route is guarded", () => {
     expect(handlers.length).toBeGreaterThan(80);
     for (const h of handlers) {
       if (PUBLIC.has(h.name)) expect(["signInRoute", "route"], h.name).toContain(h.via);
-      else expect(["staffRoute", "banking", "punchAs", "kioskRoute"], h.name).toContain(h.via);
+      else expect(["staffRoute", "banking", "punchAs", "kioskRoute", "earningsRoute"], h.name).toContain(h.via);
     }
     expect(src).toMatch(/const banking = [^]*?staffRoute<P>\(TIPS/);
+    // My Earnings: staffRoute with MFA on the session, then the view in the audit log.
+    expect(src).toMatch(/const EARNINGS = \{ \.\.\.PAY, mfa: true \} as const;\s*const EARNED_TIPS = \{ \.\.\.TIPS, mfa: true \} as const;/);
+    expect(src).toMatch(/const earningsRoute = [^]*?staffRoute\(guard, async \(req, ctx\) => \{\s*const out = await fn\(req, ctx\);\s*await logEarningsView\(ctx, endpoint, new URL\(req\.url\)\.searchParams\);/);
+    expect(exported.filter((e) => e.via === "earningsRoute").map((e) => e.name).sort()).toEqual(["getEarningsDays", "getEarningsTickets", "getMyPayPeriods", "getMyPayouts", "getPeriodEarnings", "getYearToDate"]);
     expect(src).toMatch(/const punchAs = [^]*?staffRoute\(CLOCK/);
     // The front-desk clock: a paired install's own token, else the same guard as staffRoute.
     expect(src).toMatch(/const kioskRoute = [^]*?pairedKiosk\(req\);\s*if \(paired\) return fn\(req, paired\);\s*return fn\(req, await signedInKiosk\(await guardedStaff\(req, KIOSK\), req\)\)/);

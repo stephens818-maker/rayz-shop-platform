@@ -104,7 +104,7 @@ export async function stepUp(c: { staff: { id: string; displayLabel: string }; a
     if (me.passwordFailures) await db.update(staff).set({ passwordFailures: 0, passwordLockedUntil: null }).where(eq(staff.id, me.id));
   }
   if (c.session.kind === "web") await db.update(staffWebSessions).set({ stepUpAt: now }).where(eq(staffWebSessions.id, c.session.id));
-  else await db.update(staffAppTokens).set({ stepUpAt: now }).where(eq(staffAppTokens.id, c.session.id));
+  else await db.update(staffAppTokens).set({ stepUpAt: now, ...(me.totpEnabledAt ? { mfaAt: now } : {}) }).where(eq(staffAppTokens.id, c.session.id));
   await audit(c.actor, "staff.step_up", "staff", me.id, { via: c.session.kind, factor: me.totpEnabledAt ? "authenticator" : "password" }, null);
   return { steppedUpAt: now.toISOString(), factor: me.totpEnabledAt ? ("code" as const) : ("password" as const) };
 }

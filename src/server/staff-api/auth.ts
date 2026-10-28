@@ -13,7 +13,12 @@ import { approvedShopIds, deviceCookieValue, deviceTicket, devicesFromCookie, ev
 import { checkPassword, noteSignInDevice, signInFactorFor } from "@/server/auth/sign-in-guard";
 import { StaffContext, staffContextOf } from "@/server/auth/staff";
 import { randomToken, sha256, signToken, verifyToken } from "@/server/auth/tokens";
-import { TwoFactorPrompt, finishTwoFactor, twoFactorPrompt } from "@/server/auth/two-factor";
+import { isSteppedUp } from "@/server/auth/sessions";
+import { demoMode } from "@/lib/deployment";
+import { groupedSecret, newTotpSecret, otpauthUri } from "@/lib/totp";
+import { open, seal } from "@/lib/secret-box";
+import QRCode from "qrcode";
+import { TwoFactorPrompt, enrollTotp, finishTwoFactor, twoFactorPrompt } from "@/server/auth/two-factor";
 import { refreshDemoDay, staffReviewLoginOn } from "@/server/demo-shop";
 import { AppError } from "@/server/errors";
 import { rateLimit } from "@/server/rate-limit";
@@ -62,7 +67,7 @@ export const requestWhere = (req: Request): Where => ({ ip: clientIp(req.headers
 const cleanDevice = (name: string | null | undefined) => name?.trim().slice(0, 80) || null;
 const cleanDeviceId = (id: string | null | undefined) => id?.trim().slice(0, 100) || null;
 
-async function issue(staffId: string, install: { deviceName: string | null; deviceId: string | null }, sessionId?: string): Promise<StaffTokens & { tokenId: string }> {
+async function issue(staffId: string, install: { deviceName: string | null; deviceId: string | null }, sessionId?: string, mfaAt: Date | null = null): Promise<StaffTokens & { tokenId: string }> {
   const id = randomUUID();
   const sid = sessionId ?? id;
   const refreshToken = randomToken(32);
@@ -75,6 +80,7 @@ async function issue(staffId: string, install: { deviceName: string | null; devi
     deviceId: install.deviceId,
     lastUsedAt: new Date(),
     expiresAt: new Date(Date.now() + STAFF_REFRESH_TTL_DAYS * 86_400_000),
+    mfaAt,
   });
   const accessToken = await signToken({ sub: staffId, sid }, "staff_app_access", STAFF_ACCESS_TTL_SECONDS);
   return { accessToken, refreshToken, tokenType: "Bearer", expiresIn: STAFF_ACCESS_TTL_SECONDS, sessionId: sid, tokenId: id };
@@ -104,7 +110,7 @@ export async function admit(user: typeof staff.$inferSelect, where: Where, insta
   }
   if (device) await touchDevices(device.hash, where.ip);
   const deviceId = cleanDeviceId(install.deviceId);
-  const tokens = await issue(user.id, { deviceName, deviceId });
+  const tokens = await issue(user.id, { deviceName, deviceId }, undefined, twoStep ? new Date() : null);
   await noteSignInDevice(user, "app", { deviceKey: deviceId, label: deviceName ?? deviceLabel(where.userAgent), ip: where.ip });
   await db.update(staff).set({ lastSignInAt: new Date() }).where(eq(staff.id, user.id));
   if (user.isDemo) await refreshDemoDay();
@@ -310,4 +316,67 @@ export async function appDeviceStatus(where: Where) {
   if (!device) return { devices: [] };
   const names = new Map((await shopNames(device.rows.map((r) => r.shopId))).map((s) => [s.id, s.name]));
   return { devices: device.rows.map((r) => ({ shopId: r.shopId, shop: names.get(r.shopId) ?? null, label: r.label, status: r.status })) };
+}
+
+// ───────────────────────────── Staff MFA (My Earnings) ─────────────────────────────
+
+/**
+ * Whether My Earnings needs this session to have passed MFA: everywhere but the sandbox demo, and in
+ * the test suite only when a test turns it on (ENFORCE_STAFF_MFA=1, which also forces it on anywhere).
+ */
+export const staffMfaOn = () => process.env.ENFORCE_STAFF_MFA === "1" || (!demoMode() && process.env.NODE_ENV !== "test");
+
+export const MFA_CODE_MESSAGE = "Enter the code from your authenticator app to see your earnings.";
+export const MFA_ENROLL_MESSAGE = "Set up two-step sign-in to see your earnings.";
+
+/**
+ * My Earnings: this session passed a second factor (an authenticator code at sign-in, at step-up, or
+ * setting one up in the app), else 403 with details.mfaRequired: "code" (POST /me/step-up with their
+ * code) or "enroll" (POST /me/two-factor/setup, then /me/two-factor/verify). The Demo Shop's review
+ * login is let through: it holds only Demo Shop data and can't hold an authenticator.
+ */
+export async function assertStaffMfa(ctx: { staff: { id: string; demo?: boolean }; sessionId: string }) {
+  if (!staffMfaOn() || ctx.staff.demo) return;
+  const [row] = await db.select({ mfaAt: staffAppTokens.mfaAt }).from(staffAppTokens).where(and(eq(staffAppTokens.id, ctx.sessionId), eq(staffAppTokens.staffId, ctx.staff.id))).limit(1);
+  if (row?.mfaAt) return;
+  const me = await db.query.staff.findFirst({ where: eq(staff.id, ctx.staff.id), columns: { totpEnabledAt: true } });
+  if (me?.totpEnabledAt) throw new AppError("forbidden", MFA_CODE_MESSAGE, { mfaRequired: "code" });
+  throw new AppError("forbidden", MFA_ENROLL_MESSAGE, { mfaRequired: "enroll" });
+}
+
+/** This session passed a second factor now. */
+export async function markSessionMfa(sessionId: string, now = new Date()) {
+  await db.update(staffAppTokens).set({ mfaAt: now, stepUpAt: now }).where(eq(staffAppTokens.id, sessionId));
+}
+
+const SETUP_TTL = 10 * 60;
+
+/**
+ * POST /me/two-factor/setup: a new authenticator key for someone without one, as a QR code and
+ * grouped for typing, with a ticket for /me/two-factor/verify. Needs a sign-in or step-up in the last
+ * 15 minutes on this session, so a phone left signed in can't be used to take over the second factor.
+ * The ticket is its own kind: it can't stand in for the sign-in ticket at /auth/login/code.
+ */
+export async function startAppTwoFactorSetup(ctx: { staff: { id: string }; sessionId: string; session?: { kind: "web" | "app"; id: string } | null }) {
+  const me = await db.query.staff.findFirst({ where: eq(staff.id, ctx.staff.id), columns: { id: true, email: true, totpEnabledAt: true, kind: true } });
+  if (!me || me.kind !== "person") throw new AppError("forbidden", "A shop login can't do that. Sign in to the app as yourself.");
+  if (me.totpEnabledAt) throw new AppError("conflict", "Two-step sign-in is already set up. Send your code to POST /me/step-up instead.", { mfaRequired: "code" });
+  if (!(await isSteppedUp(ctx))) throw new AppError("forbidden", "Confirm it's you first (POST /me/step-up with your password), then try again.", { stepUpRequired: "two_factor" });
+  const secret = newTotpSecret();
+  const ticket = await signToken({ sub: me.id, sid: ctx.sessionId, es: seal(secret) }, "staff_app_2fa_setup", SETUP_TTL);
+  return { ticket, enroll: { qr: await QRCode.toDataURL(otpauthUri(secret, me.email ?? "staff"), { margin: 1, width: 192 }), secret: groupedSecret(secret) } };
+}
+
+/** POST /me/two-factor/verify: the first code from the new key turns two-step sign-in on and counts as this session's MFA. */
+export async function finishAppTwoFactorSetup(ctx: { staff: { id: string }; sessionId: string; actor: { staffId?: string | null; label: string } }, input: { ticket: string; code: string }, now = new Date()) {
+  await rateLimit("staff_app_2fa_setup", ctx.staff.id, 20, LOGIN_WINDOW_MS, "Too many tries. Try again in 15 minutes.");
+  const t = await verifyToken<{ sub: string; sid: string; es: string }>(input.ticket, "staff_app_2fa_setup");
+  if (!t || t.sub !== ctx.staff.id || t.sid !== ctx.sessionId) throw new AppError("unauthorized", "That took too long, or it was started on another sign-in. Start setting up again.");
+  const secret = open(t.es);
+  if (!secret) throw new AppError("unauthorized", "Start setting up again.");
+  const r = await enrollTotp(ctx.staff.id, secret, input.code, now);
+  if (!r.ok) throw new AppError("unauthorized", r.error);
+  await markSessionMfa(ctx.sessionId, now);
+  await audit(ctx.actor, "user.two_factor_setup", "staff", ctx.staff.id, { via: "staff_app", sessionId: ctx.sessionId }, null);
+  return { twoStep: true, mfaAt: now.toISOString() };
 }

@@ -22,6 +22,7 @@ import { appPayoutStatus, appTransferStatus } from "@/domain/staff-payouts";
 import { employeeFeeCents, receivedCents } from "@/domain/tips";
 import { SHOP_TZ, addDays, diffDays, endOfLocalDay, isValidLocalDate, localDateOf, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { workShopIds } from "@/server/auth/access";
+import { audit } from "@/server/audit";
 import { AppError, forbidden } from "@/server/errors";
 import { approvalOf, buildPayroll, dayFigures, ensurePayGroups, lockedRunsOver, type DayFigures, type PayrollView } from "@/server/payroll/run";
 import { PAID, rows, uuids } from "@/server/report-sql";
@@ -734,6 +735,19 @@ export async function myEarningsTickets(ctx: StaffAppContext, q: { periodId: str
 
 /** A client on an employee's screen: their first name only, whatever was typed into the field. */
 export const firstNameOnly = (raw: string | null) => raw?.trim().split(/\s+/)[0] || "Walk-in";
+
+// ───────────────────────────── Audit ─────────────────────────────
+
+const VIEW_KEYS = ["period", "periodId", "from", "to", "date", "year"] as const;
+
+/**
+ * Every My Earnings view, in the audit log: who, which endpoint and period (the query already held to
+ * its schema), on which sign-in. Their own figures only, so the entity is themselves.
+ */
+export async function logEarningsView(ctx: StaffAppContext, endpoint: string, params: URLSearchParams) {
+  const asked = Object.fromEntries(VIEW_KEYS.flatMap((k) => (params.has(k) ? [[k, params.get(k)]] : [])));
+  await audit(ctx.actor, "staff.earnings_view", "staff", ctx.staff.id, { endpoint, ...asked, via: "staff_app", sessionId: ctx.sessionId }, ctx.currentShopId ?? null);
+}
 
 // ───────────────────────────── GET /me/payouts ─────────────────────────────
 
