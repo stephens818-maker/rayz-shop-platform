@@ -317,8 +317,9 @@ for (const fx of FIXTURES) {
           | "trainingHours"
           | "otPay"
           | "trainingPay"
+          | "trainingOtPay"
+          | "trainingCost"
           | "laborCost"
-          | "laborCostWithTraining"
           | "grossProfitAfterLabor",
           number
         >;
@@ -349,12 +350,12 @@ for (const fx of FIXTURES) {
         trainingHours: sum((l) => l.trainingHours),
         otPay: sum((l) => l.otPay),
         trainingPay,
-        // The audit's Labor Cost and Gross Profit After Labor leave training pay out; the platform's include it (Charles, Oct 28).
-        laborCost: laborCost - trainingPay,
-        laborCostWithTraining: laborCost,
-        grossProfitAfterLabor: total.service - laborCost + trainingPay,
+        trainingOtPay: sum((l) => l.trainingOtPay),
+        trainingCost: sum((l) => l.trainingCost),
+        laborCost,
+        grossProfitAfterLabor: total.service - laborCost,
       };
-      expect(toCent(totalsOf(lines).grossProfit, total.service - want.grand.laborCostWithTraining)).toBe(true);
+      expect(toCent(totalsOf(lines).grossProfit, total.service - want.grand.laborCost)).toBe(true);
       for (const [k, v] of Object.entries(want.grand)) expect(toCent(got[k as keyof typeof got], v), `${k}: ${got[k as keyof typeof got]} vs ${v}`).toBe(true);
       expect(near(got.netComm, topUp + product + typedOver)).toBe(true);
       for (const [shop, t] of Object.entries(want.shopTabs)) {

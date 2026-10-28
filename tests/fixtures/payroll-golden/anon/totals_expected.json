@@ -16,9 +16,10 @@
   "trainingHours": 39.5,
   "otPay": 71.2463,
   "trainingPay": 689.125,
-  "laborCost": 34431.0293,
-  "laborCostWithTraining": 35120.1543,
-  "grossProfitAfterLabor": 30759.1706
+  "laborCost": 35120.1543,
+  "grossProfitAfterLabor": 30070.0456,
+  "trainingOtPay": 2.9388,
+  "trainingCost": 692.0638
  },
  "shopTabs": {
   "Utica": {

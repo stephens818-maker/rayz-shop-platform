@@ -40,7 +40,9 @@
     "pct_of_gross": 0.3824241982507289,
     "ot_pay": 0.0,
     "training_pay": 31.5,
-    "labor_cost": 524.686
+    "labor_cost": 556.186,
+    "training_ot_pay": 0.0,
+    "training_cost": 31.5
    }
   },
   {
@@ -82,7 +84,9 @@
     "pct_of_gross": 0.4446148522906867,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 950.88
+    "labor_cost": 950.88,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -124,7 +128,9 @@
     "pct_of_gross": 0.3806025588779993,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 1886.5935999999997
+    "labor_cost": 1886.5935999999997,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -166,7 +172,9 @@
     "pct_of_gross": 0.47506914127677086,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 623.5425
+    "labor_cost": 623.5425,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -208,7 +216,9 @@
     "pct_of_gross": 0.5766549089845749,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 315.52250000000004
+    "labor_cost": 315.52250000000004,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -250,7 +260,9 @@
     "pct_of_gross": "#DIV/0!",
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 1223.3700000000001
+    "labor_cost": 1223.3700000000001,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -292,7 +304,9 @@
     "pct_of_gross": 0.3838604904931983,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 837.2266000000001
+    "labor_cost": 837.2266000000001,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -334,7 +348,9 @@
     "pct_of_gross": 0.44696100266387184,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 1125.8456
+    "labor_cost": 1125.8456,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -376,7 +392,9 @@
     "pct_of_gross": 0.42421019900497514,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 1350.6174
+    "labor_cost": 1350.6174,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -418,7 +436,9 @@
     "pct_of_gross": 0.42371163454675226,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 1032.8987999999997
+    "labor_cost": 1032.8987999999997,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -460,7 +480,9 @@
     "pct_of_gross": 0.35278395332015705,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 1458.2994999999999
+    "labor_cost": 1458.2994999999999,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -502,7 +524,9 @@
     "pct_of_gross": 0.42941882814837273,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 1047.812
+    "labor_cost": 1047.812,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -544,7 +568,9 @@
     "pct_of_gross": "#DIV/0!",
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 0.0
+    "labor_cost": 0.0,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -586,7 +612,9 @@
     "pct_of_gross": 0.5541641793329353,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 1810.205
+    "labor_cost": 1810.205,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -628,7 +656,9 @@
     "pct_of_gross": 0.5949036847804426,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 2477.7560000000003
+    "labor_cost": 2477.7560000000003,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -670,7 +700,9 @@
     "pct_of_gross": 0.4969164813498705,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 1517.25
+    "labor_cost": 1517.25,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -712,7 +744,9 @@
     "pct_of_gross": 1.140357161263722,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 663.7905
+    "labor_cost": 663.7905,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -754,7 +788,9 @@
     "pct_of_gross": 0.5734522777482591,
     "ot_pay": 47.7675,
     "training_pay": 49.5,
-    "labor_cost": 1278.1322999999998
+    "labor_cost": 1327.6322999999998,
+    "training_ot_pay": 1.8114334470989761,
+    "training_cost": 51.31143344709898
    }
   },
   {
@@ -796,7 +832,9 @@
     "pct_of_gross": 0.858092168599054,
     "ot_pay": 10.15875,
     "training_pay": 78.75,
-    "labor_cost": 1240.19955
+    "labor_cost": 1318.94955,
+    "training_ot_pay": 0.6162046584981196,
+    "training_cost": 79.36620465849812
    }
   },
   {
@@ -838,7 +876,9 @@
     "pct_of_gross": 0.45755604475220485,
     "ot_pay": 0.0,
     "training_pay": 30.5,
-    "labor_cost": 985.2051
+    "labor_cost": 1015.7051,
+    "training_ot_pay": 0.0,
+    "training_cost": 30.5
    }
   },
   {
@@ -880,7 +920,9 @@
     "pct_of_gross": 0.5113001784766774,
     "ot_pay": 0.0,
     "training_pay": 45.75,
-    "labor_cost": 529.9882
+    "labor_cost": 575.7382,
+    "training_ot_pay": 0.0,
+    "training_cost": 45.75
    }
   },
   {
@@ -922,7 +964,9 @@
     "pct_of_gross": 0.6059853046126629,
     "ot_pay": 0.0,
     "training_pay": 76.25,
-    "labor_cost": 602.8765999999999
+    "labor_cost": 679.1265999999999,
+    "training_ot_pay": 0.0,
+    "training_cost": 76.25
    }
   },
   {
@@ -964,7 +1008,9 @@
     "pct_of_gross": "#DIV/0!",
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 0.0
+    "labor_cost": 0.0,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -1006,7 +1052,9 @@
     "pct_of_gross": 0.8039350817066508,
     "ot_pay": 0.0,
     "training_pay": 70.5,
-    "labor_cost": 647.4250000000001
+    "labor_cost": 717.9250000000001,
+    "training_ot_pay": 0.0,
+    "training_cost": 70.5
    }
   },
   {
@@ -1048,7 +1096,9 @@
     "pct_of_gross": 0.4912516096434749,
     "ot_pay": 13.32,
     "training_pay": 55.5,
-    "labor_cost": 1413.392
+    "labor_cost": 1468.892,
+    "training_ot_pay": 0.5111281657712969,
+    "training_cost": 56.0111281657713
    }
   },
   {
@@ -1090,7 +1140,9 @@
     "pct_of_gross": 0.46568847361663296,
     "ot_pay": 0.0,
     "training_pay": 42.0,
-    "labor_cost": 1204.14
+    "labor_cost": 1246.14,
+    "training_ot_pay": 0.0,
+    "training_cost": 42.0
    }
   },
   {
@@ -1132,7 +1184,9 @@
     "pct_of_gross": 0.5370102968081407,
     "ot_pay": 0.0,
     "training_pay": 70.875,
-    "labor_cost": 355.1625
+    "labor_cost": 426.0375,
+    "training_ot_pay": 0.0,
+    "training_cost": 70.875
    }
   },
   {
@@ -1174,7 +1228,9 @@
     "pct_of_gross": 0.5137195625106296,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 2446.6562
+    "labor_cost": 2446.6562,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -1216,7 +1272,9 @@
     "pct_of_gross": 1.1101109015316855,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 1124.1094
+    "labor_cost": 1124.1094,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -1258,7 +1316,9 @@
     "pct_of_gross": 0.7497039168227002,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 492.488
+    "labor_cost": 492.488,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -1300,7 +1360,9 @@
     "pct_of_gross": 0.5607646837820914,
     "ot_pay": 0.0,
     "training_pay": 0.0,
-    "labor_cost": 1343.3118
+    "labor_cost": 1343.3118,
+    "training_ot_pay": 0.0,
+    "training_cost": 0.0
    }
   },
   {
@@ -1342,7 +1404,9 @@
     "pct_of_gross": 0.3543690743932003,
     "ot_pay": 0.0,
     "training_pay": 33.0,
-    "labor_cost": 606.6266999999999
+    "labor_cost": 639.6266999999999,
+    "training_ot_pay": 0.0,
+    "training_cost": 33.0
    }
   },
   {
@@ -1384,7 +1448,9 @@
     "pct_of_gross": 0.7757223251259423,
     "ot_pay": 0.0,
     "training_pay": 105.0,
-    "labor_cost": 1315.02
+    "labor_cost": 1420.02,
+    "training_ot_pay": 0.0,
+    "training_cost": 105.0
    }
   }
  ],
@@ -2311,9 +2377,10 @@
    "gross_profit": 4802.615399999999,
    "ot_pay": 0.0,
    "training_pay": 31.5,
-   "labor_cost": 5524.5946,
-   "labor_cost_with_training": 5556.0946,
-   "gross_profit_after_labor": 4802.615399999999
+   "labor_cost": 5556.0946,
+   "gross_profit_after_labor": 4771.115399999999,
+   "training_ot_pay": 0.0,
+   "training_cost": 31.5
   },
   "Moline": {
    "hours": 346.48,
@@ -2327,8 +2394,9 @@
    "ot_pay": 0.0,
    "training_pay": 0.0,
    "labor_cost": 6852.6999,
-   "labor_cost_with_training": 6852.6999,
-   "gross_profit_after_labor": 10042.6001
+   "gross_profit_after_labor": 10042.6001,
+   "training_ot_pay": 0.0,
+   "training_cost": 0.0
   },
   "Kimberly": {
    "hours": 336.58,
@@ -2341,9 +2409,10 @@
    "gross_profit": 5513.1137,
    "ot_pay": 47.7675,
    "training_pay": 49.5,
-   "labor_cost": 7747.1338,
-   "labor_cost_with_training": 7796.6338,
-   "gross_profit_after_labor": 5465.3462
+   "labor_cost": 7796.6338,
+   "gross_profit_after_labor": 5415.8462,
+   "training_ot_pay": 1.8114334470989761,
+   "training_cost": 51.31143344709898
   },
   "Rock Island": {
    "hours": 215.15,
@@ -2356,9 +2425,10 @@
    "gross_profit": 2269.9592999999995,
    "ot_pay": 10.15875,
    "training_pay": 231.25,
-   "labor_cost": 3358.2694500000002,
-   "labor_cost_with_training": 3589.5194500000002,
-   "gross_profit_after_labor": 2259.8005499999995
+   "labor_cost": 3589.5194500000002,
+   "gross_profit_after_labor": 2028.5505499999995,
+   "training_ot_pay": 0.6162046584981196,
+   "training_cost": 231.86620465849813
   },
   "Silvis": {
    "hours": 182.14000000000001,
@@ -2371,9 +2441,10 @@
    "gross_profit": 3295.6205,
    "ot_pay": 13.32,
    "training_pay": 238.875,
-   "labor_cost": 3620.1195000000002,
-   "labor_cost_with_training": 3858.9945000000002,
-   "gross_profit_after_labor": 3282.3005
+   "labor_cost": 3858.9945000000002,
+   "gross_profit_after_labor": 3043.4255,
+   "training_ot_pay": 0.5111281657712969,
+   "training_cost": 239.3861281657713
   },
   "Coralville": {
    "hours": 234.09,
@@ -2387,8 +2458,9 @@
    "ot_pay": 0.0,
    "training_pay": 0.0,
    "labor_cost": 5406.5653999999995,
-   "labor_cost_with_training": 5406.5653999999995,
-   "gross_profit_after_labor": 3421.0846
+   "gross_profit_after_labor": 3421.0846,
+   "training_ot_pay": 0.0,
+   "training_cost": 0.0
   },
   "LeClaire": {
    "hours": 87.5,
@@ -2401,9 +2473,10 @@
    "gross_profit": 1485.4233,
    "ot_pay": 0.0,
    "training_pay": 138.0,
-   "labor_cost": 1921.6466999999998,
-   "labor_cost_with_training": 2059.6467,
-   "gross_profit_after_labor": 1485.4233
+   "labor_cost": 2059.6467,
+   "gross_profit_after_labor": 1347.4233,
+   "training_ot_pay": 0.0,
+   "training_cost": 138.0
   }
  }
 }

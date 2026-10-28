@@ -35,8 +35,8 @@ export interface GoldenRow {
     manual: Record<"B" | "E" | "J" | "R" | "D" | "M", boolean>;
   };
   expected_raw: Record<"hourly_total" | "gross_per_hr" | "commission" | "service_total" | "product_commission" | "net_comm" | "total_wages" | "pct_of_gross", Cached> &
-    /** The Payroll Report's additions (scripts/payroll-golden-labor-cost.py): labor cost = Total Wages + OT pay; training pay stays out until Q11. */
-    Record<"ot_pay" | "training_pay" | "labor_cost", number>;
+    /** The Payroll Report's additions (scripts/payroll-golden-labor-cost.py): labor cost = Total Wages + OT pay + training pay; training cost = training pay + training's share of the OT pay (Q11). */
+    Record<"ot_pay" | "training_pay" | "training_ot_pay" | "training_cost" | "labor_cost", number>;
 }
 export interface GoldenExportRow {
   row: number;
@@ -60,7 +60,7 @@ export interface Golden {
   workbook_summary_cached: Record<string, { service_sales: number; employee_cost: number; gross_profit: number }>;
   corrected_location_totals_all_rows: Record<
     string,
-    Record<"hours" | "hourly_total" | "service" | "commission" | "net_comm" | "total_wages" | "tips" | "gross_profit" | "ot_pay" | "training_pay" | "labor_cost" | "labor_cost_with_training" | "gross_profit_after_labor", number>
+    Record<"hours" | "hourly_total" | "service" | "commission" | "net_comm" | "total_wages" | "tips" | "gross_profit" | "ot_pay" | "training_pay" | "training_ot_pay" | "training_cost" | "labor_cost" | "gross_profit_after_labor", number>
   >;
 }
 

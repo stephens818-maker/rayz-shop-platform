@@ -20,6 +20,9 @@ const ROW_CHECKS: [keyof GoldenRow["expected_raw"], keyof Line][] = [
   ["pct_of_gross", "pctOfGross"],
   ["ot_pay", "otPay"],
   ["training_pay", "trainingPay"],
+  ["training_ot_pay", "trainingOtPay"],
+  ["training_cost", "trainingCost"],
+  ["labor_cost", "laborCost"],
 ];
 
 /** Shops whose cached workbook totals skip rows with money in them (spec §8): the corrected totals differ. */
@@ -32,7 +35,7 @@ for (const fx of FIXTURES) {
   describe.skipIf(!fx.present)(`Charles's payroll workbook, ${fx.name}`, () => {
     const g = () => load(fx.dir);
 
-    it("every Locations row: Hourly Total, Gross /Hr, Commission$, Service Total, Product Total, NetComm, Total Wages, Total % of Gross, O.T. Pay, Training Pay and Labor Cost with training", () => {
+    it("every Locations row: Hourly Total, Gross /Hr, Commission$, Service Total, Product Total, NetComm, Total Wages, Total % of Gross, O.T. Pay, Training Pay, its share of O.T. Pay, Training Cost and Labor Cost", () => {
       const { golden, byShop } = g();
       expect(byShop.reduce((a, s) => a + s.inputs.length, 0)).toBe(golden.rows.length);
       const diffs: string[] = [];
@@ -46,8 +49,6 @@ for (const fx of FIXTURES) {
             const v = line[got] as number | null;
             if (!near(v, w)) diffs.push(`${s.shop} row ${row.inputs.row} ${want}: ${v} vs ${w}`);
           }
-          const withTraining = cached(row.expected_raw.labor_cost)! + row.expected_raw.training_pay;
-          if (!near(line.laborCost, withTraining)) diffs.push(`${s.shop} row ${row.inputs.row} labor_cost with training: ${line.laborCost} vs ${withTraining}`);
         });
       expect(diffs).toEqual([]);
     });
@@ -113,11 +114,12 @@ for (const fx of FIXTURES) {
           gross_profit: t.service - t.totalWages,
           ot_pay: t.otPay,
           training_pay: t.trainingPay,
-          labor_cost: t.laborCost - t.trainingPay,
-          labor_cost_with_training: t.laborCost,
-          gross_profit_after_labor: t.grossProfit + t.trainingPay,
+          training_ot_pay: t.trainingOtPay,
+          training_cost: t.trainingCost,
+          labor_cost: t.laborCost,
+          gross_profit_after_labor: t.grossProfit,
         };
-        expect(near(t.grossProfit, want.service - want.labor_cost_with_training), `${b.shop} gross profit after labor with training`).toBe(true);
+        expect(near(t.grossProfit, want.service - want.labor_cost), `${b.shop} gross profit after labor`).toBe(true);
         for (const [k, v] of Object.entries(want)) expect(near(got[k as keyof typeof got], v), `${b.shop} ${k}`).toBe(true);
         const c = golden.workbook_location_totals_cached[b.shop];
         if (!near(t.service, c.E) || !near(t.totalWages, c.N)) differ.push(b.shop);
@@ -132,7 +134,10 @@ for (const fx of FIXTURES) {
       const lines = blocks.flatMap((b) => b.lines);
       const t = totalsOf(lines);
       expect(near(t.laborCost, sum("total_wages") + sum("ot_pay") + sum("training_pay"))).toBe(true);
-      expect(near(t.laborCost, sum("labor_cost_with_training"))).toBe(true);
+      expect(near(t.laborCost, sum("labor_cost"))).toBe(true);
+      expect(near(t.trainingCost, sum("training_pay") + sum("training_ot_pay"))).toBe(true);
+      expect(t.trainingOtPay).toBeGreaterThan(0);
+      expect(t.trainingOtPay).toBeLessThan(t.otPay);
       expect(near(t.service - t.laborCost, sum("gross_profit") - sum("ot_pay") - sum("training_pay"))).toBe(true);
       expect(t.trainingPay).toBeGreaterThan(0);
       expect(near(t.trainingPay, lines.reduce((a, l) => a + (l.input.trainingRate ?? (l.input.zeroHourlyPay ? 0 : l.wage)) * l.trainingHours, 0))).toBe(true);
@@ -148,6 +153,22 @@ for (const fx of FIXTURES) {
           expect(r.values[5]).toBe(l.trainingHours);
         }
       }
+    });
+
+    it("Q11: the workbook leaves training out of the 40, so its typed OT is short; an estimate from an even weekly split, never corrected automatically", () => {
+      const { blocks } = g();
+      // Each person's production + training over the period's two weeks, split evenly: OT is what's over 40 each week.
+      const short = blocks
+        .flatMap((b) => b.lines)
+        .filter((l) => l.trainingHours > 0)
+        .map((l) => ({ l, hours: Math.max(0, 2 * Math.max(0, (l.hours + l.otHours + l.trainingHours) / 2 - 40) - l.otHours) }))
+        .filter((x) => x.hours > 1e-9);
+      // Those hours are already paid once at the base rate, so what's owed is the half-time premium on them.
+      const premium = short.reduce((a, x) => a + 0.5 * (x.l.input.zeroHourlyPay ? 0 : x.l.wage) * x.hours, 0);
+      const hours = Math.round(short.reduce((a, x) => a + x.hours, 0) * 100) / 100;
+      // docs/payroll-workbook-discrepancies.md section 16: about 12.9 hours for 4 barbers, roughly $101, in the real workbook.
+      expect([short.length, hours, Math.round(premium)]).toEqual(fx.real ? [4, 12.9, 101] : [1, 2, 16]);
+      for (const b of blocks) for (const l of b.lines) expect(l.otHours).toBe(l.input.otHours);
     });
 
     it("the Locations summary: Service Sales, Employee Cost (Total Wages) and Gross Profit per shop and in total, in Charles's order", () => {
