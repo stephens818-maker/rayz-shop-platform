@@ -4,17 +4,20 @@ import { db } from "@/db";
 import { staff, timeEntries } from "@/db/schema";
 import { dailyHours } from "@/domain/payroll/overtime";
 import {
+  CLIENTS_LABEL,
   NA,
   PPH_LABEL,
-  PPH_MEASURES,
+  PPH_RANKS,
   PPH_TREND_LABEL,
   PPH_TRENDS,
+  RANK_LABEL,
   type Bucket,
   type Pph,
-  type PphMeasure,
   type PphOrder,
-  parsePphMeasure,
+  type PphRank,
+  clientsText,
   parsePphOrder,
+  parsePphRank,
   parsePphTrend,
   pphCents,
   pphOf,
@@ -30,22 +33,25 @@ import type { ReportData, ReportOption } from "./report-data";
 import { PAID, type ReportScope, rows, staffFilter, staffSelection, uuids } from "./report-sql";
 import { payrollSalesBetween } from "./reports";
 import { brandShopIds } from "./rebook-report";
+import { serviceTicketDays } from "./service-tickets";
 import { squireEra } from "./squire-era";
 
 /**
- * Production per hour (src/domain/pph.ts) from the live data: worked hours from the time clock, read
- * day by day as payroll reads them, and service and product sales as payroll credits them
+ * Productivity Per Hour (src/domain/pph.ts) from the live data: worked hours from the time clock,
+ * read day by day as payroll reads them, service and product sales as payroll credits them
  * (payrollSalesBetween: net of discounts and refunds, before tax and tips), plus tickets imported
- * from Squire, which payroll leaves out because Squire paid them but which are still production.
+ * from Squire, which payroll leaves out because Squire paid them but which are still sales, and
+ * completed service tickets (src/server/service-tickets.ts) for clients per hour.
  */
 
-/** One person at one shop over a range: worked centi-hours and sales in cents. */
+/** One person at one shop over a range: worked centi-hours, sales in cents and completed service tickets. */
 export interface PphRow {
   staffId: string;
   shopId: string;
   centi: number;
   serviceCents: number;
   productCents: number;
+  clients: number;
 }
 
 type Sel = Pick<ReportScope, "shopIds" | "staffId" | "staffIds">;
@@ -97,14 +103,17 @@ async function salesBetween(s: Sel, from: LocalDate, to: LocalDate, squire: Awai
   return out;
 }
 
-function rowsOf(days: Awaited<ReturnType<typeof workedDays>>, sales: Map<string, { service: number; product: number }>, from: LocalDate, to: LocalDate): PphRow[] {
+type Tickets = Awaited<ReturnType<typeof serviceTicketDays>>;
+
+function rowsOf(days: Awaited<ReturnType<typeof workedDays>>, tickets: Tickets, sales: Map<string, { service: number; product: number }>, from: LocalDate, to: LocalDate): PphRow[] {
   const out = new Map<string, PphRow>();
   const at = (staffId: string, shopId: string) => {
     const k = k2(staffId, shopId);
-    if (!out.has(k)) out.set(k, { staffId, shopId, centi: 0, serviceCents: 0, productCents: 0 });
+    if (!out.has(k)) out.set(k, { staffId, shopId, centi: 0, serviceCents: 0, productCents: 0, clients: 0 });
     return out.get(k)!;
   };
   for (const d of days) if (d.date >= from && d.date <= to) at(d.staffId, d.shopId).centi += d.centi;
+  for (const t of tickets) if (t.date >= from && t.date <= to) at(t.staffId, t.shopId).clients += t.n;
   for (const [k, v] of sales) {
     if (!v.service && !v.product) continue;
     const [staffId, shopId] = k.split("|");
@@ -115,17 +124,17 @@ function rowsOf(days: Awaited<ReturnType<typeof workedDays>>, sales: Map<string,
   return [...out.values()];
 }
 
-/** Each person's hours and sales at each shop over [from, to]. */
+/** Each person's hours, sales and service tickets at each shop over [from, to]. */
 export async function pphRows(s: Sel, from: LocalDate, to: LocalDate): Promise<PphRow[]> {
-  const [days, squire] = await Promise.all([workedDays(s, from, to), squireDays(s, from, to)]);
-  return rowsOf(days, await salesBetween(s, from, to, squire), from, to);
+  const [days, squire, tickets] = await Promise.all([workedDays(s, from, to), squireDays(s, from, to), serviceTicketDays(s, from, to)]);
+  return rowsOf(days, tickets, await salesBetween(s, from, to, squire), from, to);
 }
 
-/** The same, for each period of a trend, from one read of the hours. */
+/** The same, for each period of a trend, from one read of the hours and tickets. */
 async function pphTrendRows(s: Sel, from: LocalDate, to: LocalDate, buckets: readonly Bucket[]): Promise<{ range: PphRow[]; buckets: PphRow[][] }> {
-  const [days, squire] = await Promise.all([workedDays(s, from, to), squireDays(s, from, to)]);
+  const [days, squire, tickets] = await Promise.all([workedDays(s, from, to), squireDays(s, from, to), serviceTicketDays(s, from, to)]);
   const [range, ...each] = await Promise.all([salesBetween(s, from, to, squire), ...buckets.map((b) => salesBetween(s, b.start, b.end, squire))]);
-  return { range: rowsOf(days, range, from, to), buckets: buckets.map((b, i) => rowsOf(days, each[i], b.start, b.end)) };
+  return { range: rowsOf(days, tickets, range, from, to), buckets: buckets.map((b, i) => rowsOf(days, tickets, each[i], b.start, b.end)) };
 }
 
 export const totalOf = (xs: readonly PphRow[]): Pph =>
@@ -133,6 +142,7 @@ export const totalOf = (xs: readonly PphRow[]): Pph =>
     xs.reduce((a, r) => a + r.serviceCents, 0),
     xs.reduce((a, r) => a + r.productCents, 0),
     xs.reduce((a, r) => a + r.centi, 0),
+    xs.reduce((a, r) => a + r.clients, 0),
   );
 
 // ───────────────────────────── The report ─────────────────────────────
@@ -142,16 +152,19 @@ const ORDER_LABEL: Record<PphOrder, string> = { high: "Highest first", low: "Low
 const naCell = (v: number | null): Cell => (v === null ? NA : v);
 
 const money = (label: string): Column => ({ label, kind: "money" });
-const rate = (label: string): Column => ({ label, kind: "money", sum: false });
+const rate = (label: string, k: PphRank = "service"): Column => ({ label, kind: k === "clients" ? "decimal" : "money", sum: false });
+/** In the order pphSort expects (src/domain/pph.ts). */
 const figureColumns: Column[] = [
   { label: "Worked hours", kind: "pay_hours", sum: true },
   money("Service sales"),
   money("Product sales"),
+  { label: "Service tickets", kind: "int", sum: true },
   rate(PPH_LABEL.service),
+  rate(CLIENTS_LABEL, "clients"),
   rate(PPH_LABEL.product),
   rate(PPH_LABEL.total),
 ];
-const figures = (p: Pph): Cell[] => [p.hours, p.service, p.product, naCell(p.servicePph), naCell(p.productPph), naCell(p.totalPph)];
+const figures = (p: Pph): Cell[] => [p.hours, p.service, p.product, p.clients, naCell(p.servicePph), naCell(p.clientsPerHour), naCell(p.productPph), naCell(p.totalPph)];
 /** Pay periods for a trend, one calendar's worth: where shops' calendars differ, a period overlapping the one before is left out. */
 async function trendPeriods(shopIds: readonly string[], from: LocalDate, to: LocalDate) {
   const { periods } = await periodsEnding(from, addDays(to, 40), shopIds);
@@ -171,11 +184,11 @@ export interface PphViewer {
 
 /**
  * The PPH report: per barber (across the selected shops, or per shop by location), per location and
- * for the brand, over any range or pay period, ranked by service, product or total PPH, with a trend
- * by day, week, month or pay period.
+ * for the brand, over any range or pay period, ranked by service PPH (the default), clients per hour,
+ * product or total PPH, with a trend by day, week, month or pay period.
  */
 export async function pphReportData(scope: ReportScope, loc: ViewCtx, params: Record<string, string | undefined>, viewer: PphViewer): Promise<ReportData> {
-  const measure: PphMeasure = parsePphMeasure(params.rank);
+  const measure: PphRank = parsePphRank(params.rank);
   const order: PphOrder = parsePphOrder(params.order);
   let { grain, coarsened } = parsePphTrend(params.trend, scope.from, scope.to);
   const periods = grain === "period" ? await trendPeriods(scope.shopIds, scope.from, scope.to) : [];
@@ -197,7 +210,7 @@ export async function pphReportData(scope: ReportScope, loc: ViewCtx, params: Re
   const total = totalOf(list);
   const brandTotal = brand ? totalOf(brand.range) : null;
   const value = (p: Pph) => pphOf(p, measure);
-  const m = PPH_LABEL[measure];
+  const m = RANK_LABEL[measure];
   const brandLabel = "Brand";
 
   const tail = (): { rows: Cell[][]; styles: (RowStyle | undefined)[] } => ({
@@ -289,27 +302,35 @@ export async function pphReportData(scope: ReportScope, loc: ViewCtx, params: Re
     id: "trend",
     title: `Trend: ${PPH_TREND_LABEL[grain].toLowerCase()}`,
     subtitle: "Each period on its own: its sales over its worked hours. N/A where nobody worked.",
-    columns: [{ label: grain === "day" ? "Day" : grain === "week" ? "Week" : grain === "month" ? "Month" : "Pay period" }, ...figureColumns, ...(btr ? [rate(`Brand ${m}`)] : [])],
+    columns: [{ label: grain === "day" ? "Day" : grain === "week" ? "Week" : grain === "month" ? "Month" : "Pay period" }, ...figureColumns, ...(btr ? [rate(`Brand ${m}`, measure)] : [])],
     rows: buckets.map((b, i) => [b.label, ...figures(tr[i]), ...(btr ? [naCell(value(btr[i]))] : [])]),
   };
   const shopTrend: ReportTable = {
     id: "trend_locations",
     title: `${m} by location: ${PPH_TREND_LABEL[grain].toLowerCase()}`,
-    columns: [{ label: trendTable.columns[0].label }, ...loc.shops.map((s) => rate(s.name)), rate(loc.totalLabel)],
+    columns: [{ label: trendTable.columns[0].label }, ...loc.shops.map((s) => rate(s.name, measure)), rate(loc.totalLabel, measure)],
     rows: buckets.map((b, i) => [b.label, ...loc.shops.map((s) => naCell(value(totalOf(mine.buckets[i].filter((r) => r.shopId === s.id))))), naCell(value(tr[i]))]),
   };
 
   const labels = buckets.map((b) => b.label);
-  const vs = (x: number | null, y: number | null | undefined) => (y === undefined ? "" : ` · brand ${y === null ? NA : formatCents(y)}`) + (x !== null && y !== null && y !== undefined && y ? ` (${x >= y ? "+" : "−"}${formatCents(Math.abs(x - y))})` : "");
-  const stat = (k: PphMeasure) => {
-    const v = pphOf(total, k);
-    return { label: PPH_LABEL[k], value: v === null ? NA : formatCents(v), hint: `${k === "service" ? "service" : k === "product" ? "product" : "service and product"} sales per worked hour${vs(v, brandTotal ? pphOf(brandTotal, k) : undefined)}` };
+  const shown = (k: PphRank, v: number) => (k === "clients" ? clientsText(v) : formatCents(v));
+  const vs = (k: PphRank, x: number | null, y: number | null | undefined) =>
+    (y === undefined ? "" : ` · brand ${y === null ? NA : shown(k, y)}`) + (x !== null && y !== null && y !== undefined && y ? ` (${x >= y ? "+" : "−"}${shown(k, Math.abs(x - y))})` : "");
+  const what: Record<PphRank, string> = {
+    service: "PPH, the default: service sales per worked hour",
+    clients: `${total.clients.toLocaleString("en-US")} completed service tickets per worked hour`,
+    product: "product sales per worked hour",
+    total: "service and product sales per worked hour",
   };
-  const noHours = list.filter((r) => r.centi === 0 && (r.serviceCents || r.productCents)).length;
+  const stat = (k: PphRank) => {
+    const v = pphOf(total, k);
+    return { label: RANK_LABEL[k], value: v === null ? NA : shown(k, v), hint: `${what[k]}${vs(k, v, brandTotal ? pphOf(brandTotal, k) : undefined)}` };
+  };
+  const noHours = list.filter((r) => r.centi === 0 && (r.serviceCents || r.productCents || r.clients)).length;
 
   return {
     stats: [
-      ...PPH_MEASURES.map(stat),
+      ...PPH_RANKS.map(stat),
       { label: "Worked hours", value: total.hours.toLocaleString("en-US", { maximumFractionDigits: 2 }), hint: noHours ? `${noHours} with sales but no worked hours: N/A` : "clocked, regular and overtime" },
     ],
     options: [
@@ -317,7 +338,7 @@ export async function pphReportData(scope: ReportScope, loc: ViewCtx, params: Re
         "rank",
         "Rank by",
         measure,
-        PPH_MEASURES.map((k) => [k, PPH_LABEL[k]]),
+        PPH_RANKS.map((k) => [k, RANK_LABEL[k]]),
       ),
       option("order", "Order", order, [
         ["high", ORDER_LABEL.high],
@@ -350,23 +371,35 @@ export async function pphReportData(scope: ReportScope, loc: ViewCtx, params: Re
         ],
       },
       {
+        id: "trend_clients",
+        title: btr ? `${CLIENTS_LABEL} against the brand` : `${CLIENTS_LABEL}: ${PPH_TREND_LABEL[grain].toLowerCase()}`,
+        kind: "number",
+        labels,
+        series: [
+          { label: btr ? (loc.shops.length === 1 ? loc.shops[0].name : loc.totalLabel) : CLIENTS_LABEL, values: tr.map((p) => p.clientsPerHour) },
+          ...(btr ? [{ label: "Brand", values: btr.map((p) => p.clientsPerHour), dashed: true }] : []),
+        ],
+      },
+      {
         id: "trend_total",
-        title: btr ? `${m} against the brand` : `${PPH_LABEL.total}: ${PPH_TREND_LABEL[grain].toLowerCase()}`,
+        title: btr && measure !== "clients" ? `${m} against the brand` : `${PPH_LABEL.total}: ${PPH_TREND_LABEL[grain].toLowerCase()}`,
         kind: "money",
         labels,
-        series: btr
-          ? [
-              { label: loc.shops.length === 1 ? loc.shops[0].name : loc.totalLabel, values: tr.map(value) },
-              { label: "Brand", values: btr.map(value), dashed: true },
-            ]
-          : [{ label: PPH_LABEL.total, values: tr.map((p) => p.totalPph) }],
+        series:
+          btr && measure !== "clients"
+            ? [
+                { label: loc.shops.length === 1 ? loc.shops[0].name : loc.totalLabel, values: tr.map(value) },
+                { label: "Brand", values: btr.map(value), dashed: true },
+              ]
+            : [{ label: PPH_LABEL.total, values: tr.map((p) => p.totalPph) }],
       },
     ],
     tables: [barberTable, ...(multiShop ? [shopTable] : []), trendTable, ...(multiShop ? [shopTrend] : [])],
     notes: [
-      "PPH is sales per clocked worked hour: service sales before tax and tips, net of discounts and refunds, over regular and overtime hours from the time clock (training and PTO aren't production time). Product PPH is product sales over the same hours, and total PPH both. A total is the sales added up over the hours added up, never an average of PPHs.",
-      "N/A means no worked hours in the range: sales with no hours aren't ranked and are listed last. Equal PPHs share a rank.",
-      "Over a pay period the hours and sales are the Payroll Report's before any typed-over figures, so its PPH columns match unless the commission base adds the card fee or loyalty rewards (I10). Tickets imported from Squire count here, on the days they were sold.",
+      "Productivity Per Hour (PPH) is sales per clocked worked hour. PPH on its own is service PPH, the default: service sales before tax and tips, net of discounts and refunds, over regular and overtime hours from the time clock (training and PTO aren't working time). Product PPH is product sales over the same hours, and total PPH both. A total is the sales added up over the hours added up, never an average of PPHs.",
+      "Clients per hour is completed service tickets over the same worked hours: paid or partly refunded tickets with a service on them, credited to the ticket's barber on the day it was sold. Fully refunded and voided tickets don't count, and a family ticket is one ticket.",
+      "N/A means no worked hours in the range: sales with no hours aren't ranked and are listed last. Equal PPHs (or clients per hour, to the hundredth) share a rank.",
+      "Over a pay period the hours and sales are the Payroll Report's before any typed-over figures, so its PPH columns match unless the commission base adds the card fee or loyalty rewards (I10) or there are tickets imported from Squire: those count here, on the days they were sold, but not in payroll's sales. Its clients per hour counts the same tickets as here.",
       ...(coarsened ? [`The range is too long for that trend, so it's shown ${PPH_TREND_LABEL[grain].toLowerCase()}.`] : []),
       ...(whole ? ["This is every location and barber, so the total is the brand."] : []),
     ],
