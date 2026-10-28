@@ -137,6 +137,13 @@ describe("the workbook totals audit's catalog", () => {
     expect(count("label")).toEqual(["F72"]);
   });
 
+  it("only Moline's totals are all right: every other shop has wrong values, and Moline has none (just its summed wage and blank PTO, OT and training)", () => {
+    const wrongBy = (shop: string) => CATALOG.filter((c) => c.block === shop && c.finding === "wrong_value").length;
+    expect(wrongBy("Moline")).toBe(0);
+    for (const shop of Object.keys(TOTALS_ROW).filter((s) => s !== "Moline")) expect(wrongBy(shop), shop).toBeGreaterThan(0);
+    expect(CATALOG.filter((c) => c.block === "Moline").map((c) => `${c.cell} ${c.finding}`)).toEqual(["C20 rate_sum", "P20 missing", "Q20 missing", "S20 missing"]);
+  });
+
   it("the totals that include themselves are exactly Utica C9, L9 and R9 and Kimberly B30, C30 and R30", () => {
     const { blocks } = load(FIXTURES[0].dir);
     const circular = CATALOG.filter((c) => c.formula && /^=SUM\(/.test(c.formula) && TOTALS_ROW[c.block] === split(c.cell).row)
