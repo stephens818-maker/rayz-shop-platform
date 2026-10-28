@@ -14,7 +14,7 @@ import { ensurePayGroups, loadSettings } from "@/server/payroll/run";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { payrollEmployerList } from "@/server/payroll/groups";
 import { PayrollHoursEditor } from "../../settings/display-editors";
-import { EmployerRow, EmployerStatesRow, PayGroupRow, PeriodDatesRow, ProfileRowForm, SettingsForm, type PeriodDatesView } from "./client";
+import { EmployerRow, EmployerStatesRow, PayGroupRow, PayScheduleTable, PeriodDatesRow, ProfileRowForm, SettingsForm, type PeriodDatesView } from "./client";
 
 export const metadata: Metadata = { title: "Payroll setup" };
 
@@ -37,8 +37,9 @@ export default async function PayrollSetupPage() {
   for (const g of groups) {
     for (const p of periodsAround(g.calendar, todayLocal(), 2, 6).reverse()) {
       const k = `${p.start}_${p.end}_${p.checkDate}_${p.submitBy}`;
-      const v = periodDates.get(k) ?? { key: k, start: p.start, end: p.end, checkDate: p.checkDate, submitBy: p.submitBy, moved: p.datesMoved, reason: null, locked: false, groups: [] };
+      const v = periodDates.get(k) ?? { key: k, start: p.start, end: p.end, checkDate: p.checkDate, submitBy: p.submitBy, moved: p.datesMoved, reason: null, locked: false, pastSchedule: [], groups: [] };
       v.groups.push({ label: g.label, code: g.code, number: p.number });
+      if (p.beyondSchedule) v.pastSchedule.push(g.label);
       v.reason ??= moved.find((m) => m.g === g.id && m.s === p.start)?.reason ?? null;
       v.locked ||= locked.some((l) => l.g === g.id && l.s === p.start);
       periodDates.set(k, v);
@@ -109,6 +110,23 @@ export default async function PayrollSetupPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      </Card>
+      <Card>
+        <CardHeader
+          title="iSolved pay schedule"
+          subtitle="The official pay periods from iSolved's Payroll Run Schedule: each one's number, due (run) date and check date, written into the pay period dates below. A period after the end of a pay group's schedule can't be approved or locked until it's extended here, once iSolved has scheduled it."
+        />
+        <div className="overflow-x-auto">
+          <PayScheduleTable
+            canEdit={can(ctx, "payroll.run")}
+            unscheduled={groups.filter((g) => !g.schedule).map((g) => g.label)}
+            rows={groups.flatMap((g) =>
+              g.schedule
+                ? [{ payGroupId: g.id, label: g.label, code: g.code, isolvedGroup: g.schedule.isolvedGroup, from: g.schedule.from, through: g.schedule.through, periods: g.schedule.periods, added: g.schedule.added }]
+                : [],
+            )}
+          />
         </div>
       </Card>
       <Card>

@@ -22,7 +22,7 @@ import {
 } from "@/domain/payroll/calc";
 import { calendarProblem, periodsAround, type PayCalendar } from "@/domain/payroll/calendar";
 import { formatDate, todayLocal } from "@/lib/time";
-import { removeEmployerStateAction, saveEmployerAction, saveEmployerStateAction, savePayGroupAction, savePeriodDatesAction, saveProfileAction } from "../actions";
+import { extendPayScheduleAction, removeEmployerStateAction, saveEmployerAction, saveEmployerStateAction, savePayGroupAction, savePeriodDatesAction, saveProfileAction } from "../actions";
 
 const Check = ({ label, hint, checked, onChange }: { label: string; hint?: string; checked: boolean; onChange: (v: boolean) => void }) => (
   <label className="flex items-start gap-2 text-sm">
@@ -431,7 +431,83 @@ export interface PeriodDatesView {
   moved: boolean;
   reason: string | null;
   locked: boolean;
+  /** Pay groups for which the period starts after the end of their iSolved schedule. */
+  pastSchedule: string[];
   groups: { label: string; code: string | null; number: number }[];
+}
+
+export interface ScheduleView {
+  payGroupId: string;
+  label: string;
+  code: string | null;
+  isolvedGroup: string;
+  from: string;
+  through: string;
+  periods: number;
+  added: number;
+}
+
+/** iSolved's Payroll Run Schedule per pay group, and adding periods past its end. */
+export function PayScheduleTable({ rows, unscheduled, canEdit }: { rows: ScheduleView[]; unscheduled: string[]; canEdit: boolean }) {
+  const { pending, error, run } = useAction();
+  const soonest = rows.reduce<string | null>((m, r) => (!m || r.through < m ? r.through : m), null);
+  const [picked, setPicked] = useState<string[]>(rows.filter((r) => r.through === soonest).map((r) => r.payGroupId));
+  const [through, setThrough] = useState(soonest ? `${Number(soonest.slice(0, 4)) + 1}${soonest.slice(4)}` : "");
+  return (
+    <div>
+      <table className="w-full text-sm" data-testid="pay-schedule">
+        <thead className="bg-zinc-50 text-left text-[11px] text-zinc-500">
+          <tr>
+            {canEdit && <th className="w-8 px-2 py-2" />}
+            <th className="px-2 py-2">Pay group</th>
+            <th className="px-2 py-2">In iSolved as</th>
+            <th className="px-2 py-2">Scheduled from</th>
+            <th className="px-2 py-2">Through</th>
+            <th className="px-2 py-2">Periods</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.payGroupId} className="border-t border-zinc-100" data-testid={`pay-schedule-${r.payGroupId}`}>
+              {canEdit && (
+                <td className="px-2 py-1.5">
+                  <input
+                    type="checkbox"
+                    aria-label={`Extend ${r.label}`}
+                    checked={picked.includes(r.payGroupId)}
+                    onChange={(e) => setPicked(e.target.checked ? [...picked, r.payGroupId] : picked.filter((x) => x !== r.payGroupId))}
+                  />
+                </td>
+              )}
+              <td className="px-2 py-1.5 font-medium">
+                {r.label}
+                {r.code && <span className="ml-1 text-xs text-zinc-500">({r.code})</span>}
+              </td>
+              <td className="px-2 py-1.5 text-zinc-600">{r.isolvedGroup}</td>
+              <td className="px-2 py-1.5 whitespace-nowrap">{formatDate(r.from, "EEE MMM d, yyyy")}</td>
+              <td className={`px-2 py-1.5 whitespace-nowrap ${r.through === soonest && rows.some((x) => x.through !== soonest) ? "font-medium text-amber-800" : ""}`}>{formatDate(r.through, "EEE MMM d, yyyy")}</td>
+              <td className="px-2 py-1.5 tabular-nums">
+                {r.periods}
+                {r.added > 0 && <span className="ml-1 text-xs text-zinc-500">({r.added} added here)</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {unscheduled.length > 0 && <p className="px-4 py-2 text-xs text-zinc-500">Not in iSolved&apos;s schedule: {unscheduled.join(", ")}. Their periods follow the calendar above and aren&apos;t held at its end.</p>}
+      {canEdit && rows.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-zinc-100 px-4 py-3">
+          <span className="text-sm">Extend the {picked.length === 1 ? "pay group" : `${picked.length} pay groups`} ticked through</span>
+          <Input aria-label="Schedule through" type="date" value={through} onChange={(e) => setThrough(e.target.value)} className="h-8 w-40 text-xs" />
+          <Button size="sm" variant="secondary" disabled={pending || !picked.length || !through} onClick={() => run(() => extendPayScheduleAction({ payGroupIds: picked, through }), undefined, "Schedule extended")}>
+            Extend schedule
+          </Button>
+          <span className="text-xs text-zinc-500">Bi-weekly on each one&apos;s due and check days, at most 27 periods at a time. Move a holiday&apos;s dates below once iSolved posts them.</span>
+          {error && <p className="w-full text-xs text-red-700">{error}</p>}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function PeriodDatesRow({ p }: { p: PeriodDatesView }) {
@@ -445,6 +521,7 @@ export function PeriodDatesRow({ p }: { p: PeriodDatesView }) {
       <td className="px-2 py-1.5 font-medium tabular-nums">{nums}</td>
       <td className="px-2 py-1.5 whitespace-nowrap">
         {formatDate(p.start, "EEE MMM d")} – {formatDate(p.end, "EEE MMM d, yyyy")}
+        {p.pastSchedule.length > 0 && <div className="text-xs font-medium text-amber-800">Past iSolved&apos;s schedule for {p.pastSchedule.join(", ")}</div>}
       </td>
       {editing ? (
         <>
