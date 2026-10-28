@@ -832,6 +832,14 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-10-28: core, the Payroll Report on start and end dates (Charles), for the Rayz App builder and the mobile agent
+
+- **Supersedes the entry below where they differ.** The Payroll Report and its run flow are built on start and end dates (America/Chicago days, 12-hour times). Presets: current pay period, last pay period, this week, last week, month to date and custom. Each pay group has its own: with shops on another calendar picked, "Current pay period (Dubuque)" and "Last pay period (Dubuque)" are added (`ppg:<pay group>:current|last`).
+- **Any range can be viewed and drilled into.** OT is always worked out per full Chicago workweek. A workweek the range cuts is flagged, and the OT on its days in the range is shown as an estimate ("est.").
+- **Approve, lock and the per-shop iSolved downloads** work on a pay period (the default) or on whole Sun–Sat workweeks for the shops picked, if the dates don't overlap a locked run. Otherwise they're blocked with a message saying why (409 on the download). A workweeks run is locked with period number 0; its approval is scoped to its shops. The database refuses an overlapping lock too.
+- **Same range for everything:** sales, refunds, tips, commission, training and hours. Commission uses the Payroll setup rate in effect on each sale date (`payroll_rate_versions`); a refund is at the rate of its sale.
+- **API (additive):** `GET /me/earnings` and `GET /me/earnings/tickets` take `from` and `to` (Chicago dates) as well as `periodId`. `/me/earnings` on a range up to 92 days: `period` is null, `range` gives `kind` (`weeks` or `review`), `wholeWorkweeks`, `partialWeeks` and `excluded`, and `isEstimate` is true unless every shop is locked on exactly those dates. A from/to that is exactly a pay period answers as that pay period. Responses include `timezone`. Tickets answer `periodId` (null on a range), `from` and `to`. Migration `core_0148_payroll_ranges`; the next free number is `core_0149`.
+
 ### 2026-10-28: core, a date range on every report (Charles), for the Rayz App builder and the mobile agent
 
 - **Web only; no API change.** `/api/staff/v1` and `/api/v1` are unchanged: `/me/earnings` still takes a pay period. The staff app doesn't need a range picker for this.

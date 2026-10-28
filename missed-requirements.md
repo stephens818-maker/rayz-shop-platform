@@ -1221,6 +1221,17 @@ The plan's P0 cases must all pass in the sandbox before the pilot. Status by cas
 - [ ] **Ask Charles:** a review of the Payroll Report on dates that aren't a pay period leaves out shops whose payroll came from Squire then (Squire's report is per pay period). Is that right, or should those shops show their Squire totals for any period the dates touch?
 - [ ] **Ask Charles:** should the dashboard keep his last range the next day (it does now, per the request), or go back to today each morning?
 
+## 58. The Payroll Report on start and end dates (Charles, Oct 28; supersedes 57 where they differ)
+
+Tests: `tests/db/payroll-ranges.test.ts`, one block per rule.
+
+- [x] Rule 1: built on start and end dates (America/Chicago days, 12-hour times). Presets: current pay period, last pay period, this week, last week, month to date, custom. Each pay group has its own presets; Dubuque's run on its own calendar.
+- [x] Rule 2: any range can be viewed and drilled into. OT per full Chicago workweek; a workweek the range cuts is flagged, and its OT shown as an estimate.
+- [x] Rule 3: approve, lock and the per-shop iSolved downloads on whole workweeks that don't overlap a locked range (in code and by a database trigger); blocked otherwise, with a message. The pay period is the default.
+- [x] Rule 4: sales, refunds, tips, commission (at the rate in effect on each sale date), training and hours on the same range, so two workweeks add up to their pay period.
+- [x] Rule 5: `/me/earnings` and `/me/earnings/tickets` take from/to as well as periodId.
+- [ ] **Ask Charles:** a workweeks run is locked with period number 0 and no check date of its own. Should iSolved get it as an off-cycle run, or is it only for closing weeks before a pay period is split?
+
 ## Deferred by decision
 
 - I10 is decided: separate charges and transfers (section 5), with tips to barbers' recipient accounts on (`FEATURE_TIP_TO_BARBER`, the CPA approved it on 2026-10-28), turned off per shop with the brand setting `tip_to_barber` (section 50). Live tip transfers also need `MONEY_MOVEMENT_LIVE`.
