@@ -313,6 +313,8 @@ describe("My Earnings: their own pay periods, pay, days, tickets and payouts", (
     expect(t(card).payout).toMatchObject({ status: "pending", arrivalDate: null, bankLast4: "6789" });
     expect(t(inCash)).toMatchObject({ cardTipCents: 0, cashTipCents: 503, transferStatus: null, payoutStatus: null, transfer: null, payout: null });
     expect(t(split)).toMatchObject({ cardTipCents: 1209, shared: true, transferStatus: "paid" });
+    // Each tip's own status, start to finish: in their Stripe account, not yet at their bank.
+    expect([t(card).tipTransferStatus, t(split).tipTransferStatus, t(inCash).tipTransferStatus]).toEqual(["transferred", "transferred", null]);
     for (const x of r.tickets as J[]) expect(x.clientFirstName).not.toMatch(/\s/);
     for (const id of trail.michelle.sales) expect(t(id)).toBeUndefined();
     expect(new Date(t(card).startedAt).toISOString()).toBe(t(card).startedAt);
@@ -323,7 +325,7 @@ describe("My Earnings: their own pay periods, pay, days, tickets and payouts", (
     let p = await get("me/payouts?period=current");
     expect(p.bankLast4).toBe("6789");
     expect((p.transfers as J[]).map((t) => t.saleId).sort()).toEqual([card, split].sort());
-    for (const t of p.transfers) expect(t).toMatchObject({ transferStatus: "paid", transferReversedBy: null, transferArrivalDate: today, payoutStatus: "pending" });
+    for (const t of p.transfers) expect(t).toMatchObject({ transferStatus: "paid", transferReversedBy: null, transferArrivalDate: today, payoutStatus: "pending", tipTransferStatus: "transferred" });
     for (const t of p.transfers) expect(t.status).toBe(t.transferStatus);
     expect(trail.makenna.payouts).toContain(p.transfers[0].payoutId);
     expect((p.payouts as J[]).map((x) => x.id)).toEqual(trail.makenna.payouts);
@@ -345,11 +347,14 @@ describe("My Earnings: their own pay periods, pay, days, tickets and payouts", (
     p = await get("me/payouts?period=current");
     expect(p.payouts[0]).toMatchObject({ payoutStatus: "paid", arrivalDate: arrives, returned: false });
     expect(p.transfers.every((t: J) => t.payoutStatus === "paid")).toBe(true);
+    expect(p.transfers.map((t: J) => t.tipTransferStatus)).toEqual(p.transfers.map(() => "paid_out"));
+    expect((await get(`me/earnings/tickets?periodId=current&date=${today}`)).tickets.find((x: J) => x.saleId === card).tipTransferStatus).toBe("paid_out");
 
     await event("failed", "account_closed");
     p = await get("me/payouts?period=current");
     expect(p.payouts.find((x: J) => x.id === row.id)).toMatchObject({ payoutStatus: "failed", returned: true, failureMessage: expect.stringMatching(/account_closed/) });
-    for (const t of p.transfers) expect(t).toMatchObject({ transferStatus: "paid", transferReversedBy: null, payoutId: null });
+    // The bank sent it back to their Stripe balance: still transferred, no longer paid out.
+    for (const t of p.transfers) expect(t).toMatchObject({ transferStatus: "paid", transferReversedBy: null, payoutId: null, tipTransferStatus: "transferred" });
 
     const [tr] = await m.db.db
       .select()
@@ -358,8 +363,8 @@ describe("My Earnings: their own pay periods, pay, days, tickets and payouts", (
     await tp.applyTransferReversed({ id: tr.stripeTransferId!, metadata: {} });
     await tp.applyTransferReversed({ id: tr.stripeTransferId!, metadata: {} });
     p = await get("me/payouts?period=current");
-    expect(p.transfers.find((t: J) => t.saleId === card)).toMatchObject({ transferStatus: "reversed", transferReversedBy: "stripe" });
-    expect(p.transfers.find((t: J) => t.saleId === split)).toMatchObject({ transferStatus: "paid", transferReversedBy: null });
+    expect(p.transfers.find((t: J) => t.saleId === card)).toMatchObject({ transferStatus: "reversed", transferReversedBy: "stripe", tipTransferStatus: "failed" });
+    expect(p.transfers.find((t: J) => t.saleId === split)).toMatchObject({ transferStatus: "paid", transferReversedBy: null, tipTransferStatus: "transferred" });
     expect((await get(`me/earnings/tickets?periodId=current&date=${today}`)).tickets.find((x: J) => x.saleId === card)).toMatchObject({ transferStatus: "reversed", transferReversedBy: "stripe" });
     const stripePayoutStatuses = ["pending", "in_transit", "paid", "failed", "canceled"];
     for (const x of p.payouts as J[]) expect(stripePayoutStatuses).toContain(x.payoutStatus);
@@ -374,7 +379,7 @@ describe("My Earnings: their own pay periods, pay, days, tickets and payouts", (
     const later = await sale(ids.makenna, 1777, credit);
     const tk = await get(`me/earnings/tickets?periodId=current&date=${today}`);
     const t = (id: string) => (tk.tickets as J[]).find((x) => x.saleId === id);
-    expect(t(later)).toMatchObject({ cardTipCents: 1777, tipDisposition: "payroll", transferStatus: null, payoutStatus: null });
+    expect(t(later)).toMatchObject({ cardTipCents: 1777, tipDisposition: "payroll", transferStatus: null, payoutStatus: null, tipTransferStatus: null });
     expect(t(trail.makenna.sales[0])).toMatchObject({ tipDisposition: "stripe", transferStatus: "reversed" });
     const off = { tipToBarber: false, tipTransfersEnabled: false, payrollCopy: expect.stringMatching(/./) };
     expect(coralville({ json: await get("me/earnings?period=current") })).toMatchObject(off);
@@ -382,6 +387,28 @@ describe("My Earnings: their own pay periods, pay, days, tickets and payouts", (
     expect(p.shops.find((x: J) => x.shopId === shop.coralville)).toMatchObject(off);
     expect((p.transfers as J[]).map((x) => x.saleId)).not.toContain(later);
   });
+
+  it("tipTransferStatus: pending until a real tip transfer exists; a legacy destination charge says so, never transferred", async () => {
+    const next = await sale(ids.makenna, 1888, credit);
+    const ticket = async (id: string) => (await get(`me/earnings/tickets?periodId=current&date=${today}`)).tickets.find((x: J) => x.saleId === id);
+    expect(await ticket(next)).toMatchObject({ cardTipCents: 1888, tipDisposition: "stripe", transferStatus: "paid", tipTransferStatus: "transferred" });
+    // As checkout plans it, before Stripe has made the transfer.
+    const tip = and(eq(s().paymentTransfers.saleId, next), eq(s().paymentTransfers.kind, "tip"));
+    await m.db.db.update(s().paymentTransfers).set({ status: "pending", stripeTransferId: null, sentAt: null }).where(tip);
+    expect(await ticket(next)).toMatchObject({ transferStatus: "pending", tipTransferStatus: "pending" });
+    expect((await get("me/payouts?period=current")).transfers.find((x: J) => x.saleId === next)).toMatchObject({ tipTransferStatus: "pending" });
+    await m.db.db.update(s().paymentTransfers).set({ status: "failed" }).where(tip);
+    expect(await ticket(next)).toMatchObject({ transferStatus: "pending", tipTransferStatus: "failed" });
+
+    // A card tip charged before separate charges and transfers: a destination charge with no tip transfer.
+    const legacy = await sale(ids.makenna, 1999, credit);
+    await m.db.db.delete(s().paymentTransfers).where(and(eq(s().paymentTransfers.saleId, legacy), eq(s().paymentTransfers.kind, "tip")));
+    await m.db.db.update(s().payments).set({ chargeType: "destination" }).where(eq(s().payments.saleId, legacy));
+    expect(await ticket(legacy)).toMatchObject({ cardTipCents: 1999, transferStatus: null, tipTransferStatus: "destination_charge" });
+    await m.db.db.update(s().payments).set({ chargeType: null }).where(eq(s().payments.saleId, legacy));
+    expect((await ticket(legacy)).tipTransferStatus).toBe("destination_charge");
+    for (const x of (await get(`me/earnings/tickets?periodId=current&date=${today}`)).tickets as J[]) if (x.tipTransferStatus) expect(["pending", "destination_charge", "transferred", "paid_out", "failed"]).toContain(x.tipTransferStatus);
+  }, 60_000);
 });
 
 describe("nobody reads anyone else's earnings", () => {

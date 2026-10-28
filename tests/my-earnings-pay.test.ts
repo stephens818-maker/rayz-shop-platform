@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PAYROLL_SETTINGS, computeLine, employeePay, toCents, type LineInput } from "@/domain/payroll/calc";
-import { appPayoutStatus, appTransferStatus } from "@/domain/staff-payouts";
+import { TIP_TRANSFER_STATUSES, appPayoutStatus, appTransferStatus, tipTransferStatus } from "@/domain/staff-payouts";
 
 const input = (over: Partial<LineInput> = {}): LineInput => ({
   staffId: "b1",
@@ -104,5 +104,28 @@ describe("the app's transfer and payout statuses", () => {
     expect(appTransferStatus(t("failed"))).toEqual({ status: "pending", reversedBy: null });
     expect(appTransferStatus(t("cancelled"))).toBeNull();
     expect(appTransferStatus(t("sent", new Date()))).toEqual({ status: "reversed", reversedBy: "stripe" });
+  });
+
+  it("each tip's own status: never transferred or paid out without a real tip transfer (a sent row with Stripe's id)", () => {
+    const sep = { chargeType: "separate" as const };
+    const tr = (status: string, stripeTransferId: string | null = status === "sent" ? "tr_1" : null, stripeReversedAt: Date | null = null) => ({ status, stripeTransferId, stripeReversedAt });
+    const at = (o: Partial<Parameters<typeof tipTransferStatus>[0]>) => tipTransferStatus({ method: "card", charge: sep, transfer: null, payout: null, ...o });
+    expect(TIP_TRANSFER_STATUSES).toEqual(["pending", "destination_charge", "transferred", "paid_out", "failed"]);
+    expect(at({ transfer: tr("pending") })).toBe("pending");
+    expect(at({ transfer: tr("sent", null) })).toBe("pending");
+    expect(at({ transfer: tr("sent") })).toBe("transferred");
+    expect(at({ transfer: tr("sent"), payout: po("processing", "in_transit") })).toBe("transferred");
+    expect(at({ transfer: tr("sent"), payout: po("paid", "paid") })).toBe("paid_out");
+    expect(at({ transfer: tr("sent"), payout: po("failed", "failed", new Date()) })).toBe("transferred");
+    expect(at({ transfer: tr("pending"), payout: po("paid", "paid") })).toBe("pending");
+    expect(at({ transfer: tr("failed") })).toBe("failed");
+    expect(at({ transfer: tr("sent", "tr_1", new Date()) })).toBe("failed");
+    expect(at({ transfer: tr("cancelled") })).toBeNull();
+    // No tip transfer row: a destination charge (or one from before charge types) is legacy; a separate charge's tip went through payroll.
+    expect(at({ charge: { chargeType: "destination" } })).toBe("destination_charge");
+    expect(at({ charge: { chargeType: null } })).toBe("destination_charge");
+    expect(at({})).toBeNull();
+    expect(at({ charge: null })).toBeNull();
+    for (const method of ["cash", "gift_card"]) expect(at({ method, charge: null })).toBeNull();
   });
 });

@@ -398,3 +398,32 @@ export function appTransferStatus(t: { status: string; stripeReversedAt: Date | 
   if (t.stripeReversedAt) return { status: "reversed", reversedBy: "stripe" };
   return { status: t.status === "sent" ? "paid" : "pending", reversedBy: null };
 }
+
+/** One card tip on its way to their bank, start to finish (tipTransferStatus on tickets and /me/payouts). */
+export const TIP_TRANSFER_STATUSES = ["pending", "destination_charge", "transferred", "paid_out", "failed"] as const;
+export type TipTransferStatus = (typeof TIP_TRANSFER_STATUSES)[number];
+
+/**
+ * transferred and paid_out need a real tip transfer: its payment_transfers row sent, which the
+ * database only allows with Stripe's transfer id (payment_transfers_sent). Until then it's pending.
+ * paid_out once the Stripe payout carrying it is paid (a payout their bank returned isn't: the money
+ * is back in their Stripe balance, so the tip is transferred again). failed when Stripe refused the
+ * transfer at the last try, or reversed it. destination_charge: a card tip charged before separate
+ * charges and transfers (a destination charge, or older history with no charge type), which has no
+ * tip transfer and never will. Null where no transfer to their Stripe account is meant: cash and
+ * gift-card tips, card tips paid through payroll, and a tip a refund took before it was sent.
+ */
+export function tipTransferStatus(o: {
+  method: string;
+  /** The card payment the tip came on; null when there's none. */
+  charge: { chargeType: "destination" | "separate" | null } | null;
+  transfer: { status: string; stripeTransferId: string | null; stripeReversedAt: Date | null } | null;
+  payout: { status: string; stripeStatus: string | null; returnedAt: Date | null } | null;
+}): TipTransferStatus | null {
+  const t = o.transfer;
+  if (!t) return o.method === "card" && o.charge && o.charge.chargeType !== "separate" ? "destination_charge" : null;
+  if (t.status === "cancelled") return null;
+  if (t.status === "failed" || t.stripeReversedAt) return "failed";
+  if (t.status !== "sent" || !t.stripeTransferId) return "pending";
+  return o.payout && appPayoutStatus(o.payout) === "paid" ? "paid_out" : "transferred";
+}

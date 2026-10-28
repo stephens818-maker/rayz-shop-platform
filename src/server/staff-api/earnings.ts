@@ -1,7 +1,7 @@
 import "server-only";
 import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { payrollApprovals, payrollExportSends, payrollRuns, paymentTransfers, sales, shops, tipAbsorptions, tipLedger, tipPayouts } from "@/db/schema";
+import { payments, payrollApprovals, payrollExportSends, payrollRuns, paymentTransfers, sales, shops, tipAbsorptions, tipLedger, tipPayouts } from "@/db/schema";
 import { periodOf, periodStarting, periodsAround, type PayCalendar } from "@/domain/payroll/calendar";
 import { DEFAULT_PAYROLL_SETTINGS, employeePay, exportRowChecks, paystubLines, toCents, type Line, type ShopBlock } from "@/domain/payroll/calc";
 import {
@@ -22,7 +22,7 @@ import {
   type TrainingLine,
 } from "@/domain/my-earnings";
 import { type ClientCounts, clientCountsOf, linesPph, perClientCents, uniqueClients } from "@/domain/pph";
-import { appPayoutStatus, appTransferStatus } from "@/domain/staff-payouts";
+import { appPayoutStatus, appTransferStatus, tipTransferStatus } from "@/domain/staff-payouts";
 import { employeeFeeCents, receivedCents } from "@/domain/tips";
 import { SHOP_TZ, addDays, diffDays, endOfLocalDay, isValidLocalDate, localDateOf, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { wholeWorkweeks } from "@/domain/report-range";
@@ -281,9 +281,11 @@ async function myLedger(staffId: string, shopIds: readonly string[], w: { from: 
       shared: sql<boolean>`exists (select 1 from tip_split_shares x where x.sale_id = ${tipLedger.saleId} and x.staff_id <> ${tipLedger.staffId})`,
       payout: tipPayouts,
       transfer: paymentTransfers,
+      charge: { id: payments.id, chargeType: payments.chargeType },
     })
     .from(tipLedger)
     .leftJoin(sales, eq(sales.id, tipLedger.saleId))
+    .leftJoin(payments, and(eq(payments.id, tipLedger.paymentId), eq(payments.method, "card")))
     .leftJoin(tipPayouts, and(eq(tipPayouts.id, tipLedger.payoutId), eq(tipPayouts.staffId, tipLedger.staffId)))
     .leftJoin(
       paymentTransfers,
@@ -301,6 +303,10 @@ async function myLedger(staffId: string, shopIds: readonly string[], w: { from: 
 
 type LedgerRow = Awaited<ReturnType<typeof myLedger>>[number];
 type Transfer = NonNullable<LedgerRow["transfer"]>;
+
+/** A tip's way to their bank, from its own ledger row: never transferred before its tip transfer is real. */
+const tipStatusOf = (r: LedgerRow) =>
+  tipTransferStatus({ method: r.method, charge: r.charge?.id ? r.charge : null, transfer: r.transfer, payout: r.payout?.method === "stripe" ? r.payout : null });
 
 /** Their tips by tender, net of the refunds taken back from them; manager adjustments apart. */
 function tendersOf(list: readonly Pick<LedgerRow, "method" | "amountCents">[]) {
@@ -815,6 +821,7 @@ export async function myEarningsTickets(ctx: StaffAppContext, q: { period?: stri
     const late = mineHere.find((r) => r.kind === "tip" && r.date !== t.date);
     const payout = see.tips && tip?.payout?.method === "stripe" ? payoutBrief(tip.payout) : null;
     const transfer = see.tips && tip?.transfer ? transferBrief(tip.transfer) : null;
+    const cardTip = mineHere.find((r) => r.kind === "tip" && r.transfer) ?? mineHere.find((r) => r.kind === "tip" && r.method === "card");
     return {
       saleId: t.saleId,
       shopId: t.shopId,
@@ -832,6 +839,7 @@ export async function myEarningsTickets(ctx: StaffAppContext, q: { period?: stri
       transfer: transfer && { status: transfer.transferStatus, amountCents: transfer.amountCents, arrivalDate: transfer.transferArrivalDate },
       payout: payout && { status: payout.payoutStatus, amountCents: payout.amountCents, arrivalDate: payout.arrivalDate, bankLast4: payout.bankLast4, failureMessage: payout.failureMessage },
       transferStatus: transfer?.transferStatus ?? null,
+      tipTransferStatus: see.tips && cardTip ? tipStatusOf(cardTip) : null,
       transferReversedBy: transfer?.transferReversedBy ?? null,
       transferArrivalDate: transfer?.transferArrivalDate ?? null,
       payoutId: see.tips && tip?.payout?.method === "stripe" ? tip.payout.id : null,
@@ -902,6 +910,7 @@ export async function myPayoutsView(ctx: StaffAppContext, q: PeriodQuery, today:
         status: t.transferStatus,
         arrivalDate: t.transferArrivalDate,
         transferStatus: t.transferStatus,
+        tipTransferStatus: tipStatusOf(r),
         transferReversedBy: t.transferReversedBy,
         transferArrivalDate: t.transferArrivalDate,
         date: r.date,
