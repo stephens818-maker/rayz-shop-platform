@@ -35,7 +35,7 @@ export async function declareCashTipsAction(input: z.input<typeof Declare>) {
   });
 }
 
-/** A manager enters or corrects someone's declaration, with a reason; allowed after the month closes, never in a locked pay period. */
+/** A manager enters or corrects someone's declaration, with a reason; allowed after the month closes. One for a locked pay period is paid in the next open one. */
 export async function managerDeclareAction(input: z.input<typeof Declare> & { staffId: string }) {
   return safe(async () => {
     const ctx = await authorize("timesheet.edit");

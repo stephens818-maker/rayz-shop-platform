@@ -1129,6 +1129,7 @@ export type AnomalyKind =
   | "late_tip_refund"
   | "tip_refunded_after_export"
   | "late_tip"
+  | "late_declaration"
   | "final_pay"
   | "final_pay_changed"
   | "refund_written_off"

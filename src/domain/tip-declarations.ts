@@ -34,8 +34,10 @@ export interface DeclarationAttempt {
   /** A manager correcting one, with a reason: allowed after the month closes. */
   manager: boolean;
   reason?: string | null;
-  /** The pay period holding the date is approved and locked at the shop. */
+  /** The pay period it's paid in is approved and locked at the shop: the day's, or for a correction the one the declaration it corrects was paid in. */
   periodLocked: boolean;
+  /** Correcting an earlier declaration. */
+  correction?: boolean;
 }
 
 export function declarationProblem(a: DeclarationAttempt, today: LocalDate, s: TipDeclarationSettings): string | null {
@@ -44,7 +46,7 @@ export function declarationProblem(a: DeclarationAttempt, today: LocalDate, s: T
   if (a.businessDate > today) return "You can't declare tips for a day that hasn't happened yet.";
   if (!Number.isInteger(a.amountCents) || a.amountCents < 0 || a.amountCents > MAX_DECLARATION_CENTS) return "Enter an amount from $0 to $10,000.";
   if (!a.attested) return "Check the box to declare these are all your cash tips.";
-  if (a.periodLocked) return "That pay period is already approved and locked. Ask a manager to add it to the current one.";
+  if (a.periodLocked && a.correction) return "That declaration was paid in a pay period that's already locked, so it stays as it is. Declare any more cash tips as a new declaration: they're paid in the next open period.";
   if (monthClosed(a.businessDate, today, s) && !a.manager) return `Declarations for that month closed on the ${ordinal(s.lockDay)}. Ask a manager to correct it.`;
   if (a.manager && !(a.reason ?? "").trim()) return "Say why it's being entered or corrected.";
   return null;

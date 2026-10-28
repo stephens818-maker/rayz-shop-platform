@@ -137,3 +137,62 @@ describe("a locked pay period is what its lock kept", () => {
     expect(await get(`me/earnings/days?periodId=${prev.start}`)).toMatchObject({ periodStatus: "exported", isEstimate: false });
   });
 });
+
+describe("after export: late changes are flagged adjustments in the next open period, never a reopened period, negative pay or a clawed-back tip", () => {
+  it("a cash tip declared for an exported day is taken, paid in the open period and flagged there; correcting what the locked one paid is refused", async () => {
+    await withPay();
+    const locked = await get(`me/earnings?period=${prev.start}`);
+    const open = await get("me/earnings?period=current");
+    const sameMonth = day.slice(0, 7) === today.slice(0, 7);
+    let id: string;
+    if (sameMonth) {
+      const r = await api.call("POST", "tips/declarations", { token, body: { shopId: cv, businessDate: day, amountCents: 1313, attest: true } });
+      expect(r.status, r.text).toBe(201);
+      expect(r.json).toMatchObject({ businessDate: day, postedDate: today, late: true, amountCents: 1313 });
+      id = r.json.id;
+    } else {
+      const { declareCashTips } = await import("@/server/tips/declarations");
+      const d = await declareCashTips({ staffId: me, shopId: cv, businessDate: day, amountCents: 1313, attested: true, source: "manager", reason: "Declared late for the test", actor });
+      expect(d).toMatchObject({ postedDate: today, late: true });
+      id = d.id;
+    }
+
+    expect(await get(`me/earnings?period=${prev.start}`)).toEqual(locked);
+    const e = await get("me/earnings?period=current");
+    expect(e.declaredCashTipsCents).toBe(open.declaredCashTipsCents + 1313);
+    expect(e.totalTipsCents).toBe(open.totalTipsCents + 1313);
+    expect(e.adjustments).toContainEqual(expect.objectContaining({ id, kind: "late_declaration", amountCents: 1313, effectCents: 1313, originalDate: day, postedDate: today, lateDeclaration: true, flagged: true, reducesPay: false }));
+    expect(e.declarations).toContainEqual(expect.objectContaining({ id, date: day, postedDate: today, late: true }));
+    const d = await get(`me/earnings/days?periodId=${e.period.id}`);
+    expect(d.days.find((x: J) => x.date === today).declaredCashTipsCents).toBeGreaterThanOrEqual(1313);
+    const view = (await run.buildPayroll(cur.start, cur.end, { clockChecks: false }))!;
+    expect(view.anomalies.find((a) => a.kind === "late_declaration" && a.staffId === me)?.message).toMatch(/\$13\.13 of cash tips .* declared after that pay period was locked, so they're paid in this one/);
+    expect((await run.buildPayroll(prev.start, prev.end, { clockChecks: false }))!.blocks.find((b) => b.shopId === cv)!.lockCheck!.drift.filter((x) => x.staffId === me && x.field === "declaredCashTips")).toEqual([]);
+
+    const [paid] = await m.db.db.select().from(s().tipDeclarations).where(m.drizzle.and(eq(s().tipDeclarations.staffId, me), eq(s().tipDeclarations.amountCents, 1100)));
+    const fix = await api.call("POST", "tips/declarations", { token, body: { shopId: cv, businessDate: day, amountCents: 100, attest: true, replacesId: paid.id, reason: "Fewer than I said" } });
+    expect(fix.status, fix.text).toBe(409);
+    expect(fix.json.error.message).toMatch(/locked, so it stays as it is/);
+  });
+
+  it("a card tip refunded after export: the shop covers it, flagged in the open period; nothing taken from them, nothing negative, the locked period untouched", async () => {
+    await withPay();
+    const locked = await get(`me/earnings?period=${prev.start}`);
+    const open = await get("me/earnings?period=current");
+    await m.checkout.refundSale({ saleId: sales.card, items: [], tipCents: 1500, refundCardFee: false, reason: "Client disputed the tip", restock: false, actor });
+    await tl.syncTipLedger();
+
+    const reversals = await m.db.db.select().from(s().tipLedger).where(m.drizzle.and(eq(s().tipLedger.saleId, sales.card), eq(s().tipLedger.kind, "refund")));
+    expect(reversals).toEqual([]);
+    const e = await get("me/earnings?period=current");
+    expect(e.adjustments).toContainEqual(expect.objectContaining({ kind: "tip_refunded_after_export", saleId: sales.card, amountCents: 1500, effectCents: 0, originalDate: day, flagged: true, reducesPay: false }));
+    expect(e.refunds.find((x: J) => x.saleId === sales.card)).toBeUndefined();
+    expect(e.totalTipsCents).toBe(open.totalTipsCents);
+    expect(e.totalCents).toBe(open.totalCents);
+    for (const k of ["totalTipsCents", "cardTipsCents", "cashTipsCents", "wagesCents", "totalCents"]) expect(e[k], k).toBeGreaterThanOrEqual(0);
+    for (const a of e.adjustments) expect(a.amountCents).toBeGreaterThan(0);
+    expect(await get(`me/earnings?period=${prev.start}`)).toEqual(locked);
+    const view = (await run.buildPayroll(cur.start, cur.end, { clockChecks: false }))!;
+    expect(view.anomalies.some((a) => a.kind === "tip_refunded_after_export" && a.staffId === me)).toBe(true);
+  });
+});

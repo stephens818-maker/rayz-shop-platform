@@ -239,7 +239,7 @@ const OPS: Op[] = [
     path: "/tips/declarations",
     tag: "Tips and pay",
     summary:
-      "Their cash tip declarations (SB-C3), newest first: current (not replaced by a correction) and closesOn (the day the month locks). rules: whether declaring is on, asked at clock-out, the attestation to show, the lock day. reminder: last month, when nothing's declared for it yet.",
+      "Their cash tip declarations (SB-C3), newest first: current (not replaced by a correction), closesOn (the day the month locks), postedDate (the day payroll pays it on) and late (declared after its day's pay period was locked, so paid in the next open one). rules: whether declaring is on, asked at clock-out, the attestation to show, the lock day. reminder: last month, when nothing's declared for it yet.",
     permission: "tips.own",
     query: S.DeclarationsQuery,
   },
@@ -248,7 +248,7 @@ const OPS: Op[] = [
     path: "/tips/declarations",
     tag: "Tips and pay",
     summary:
-      "Declare cash tips they were handed for a day at a shop (0 counts), with the attestation checked; 201. A correction sends replacesId and a reason and keeps the shop and day. 409 once the pay period is locked or the month closed (a manager corrects it then).",
+      "Declare cash tips they were handed for a day at a shop (0 counts), with the attestation checked; 201. A correction sends replacesId and a reason and keeps the shop and day. One for a day whose pay period is already locked or sent to payroll is taken with late true and postedDate today: it's paid in the next open period and flagged there, and the locked one is never reopened. 409 for a correction of a declaration a locked period paid (nothing it paid is taken back; declare more as a new one), and once the month closes (a manager enters it then).",
     permission: "tips.own",
     body: S.DeclareBody,
   },

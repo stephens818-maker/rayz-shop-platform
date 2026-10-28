@@ -508,7 +508,7 @@ export const postTipDeclaration = staffRoute(TIPS, async (req, ctx) => {
   const v = await body(req, S.DeclareBody);
   assertShopAccess(ctx, v.shopId);
   const d = await declareCashTips({ staffId: ctx.staff.id, shopId: v.shopId, businessDate: v.businessDate, amountCents: v.amountCents, attested: v.attest, replacesId: v.replacesId ?? null, reason: v.reason ?? null, source: "staff_app", actor: ctx.actor });
-  return json({ id: d.id, businessDate: d.businessDate, amountCents: d.amountCents, replacesId: d.replacesId }, 201);
+  return json({ id: d.id, businessDate: d.businessDate, postedDate: d.postedDate, late: d.late, amountCents: d.amountCents, replacesId: d.replacesId }, 201);
 });
 
 /** GET /payouts */

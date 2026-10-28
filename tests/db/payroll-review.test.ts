@@ -388,7 +388,7 @@ describe("I4 and I10: refunds and the commission base", () => {
 });
 
 describe("a locked pay period stays as exported", () => {
-  it("keeps the hash it was approved on; drift and late Squire imports are flagged, and its tickets, tips and declarations can't change", async () => {
+  it("keeps the hash it was approved on; drift and late Squire imports are flagged, its tickets can't change, and cash tips declared late are paid in the next open period, never in it", async () => {
     const { shop: sh, b } = await barberAt("rock-island", 0);
     const { prev } = await periods();
     const ours = await tipSale(sh.id, b.id, 400, noon(m.time.addDays(prev.start, 1)));
@@ -418,6 +418,10 @@ describe("a locked pay period stays as exported", () => {
 
     const other = (await barberAt("rock-island", 1)).b;
     await expect(reassign.reassignSale({ saleId: ours, toStaffId: other.id, reason: "Wrong barber", actor })).rejects.toThrow(/locked/);
-    await expect(dec.declareCashTips({ staffId: b.id, shopId: sh.id, businessDate: m.time.addDays(prev.start, 1), amountCents: 1000, attested: true, source: "staff_app", actor })).rejects.toThrow(/locked|closed/);
+    const late = await dec.declareCashTips({ staffId: b.id, shopId: sh.id, businessDate: m.time.addDays(prev.start, 1), amountCents: 1000, attested: true, source: "manager", reason: "Handed in after the lock", actor });
+    expect(late).toMatchObject({ late: true, postedDate: m.time.todayLocal() });
+    const kept = blockOf(await run.buildPayroll(prev.start, prev.end), sh.id);
+    expect(kept.exportRows).toEqual(lb.exportRows);
+    expect(kept.lockCheck!.drift.filter((d) => d.field === "declaredCashTips")).toEqual([]);
   });
 });

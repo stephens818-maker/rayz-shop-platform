@@ -3,7 +3,7 @@ import { payPeriodsBetween, PayPeriod } from "@/domain/payroll";
 import { TOTAL, segKey } from "@/domain/report-views";
 import { LocalDate, addDays, diffDays, endOfLocalDay, startOfLocalDay } from "@/lib/time";
 import { ByShop, PAID, ReportScope, Grain, atGrains, grp, ids, keyOf, rows, same, sgrp, staffFilter, uuids } from "./report-sql";
-import { tipPostingDate } from "./payroll/tip-posting";
+import { declarationPostingDate, tipPostingDate } from "./payroll/tip-posting";
 import { notSquireEra } from "./squire-era";
 
 export { staffSelection } from "./report-sql";
@@ -616,12 +616,12 @@ export async function squireTipsBetween(s: Pick<ReportScope, "shopIds" | "staffI
 
 type DeclaredRow = Pick<PayrollRow, "staffId" | "staffCode" | "label" | "shopId" | "shop" | "declaredCashTipsCents">;
 
-/** Current cash tip declarations in [start, end], per barber per shop. */
+/** Current cash tip declarations paid in [start, end] (declarationPostingDate), per barber per shop. */
 export async function declaredTipRowsBetween(s: Pick<ReportScope, "shopIds" | "staffId" | "staffIds">, start: LocalDate, end: LocalDate): Promise<DeclaredRow[]> {
   return rows<DeclaredRow>(sql`
     select st.id "staffId", st.staff_code "staffCode", st.display_label label, sh.id "shopId", sh.name shop, sum(d.amount_cents)::int "declaredCashTipsCents"
     from tip_declarations d join staff st on st.id = d.staff_id join shops sh on sh.id = d.shop_id
-    where d.shop_id in ${uuids(s.shopIds)} and d.business_date between ${start} and ${end} ${staffFilter(sql`d.staff_id`, s)}
+    where d.shop_id in ${uuids(s.shopIds)} and ${declarationPostingDate(sql.raw("d"))} between ${start} and ${end} ${staffFilter(sql`d.staff_id`, s)}
       and not exists (select 1 from tip_declarations r where r.replaces_id = d.id)
     group by st.id, sh.id
     having sum(d.amount_cents) <> 0`);

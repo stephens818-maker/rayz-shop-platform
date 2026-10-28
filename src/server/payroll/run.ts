@@ -49,7 +49,7 @@ import { lockPayrollTips, payrollTipSplit } from "@/server/tips/payouts";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { payrollHoursCheck, type PayrollHoursCheck } from "@/server/time-clock";
 import { isolvedTimecardExporter, type PayrollExporter } from "./export";
-import { tipPostingDate } from "./tip-posting";
+import { declarationPostingDate, tipPostingDate } from "./tip-posting";
 import { checkPayrollTips, type TipCheck, type TipCheckBlock } from "./tip-reconcile";
 import { ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type LegalEntity, type PayGroup } from "./groups";
 import { groupCalendar, resyncPeriodDates, savePeriodDates as savePeriodDatesFor } from "./period-dates";
@@ -527,6 +527,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       ...lockAnomalies(blocks),
       ...finalPayAnomalies(finalPays),
       ...(await lateTipsIn(blocks, start, end)),
+      ...(await lateDeclarationsIn(blocks, start, end)),
       ...stateAnomalies(blocks, end, await missedMealsIn(platformShops, start, end)),
       ...crossSourceOt(blocks, (id) => groupOf.get(id)?.legalEntity ?? ""),
       ...(rollout.active ? await rolloutSourceAnomalies(blocks) : []),
@@ -1024,6 +1025,25 @@ async function lateTipsIn(blocks: readonly BlockView[], start: LocalDate, end: L
     shopId: r.shop_id,
     kind: "late_tip" as const,
     message: `${r.label} (${open.find((b) => b.shopId === r.shop_id)?.shop ?? "Other shop"}): ${fmtMoney(r.cents / 100)} of tips on tickets from ${formatDate(r.from, "MMM d")} came in after that pay period was locked, so they're paid in this one.`,
+  }));
+}
+
+/** Cash tips declared after their day's pay period was locked: paid in this one (declarationPostingDate), flagged for review. */
+async function lateDeclarationsIn(blocks: readonly BlockView[], start: LocalDate, end: LocalDate): Promise<Anomaly[]> {
+  const open = blocks.filter((b) => !b.locked && b.source === "platform");
+  if (!open.length) return [];
+  const rows = await db.execute<{ staff_id: string; shop_id: string; cents: number; from: string; label: string }>(sql`
+    select d.staff_id, d.shop_id, sum(d.amount_cents)::int cents, min(d.business_date)::text "from", st.display_label label
+    from tip_declarations d join staff st on st.id = d.staff_id
+    where d.shop_id in (${sql.join(open.map((b) => sql`${b.shopId}::uuid`), sql`, `)}) and d.business_date < ${start}
+      and ${declarationPostingDate(sql.raw("d"))} between ${start} and ${end}
+      and not exists (select 1 from tip_declarations r where r.replaces_id = d.id)
+    group by 1, 2, 5`);
+  return [...rows].map((r) => ({
+    staffId: r.staff_id,
+    shopId: r.shop_id,
+    kind: "late_declaration" as const,
+    message: `${r.label} (${open.find((b) => b.shopId === r.shop_id)?.shop ?? "Other shop"}): ${fmtMoney(r.cents / 100)} of cash tips for ${formatDate(r.from, "MMM d")} were declared after that pay period was locked, so they're paid in this one. The locked period stays as exported.`,
   }));
 }
 

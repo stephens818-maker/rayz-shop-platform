@@ -7,10 +7,12 @@ import { employeePay, exportRowChecks, paystubLines, toCents, type Line, type Sh
 import {
   CASH_TIPS_COPY,
   GROSS_LABEL,
+  LATE_DECLARATION_COPY,
   LATE_TIP_COPY,
   OT_PAY_LABEL,
   PARTIAL_WEEK_OT_LABEL,
   PAYROLL_TIPS_COPY,
+  REFUNDED_AFTER_EXPORT_COPY,
   SHOP_COVERS_REFUND_COPY,
   cashTipReminder,
   hoursOf,
@@ -314,42 +316,54 @@ function dispositionOf(r: LedgerRow | undefined, m: ShopMethod | undefined): "st
 async function shopCoveredRefunds(staffId: string, shopIds: readonly string[], from: LocalDate, to: LocalDate) {
   if (!shopIds.length) return [];
   const list = await db
-    .select({ id: tipAbsorptions.id, shopId: tipAbsorptions.shopId, kind: tipAbsorptions.kind, amountCents: tipAbsorptions.amountCents, date: tipAbsorptions.businessDate, saleDate: sales.businessDate, saleId: tipAbsorptions.saleId })
+    .select({
+      id: tipAbsorptions.id,
+      shopId: tipAbsorptions.shopId,
+      kind: tipAbsorptions.kind,
+      amountCents: tipAbsorptions.amountCents,
+      date: tipAbsorptions.businessDate,
+      saleDate: sales.businessDate,
+      saleId: tipAbsorptions.saleId,
+      afterExport: sql<boolean>`exists (select 1 from payroll_runs lr join pay_groups lg on lg.id = lr.pay_group_id where lg.shop_id = ${sales.shopId} and ${sales.businessDate} between lr.period_start and lr.period_end)`,
+    })
     .from(tipAbsorptions)
     .leftJoin(sales, eq(sales.id, tipAbsorptions.saleId))
     .where(and(eq(tipAbsorptions.staffId, staffId), inArray(tipAbsorptions.shopId, [...shopIds]), gte(tipAbsorptions.businessDate, from), lte(tipAbsorptions.businessDate, to), ne(tipAbsorptions.kind, "dispute")))
     .orderBy(asc(tipAbsorptions.businessDate));
   return list.map((a) => ({
     id: a.id,
-    kind: "card_tip_refund" as const,
+    kind: a.afterExport ? ("tip_refunded_after_export" as const) : ("card_tip_refund" as const),
     shopId: a.shopId,
     saleId: a.saleId,
     amountCents: a.amountCents,
+    effectCents: 0,
     originalDate: a.saleDate ?? a.date,
     postedDate: a.date,
     lateDeclaration: false,
+    flagged: a.afterExport,
     reducesPay: false as const,
     reason: a.kind,
-    copy: SHOP_COVERS_REFUND_COPY,
+    copy: a.afterExport ? REFUNDED_AFTER_EXPORT_COPY : SHOP_COVERS_REFUND_COPY,
   }));
 }
 
-/** Tips on tickets from an earlier pay period that posted to this one, because that one had closed. */
-function lateTips(list: readonly LedgerRow[], start: LocalDate) {
-  return list
-    .filter((r) => r.kind === "tip" && r.saleDate && r.saleDate < start)
-    .map((r) => ({
-      id: r.id,
-      kind: "late_tip" as const,
-      shopId: r.shopId,
-      saleId: r.saleId,
-      amountCents: r.amountCents,
-      originalDate: r.saleDate!,
-      postedDate: r.date,
-      lateDeclaration: false,
-      reducesPay: false as const,
-      copy: LATE_TIP_COPY,
-    }));
+/**
+ * What changed after an earlier pay period was locked and is flagged in this one instead (that one is
+ * never reopened): tips on its tickets that came in late and cash tips declared late, each paid here
+ * (effectCents), and its card tips refunded since, which the shop covers (nothing taken from them).
+ * Amounts are never negative.
+ */
+function lateChanges(ledger: readonly LedgerRow[], declared: readonly { id: string; shopId: string; businessDate: string; postedDate: string; amountCents: number }[], covered: Awaited<ReturnType<typeof shopCoveredRefunds>>, start: LocalDate) {
+  const flag = { flagged: true as const, reducesPay: false as const };
+  return [
+    ...ledger
+      .filter((r) => r.kind === "tip" && r.saleDate && r.saleDate < start)
+      .map((r) => ({ id: r.id, kind: "late_tip" as const, shopId: r.shopId, saleId: r.saleId, amountCents: r.amountCents, effectCents: r.amountCents, originalDate: r.saleDate!, postedDate: r.date, lateDeclaration: false, ...flag, copy: LATE_TIP_COPY })),
+    ...declared
+      .filter((d) => d.businessDate < start)
+      .map((d) => ({ id: d.id, kind: "late_declaration" as const, shopId: d.shopId, saleId: null, amountCents: d.amountCents, effectCents: d.amountCents, originalDate: d.businessDate, postedDate: d.postedDate, lateDeclaration: true, ...flag, copy: LATE_DECLARATION_COPY })),
+    ...covered.filter((c) => c.kind === "tip_refunded_after_export").map(({ reason: _r, ...c }) => ({ ...c, ...flag })),
+  ].sort((a, b) => a.postedDate.localeCompare(b.postedDate) || a.id.localeCompare(b.id));
 }
 
 // ───────────────────────────── GET /me/earnings ─────────────────────────────
@@ -499,9 +513,9 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
 
     workweeks: see.hours ? weeksOf(view, me, per) : [],
     shops: slices.map((s) => s.out),
-    adjustments: see.tips ? lateTips(ledger, per.start) : [],
-    refunds: covered,
-    declarations: declared.map((d) => ({ id: d.id, shopId: d.shopId, date: d.businessDate, amountCents: d.amountCents, source: d.source })),
+    adjustments: see.tips ? lateChanges(ledger, declared, covered, per.start) : [],
+    refunds: covered.filter((c) => c.kind === "card_tip_refund"),
+    declarations: declared.map((d) => ({ id: d.id, shopId: d.shopId, date: d.businessDate, postedDate: d.postedDate, late: d.businessDate < per.start, amountCents: d.amountCents, source: d.source })),
     cashTipReminder: view ? cashTipReminder(view.settings.declarations) : null,
     payout: setup,
   };

@@ -69,7 +69,9 @@ export async function syncTipLedger(tx: DBorTx = db, o: { saleId?: string; shopI
   const cal = (await settingAt<PayrollSettings>("payroll", null, tx)).calendar;
   const periodIx = (d: SQL) => sql`floor((${d} - coalesce(g.anchor_start, ${cal.anchorStart}::date))::numeric / coalesce(g.period_days, ${cal.periodDays}))`;
   const transferred = sql`exists (select 1 from payment_transfers pt where pt.kind = 'tip' and pt.payment_id = r.payment_id and pt.staff_id = coalesce(sh.staff_id, s.staff_id) and pt.status in ('pending', 'sent'))`;
-  const afterPayout = sql`(${transferred} or coalesce(tp.status in ('held', 'approved', 'processing', 'paid'), false) or ${periodIx(sql`r.business_date`)} > ${periodIx(sql`s.business_date`)})`;
+  // The ticket's pay period is locked (and so may be exported): it's never reopened and its tips never taken back.
+  const lockedTicket = sql`exists (select 1 from payroll_runs lr join pay_groups lg on lg.id = lr.pay_group_id where lg.shop_id = s.shop_id and s.business_date between lr.period_start and lr.period_end)`;
+  const afterPayout = sql`(${transferred} or coalesce(tp.status in ('held', 'approved', 'processing', 'paid'), false) or ${periodIx(sql`r.business_date`)} > ${periodIx(sql`s.business_date`)} or ${lockedTicket})`;
   const reverses = sql`(not ${afterPayout} and ${byRule})`;
   const refunded = sql`
     from refunds r join sales s on s.id = r.sale_id

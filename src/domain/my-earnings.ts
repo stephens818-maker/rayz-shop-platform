@@ -12,6 +12,8 @@ export const PAYROLL_TIPS_COPY = "Tips paid through payroll.";
 export const CASH_TIPS_COPY = "Tips paid in cash at the shop.";
 export const LATE_TIP_COPY = "Came in after that pay period closed, so it's paid in this one.";
 export const SHOP_COVERS_REFUND_COPY = "Refunded to the client after it reached you. The shop covers it; your pay isn't reduced.";
+export const LATE_DECLARATION_COPY = "Declared after that pay period closed, so it's paid in this one.";
+export const REFUNDED_AFTER_EXPORT_COPY = "Refunded to the client after that pay period was sent to payroll. The shop covers it: your pay isn't reduced and nothing is taken back.";
 
 export type EarningsRule = "hourly" | "commission" | "mixed";
 export type EarningsCode = GreaterOfCode | "mixed";

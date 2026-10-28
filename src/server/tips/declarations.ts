@@ -12,9 +12,19 @@ import { assertStaffAtShop } from "@/server/checkout";
 import { AppError, notFound } from "@/server/errors";
 import { enqueueRaw } from "@/server/notifications/queue";
 import { isLockedOn } from "@/server/payroll/groups";
+import { declarationPostingDate } from "@/server/payroll/tip-posting";
 
 /** Declarations nothing has replaced: what payroll and the reports count. */
 const current = sql`not exists (select 1 from tip_declarations r where r.replaces_id = ${tipDeclarations.id})`;
+/** The day payroll counts it on (declarationPostingDate). */
+const posted = declarationPostingDate();
+const postedBetween = (start: LocalDate, end: LocalDate) => sql`${posted} between ${start}::date and ${end}::date`;
+
+/** The day a declaration was paid on, or null when there's no such declaration. */
+async function postedDateOf(id: string): Promise<LocalDate | null> {
+  const [r] = await db.select({ d: sql<string>`${posted}::text` }).from(tipDeclarations).where(eq(tipDeclarations.id, id));
+  return r?.d ?? null;
+}
 
 export async function declarationRules(tx: DBorTx = db): Promise<TipDeclarationSettings> {
   return (await settingAt<PayrollSettings>("payroll", null, tx)).declarations;
@@ -35,17 +45,23 @@ export interface DeclareInput {
 
 /**
  * Records a cash tip declaration with the attestation the employee checked. A correction replaces an
- * earlier declaration of the same employee, shop and day (the old row stays). Refused once the pay
- * period is locked, and after the month closes unless a manager enters it with a reason.
+ * earlier declaration of the same employee, shop and day (the old row stays). One for a day whose pay
+ * period is already locked is taken and paid in the next open period, flagged there
+ * (declarationPostingDate): the locked period is never reopened. A correction of one a locked period
+ * paid is refused, so nothing it paid is taken back. After the month closes, only a manager with a reason.
  */
 export async function declareCashTips(i: DeclareInput, now = new Date()) {
   const rules = await declarationRules();
   const manager = i.source === "manager";
+  const corrected = i.replacesId ? await postedDateOf(i.replacesId) : null;
+  const periodLocked = await isLockedOn(i.shopId, corrected ?? i.businessDate);
   const problem = declarationProblem(
-    { businessDate: i.businessDate, amountCents: i.amountCents, attested: manager || i.attested, manager, reason: i.reason, periodLocked: await isLockedOn(i.shopId, i.businessDate) },
+    { businessDate: i.businessDate, amountCents: i.amountCents, attested: manager || i.attested, manager, reason: i.reason, periodLocked, correction: !!i.replacesId },
     todayLocal(now),
     rules,
   );
+  const late = periodLocked && !i.replacesId;
+  const postedDate = late ? todayLocal(now) : i.businessDate;
   if (problem) throw new AppError(problem.startsWith("Check") || problem.startsWith("Enter") || problem.startsWith("Pick") || problem.startsWith("Say") ? "bad_request" : "conflict", problem);
   await assertStaffAtShop(i.staffId, i.shopId);
   return db.transaction(async (tx) => {
@@ -77,11 +93,11 @@ export async function declareCashTips(i: DeclareInput, now = new Date()) {
       i.replacesId ? "tips.declaration_correct" : "tips.declare",
       "tip_declaration",
       row.id,
-      { staffId: i.staffId, businessDate: i.businessDate, amountCents: i.amountCents, source: i.source, replacesId: i.replacesId ?? null, reason: row.reason },
+      { staffId: i.staffId, businessDate: i.businessDate, amountCents: i.amountCents, source: i.source, replacesId: i.replacesId ?? null, reason: row.reason, ...(late ? { late: true, postedDate } : {}) },
       i.shopId,
       tx,
     );
-    return row;
+    return { ...row, postedDate, late };
   });
 }
 
@@ -100,7 +116,7 @@ export async function declareAtClockOut(i: { staffId: string; shopId: string; ce
 export async function myDeclarations(staffId: string, from: LocalDate, today: LocalDate = todayLocal()) {
   const rules = await declarationRules();
   const rows = await db
-    .select({ d: tipDeclarations, shop: shops.name, current: sql<boolean>`${current}` })
+    .select({ d: tipDeclarations, shop: shops.name, current: sql<boolean>`${current}`, postedDate: sql<string>`${posted}::text` })
     .from(tipDeclarations)
     .innerJoin(shops, eq(shops.id, tipDeclarations.shopId))
     .where(and(eq(tipDeclarations.staffId, staffId), gte(tipDeclarations.businessDate, from)))
@@ -120,41 +136,43 @@ export async function myDeclarations(staffId: string, from: LocalDate, today: Lo
       replacesId: r.d.replacesId,
       reason: r.d.reason,
       createdAt: r.d.createdAt,
+      postedDate: r.postedDate,
+      late: r.postedDate !== r.d.businessDate,
       current: r.current,
       closesOn: closesOn(r.d.businessDate, rules),
     })),
   };
 }
 
-/** One employee's current declarations at these shops in [start, end], as payroll counts them. */
+/** One employee's current declarations at these shops paid in [start, end], as payroll counts them: postedDate is the day it's paid on. */
 export async function currentDeclarationsOf(staffId: string, shopIds: readonly string[], start: LocalDate, end: LocalDate, tx: DBorTx = db) {
   if (!shopIds.length) return [];
   return tx
-    .select({ id: tipDeclarations.id, shopId: tipDeclarations.shopId, businessDate: tipDeclarations.businessDate, amountCents: tipDeclarations.amountCents, source: tipDeclarations.source })
+    .select({ id: tipDeclarations.id, shopId: tipDeclarations.shopId, businessDate: tipDeclarations.businessDate, postedDate: sql<string>`${posted}::text`, amountCents: tipDeclarations.amountCents, source: tipDeclarations.source, createdAt: tipDeclarations.createdAt })
     .from(tipDeclarations)
-    .where(and(eq(tipDeclarations.staffId, staffId), inArray(tipDeclarations.shopId, [...shopIds]), gte(tipDeclarations.businessDate, start), lte(tipDeclarations.businessDate, end), current))
+    .where(and(eq(tipDeclarations.staffId, staffId), inArray(tipDeclarations.shopId, [...shopIds]), postedBetween(start, end), current))
     .orderBy(desc(tipDeclarations.businessDate), desc(tipDeclarations.createdAt));
 }
 
-/** Current declared cash tips in [start, end], per `staffId|shopId`, in cents. */
+/** Current declared cash tips paid in [start, end] (declarationPostingDate), per `staffId|shopId`, in cents. */
 export async function declaredTipsBetween(shopIds: readonly string[], start: LocalDate, end: LocalDate, tx: DBorTx = db): Promise<Map<string, number>> {
   if (!shopIds.length) return new Map();
   const rows = await tx
     .select({ staffId: tipDeclarations.staffId, shopId: tipDeclarations.shopId, cents: sql<number>`sum(${tipDeclarations.amountCents})::int` })
     .from(tipDeclarations)
-    .where(and(inArray(tipDeclarations.shopId, [...shopIds]), gte(tipDeclarations.businessDate, start), lte(tipDeclarations.businessDate, end), current))
+    .where(and(inArray(tipDeclarations.shopId, [...shopIds]), postedBetween(start, end), current))
     .groupBy(tipDeclarations.staffId, tipDeclarations.shopId);
   return new Map(rows.filter((r) => r.cents).map((r) => [`${r.staffId}|${r.shopId}`, r.cents]));
 }
 
-/** Current declared cash tips by day, per employee (everyone at the shops when staffId is null) and shop, in cents. */
+/** Current declared cash tips by the day they're paid on, per employee (everyone at the shops when staffId is null) and shop, in cents. */
 export async function declaredByDay(staffId: string | null, shopIds: readonly string[], start: LocalDate, end: LocalDate, tx: DBorTx = db) {
   if (!shopIds.length) return [];
   return tx
-    .select({ staffId: tipDeclarations.staffId, shopId: tipDeclarations.shopId, date: tipDeclarations.businessDate, cents: sql<number>`sum(${tipDeclarations.amountCents})::int` })
+    .select({ staffId: tipDeclarations.staffId, shopId: tipDeclarations.shopId, date: sql<string>`${posted}::text`, cents: sql<number>`sum(${tipDeclarations.amountCents})::int` })
     .from(tipDeclarations)
-    .where(and(staffId ? eq(tipDeclarations.staffId, staffId) : undefined, inArray(tipDeclarations.shopId, [...shopIds]), gte(tipDeclarations.businessDate, start), lte(tipDeclarations.businessDate, end), current))
-    .groupBy(tipDeclarations.staffId, tipDeclarations.shopId, tipDeclarations.businessDate);
+    .where(and(staffId ? eq(tipDeclarations.staffId, staffId) : undefined, inArray(tipDeclarations.shopId, [...shopIds]), postedBetween(start, end), current))
+    .groupBy(tipDeclarations.staffId, tipDeclarations.shopId, posted);
 }
 
 /**

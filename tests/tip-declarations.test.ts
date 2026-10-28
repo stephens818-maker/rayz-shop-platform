@@ -23,7 +23,7 @@ describe("cash tip declarations (SB-C3)", () => {
     expect(reminderDue("2026-11-03", { ...rules, enabled: false }, false)).toBe(false);
   });
 
-  it("needs the attestation, a real amount and a day that has happened; never in a locked period; a manager can fix a closed month with a reason", () => {
+  it("needs the attestation, a real amount and a day that has happened; one for a locked period is taken (paid in the next open one) but never corrects what the locked one paid; a manager can fix a closed month with a reason", () => {
     const today = "2026-10-27";
     expect(declarationProblem(ok, today, rules)).toBeNull();
     expect(declarationProblem({ ...ok, amountCents: 0 }, today, rules)).toBeNull();
@@ -33,8 +33,9 @@ describe("cash tip declarations (SB-C3)", () => {
     expect(declarationProblem({ ...ok, amountCents: 12.5 }, today, rules)).toMatch(/Enter an amount/);
     expect(declarationProblem({ ...ok, businessDate: "2026-10-28" }, today, rules)).toMatch(/hasn't happened/);
     expect(declarationProblem({ ...ok, businessDate: "Oct 20" }, today, rules)).toMatch(/Pick the day/);
-    expect(declarationProblem({ ...ok, periodLocked: true }, today, rules)).toMatch(/locked/);
-    expect(declarationProblem({ ...ok, periodLocked: true, manager: true, reason: "x" }, today, rules)).toMatch(/locked/);
+    expect(declarationProblem({ ...ok, periodLocked: true }, today, rules)).toBeNull();
+    expect(declarationProblem({ ...ok, periodLocked: true, correction: true }, today, rules)).toMatch(/locked, so it stays as it is/);
+    expect(declarationProblem({ ...ok, periodLocked: true, correction: true, manager: true, reason: "x" }, today, rules)).toMatch(/locked/);
 
     const closed = { ...ok, businessDate: "2026-09-12" };
     expect(declarationProblem(closed, today, rules)).toBe("Declarations for that month closed on the 10th. Ask a manager to correct it.");
