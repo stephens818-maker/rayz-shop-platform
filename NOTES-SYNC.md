@@ -1,8 +1,22 @@
 # NOTES-SYNC
 
-Working notes between the two agents on this repo. The **core agent** (this branch, `cursor/rayz-barbershop-v1-8f0b`, PR #1) updates this file on every push. The **mobile agent** (`bc-645fbcc0-ed66-58c5-a7b9-f578411fa9e1`) opens PRs into this branch. The newest entry goes at the top of the log.
+Working notes between the three agents on this repo. The newest entry goes at the top of the log.
+
+- The **core agent** (this branch, `cursor/rayz-barbershop-v1-8f0b`, PR #1) updates this file on every push.
+- **Claude's mobile agent** (`bc-645fbcc0-ed66-58c5-a7b9-f578411fa9e1`) owns the customer API, `/api/v1`, and opens PRs into this branch.
+- The **Rayz App builder** (`bc-bdfbbeec-9bcb-540d-a36f-8a63cbccfe47`) builds the Expo customer app and the Ray'z Staff app in the top-level `mobile/` folder. It branched from this branch and has its own draft PR. It doesn't touch platform code and runs against a mock API until the endpoints it needs are live.
 
 ## Who owns what
+
+The split, by directory:
+
+| Area | Owner |
+| --- | --- |
+| The platform: everything outside `mobile/` and `src/app/api/v1/**` (admin, booking engine, POS, payroll, time clock, tips, notifications, the server), and the staff app's API, `/api/staff/v1` | core |
+| The customer API, `/api/v1` (details in the rows below) | claude's mobile agent (bc-645fbcc0) |
+| `mobile/`: the Expo customer app and the Ray'z Staff app, their builds and store submissions | the Rayz App builder (bc-bdfbbeec). Neither core nor the mobile agent edits `mobile/` |
+
+In detail:
 
 | Area | Owner |
 | --- | --- |
@@ -25,7 +39,7 @@ Working notes between the two agents on this repo. The **core agent** (this bran
 | Digital receipts (`src/domain/receipts.ts`, `src/server/receipts.ts`, `src/app/receipt/**`, the ticket's receipt panel). The consent itself (opt-ins, wording, STOP) stays mobile's; receipts only read it | core |
 | The staff app's API, `/api/staff/v1` (`src/app/api/staff/v1/**`, `src/server/staff-api/**`, `src/app/staff-app/**`), its sign-in (`staff_app_tokens`) and phones (`staff_devices`). Separate from the customer `/api/v1`; the Rayz App builder (replacing Squire Commander) calls it | core |
 
-Neither agent edits the other's files. If you need a change in the other side's file, put it under "Requests" below or in a PR comment.
+No agent edits another's files. If you need a change in someone else's file, put it under "Requests" below or in a PR comment.
 
 ## Rules both sides follow
 
@@ -457,6 +471,14 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Requests for the other agent
 
+- (core → the Rayz App builder) **The Critical endpoints your apps are gated on are live in the sandbox (checked 2026-10-28 at c1b5fb3 and later).** Core called each one on the sandbox, signed in as the demo users, not against a mock. PR #1's launch list has the same lists as tables ("Staff endpoints the apps are gated on" in section 3, "Customer endpoints the apps are gated on" in section 4). Please switch `mobile/` from the mock to the sandbox for these as you go, and post here when a screen runs against them.
+  - **Where:** the branch alias in the 2026-10-27 log entry, `/api/v1` (customer) and `/api/staff/v1` (staff), with the OpenAPI at each one's `/openapi.json`. Vercel Authentication covers the API: sandbox builds send the Protection Bypass for Automation secret as `x-vercel-protection-bypass` (ask Charles; never in this public repo or a production build).
+  - **Customer app, live and exercised:** the code sign-in (`/auth/otp/start` returns `devCode` in demo mode; `verify`, `refresh`, `logout`), `/app/config` with the switches, shops, services, barbers, `available-days` and `availability`, booking signed in, then `GET`, cancel and the reschedule check, `/me` and its history, loyalty, family, badges, consent, sessions, receipts and account deletion's summary, push device add and remove, and a saved simulator card (`/me/payment-methods/setup`, save, list, delete). The demo client is phone `319-555-0100`.
+  - **Customer app, live but only checked for validation:** paying a ticket in the app (`/me/tickets/{id}/quote` and `/pay`; there's no open ticket for the demo client until the desk rings one up), step-up, `/auth/help` and `/auth/otp/complete`.
+  - **Staff app, live and exercised (`makenna@rayz.test` as a barber, `michelle@rayz.test` as a manager, password in PR #1):** password sign-in, refresh (send `deviceId` in the body: a refresh from another install ends the session, by design), sign out of other phones, logout, `/config`, `/me`, the calendar, schedule, appointments and openings, client search, the timecard, earnings by period and year to date, tips, payouts, payout setup and cutover, banking, devices, declarations, pay questions, time off, milestones, managers' timecards, board, waitlist and time off. Permissions answer 403 for a barber on manager routes. **Kiosk (ST-I6):** a front-desk clock registered by a manager lists the shop's team and checks a PIN (demo PIN `2468`; core stopped before punching).
+  - **Staff app, live but only checked for validation:** clock in, out and breaks from a phone (they need the shop's QR or NFC proof), pairing a kiosk with a manager's code (the code comes from the web's **Time clock setup → Pair a clock**), sign-off, punch fixes, approve, blocks, appointment status, move and running late, deposit consent and the payout cutover confirmation.
+  - **Not live yet:** App Attest and Play Integrity (C2, mobile), and the charge side that keeps connected shops' card tips on the platform (ST-C11, mobile). Push is queued but suppressed in demo mode (it shows under **Notifications**).
+
 - (core → mobile) **Launch rule (Charles, 2026-10-27).** No shop goes live until the whole scope is built and tested in the sandbox, mobile included. Only the direct iSolved integration waits (download-only at launch); direct Stripe tip payouts are built and tested but stay behind `FEATURE_TIP_TO_BARBER` until the CPA signs off. PR #1's description has the one launch-readiness list, and mobile owns these items:
   - **L31, ST-C11 charge side:** connected shops leave card tips on the platform at checkout (read `flags.tipToBarber()` in `chargeCard`). Core's transfer side is built and tested behind the flag.
   - **L43:** rebase PRs #2–#8 onto `cursor/rayz-barbershop-v1-8f0b` and drop what core already has (see "PR #2 against core's branch" below). Core is at `core_0133`; the next free migration is `core_0134`.
@@ -464,7 +486,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
   - **L45:** App Attest and Play Integrity (C2).
   - Please test against the sandbox URL in the log (the Vercel branch alias; ask Charles for the share link, which is never written in this public repo) and post each item's status here, so core can mark it on PR #1.
 
-- (core → mobile and the Ray'z Staff app builder) **Launch day: every surface at the same time (Charles, 2026-10-28).** The web platform, the iOS and Android customer apps and the staff app go live on the same day at the same time, each complete and tested in the sandbox first. DEPLOY.md "Launch day" has the runbook; PR #1's launch list has L67 to L71. For both apps:
+- (core → mobile and the Rayz App builder) **Launch day: every surface at the same time (Charles, 2026-10-28).** The web platform, the iOS and Android customer apps and the staff app go live on the same day at the same time, each complete and tested in the sandbox first. DEPLOY.md "Launch day" has the runbook; PR #1's launch list has L67 to L71. For both apps:
   - **Submit at least 3 weeks before launch** to App Review and Google Play (5 weeks if the Play Console account is a personal one made after Nov 13, 2023: a 14-day closed test with 12 or more testers, then the production access review). Apple: "Manually release this version". Google: Managed publishing. Builds wait approved until the day before launch.
   - **App Review sign-in:** the Demo Shop login (`FEATURE_REVIEW_LOGIN`, `FEATURE_STAFF_REVIEW_LOGIN`, C18). Before launch, real shops don't take bookings here (their Squire cutover isn't signed off), so the reviewer must be able to book, pay and clock in at the Demo Shop alone. Please test that path in the sandbox.
   - **Released early, turned on at the launch time:** the apps are in the stores up to a day before launch. They must work correctly while no real shop books here: show the Squire link (or "Booking opens soon") from each shop's `bookingMode` and `takesOnlineBookings`, not an error. At launch, the owner signs off the pilot shop's cutover and the apps follow within a minute, with no app release; the other shops follow the same way after the pilot's clean pay period (see the rollout request below).
@@ -472,14 +494,14 @@ Append-only `analytics_events`, written by database triggers on the tables both 
   - **Mobile:** PR #8's `shops.launch_at` would let every shop's cutover happen at one set time. If you land it, please set the pilot's to the launch instant and each other shop's to its own switch time, combined with `takesOnlineBookings`, as in the location lifecycle request below.
   - Please post here when each build is submitted, approved and held, so core can mark L68 to L70 on PR #1.
 
-- (core → mobile and the Ray'z Staff app builder) **The apps are in the launch scope (Charles, 2026-10-28).** The customer app on iOS and Android and the staff app must be complete and tested in the sandbox, with everything else, before launch day. Nothing launches until all of them are. What core needs from you:
+- (core → mobile and the Rayz App builder) **The apps are in the launch scope (Charles, 2026-10-28).** The customer app on iOS and Android and the staff app must be complete and tested in the sandbox, with everything else, before launch day. Nothing launches until all of them are. What core needs from you:
   - **Test against the sandbox, not a mock.** PR #7's apps run against a mock API. Before launch, run each app's builds (TestFlight and Play internal testing) against the sandbox's real `/api/v1` and `/api/staff/v1` at the branch alias in the 2026-10-27 log entry. Vercel Authentication covers the API too, so sandbox builds need the **Protection Bypass for Automation** secret, sent as `x-vercel-protection-bypass` on every request. Ask Charles for it, keep it in the sandbox build profile only, and never put it in this public repo or a production build.
   - **What "tested" means for each app:** sign-in (codes for clients; password, two-step and approved device for staff), booking and rebooking, paying and tipping with the simulator's cards, receipts, push (shown under Notifications in the sandbox), account deletion, the minimum-version 426 and the `/config` switches. For the staff app, also the calendar, the time clock and kiosk mode (ST-I6, critical for payroll), timecards, earnings, banking and payouts, and Question my pay. Core's sandbox pay run (Oct 4–17, locked) gives the staff app real earnings and payouts to show.
   - **Status, per app, here:** built, tested in the sandbox, submitted, approved and held. Core copies it onto PR #1 (L68 to L70).
   - **The launch instant: please land PR #3 first.** Its `LAUNCH_AT` (one instant for the website, both customer apps, customer payments and push, with `shops.launch_at` per shop) is the right mechanism for Charles's rule. Please rebase it onto `cursor/rayz-barbershop-v1-8f0b` ahead of the rest of L43, with the next free core migration (`core_0134`), and combine `shops.launch_at` with core's Squire cutover and `takesOnlineBookings` (location lifecycle request below). Until it lands, DEPLOY.md's runbook opens shops with the Squire cutover sign-off. Please also give the staff app the instant in its `/config`, so both apps read it the same way.
   - **PR #4's "option B" stands (Charles approved the rollout, 2026-10-28):** every surface goes live at once, but only one pilot shop leaves Squire at launch; the rest switch after the pilot's first clean pay period. Please keep PR #4's behavior (see the rollout request below).
 
-- (core → mobile and the Ray'z Staff app builder) **The rollout: one pilot shop, then the rest (Charles, 2026-10-28).** Core has per-shop go-live flags on **Setup → Rollout** (`shop_rollouts`, migration `core_0134_rollout`) and the runbook in `docs/rollout-runbook.md`. What it means for the apps:
+- (core → mobile and the Rayz App builder) **The rollout: one pilot shop, then the rest (Charles, 2026-10-28).** Core has per-shop go-live flags on **Setup → Rollout** (`shop_rollouts`, migration `core_0134_rollout`) and the runbook in `docs/rollout-runbook.md`. What it means for the apps:
   - **Where a shop books stays `shops.booking_mode`**, changed only by core's Squire cutover (sign-off or hand back). The rollout flags don't change it by themselves. Core refuses to switch a second-wave shop until the pilot's clean pay period is signed off, and a hand back clears that sign-off. So the apps need no rollout logic: keep reading `bookingMode` and `takesOnlineBookings`, and combine them with `shops.launch_at` when PR #3 lands (a shop books in the app only when all three allow it).
   - **Shops not live yet:** show the shop's Squire link (`external_booking_url`), as PR #4's option B does, never an error or an empty calendar. For about two pay periods that's 7 of the 8 shops.
   - **Staff app:** someone at a shop still on Squire clocks in on Squire's side, and that shop's payroll comes from Squire's Commissions report. `GET /api/staff/v1/me/earnings` now has `source` (`platform` or `squire`) and `squireImported` per shop. For `squire`, the figures are Squire's Commissions report (no card, cash and gift-card split: the tips are all in `adjustmentsCents`), and with `squireImported: false` there's nothing yet: show "Not ready yet: comes from Squire" rather than $0. Timecards at a shop on Squire data are empty, since its people clock in on Squire.
@@ -551,7 +573,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 - (core → mobile) **No biometrics in either app (ST-I17).** Please run `node scripts/check-no-biometrics.mjs` (copy it from this repo, it has no dependencies) in the CI of the customer app and the Ray'z Staff app repos, on every pull request, as `.github/workflows/no-biometrics.yml` does here. It fails on face, fingerprint, voice or ID-verification SDKs (face-api, ML Kit or Vision face detection, ARKit face tracking, Rekognition, FaceTec, Onfido, Stripe Identity and the like) in `package.json`, lockfiles, `app.json` plugins, Podfiles, Gradle files and source. The phone's own unlock through `expo-local-authentication`, `react-native-biometrics` or `react-native-keychain` is allowed (the app only gets yes or no). The policy wording is `NO_BIOMETRICS_POLICY` in `src/domain/biometrics.ts`.
 
-- (core → mobile) **The staff delta (2026-10-27, see the log entry).** For the Ray'z Staff app builder:
+- (core → mobile) **The staff delta (2026-10-27, see the log entry).** For the Rayz App builder (the staff app in `mobile/`):
   - Sign-in: handle `twoFactor.enroll` (set up the authenticator before the first sign-in completes), the 403 `stepUpRequired` on reveal (`POST /me/step-up`, then retry), and pairing the front-desk clock by the manager's QR code (`POST /clock/kiosk/pair`, then `X-Clock-Device` and `X-Device-Id`).
   - Banking: show `depositConsent.text` and record agreement with `PUT /banking/deposit-consent` before any Stripe setup; offer tips on the paycheck only where `policy.tipsOnPaycheck` is true.
   - Phone data: follow `GET /config` `dataProtection` (encrypted 24-hour cache of `X-Staff-Cache: offline-24h` responses only, app lock, snapshot blur, no copy or share), wipe on a 401 `details.wipe` and report it with `POST /auth/wiped`, and queue offline punches with `queuedAt` and `clientPunchId`.
@@ -598,6 +620,11 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
 
 ## Log
+
+### 2026-10-28: core, a third agent: the Rayz App builder in `mobile/`
+- **Ownership:** core owns the platform and the staff API (`/api/staff/v1`); claude's mobile agent owns the customer API (`/api/v1`); the Rayz App builder (bc-bdfbbeec) owns `mobile/`, the Expo customer app and the Ray'z Staff app. It branched from this branch, opens its own draft PR, doesn't touch platform code, and runs against a mock until the endpoints it needs are live. Core and the mobile agent don't edit `mobile/`. See "Who owns what".
+- **Endpoints:** core checked every Critical customer and staff endpoint on the sandbox; see the first request. In PR #1, the app store builds (L68 to L70) and the app screens (L39) are now the App builder's.
+- **Sandbox footprint of the check:** one booking for the demo client, cancelled, and two front-desk clocks at Coralville named "Core sandbox check (safe to retire)", which a manager can retire under **Time clock setup**.
 
 ### 2026-10-28: core, the rollout: one pilot shop, then the rest (Charles)
 - **Charles approved the rollout plan:** (1) all scope, the apps included, complete and tested in the sandbox; (2) one pilot shop goes live while Squire stays as its backup; (3) the other shops switch after one clean pay period. PR #4's option B stands.
