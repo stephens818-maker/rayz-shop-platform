@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Card, CardHeader, Table, Td, Th, cx } from "@/components/ui";
+import { Card, CardHeader, Table, cx } from "@/components/ui";
 import { Sparkline } from "@/components/sparkline";
 import { BOARD_ROWS, CARD_PERIODS, CARD_PERIOD_LABEL, type BoardEntry, type CardPeriod } from "@/domain/pph-card";
 import { CLIENTS_LABEL, PPH_LABEL, type Pph, type Ranked, clientsText, pphText } from "@/domain/pph";
@@ -9,6 +9,9 @@ import { type StaffContext, reportShopIds } from "@/server/auth/staff";
 import { type PphDashboard, pphDashboard } from "@/server/pph-dashboard";
 import { Skeleton } from "@/components/skeleton";
 
+/** Tighter than the report tables, so two leaderboards fit side by side. */
+const TH = "whitespace-nowrap border-b border-zinc-200 bg-zinc-50 px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500";
+const TD = "whitespace-nowrap border-b border-zinc-100 px-2 py-1.5";
 const hoursText = (h: number) => h.toLocaleString("en-US", { maximumFractionDigits: 2 });
 const money = (v: number | null) => pphText(v, formatCents);
 
@@ -156,39 +159,37 @@ function Board({ id, title, d, rows, detail, reportHref }: { id: string; title: 
         <Table label={`${title} by ${d.money ? PPH_LABEL.service : CLIENTS_LABEL}`}>
           <thead>
             <tr>
-              <Th right>#</Th>
-              <Th>{title === "Barbers" ? "Barber" : "Location"}</Th>
+              <th className={cx(TH, "text-right")}>#</th>
+              <th className={cx(TH, "text-left")}>{title === "Barbers" ? "Barber" : "Location"}</th>
               {heads.map((h, i) => (
-                <Th key={h} right sort={i === 0 ? "descending" : undefined}>
+                <th key={h} className={cx(TH, "text-right")} aria-sort={i === 0 ? "descending" : undefined}>
                   {h}
-                </Th>
+                </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {shownRows.map((r) => (
               <tr key={r.item.id}>
-                <Td right className="w-8 text-zinc-500">
-                  {r.rank ?? "–"}
-                </Td>
-                <Td>
+                <td className={cx(TD, "tabular w-6 text-right text-zinc-500")}>{r.rank ?? "–"}</td>
+                <td className={TD}>
                   <span className="font-medium">{r.item.name}</span>
                   {detail && r.item.detail && <div className="text-xs text-zinc-500">{r.item.detail}</div>}
-                </Td>
+                </td>
                 {cells(r.item.p).map((c, i) => (
-                  <Td key={i} right className={i === 0 ? "font-semibold" : undefined}>
+                  <td key={i} className={cx(TD, "tabular text-right", i === 0 && "font-semibold")}>
                     {c}
-                  </Td>
+                  </td>
                 ))}
               </tr>
             ))}
             <tr className="bg-zinc-50 font-semibold">
-              <Td />
-              <Td>{d.totalLabel}</Td>
+              <td className={TD} />
+              <td className={TD}>{d.totalLabel}</td>
               {cells(total).map((c, i) => (
-                <Td key={i} right>
+                <td key={i} className={cx(TD, "tabular text-right")}>
                   {c}
-                </Td>
+                </td>
               ))}
             </tr>
           </tbody>
