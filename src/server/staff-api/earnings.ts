@@ -20,6 +20,7 @@ import {
   trainingLine,
   type TrainingLine,
 } from "@/domain/my-earnings";
+import { linesPph } from "@/domain/pph";
 import { appPayoutStatus, appTransferStatus } from "@/domain/staff-payouts";
 import { employeeFeeCents, receivedCents } from "@/domain/tips";
 import { SHOP_TZ, addDays, diffDays, endOfLocalDay, isValidLocalDate, localDateOf, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
@@ -447,7 +448,7 @@ function weeksOf(view: PayrollView | null, staffId: string, p: MyPeriod) {
  * GET /me/earnings?period=current|<id> (or periodId=<id>): one pay period at every shop of theirs on
  * it, from their line of the Payroll Report. Parts they may not see are null: pay without
  * compensation.own, tips without tips.own, sales without report.my_sales.view and reports.money,
- * hours without timesheet.own. totalCents needs both pay and tips.
+ * hours without timesheet.own. totalCents needs both pay and tips, pph both sales and hours.
  */
 export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: LocalDate = todayLocal()) {
   const see = sees(ctx);
@@ -505,6 +506,7 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
         pay: see.wages ? pay : null,
         training: trainingOf(line ? [line] : []),
         hours: see.hours ? shopHours(line) : null,
+        pph: pphOut(line ? [line] : [], see),
         reconciliation: reconciliationOf(see, block, line),
       },
     };
@@ -541,6 +543,10 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
 
     serviceSalesCents: see.sales ? sum(slices, (s) => s.out.serviceSalesCents ?? 0) : null,
     productSalesCents: see.sales ? sum(slices, (s) => s.out.productSalesCents ?? 0) : null,
+    pph: pphOut(
+      slices.flatMap((s) => (s.line ? [s.line] : [])),
+      see,
+    ),
     cardTipsCents: tipsOf("cardTipsCents"),
     cashTipsCents: tipsOf("cashTipsCents"),
     giftCardTipsCents: tipsOf("giftCardTipsCents"),
@@ -558,6 +564,18 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
     cashTipReminder: view ? cashTipReminder(view.settings.declarations) : null,
     payout: setup,
   };
+}
+
+/**
+ * Their own production per hour (src/domain/pph.ts) from their lines of the Payroll Report: service
+ * and product sales over worked hours (regular plus overtime). Needs both their sales and their hours;
+ * PPHs are null (N/A) with no worked hours.
+ */
+function pphOut(lines: readonly Line[], see: Sees) {
+  if (!see.sales || !see.hours) return null;
+  const p = linesPph(lines);
+  const c = (v: number | null) => (v === null ? null : toCents(v));
+  return { workedHours: r2(p.hours), servicePphCents: c(p.servicePph), productPphCents: c(p.productPph), totalPphCents: c(p.totalPph), na: p.servicePph === null };
 }
 
 /** The training line with its hours left out for someone who may see pay but not their hours. */
