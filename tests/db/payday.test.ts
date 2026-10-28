@@ -82,7 +82,7 @@ const allShops: string[] = [];
 const manager = () => ({ actor: actorOf(who.owner), staffId: who.owner.id, isOwner: true, shopIds: allShops });
 
 async function punch(p: Person, shopId: string, type: "in" | "out" | "break_start" | "break_end", now: Date) {
-  const r = await tc.punch({ staffId: p.id, shopId, type, source: "self", evidence: { deviceShopId: shopId, ip: null, gps: null }, deviceId: null, photo: null, actor: actorOf(p), now });
+  const r = await tc.punch({ staffId: p.id, shopId, type, source: "self", evidence: { deviceShopId: shopId, ip: null, gps: null }, deviceId: null, photo: null, actor: actorOf(p), now, nonce: { id: crypto.randomUUID(), at: now } });
   if (r.kind !== "done") throw new Error(r.message);
   return r;
 }

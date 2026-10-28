@@ -27,6 +27,11 @@ import {
   shiftWork,
   shopClockSettings,
   verifyPunch,
+  KIOSK_REQUIRED,
+  punchDistanceM,
+  clockRuleText,
+  pinLocked,
+  PIN_LOCKED_UNTIL_UNLOCKED,
   isRepeatedWallTime,
   wallInstant,
   wallStamp,
@@ -271,35 +276,33 @@ describe("schedule and forgotten clock-outs", () => {
   });
 });
 
-describe("verifying a punch", () => {
+describe("verifying a punch: the shop's front-desk clock only", () => {
   const shop = { name: "Ray'z Test", latitude: 41.5236, longitude: -90.5776 };
   const evidence = { deviceShopId: null, ip: null, gps: null };
+  const near = { lat: 41.5242, lng: -90.5776 };
 
-  it("anything goes when the shop has no rule, but a device is still recorded", () => {
-    expect(verifyPunch("s1", shop, shopClockSettings({}), evidence)).toEqual({ ok: true, method: "none", distanceM: null });
-    expect(verifyPunch("s1", shop, shopClockSettings({}), { ...evidence, deviceShopId: "s1" })).toMatchObject({ ok: true, method: "device" });
+  it("a phone on its own never punches: not by location, Wi-Fi or nothing at all", () => {
+    expect(verifyPunch("s1", shop, evidence)).toMatchObject({ ok: false, problem: KIOSK_REQUIRED("Ray'z Test") });
+    expect(verifyPunch("s1", shop, { ...evidence, gps: { ...near, accuracyM: 5 } })).toEqual({ ok: false, problem: KIOSK_REQUIRED("Ray'z Test"), distanceM: 67 });
+    expect(verifyPunch("s1", shop, { ...evidence, ip: "203.0.113.5" }).ok).toBe(false);
+    expect(verifyPunch("s1", shop, { ...evidence, nfcShopId: "s1" }).ok).toBe(false);
   });
 
-  it("a registered device passes only at its own shop", () => {
-    const s = shopClockSettings({ methods: ["device"] });
-    expect(verifyPunch("s1", shop, s, { ...evidence, deviceShopId: "s1" })).toMatchObject({ ok: true, method: "device" });
-    expect(verifyPunch("s1", shop, s, { ...evidence, deviceShopId: "s2" }).ok).toBe(false);
+  it("the shop's own paired clock, or a QR code it issued, and only at that shop", () => {
+    expect(verifyPunch("s1", shop, { ...evidence, deviceShopId: "s1" })).toMatchObject({ ok: true, method: "device" });
+    expect(verifyPunch("s1", shop, { ...evidence, deviceShopId: "s2" }).ok).toBe(false);
+    expect(verifyPunch("s1", shop, { ...evidence, qrShopId: "s1", gps: { ...near, accuracyM: 20 } })).toEqual({ ok: true, method: "qr", distanceM: 67 });
+    expect(verifyPunch("s1", shop, { ...evidence, qrShopId: "s2" }).ok).toBe(false);
   });
 
-  it("the GPS geofence", () => {
-    const s = shopClockSettings({ methods: ["gps"], radiusM: 150 });
-    const near = { lat: 41.5242, lng: -90.5776 };
-    const far = { lat: 41.5336, lng: -90.5776 };
+  it("the distance is still worked out for the off-site flag", () => {
     expect(Math.round(haversineMeters({ lat: shop.latitude, lng: shop.longitude }, near))).toBe(67);
-    expect(verifyPunch("s1", shop, s, { ...evidence, gps: { ...near, accuracyM: 20 } })).toEqual({ ok: true, method: "gps", distanceM: 67 });
-    const r = verifyPunch("s1", shop, s, { ...evidence, gps: { ...far, accuracyM: 20 } });
-    expect(r).toMatchObject({ ok: false, distanceM: 1112 });
-    expect(!r.ok && r.problem).toContain("1.1 km away");
-    expect(verifyPunch("s1", shop, s, { ...evidence, gps: { ...near, accuracyM: 900 } }).ok).toBe(false);
-    expect(verifyPunch("s1", { ...shop, latitude: null, longitude: null }, s, { ...evidence, gps: { ...near, accuracyM: 5 } }).ok).toBe(false);
+    expect(punchDistanceM(shop, { lat: 41.5336, lng: -90.5776, accuracyM: 20 })).toBe(1112);
+    expect(punchDistanceM({ latitude: null, longitude: null }, { ...near, accuracyM: 5 })).toBeNull();
+    expect(clockRuleText()).toMatch(/front-desk clock/);
   });
 
-  it("the shop's network, IPv4 and IPv6", () => {
+  it("the shop's network list still parses, IPv4 and IPv6", () => {
     expect(ipInList("203.0.113.77", ["203.0.113.0/24"])).toBe(true);
     expect(ipInList("203.0.114.1", ["203.0.113.0/24"])).toBe(false);
     expect(ipInList("::ffff:203.0.113.9", ["203.0.113.9"])).toBe(true);
@@ -309,11 +312,7 @@ describe("verifying a punch", () => {
     expect(parseIp("64:ff9b::192.0.2.33")?.n).toBe(BigInt("0x0064ff9b0000000000000000c0000221"));
     expect(parseIp("1.2.3")).toBeNull();
     expect(parseIp("1::2::3")).toBeNull();
-    const s = shopClockSettings({ methods: ["network", "gps"], networks: ["203.0.113.0/24", "not an ip"] });
-    expect(s.networks).toEqual(["203.0.113.0/24"]);
-    expect(verifyPunch("s1", shop, s, { ...evidence, ip: "203.0.113.5" })).toMatchObject({ ok: true, method: "network" });
-    const r = verifyPunch("s1", shop, s, { ...evidence, ip: "198.51.100.1" });
-    expect(!r.ok && r.problem).toBe("Punch on the shop's Wi-Fi, or within 150 m of the shop with location on. Your phone didn't share its location.");
+    expect(shopClockSettings({ methods: ["network", "gps"], networks: ["203.0.113.0/24", "not an ip"] }).networks).toEqual(["203.0.113.0/24"]);
   });
 });
 
@@ -326,6 +325,14 @@ describe("PINs", () => {
     expect(pinProblem("6543")).not.toBeNull();
     expect(pinProblem("2580")).toBeNull();
     expect(pinProblem("918273")).toBeNull();
+  });
+
+  it("five wrong in a row lock it until a manager unlocks it, not for a few minutes", () => {
+    const now = new Date("2026-11-02T15:00:00Z");
+    expect(pinLocked({ pinFailures: 4, pinLockedUntil: null }, now)).toBe(false);
+    expect(pinLocked({ pinFailures: 5, pinLockedUntil: null }, now)).toBe(true);
+    expect(pinLocked({ pinFailures: 5, pinLockedUntil: PIN_LOCKED_UNTIL_UNLOCKED }, new Date("2099-01-01T00:00:00Z"))).toBe(true);
+    expect(pinLocked({ pinFailures: 0, pinLockedUntil: new Date("2026-11-02T14:00:00Z") }, now)).toBe(false);
   });
 });
 

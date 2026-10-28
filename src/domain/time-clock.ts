@@ -588,54 +588,40 @@ export type Verified = { ok: true; method: ClockMethod | "none"; distanceM: numb
 /** GPS fixes rougher than this can't prove anything. */
 export const MAX_GPS_ACCURACY_M = 250;
 
-/**
- * Whether a phone (or browser) punch at this shop passes the shop's rule: any one allowed method is
- * enough. The distance is always worked out when there's a fix, so it's on record either way.
- */
-export function verifyPunch(shopId: string, shop: { name: string; latitude: number | null; longitude: number | null }, s: ShopClockSettings, e: PunchEvidence): Verified {
-  const distanceM = e.gps && shop.latitude !== null && shop.longitude !== null ? Math.round(haversineMeters(e.gps, { lat: shop.latitude, lng: shop.longitude })) : null;
-  if (!s.methods.length) return { ok: true, method: e.deviceShopId === shopId ? "device" : "none", distanceM };
-  if (s.methods.includes("device") && e.deviceShopId === shopId) return { ok: true, method: "device", distanceM };
-  if (s.methods.includes("network") && ipInList(e.ip, s.networks)) return { ok: true, method: "network", distanceM };
-  if (s.methods.includes("qr") && e.qrShopId === shopId) return { ok: true, method: "qr", distanceM };
-  if (s.methods.includes("nfc") && e.nfcShopId === shopId) return { ok: true, method: "nfc", distanceM };
-  if (s.methods.includes("gps") && distanceM !== null && e.gps) {
-    const acc = e.gps.accuracyM ?? 0;
-    if (acc <= MAX_GPS_ACCURACY_M && distanceM <= s.radiusM + Math.min(acc, 50)) return { ok: true, method: "gps", distanceM };
-  }
-  const ways = s.methods.map((m) => methodWay(m, s, shop.name));
-  const why =
-    s.methods.includes("gps") && !e.gps
-      ? " Your phone didn't share its location."
-      : s.methods.includes("gps") && shop.latitude === null
-        ? " The shop's location isn't set yet, so ask a manager."
-        : s.methods.includes("gps") && e.gps && (e.gps.accuracyM ?? 0) > MAX_GPS_ACCURACY_M
-          ? " Your location fix was too rough; step outside or turn on precise location."
-          : distanceM !== null && s.methods.includes("gps")
-            ? ` You look to be ${distanceM >= 1000 ? `${(distanceM / 1000).toFixed(1)} km` : `${distanceM} m`} away.`
-            : "";
-  return { ok: false, problem: `Punch ${ways.join(", or ")}.${why}`, distanceM };
+/** How far the phone was from the shop, when it shared a fix and the shop's location is set. On record for the off-site flag; it proves nothing. */
+export function punchDistanceM(shop: { latitude: number | null; longitude: number | null }, gps: PunchEvidence["gps"]): number | null {
+  return gps && shop.latitude !== null && shop.longitude !== null ? Math.round(haversineMeters(gps, { lat: shop.latitude, lng: shop.longitude })) : null;
 }
 
-function methodWay(m: ClockMethod, s: ShopClockSettings, shop?: string): string {
-  if (m === "device") return shop ? `from ${shop}'s front-desk device` : "on the shop's front-desk device";
-  if (m === "network") return "on the shop's Wi-Fi";
-  if (m === "qr") return "by scanning the QR code on the front-desk clock";
-  if (m === "nfc") return "by tapping your phone on the shop's NFC tag";
-  return shop ? `within ${s.radiusM} m of the shop with location on` : `within ${s.radiusM} m of the shop (location on)`;
+export const KIOSK_REQUIRED = (shop: string) => `Clock in at ${shop}'s front-desk clock with your PIN, or scan the QR code it shows. A phone on its own can't punch.`;
+
+/**
+ * Launch rule (claude bot, Oct 28): a punch counts only from the shop's own paired front-desk clock,
+ * or from a phone showing a single-use QR code that clock just issued. A staff phone on its own
+ * (location, the shop's Wi-Fi, the NFC sticker, or nothing) never punches, whatever the shop's
+ * methods say; location is still worked out and kept for the off-site flag.
+ */
+export function verifyPunch(shopId: string, shop: { name: string; latitude: number | null; longitude: number | null }, e: PunchEvidence): Verified {
+  const distanceM = punchDistanceM(shop, e.gps);
+  if (e.deviceShopId === shopId) return { ok: true, method: "device", distanceM };
+  if (e.qrShopId === shopId) return { ok: true, method: "qr", distanceM };
+  return { ok: false, problem: KIOSK_REQUIRED(shop.name), distanceM };
 }
 
 /** What a phone punch at this shop needs, in a sentence for the clock page. */
-export function clockRuleText(s: ShopClockSettings): string {
-  if (!s.methods.length) return "Punches from anywhere are accepted here; where you are is still recorded.";
-  const ways = s.methods.map((m) => methodWay(m, s));
-  return `Punch ${ways.join(", or ")}.`;
+export function clockRuleText(_s?: ShopClockSettings): string {
+  return "Punch on the shop's front-desk clock with your PIN, or scan the QR code it shows with your phone.";
 }
 
 // ───────────────────────────── PINs ─────────────────────────────
 
 export const PIN_MAX_FAILURES = 5;
-export const PIN_LOCK_MINUTES = 5;
+/** A locked PIN stays locked until a manager unlocks it; this is the lock's end date in the database. */
+export const PIN_LOCKED_UNTIL_UNLOCKED = new Date("9999-12-31T00:00:00Z");
+
+export function pinLocked(s: { pinFailures: number; pinLockedUntil: Date | null } | null | undefined, now: Date): boolean {
+  return !!s && (s.pinFailures >= PIN_MAX_FAILURES || (!!s.pinLockedUntil && s.pinLockedUntil > now));
+}
 
 export function pinProblem(pin: string): string | null {
   if (!/^\d{4,6}$/.test(pin)) return "A PIN is 4 to 6 digits.";

@@ -7,7 +7,8 @@ import QRCode from "qrcode";
 import { clientIp } from "@/lib/client-ip";
 import { safe } from "@/server/action";
 import { authorize, can, getStaffContext } from "@/server/auth/staff";
-import { clockProofUrl, clockQrCode } from "@/server/clock-codes";
+import { clockProofUrl } from "@/server/clock-codes";
+import { issueKioskQr, type ClockNonce } from "@/server/clock-security";
 import { pairedDevice, startPairing } from "@/server/clock-pairing";
 import { type Actor } from "@/server/audit";
 import { forbidden } from "@/server/errors";
@@ -25,6 +26,7 @@ import {
   revokeDevice,
   setOpensEarly,
   setPin,
+  unlockPin,
   type PunchResult,
 } from "@/server/time-clock";
 
@@ -53,6 +55,9 @@ const Gps = z
   })
   .nullable();
 const Photo = z.string().max(400_000).nullable();
+/** Each send's single-use nonce and the time it was sent; the clock page makes a new one every time. */
+const Nonce = z.object({ id: z.string().max(128), at: z.union([z.number(), z.string().max(40)]) }).optional();
+const noNonce: ClockNonce = { id: null, at: null };
 /** Break start only: what the break is for and how long it's planned to take (empty: open). */
 const BreakPlan = {
   breakReasonId: z.uuid().nullable().optional(),
@@ -88,6 +93,7 @@ export async function punchAction(
     proof?: { qr?: string; tag?: string };
     /** Clocking out: today's cash tips, declared with the attestation. */
     cashTips?: { cents: number; attest: boolean } | null;
+    nonce?: { id: string; at: number | string };
   } & BreakPlanInput,
 ) {
   return safe<PunchReply>(async () => {
@@ -99,8 +105,9 @@ export async function punchAction(
         gps: Gps,
         photo: Photo,
         confirmTimeOff: z.boolean().optional(),
-        proof: z.object({ qr: z.string().max(64).optional(), tag: z.string().max(64).optional() }).optional(),
+        proof: z.object({ qr: z.string().max(200).optional(), tag: z.string().max(64).optional() }).optional(),
         cashTips: z.object({ cents: z.number().int().min(0).max(1_000_000), attest: z.boolean() }).nullish(),
+        nonce: Nonce,
         ...BreakPlan,
       })
       .parse(input);
@@ -116,6 +123,7 @@ export async function punchAction(
         gps: v.gps,
       },
       proof: v.proof,
+      nonce: v.nonce ?? noNonce,
       deviceId: device?.shopId === v.shopId ? device.id : null,
       photo: v.photo,
       confirmTimeOff: v.confirmTimeOff,
@@ -145,13 +153,13 @@ async function kioskDevice() {
   return { device, by: `kiosk:${device.label} (${ctx.staff.displayLabel})` };
 }
 
-/** P1: the QR code the front-desk clock shows, for phones to scan. It changes every 30 seconds. */
+/** The QR code the front-desk clock shows, for phones to scan: signed, single-use, good for a minute, redrawn every 15 seconds. */
 export async function kioskQrAction() {
   return safe(async () => {
     const { device } = await kioskDevice();
-    const { code, expiresAt } = clockQrCode(device.shopId);
+    const { code, expiresAt, refreshAt } = issueKioskQr(device);
     const svg = await QRCode.toString(clockProofUrl(device.shopId, { qr: code }), { type: "svg", margin: 1, errorCorrectionLevel: "M" });
-    return { svg, expiresAt: expiresAt.toISOString() };
+    return { svg, expiresAt: refreshAt.toISOString(), validUntil: expiresAt.toISOString() };
   });
 }
 
@@ -161,12 +169,12 @@ export async function kioskStatusAction(input: {
   pin: string;
 }) {
   return safe(async () => {
-    const { device } = await kioskDevice();
+    const { device, by } = await kioskDevice();
     const v = z
       .object({ staffId: z.uuid(), pin: z.string().max(12) })
       .parse(input);
     await onShopTeam(device.shopId, v.staffId);
-    await checkPin(v.staffId, v.pin);
+    await checkPin(v.staffId, v.pin, new Date(), { deviceId: device.id, shopId: device.shopId, via: "kiosk_web", by });
     const s = await clockState(v.staffId);
     return {
       state: s.state,
@@ -185,6 +193,7 @@ export async function kioskPunchAction(
     type: string;
     photo: string | null;
     confirmTimeOff?: boolean;
+    nonce?: { id: string; at: number | string };
   } & BreakPlanInput,
 ) {
   return safe<PunchReply>(async () => {
@@ -196,11 +205,12 @@ export async function kioskPunchAction(
         type: PunchType,
         photo: Photo,
         confirmTimeOff: z.boolean().optional(),
+        nonce: Nonce,
         ...BreakPlan,
       })
       .parse(input);
     await onShopTeam(device.shopId, v.staffId);
-    await checkPin(v.staffId, v.pin);
+    await checkPin(v.staffId, v.pin, new Date(), { deviceId: device.id, shopId: device.shopId, via: "kiosk_web", by });
     const actor = { staffId: v.staffId, label: by };
     const r = await punch({
       staffId: v.staffId,
@@ -213,6 +223,7 @@ export async function kioskPunchAction(
         gps: null,
       },
       deviceId: device.id,
+      nonce: v.nonce ?? noNonce,
       photo: v.photo,
       confirmTimeOff: v.confirmTimeOff,
       breakReasonId: v.breakReasonId ?? null,
@@ -249,6 +260,20 @@ export async function clearPinAction(staffId: string, shopId: string) {
     if (staffId === ctx.staff.id)
       throw forbidden("Reset your own PIN on your Time clock page.");
     await clearPin(z.uuid().parse(staffId), ctx.actor, shopId);
+    refresh();
+    return null;
+  });
+}
+
+/** A manager lifts a PIN locked after five wrong tries; the PIN stays as it is. Not their own. */
+export async function unlockPinAction(staffId: string, shopId: string) {
+  return safe(async () => {
+    const ctx = await authorize("timesheet.edit");
+    if (!ctx.shopIds.includes(shopId)) throw forbidden();
+    if (staffId === ctx.staff.id) throw forbidden("Ask another manager to unlock your own PIN.");
+    const id = z.uuid().parse(staffId);
+    await onShopTeam(shopId, id);
+    await unlockPin(id, ctx.actor, shopId);
     refresh();
     return null;
   });

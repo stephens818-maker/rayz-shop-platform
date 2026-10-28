@@ -4105,6 +4105,26 @@ export const clockDevices = pgTable("clock_devices", {
   createdAt: createdAt(),
 });
 
+/**
+ * Every nonce a clock request or kiosk QR code has used. The primary key is what makes each one
+ * single-use: claiming one is an insert, so a replay (or two racing sends) loses on the constraint.
+ * Rows past the timestamp window can't be replayed anyway and are pruned.
+ */
+export const clockNonces = pgTable(
+  "clock_nonces",
+  {
+    /** "req:" (the X-Clock-Nonce of a punch request) or "qr:" (the nonce in a kiosk QR code), then the nonce. */
+    nonce: text("nonce").primaryKey(),
+    kind: text("kind").$type<"request" | "qr">().notNull(),
+    deviceId: uuid("device_id").references(() => clockDevices.id, { onDelete: "set null" }),
+    staffId: uuid("staff_id").references(() => staff.id, { onDelete: "set null" }),
+    /** The time the request or QR code says it was made, checked against the window. */
+    requestedAt: ts("requested_at").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("clock_nonces_created_idx").on(t.createdAt)],
+);
+
 /** A manager's one-time pairing code for a front-desk clock, shown as a QR code; good for 10 minutes. */
 export const clockPairings = pgTable("clock_pairings", {
   id: id(),

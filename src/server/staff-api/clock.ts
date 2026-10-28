@@ -9,7 +9,8 @@ import { startOfLocalDay, todayLocal } from "@/lib/time";
 import { workShopIds } from "@/server/auth/access";
 import { assertShopAccess, can, openShops } from "@/server/auth/staff";
 import { breakReasons } from "@/server/block-reasons";
-import { clockProofUrl, clockQrCode } from "@/server/clock-codes";
+import { clockProofUrl } from "@/server/clock-codes";
+import { issueKioskQr, requestNonce } from "@/server/clock-security";
 import { AppError, forbidden } from "@/server/errors";
 import { clockInWelcome } from "@/server/milestones/day";
 import { redeemPairing, pairedDevice } from "@/server/clock-pairing";
@@ -19,18 +20,20 @@ import { kioskQueue } from "./front";
 import type { StaffAppContext } from "./http";
 
 /**
- * The time clock in the staff app (S2). A phone punch proves where it is the way the shop asks:
- * the front-desk QR code (it changes every 30 seconds), the shop's NFC sticker, the shop's Wi-Fi or
- * location. Both codes open `/admin/clock?shop=…&qr=…` (or `&tag=…`); the app reads `shop` and `qr`
- * or `tag` from that link and sends them as `proof`. A tablet registered as the shop's front-desk
- * clock punches for anyone with their own PIN. Nothing biometric: no face or fingerprint is asked
- * for or kept (a shop's punch photo is kept for managers, never matched).
+ * The time clock in the staff app (S2). Punches happen at the shop's paired front-desk clock: on it,
+ * with the person's tile and then their PIN, or on their own phone by scanning the QR code it shows
+ * (signed with CLOCK_HMAC_SECRET, single-use, a minute long). The code opens
+ * `/admin/clock?shop=…&qr=…`; the app reads `shop` and `qr` from that link and sends them as `proof`.
+ * A phone on its own (location, Wi-Fi, the NFC sticker) never punches. Every punch request carries
+ * X-Clock-Nonce and X-Clock-Timestamp (see clock-security.ts). Nothing biometric: no face or
+ * fingerprint is asked for or kept (a shop's punch photo is kept for managers, never matched).
  */
 
 export type PunchType = "in" | "out" | "break_start" | "break_end";
 
 /** The X-Clock-Device header: this install's front-desk clock token, from POST /clock/kiosk/register. */
 const deviceToken = (req: Request) => req.headers.get("x-clock-device")?.trim() || null;
+const installId = (req: Request) => req.headers.get("x-device-id")?.trim() || null;
 
 async function myClockShops(ctx: StaffAppContext) {
   const team = await workShopIds(ctx.staff.id);
@@ -120,7 +123,7 @@ export async function appPunch(ctx: StaffAppContext, req: Request, v: AppPunchIn
   const late = queuedAt && queuedPunchProblem(queuedAt, now);
   if (late) throw new AppError("bad_request", late, { field: "queuedAt" });
   const offline = queuedAt && now.getTime() - queuedAt.getTime() > OFFLINE_PUNCH_CLOCK_SKEW_MS ? queuedAt : null;
-  const device = await deviceFromToken(deviceToken(req));
+  const device = await deviceFromToken(deviceToken(req), installId(req));
   const r = await punch({
     staffId: ctx.staff.id,
     shopId: v.shopId,
@@ -128,6 +131,7 @@ export async function appPunch(ctx: StaffAppContext, req: Request, v: AppPunchIn
     source: "self",
     evidence: { deviceShopId: device?.shopId ?? null, ip: offline ? null : clientIp(req.headers), gps: v.gps ?? null },
     proof: v.proof,
+    nonce: requestNonce(req),
     deviceId: device?.shopId === v.shopId ? device.id : null,
     photo: v.photo ?? null,
     confirmTimeOff: v.confirmTimeOff,
@@ -181,16 +185,16 @@ export async function pairedKiosk(req: Request): Promise<KioskCaller | null> {
 
 /** The registered front-desk clock this request comes from, at one of the signed-in login's shops. */
 export async function signedInKiosk(ctx: StaffAppContext, req: Request): Promise<KioskCaller> {
-  const device = await deviceFromToken(deviceToken(req));
+  const device = await deviceFromToken(deviceToken(req), installId(req));
   if (!device || !ctx.shopIds.includes(device.shopId)) throw forbidden("This device isn't registered as one of your shops' time clocks.");
   assertShopAccess(ctx, device.shopId);
   return { device, by: `kiosk:${device.label} (${ctx.staff.displayLabel}, staff app)`, queue: can(ctx, "walkins.manage") || ctx.staff.kind === "shop" };
 }
 
-/** The QR code the front-desk clock shows for phones to scan: the link to draw, good for about a minute. */
+/** The QR code the front-desk clock shows for phones to scan: the link to draw. One scan uses it up; it's good for a minute, and the clock draws a new one by expiresAt (15 seconds). */
 export async function kioskQr({ device }: KioskCaller) {
-  const { code, expiresAt } = clockQrCode(device.shopId);
-  return { shopId: device.shopId, url: clockProofUrl(device.shopId, { qr: code }), expiresAt: expiresAt.toISOString() };
+  const { code, expiresAt, refreshAt } = issueKioskQr(device);
+  return { shopId: device.shopId, url: clockProofUrl(device.shopId, { qr: code }), expiresAt: refreshAt.toISOString(), validUntil: expiresAt.toISOString() };
 }
 
 /** Who can punch on this clock: the shop's active team, by the name they go by. */
@@ -204,17 +208,20 @@ export async function kioskTeam({ device }: KioskCaller) {
   return { shopId: device.shopId, shop: device.shop, device: device.label, team };
 }
 
-/** Their PIN, then what they can punch next. Five wrong PINs lock theirs for five minutes. */
-export async function kioskStatus({ device }: KioskCaller, v: { staffId: string; pin: string }) {
+const pinPlace = (k: KioskCaller) => ({ deviceId: k.device.id, shopId: k.device.shopId, via: "kiosk_app" as const, by: k.by });
+
+/** Their tile, then their PIN, then what they can punch next. Five wrong PINs lock theirs until a manager unlocks it. */
+export async function kioskStatus(k: KioskCaller, v: { staffId: string; pin: string }) {
+  const { device } = k;
   await onShopTeam(device.shopId, v.staffId);
-  await checkPin(v.staffId, v.pin);
+  await checkPin(v.staffId, v.pin, new Date(), pinPlace(k));
   return stateView(await clockState(v.staffId));
 }
 
 export async function kioskPunch(k: KioskCaller, req: Request, v: { staffId: string; pin: string; type: PunchType; photo?: string | null; confirmTimeOff?: boolean; breakReasonId?: string | null; plannedMin?: number | null }) {
   const { device } = k;
   await onShopTeam(device.shopId, v.staffId);
-  await checkPin(v.staffId, v.pin);
+  await checkPin(v.staffId, v.pin, new Date(), pinPlace(k));
   const actor = { staffId: v.staffId, label: k.by };
   const r = await punch({
     staffId: v.staffId,
@@ -222,6 +229,7 @@ export async function kioskPunch(k: KioskCaller, req: Request, v: { staffId: str
     type: v.type,
     source: "kiosk",
     evidence: { deviceShopId: device.shopId, ip: clientIp(req.headers), gps: null },
+    nonce: requestNonce(req),
     deviceId: device.id,
     photo: v.photo ?? null,
     confirmTimeOff: v.confirmTimeOff,

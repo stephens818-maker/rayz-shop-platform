@@ -1,7 +1,8 @@
 /**
  * The time clock against a real database: punches pair into shifts and derive clocked hours (unpaid
- * breaks out), each shop's check (device, GPS, network) is enforced and recorded, the front-desk PIN
- * locks after five wrong tries, time off warns first, late against the schedule is flagged, manager
+ * breaks out), only the shop's front-desk clock (or a single-use QR code it drew) punches, each punch
+ * request's nonce works once, the front-desk PIN locks after five wrong tries until a manager unlocks
+ * it, time off warns first, late against the schedule is flagged, manager
  * edits need a reason and land in the append-only edit log and the audit log with before and after,
  * approvals go employee then manager, a locked period refuses punches, edits and hours, forgotten
  * clock-outs and full-time changes alert managers, the export's totals add up, and pay rates only
@@ -51,9 +52,12 @@ const actorOf = (s: { id: string; displayLabel: string }) => ({ staffId: s.id, l
 const editorOf = (s: { id: string; displayLabel: string }, shopIds: string[], isOwner = false) => ({ actor: actorOf(s), staffId: s.id, isOwner, shopIds });
 /** Standing in the Coralville shop with location on. */
 const HERE = { lat: 41.6767, lng: -91.5811, accuracyM: 10 };
+/** A punch request's single-use nonce, sent at `at`. */
+const nonce = (at: Date = new Date()) => ({ id: crypto.randomUUID(), at });
 
+/** Signed in on the shop's own front-desk clock, punching for themselves. */
 async function punchAt(staff: { id: string; displayLabel: string }, shopId: string, type: "in" | "out" | "break_start" | "break_end", now: Date, gps = HERE) {
-  const r = await tc.punch({ staffId: staff.id, shopId, type, source: "self", evidence: { deviceShopId: null, ip: null, gps }, deviceId: null, photo: null, actor: actorOf(staff), now });
+  const r = await tc.punch({ staffId: staff.id, shopId, type, source: "self", evidence: { deviceShopId: shopId, ip: null, gps }, deviceId: null, photo: null, actor: actorOf(staff), now, nonce: nonce(now) });
   if (r.kind !== "done") throw new Error(r.message);
   return r;
 }
@@ -78,29 +82,63 @@ describe("punching", () => {
     expect(rows.map((r) => r.source)).toEqual(["clock", "clock"]);
     expect(minutesOf(rows)).toBe(7.5 * 60);
     const [p] = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.id, inn.punchId));
-    expect(p).toMatchObject({ method: "gps", source: "self", shopId: cv.id });
+    expect(p).toMatchObject({ method: "device", source: "self", shopId: cv.id });
     expect(p.distanceM).toBeLessThan(50);
   });
 
-  it("each shop's check is enforced, and refused punches leave nothing behind", async () => {
+  it("a phone on its own can't punch: at the shop by GPS, on its Wi-Fi, or with nothing; refused punches leave nothing behind", async () => {
     const mk = await staffBy("makenna@rayz.test");
     const cv = await shop("coralville");
-    const now = at(m.time.addDays(period(2).start, 2), 9 * 60);
-    const before = (await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.staffId, mk.id))).length;
-    const moline = { lat: 41.493, lng: -90.487, accuracyM: 10 };
-    await expect(punchAt(mk, cv.id, "in", now, moline)).rejects.toThrow(/km away/);
-    await expect(tc.punch({ staffId: mk.id, shopId: cv.id, type: "in", source: "self", evidence: { deviceShopId: null, ip: "203.0.113.10", gps: null }, deviceId: null, photo: null, actor: actorOf(mk), now })).rejects.toThrow(
-      /didn't share its location/,
-    );
-    await expect(tc.punch({ staffId: mk.id, shopId: cv.id, type: "in", source: "kiosk", evidence: { deviceShopId: null, ip: null, gps: null }, deviceId: null, photo: null, actor: actorOf(mk), now })).rejects.toThrow(
-      /registered time clock devices/,
-    );
-    expect((await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.staffId, mk.id))).length).toBe(before);
-    const ok = await tc.punch({ staffId: mk.id, shopId: cv.id, type: "in", source: "self", evidence: { deviceShopId: cv.id, ip: null, gps: null }, deviceId: null, photo: null, actor: actorOf(mk), now });
-    expect(ok.kind).toBe("done");
-    const [p] = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.id, (ok as { punchId: string }).punchId));
-    expect(p.method).toBe("device");
-    await punchAt(mk, cv.id, "out", new Date(now.getTime() + 4 * 3600_000));
+    const saved = cv.timeClock;
+    // Even a shop still set to accept location, Wi-Fi or anything at all.
+    await m.db.db
+      .update(S().shops)
+      .set({ timeClock: { ...(await import("@/domain/time-clock")).shopClockSettings(saved), methods: ["gps", "network"], networks: ["203.0.113.0/24"] } as unknown as Record<string, unknown> })
+      .where(eq(S().shops.id, cv.id));
+    try {
+      const now = at(m.time.addDays(period(2).start, 2), 9 * 60);
+      const before = (await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.staffId, mk.id))).length;
+      const phone = { staffId: mk.id, shopId: cv.id, type: "in" as const, source: "self" as const, deviceId: null, photo: null, actor: actorOf(mk), now };
+      for (const evidence of [
+        { deviceShopId: null, ip: null, gps: HERE },
+        { deviceShopId: null, ip: "203.0.113.10", gps: null },
+        { deviceShopId: null, ip: null, gps: null },
+        { deviceShopId: (await shop("moline")).id, ip: null, gps: HERE },
+      ])
+        await expect(tc.punch({ ...phone, evidence, nonce: nonce(now) })).rejects.toMatchObject({ code: "forbidden", details: { reason: "kiosk_required" } });
+      await expect(tc.punch({ ...phone, source: "kiosk", evidence: { deviceShopId: null, ip: null, gps: null }, nonce: nonce(now) })).rejects.toThrow(/registered time clock devices/);
+      expect((await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.staffId, mk.id))).length).toBe(before);
+      const ok = await tc.punch({ ...phone, evidence: { deviceShopId: cv.id, ip: null, gps: null }, nonce: nonce(now) });
+      expect(ok.kind).toBe("done");
+      const [p] = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.id, (ok as { punchId: string }).punchId));
+      expect(p.method).toBe("device");
+      await punchAt(mk, cv.id, "out", new Date(now.getTime() + 4 * 3600_000));
+    } finally {
+      await m.db.db.update(S().shops).set({ timeClock: saved }).where(eq(S().shops.id, cv.id));
+    }
+  });
+
+  it("each punch request's nonce works once (an atomic insert), within a minute of its timestamp", async () => {
+    const mk = await staffBy("makenna@rayz.test");
+    const cv = await shop("coralville");
+    const now = at(m.time.addDays(period(2).start, 4), 9 * 60);
+    const req = { staffId: mk.id, shopId: cv.id, type: "in" as const, source: "self" as const, evidence: { deviceShopId: cv.id, ip: null, gps: null }, deviceId: null, photo: null, actor: actorOf(mk), now, confirmTimeOff: true };
+    await expect(tc.punch({ ...req, nonce: { id: null, at: null } })).rejects.toMatchObject({ code: "bad_request", details: { reason: "nonce_required" } });
+    await expect(tc.punch({ ...req, nonce: { id: "short", at: now } })).rejects.toMatchObject({ details: { reason: "nonce_required" } });
+    await expect(tc.punch({ ...req, nonce: { id: crypto.randomUUID(), at: null } })).rejects.toMatchObject({ details: { reason: "timestamp_required" } });
+    await expect(tc.punch({ ...req, nonce: nonce(new Date(now.getTime() - 61_000)) })).rejects.toMatchObject({ details: { reason: "stale_request" } });
+    await expect(tc.punch({ ...req, nonce: nonce(new Date(now.getTime() + 61_000)) })).rejects.toMatchObject({ details: { reason: "stale_request" } });
+    const once = nonce(new Date(now.getTime() - 30_000));
+    expect((await tc.punch({ ...req, nonce: once })).kind).toBe("done");
+    // The same request again, as a replay: refused before anything else, even as the next punch.
+    await expect(tc.punch({ ...req, type: "out", nonce: once })).rejects.toMatchObject({ code: "conflict", details: { reason: "nonce_replayed" } });
+    // Two sends racing with one nonce: the primary key lets exactly one through.
+    const race = nonce(now);
+    const both = await Promise.allSettled([tc.punch({ ...req, type: "out", nonce: race }), tc.punch({ ...req, type: "out", nonce: race })]);
+    expect(both.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(both.find((r) => r.status === "rejected")).toMatchObject({ reason: { details: { reason: "nonce_replayed" } } });
+    const rows = await m.db.db.select().from(S().clockNonces).where(eq(S().clockNonces.nonce, `req:${race.id}`));
+    expect(rows).toMatchObject([{ kind: "request", staffId: mk.id }]);
   });
 
   it("clocking in during time off asks first, then is flagged", async () => {
@@ -108,11 +146,11 @@ describe("punching", () => {
     const cv = await shop("coralville");
     const day = m.time.addDays(period(2).start, 3);
     await m.db.db.insert(S().timeBlocks).values({ staffId: mk.id, shopId: null, startsAt: at(day, 0), endsAt: at(m.time.addDays(day, 1), 0), kind: "day_off", category: "time_off", reason: "Vacation" });
-    const req = { staffId: mk.id, shopId: cv.id, type: "in" as const, source: "self" as const, evidence: { deviceShopId: null, ip: null, gps: HERE }, deviceId: null, photo: null, actor: actorOf(mk), now: at(day, 9 * 60) };
-    const ask = await tc.punch(req);
+    const req = { staffId: mk.id, shopId: cv.id, type: "in" as const, source: "self" as const, evidence: { deviceShopId: cv.id, ip: null, gps: HERE }, deviceId: null, photo: null, actor: actorOf(mk), now: at(day, 9 * 60) };
+    const ask = await tc.punch({ ...req, nonce: nonce(req.now) });
     expect(ask).toMatchObject({ kind: "confirm" });
     expect((ask as { message: string }).message).toMatch(/time off right now \(Vacation/);
-    const done = await tc.punch({ ...req, confirmTimeOff: true });
+    const done = await tc.punch({ ...req, confirmTimeOff: true, nonce: nonce(req.now) });
     expect(done.kind === "done" && done.flags).toContain("during_time_off");
     await punchAt(mk, cv.id, "out", at(day, 11 * 60));
   });
@@ -155,64 +193,65 @@ describe("punching", () => {
     expect(second.shops[0].totals.workedCenti).toBe(200);
   });
 
-  it("the front-desk QR code (from the last minute) and the shop's NFC tag prove presence; a retired tag stops working (P1, no biometrics)", async () => {
+  it("a phone punches by scanning the front-desk clock's QR code: signed, a minute long, single-use, from a paired device of that shop; the NFC tag alone doesn't (no biometrics)", async () => {
     const mk = await staffBy("makenna@rayz.test");
     const cv = await shop("coralville");
+    const mo = await shop("moline");
     const codes = await import("@/server/clock-codes");
-    const saved = cv.timeClock;
-    await m.db.db
-      .update(S().shops)
-      .set({ timeClock: { ...(await import("@/domain/time-clock")).shopClockSettings(saved), methods: ["qr", "nfc"] } as unknown as Record<string, unknown> })
-      .where(eq(S().shops.id, cv.id));
-    try {
-      const day = m.time.addDays(period(12).start, 1);
-      const now = at(day, 9 * 60);
-      const base = { staffId: mk.id, shopId: cv.id, source: "self" as const, evidence: { deviceShopId: null, ip: null, gps: null }, deviceId: null, photo: null, actor: actorOf(mk) };
-      await expect(tc.punch({ ...base, type: "in", now })).rejects.toThrow();
-      const stale = codes.clockQrCode(cv.id, new Date(now.getTime() - 2 * codes.QR_STEP_MS)).code;
-      await expect(tc.punch({ ...base, type: "in", now, proof: { qr: stale } })).rejects.toThrow();
-      await expect(tc.punch({ ...base, type: "in", now, proof: { qr: codes.clockQrCode((await shop("moline")).id, now).code } })).rejects.toThrow();
-      const lastStep = codes.clockQrCode(cv.id, new Date(now.getTime() - codes.QR_STEP_MS)).code;
-      const inn = await tc.punch({ ...base, type: "in", now, proof: { qr: lastStep } });
-      expect(inn.kind).toBe("done");
-      const [p] = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.id, (inn as { punchId: string }).punchId));
-      expect(p.method).toBe("qr");
+    const sec = await import("@/server/clock-security");
+    const kiosk = await tc.registerDevice(cv.id, "QR test iPad", actorOf(mk));
+    const other = await tc.registerDevice(mo.id, "Moline QR iPad", actorOf(mk));
+    const device = { id: kiosk.id, shopId: cv.id };
+    const day = m.time.addDays(period(12).start, 1);
+    const now = at(day, 9 * 60);
+    const base = { staffId: mk.id, shopId: cv.id, source: "self" as const, evidence: { deviceShopId: null, ip: null, gps: null }, deviceId: null, photo: null, actor: actorOf(mk), confirmTimeOff: true };
+    const qrOf = (d: { id: string; shopId: string }, t: Date) => sec.issueKioskQr(d, t).code;
+    await expect(tc.punch({ ...base, type: "in", now, nonce: nonce(now) })).rejects.toMatchObject({ details: { reason: "kiosk_required" } });
+    await expect(tc.punch({ ...base, type: "in", now, nonce: nonce(now), proof: { qr: qrOf(device, new Date(now.getTime() - 61_000)) } })).rejects.toMatchObject({ details: { reason: "qr_invalid" } });
+    await expect(tc.punch({ ...base, type: "in", now, nonce: nonce(now), proof: { qr: qrOf({ id: other.id, shopId: mo.id }, now) } })).rejects.toMatchObject({ details: { reason: "qr_invalid" } });
+    // A code forged for this shop under a made-up device, or with its signature changed.
+    await expect(tc.punch({ ...base, type: "in", now, nonce: nonce(now), proof: { qr: qrOf({ id: crypto.randomUUID(), shopId: cv.id }, now) } })).rejects.toMatchObject({ details: { reason: "qr_invalid" } });
+    const good = qrOf(device, new Date(now.getTime() - 20_000));
+    await expect(tc.punch({ ...base, type: "in", now, nonce: nonce(now), proof: { qr: `${good.slice(0, -2)}xx` } })).rejects.toMatchObject({ details: { reason: "qr_invalid" } });
+    const inn = await tc.punch({ ...base, type: "in", now, nonce: nonce(now), proof: { qr: good } });
+    expect(inn.kind).toBe("done");
+    const [p] = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.id, (inn as { punchId: string }).punchId));
+    expect(p).toMatchObject({ method: "qr", deviceId: kiosk.id });
+    // One scan uses the code up, even for the next punch.
+    const soon = new Date(now.getTime() + 10_000);
+    await expect(tc.punch({ ...base, type: "out", now: soon, nonce: nonce(soon), proof: { qr: good } })).rejects.toMatchObject({ code: "conflict", details: { reason: "qr_used" } });
 
-      const url = new URL(await codes.nfcTagUrl(cv.id));
-      expect(url.pathname).toBe("/admin/clock");
-      const tag = url.searchParams.get("tag")!;
-      const out = await tc.punch({ ...base, type: "out", now: at(day, 13 * 60), proof: { tag } });
-      expect(out.kind).toBe("done");
-      const [o] = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.id, (out as { punchId: string }).punchId));
-      expect(o.method).toBe("nfc");
+    const url = new URL(await codes.nfcTagUrl(cv.id));
+    expect(url.pathname).toBe("/admin/clock");
+    const tag = url.searchParams.get("tag")!;
+    await expect(tc.punch({ ...base, type: "out", now: at(day, 13 * 60), nonce: nonce(at(day, 13 * 60)), proof: { tag } })).rejects.toMatchObject({ details: { reason: "kiosk_required" } });
+    // A punch that fails after the QR code checks out leaves the code for someone else.
+    const shared = qrOf(device, at(day, 13 * 60));
+    await expect(tc.punch({ ...base, type: "out", photo: "not a photo", now: at(day, 13 * 60), nonce: nonce(at(day, 13 * 60)), proof: { qr: shared } })).rejects.toThrow(/couldn't be read/);
+    expect((await tc.punch({ ...base, type: "out", now: at(day, 13 * 60), nonce: nonce(at(day, 13 * 60)), proof: { qr: shared } })).kind).toBe("done");
 
-      const fresh = new URL(await codes.retireNfcTag(cv.id, actorOf(mk))).searchParams.get("tag")!;
-      expect(fresh).not.toBe(tag);
-      await expect(tc.punch({ ...base, type: "in", now: at(day, 14 * 60), proof: { tag } })).rejects.toThrow();
-      expect((await tc.punch({ ...base, type: "in", now: at(day, 14 * 60), proof: { tag: fresh } })).kind).toBe("done");
-      await tc.punch({ ...base, type: "out", now: at(day, 15 * 60), proof: { tag: fresh } });
-      const [retired] = await m.db.db.select().from(S().auditLog).where(m.drizzle.and(eq(S().auditLog.action, "timeclock.nfc_retired"), eq(S().auditLog.entityId, cv.id)));
-      expect(retired).toBeTruthy();
-    } finally {
-      await m.db.db.update(S().shops).set({ timeClock: saved }).where(eq(S().shops.id, cv.id));
-    }
+    const fresh = new URL(await codes.retireNfcTag(cv.id, actorOf(mk))).searchParams.get("tag")!;
+    expect(fresh).not.toBe(tag);
+    const [retired] = await m.db.db.select().from(S().auditLog).where(m.drizzle.and(eq(S().auditLog.action, "timeclock.nfc_retired"), eq(S().auditLog.entityId, cv.id)));
+    expect(retired).toBeTruthy();
+    // A revoked clock's codes stop working at once.
+    await tc.revokeDevice(kiosk.id, [cv.id], actorOf(mk));
+    await expect(tc.punch({ ...base, type: "in", now: at(day, 14 * 60), nonce: nonce(at(day, 14 * 60)), proof: { qr: qrOf(device, at(day, 14 * 60)) } })).rejects.toMatchObject({ details: { reason: "qr_invalid" } });
+    await tc.revokeDevice(other.id, [mo.id], actorOf(mk));
   });
 
   it("kiosk and QR punches go in at the server's UTC time, not a device's", async () => {
     const mk = await staffBy("makenna@rayz.test");
     const cv = await shop("coralville");
-    const codes = await import("@/server/clock-codes");
-    const saved = cv.timeClock;
-    await m.db.db
-      .update(S().shops)
-      .set({ timeClock: { ...(await import("@/domain/time-clock")).shopClockSettings(saved), methods: ["qr"] } as unknown as Record<string, unknown> })
-      .where(eq(S().shops.id, cv.id));
+    const sec = await import("@/server/clock-security");
+    const reg = await tc.registerDevice(cv.id, "UTC test iPad", actorOf(mk));
+    const device = { id: reg.id, shopId: cv.id };
     try {
       const day = m.time.addDays(period(13).start, 1);
       const received = at(day, 9 * 60);
       const deviceSaid = at(day, 6 * 60);
       const kiosk = { staffId: mk.id, shopId: cv.id, source: "kiosk" as const, evidence: { deviceShopId: cv.id, ip: null, gps: null }, deviceId: null, photo: null, actor: actorOf(mk), confirmTimeOff: true };
-      const inn = await tc.punch({ ...kiosk, type: "in", now: deviceSaid, offline: { receivedAt: received } });
+      const inn = await tc.punch({ ...kiosk, type: "in", now: deviceSaid, offline: { receivedAt: received }, nonce: nonce(received) });
       expect(inn).toMatchObject({ kind: "done", at: received });
       expect((inn as { flags: string[] }).flags).not.toContain("offline");
       const [p] = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.id, (inn as { punchId: string }).punchId));
@@ -221,13 +260,13 @@ describe("punching", () => {
       const later = at(day, 17 * 60);
       const self = { staffId: mk.id, shopId: cv.id, source: "self" as const, evidence: { deviceShopId: null, ip: null, gps: null }, deviceId: null, photo: null, actor: actorOf(mk) };
       // The phone says it scanned at 4 PM; the code is checked, and the punch put in, at the server's 5 PM.
-      await expect(tc.punch({ ...self, type: "out", now: at(day, 16 * 60), offline: { receivedAt: later }, proof: { qr: codes.clockQrCode(cv.id, at(day, 16 * 60)).code } })).rejects.toThrow();
-      const out = await tc.punch({ ...self, type: "out", now: at(day, 16 * 60), offline: { receivedAt: later }, proof: { qr: codes.clockQrCode(cv.id, later).code } });
+      await expect(tc.punch({ ...self, type: "out", now: at(day, 16 * 60), offline: { receivedAt: later }, nonce: nonce(later), proof: { qr: sec.issueKioskQr(device, at(day, 16 * 60)).code } })).rejects.toThrow();
+      const out = await tc.punch({ ...self, type: "out", now: at(day, 16 * 60), offline: { receivedAt: later }, nonce: nonce(later), proof: { qr: sec.issueKioskQr(device, later).code } });
       expect(out).toMatchObject({ kind: "done", at: later });
       const [log] = await m.db.db.select().from(S().auditLog).where(m.drizzle.and(eq(S().auditLog.action, "timeclock.punch"), eq(S().auditLog.entityId, (out as { punchId: string }).punchId)));
       expect(log.details).toMatchObject({ deviceTimeIgnored: at(day, 16 * 60).toISOString() });
     } finally {
-      await m.db.db.update(S().shops).set({ timeClock: saved }).where(eq(S().shops.id, cv.id));
+      await tc.revokeDevice(reg.id, [cv.id], actorOf(mk));
     }
   });
 
@@ -258,7 +297,7 @@ describe("punching", () => {
 });
 
 describe("the front-desk clock", () => {
-  it("runs only on a registered device, and five wrong PINs lock that person's PIN", async () => {
+  it("runs only on a registered device; their tile, then their PIN; five wrong PINs lock it until a manager unlocks it, every try audit-logged", async () => {
     const michelle = await staffBy("michelle@rayz.test");
     const cv = await shop("coralville");
     await signInAs(michelle.id);
@@ -274,18 +313,43 @@ describe("the front-desk clock", () => {
       .innerJoin(S().staff, eq(S().staff.id, S().staffShops.staffId))
       .where(m.drizzle.and(eq(S().staffShops.shopId, cv.id), eq(S().staff.kind, "person"), eq(S().staff.active, true)));
     const [a, b] = team.map((t) => t.id).filter((id) => id !== fd.id && id !== michelle.id);
+    const seen = new Set((await m.db.db.select({ id: S().auditLog.id }).from(S().auditLog).where(m.drizzle.and(eq(S().auditLog.action, "timeclock.pin_attempt"), eq(S().auditLog.entityId, a)))).map((r) => r.id));
     for (let i = 0; i < 4; i++) expect(await clockActions.kioskStatusAction({ staffId: a, pin: "0000" })).toEqual({ ok: false, error: "Wrong PIN." });
     const fifth = await clockActions.kioskStatusAction({ staffId: a, pin: "0000" });
-    expect(!fifth.ok && fifth.error).toMatch(/locked for 5 minutes/);
-    const locked = await clockActions.kioskStatusAction({ staffId: a, pin: "2468" });
-    expect(!locked.ok && locked.error).toMatch(/Too many wrong PINs/);
+    expect(!fifth.ok && fifth.error).toMatch(/locked until a manager unlocks it/);
+    // The right PIN, sent many at once, still can't get past the lock.
+    const locked = await Promise.all([1, 2, 3].map(() => clockActions.kioskStatusAction({ staffId: a, pin: "2468" })));
+    for (const l of locked) expect(!l.ok && l.error).toMatch(/Ask a manager to unlock it/);
+    // Setting a new PIN doesn't lift it, and it doesn't wear off.
+    await tc.setPin(a, "2468", { staffId: a, label: "self" });
+    await expect(tc.checkPin(a, "2468", new Date(Date.now() + 7 * 86_400_000))).rejects.toThrow(/Ask a manager to unlock it/);
+    const tries = (await m.db.db.select().from(S().auditLog).where(m.drizzle.and(eq(S().auditLog.action, "timeclock.pin_attempt"), eq(S().auditLog.entityId, a)))).filter((r) => !seen.has(r.id));
+    expect(tries.map((t) => (t.details as { ok: boolean }).ok)).toEqual(Array(tries.length).fill(false));
+    expect(tries).toHaveLength(9);
+    expect(tries.filter((t) => (t.details as { refused?: string }).refused === "locked")).toHaveLength(4);
+    expect(tries.map((t) => (t.details as { failures?: number }).failures).filter(Boolean).sort()).toEqual([1, 2, 3, 4, 5]);
+    expect(tries.find((t) => (t.details as { failures?: number }).failures === 1)).toMatchObject({ shopId: cv.id, details: { via: "kiosk_web", deviceId: reg.ok ? reg.data : null } });
+    const [lockRow] = await m.db.db.select().from(S().auditLog).where(m.drizzle.and(eq(S().auditLog.action, "timeclock.pin_locked"), eq(S().auditLog.entityId, a)));
+    expect(lockRow.details).toMatchObject({ failures: 5 });
+    // A barber can't unlock it, nor a manager their own; another manager can.
+    await signInAs((await staffBy("makenna@rayz.test")).id);
+    expect(await clockActions.unlockPinAction(a, cv.id)).toMatchObject({ ok: false });
+    await signInAs(michelle.id);
+    expect(await clockActions.unlockPinAction(michelle.id, cv.id)).toMatchObject({ ok: false, error: expect.stringMatching(/another manager/) });
+    expect(await clockActions.unlockPinAction(a, cv.id)).toEqual({ ok: true, data: null });
+    await signInAs(fd.id);
+    expect((await clockActions.kioskStatusAction({ staffId: a, pin: "2468" })).ok).toBe(true);
 
     const status = await clockActions.kioskStatusAction({ staffId: b, pin: "2468" });
     expect(status.ok).toBe(true);
     const next = status.ok ? status.data.next[0] : "in";
-    let punched = await clockActions.kioskPunchAction({ staffId: b, pin: "2468", type: next, photo: null });
-    if (punched.ok && punched.data.kind === "confirm") punched = await clockActions.kioskPunchAction({ staffId: b, pin: "2468", type: next, photo: null, confirmTimeOff: true });
+    expect(await clockActions.kioskPunchAction({ staffId: b, pin: "2468", type: next, photo: null })).toMatchObject({ ok: false, error: expect.stringMatching(/one-time code/) });
+    let sent = { id: crypto.randomUUID(), at: Date.now() };
+    let punched = await clockActions.kioskPunchAction({ staffId: b, pin: "2468", type: next, photo: null, nonce: sent });
+    if (punched.ok && punched.data.kind === "confirm") punched = await clockActions.kioskPunchAction({ staffId: b, pin: "2468", type: next, photo: null, confirmTimeOff: true, nonce: (sent = { id: crypto.randomUUID(), at: Date.now() }) });
     expect(punched.ok).toBe(true);
+    // The same request replayed, with b's PIN and all.
+    expect(await clockActions.kioskPunchAction({ staffId: b, pin: "2468", type: next === "in" ? "out" : "in", photo: null, confirmTimeOff: true, nonce: sent })).toMatchObject({ ok: false, error: expect.stringMatching(/already sent once/) });
     const id = punched.ok && punched.data.kind === "done" ? punched.data.punchId : "";
     const [row] = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.id, id));
     expect(row).toMatchObject({ staffId: b, shopId: cv.id, source: "kiosk", method: "device" });
@@ -298,20 +362,63 @@ describe("the front-desk clock", () => {
     jar.device = undefined;
   });
 
-  it("a phone punch records the address it came from", async () => {
+  it("a phone punch needs the front-desk clock's QR code, and records the address it came from", async () => {
     const kat = await staffBy("kat@rayz.test");
     await signInAs(kat.id);
     jar.ip = "198.51.100.23";
     const mo = await shop("moline");
     const s = await tc.clockState(kat.id);
     const shopId = s.shift?.shopId ?? mo.id;
-    let r = await clockActions.punchAction({ shopId, type: s.next[0], gps: null, photo: null });
-    if (r.ok && r.data.kind === "confirm") r = await clockActions.punchAction({ shopId, type: s.next[0], gps: null, photo: null, confirmTimeOff: true });
+    const reg = await tc.registerDevice(shopId, "Phone test iPad", actorOf(kat));
+    const fresh = () => ({ id: crypto.randomUUID(), at: Date.now() });
+    const here = { lat: 41.493, lng: -90.487, accuracyM: 5 };
+    const alone = await clockActions.punchAction({ shopId, type: s.next[0], gps: here, photo: null, confirmTimeOff: true, nonce: fresh() });
+    expect(!alone.ok && alone.error).toMatch(/front-desk clock with your PIN, or scan the QR code/);
+    const qr = { qr: (await import("@/server/clock-security")).issueKioskQr({ id: reg.id, shopId }).code };
+    let r = await clockActions.punchAction({ shopId, type: s.next[0], gps: null, photo: null, proof: qr, nonce: fresh() });
+    if (r.ok && r.data.kind === "confirm") r = await clockActions.punchAction({ shopId, type: s.next[0], gps: null, photo: null, confirmTimeOff: true, proof: qr, nonce: fresh() });
     expect(r.ok).toBe(true);
     const id = r.ok && r.data.kind === "done" ? r.data.punchId : "";
     const [row] = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.id, id));
-    expect(row).toMatchObject({ ip: "198.51.100.23", source: "self" });
+    expect(row).toMatchObject({ ip: "198.51.100.23", source: "self", method: "qr", deviceId: reg.id });
     jar.ip = undefined;
+    await tc.revokeDevice(reg.id, [shopId], actorOf(kat));
+  });
+
+  it("wrong PINs on one front-desk clock are limited per device, across everyone's tiles", async () => {
+    const michelle = await staffBy("michelle@rayz.test");
+    const cv = await shop("coralville");
+    const reg = await tc.registerDevice(cv.id, "Rate test iPad", actorOf(michelle));
+    const fd = await staffBy("frontdesk@rayz.test");
+    await signInAs(fd.id);
+    jar.device = reg.token;
+    const team = (
+      await m.db.db
+        .select({ id: S().staff.id })
+        .from(S().staffShops)
+        .innerJoin(S().staff, eq(S().staff.id, S().staffShops.staffId))
+        .where(m.drizzle.and(eq(S().staffShops.shopId, cv.id), eq(S().staff.kind, "person"), eq(S().staff.active, true)))
+    )
+      .map((t) => t.id)
+      .filter((id) => id !== fd.id && id !== michelle.id);
+    try {
+      const tries = [team[0], team[0], team[0], team[0], team[1], team[1], team[1], team[1], team[2], team[2]];
+      for (const id of tries) expect(await clockActions.kioskStatusAction({ staffId: id, pin: "0000" })).toEqual({ ok: false, error: "Wrong PIN." });
+      const eleventh = await clockActions.kioskStatusAction({ staffId: team[3], pin: "2468" });
+      expect(!eleventh.ok && eleventh.error).toMatch(/Too many wrong PINs on this clock/);
+      const [refused] = await m.db.db
+        .select()
+        .from(S().auditLog)
+        .where(m.drizzle.and(eq(S().auditLog.action, "timeclock.pin_attempt"), eq(S().auditLog.entityId, team[3])))
+        .orderBy(m.drizzle.desc(S().auditLog.at))
+        .limit(1);
+      expect(refused.details).toMatchObject({ ok: false, refused: "rate_limited", deviceId: reg.id });
+    } finally {
+      await m.db.db.delete(S().apiRateEvents).where(eq(S().apiRateEvents.key, reg.id));
+      await m.db.db.update(S().staff).set({ clockPinFailures: 0, clockPinLockedUntil: null }).where(m.drizzle.inArray(S().staff.id, team.slice(0, 4)));
+      await tc.revokeDevice(reg.id, [cv.id], actorOf(michelle));
+      jar.device = undefined;
+    }
   });
 });
 

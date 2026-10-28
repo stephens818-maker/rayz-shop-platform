@@ -1051,7 +1051,7 @@ async function seedPayroll(o: {
   console.log(
     `  payroll: ${people.length} profiles with sample employee numbers, ${clock.punches} time clock punches (${clocked} clocked time entries from them, one forgotten clock-out, ${clock.working} on the clock now), ${entries.length} other time entries (owner, training, PTO), one NetComm override`,
   );
-  console.log(`  time clock: front-desk PIN for everyone is ${CLOCK_PIN}; Coralville checks punches by shop device or GPS, the rest accept any`);
+  console.log(`  time clock: front-desk PIN for everyone is ${CLOCK_PIN}; punches go in only on a shop's front-desk clock or by scanning its QR code (set CLOCK_HMAC_SECRET)`);
 }
 
 /** Rough shop locations for the demo geofence (city-level, not surveyed). */

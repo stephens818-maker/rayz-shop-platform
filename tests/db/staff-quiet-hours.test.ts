@@ -68,7 +68,7 @@ describe("quiet hours for staff alerts (ST-I20)", () => {
     expect(confirm.map((j) => j.runAt.toISOString())).toEqual([at(next, 7 * 60).toISOString()]);
 
     const early = at(next, 9 * 60 + 30);
-    const inn = await tc.punch({ staffId: mk.id, shopId: cv.id, type: "in", source: "self", evidence: { deviceShopId: null, ip: null, gps: HERE }, deviceId: null, photo: null, actor: { staffId: mk.id, label: "Makenna" }, now: early });
+    const inn = await tc.punch({ staffId: mk.id, shopId: cv.id, type: "in", source: "self", evidence: { deviceShopId: cv.id, ip: null, gps: HERE }, deviceId: null, photo: null, actor: { staffId: mk.id, label: "Makenna" }, now: early, nonce: { id: crypto.randomUUID(), at: early } });
     expect(inn.kind).toBe("done");
     expect((await jobs("staff_schedule")).map((j) => [j.channel, j.runAt.toISOString(), j.heldForStaffId])).toEqual([
       ["email", evening.toISOString(), null],
@@ -82,14 +82,14 @@ describe("quiet hours for staff alerts (ST-I20)", () => {
     expect((await jobs("staff_schedule")).every((j) => j.runAt.getTime() === work.getTime() && !j.heldForStaffId)).toBe(true);
 
     await m.db.db.delete(S().notificationJobs).where(eq(S().notificationJobs.kind, "staff_schedule"));
-    await tc.punch({ staffId: mk.id, shopId: cv.id, type: "break_start", source: "self", evidence: { deviceShopId: null, ip: null, gps: HERE }, deviceId: null, photo: null, plannedMin: 30, actor: { staffId: mk.id, label: "Makenna" }, now: at(next, 12 * 60) });
+    await tc.punch({ staffId: mk.id, shopId: cv.id, type: "break_start", source: "self", evidence: { deviceShopId: cv.id, ip: null, gps: HERE }, deviceId: null, photo: null, plannedMin: 30, actor: { staffId: mk.id, label: "Makenna" }, now: at(next, 12 * 60), nonce: { id: crypto.randomUUID(), at: at(next, 12 * 60) } });
     await alerts.queueStaffNotice("schedule", mk.id, { body: "Your hours changed.", shopId: cv.id, now: at(next, 12 * 60 + 5) });
     expect((await jobs("staff_schedule")).filter((j) => j.channel !== "email").map((j) => j.runAt.toISOString())).toEqual([at(next, 12 * 60 + 30).toISOString(), at(next, 12 * 60 + 30).toISOString()]);
-    await tc.punch({ staffId: mk.id, shopId: cv.id, type: "break_end", source: "self", evidence: { deviceShopId: null, ip: null, gps: HERE }, deviceId: null, photo: null, actor: { staffId: mk.id, label: "Makenna" }, now: at(next, 12 * 60 + 20) });
+    await tc.punch({ staffId: mk.id, shopId: cv.id, type: "break_end", source: "self", evidence: { deviceShopId: cv.id, ip: null, gps: HERE }, deviceId: null, photo: null, actor: { staffId: mk.id, label: "Makenna" }, now: at(next, 12 * 60 + 20), nonce: { id: crypto.randomUUID(), at: at(next, 12 * 60 + 20) } });
     expect((await jobs("staff_schedule")).filter((j) => j.channel !== "email").map((j) => [j.runAt.toISOString(), j.heldForStaffId])).toEqual([
       [at(next, 12 * 60 + 20).toISOString(), null],
       [at(next, 12 * 60 + 20).toISOString(), null],
     ]);
-    await tc.punch({ staffId: mk.id, shopId: cv.id, type: "out", source: "self", evidence: { deviceShopId: null, ip: null, gps: HERE }, deviceId: null, photo: null, actor: { staffId: mk.id, label: "Makenna" }, now: at(next, 18 * 60) });
+    await tc.punch({ staffId: mk.id, shopId: cv.id, type: "out", source: "self", evidence: { deviceShopId: cv.id, ip: null, gps: HERE }, deviceId: null, photo: null, actor: { staffId: mk.id, label: "Makenna" }, now: at(next, 18 * 60), nonce: { id: crypto.randomUUID(), at: at(next, 18 * 60) } });
   });
 });

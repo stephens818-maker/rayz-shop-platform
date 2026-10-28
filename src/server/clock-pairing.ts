@@ -7,6 +7,7 @@ import { appBaseUrl } from "@/lib/deployment";
 import { Actor, audit } from "./audit";
 import { randomToken, sameSecret, sha256 } from "./auth/tokens";
 import { AppError, forbidden, notFound } from "./errors";
+import { installHash } from "./clock-security";
 import { rateLimit } from "./rate-limit";
 
 /**
@@ -35,7 +36,7 @@ export const normalizeCode = (raw: string) => {
 };
 
 const codeHash = (code: string) => sha256(`clock-pair:${code}`);
-export const installHash = (installId: string) => sha256(`clock-install:${installId}`);
+export { installHash };
 
 export const pairingUrl = (code: string) => `${appBaseUrl()}/clock/pair?code=${encodeURIComponent(code)}`;
 

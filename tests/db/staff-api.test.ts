@@ -43,7 +43,7 @@ const ROUTE_FILES: string[] = (function walk(dir: string): string[] {
 /** "appointments/[id]/notes" for its route file. */
 const pathOf = (file: string) => relative(ROUTE_DIR, file).split(sep).slice(0, -1).join("/");
 
-async function call(method: keyof RouteMod, path: string, o: { token?: string; body?: unknown; headers?: Record<string, string> } = {}) {
+async function call(method: keyof RouteMod, path: string, o: { token?: string; body?: unknown; headers?: Record<string, string>; noNonce?: boolean } = {}) {
   const [bare, search] = path.split("?");
   const parts = bare.split("/").filter(Boolean);
   const key = Object.keys(routes).find((k) => {
@@ -54,7 +54,8 @@ async function call(method: keyof RouteMod, path: string, o: { token?: string; b
   const params = Object.fromEntries(key.split("/").flatMap((s, i) => (s.startsWith("[") ? [[s.slice(1, -1), parts[i]]] : [])));
   const handler = routes[key][method];
   if (!handler) throw new Error(`no ${method} on ${key}`);
-  const headers: Record<string, string> = { "content-type": "application/json", ...(o.token ? { authorization: `Bearer ${o.token}` } : {}), ...(o.headers ?? {}) };
+  const nonce = method === "POST" && !o.noNonce ? { "x-clock-nonce": crypto.randomUUID(), "x-clock-timestamp": String(Date.now()) } : {};
+  const headers: Record<string, string> = { "content-type": "application/json", ...(o.token ? { authorization: `Bearer ${o.token}` } : {}), ...nonce, ...(o.headers ?? {}) };
   const res = await handler(new Request(`${BASE}/${bare}${search ? `?${search}` : ""}`, { method, headers, body: o.body === undefined ? undefined : JSON.stringify(o.body) }), { params: Promise.resolve(params) });
   const text = await res.text();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -309,70 +310,103 @@ const offTheClock = (staffId: string) =>
     .where(m.drizzle.and(eq(S().timePunches.staffId, staffId), m.drizzle.isNull(S().timePunches.voidedAt), m.drizzle.gte(S().timePunches.at, m.time.startOfLocalDay(m.time.addDays(today, -1)))));
 
 describe("the time clock", () => {
-  it("punches from the phone with the front-desk QR code or the NFC sticker, with breaks; no proof, no punch", async () => {
-    const { clockQrCode, clockProofUrl, nfcTagUrl } = await import("@/server/clock-codes");
+  /** A front-desk clock at the shop, and a fresh QR code from it whenever one is asked for. */
+  async function frontDesk(shopId: string) {
+    const tc = await import("@/server/time-clock");
+    const sec = await import("@/server/clock-security");
+    const { clockProofUrl } = await import("@/server/clock-codes");
+    const d = await tc.registerDevice(shopId, "API test iPad", actor);
+    onTestFinished(() => tc.revokeDevice(d.id, [shopId], actor));
+    return { id: d.id, token: d.token, qr: (at?: Date) => clockProofUrl(shopId, { qr: sec.issueKioskQr({ id: d.id, shopId }, at).code }) };
+  }
+
+  it("a phone punches only with the front-desk clock's QR code, one scan per code; not by location, the NFC sticker or nothing; with breaks", async () => {
+    const { nfcTagUrl } = await import("@/server/clock-codes");
     await m.db.db
       .update(S().shops)
-      .set({ timeClock: { ...coralvilleClock, methods: ["qr", "nfc"] } })
+      .set({ timeClock: { ...coralvilleClock, methods: ["qr", "nfc", "gps"] } })
       .where(eq(S().shops.id, shop.coralville));
     await offTheClock(ids.makenna);
     const t = await login("makenna@rayz.test");
+    const desk = await frontDesk(shop.coralville);
     const over = await call("GET", "clock", { token: t.accessToken });
     expect(over.status).toBe(200);
     expect(over.json.state).toBe("off");
     expect(over.json.hasPin).toBe(true);
-    expect(over.json.shops.find((s: { id: string }) => s.id === shop.coralville).methods).toEqual(["qr", "nfc"]);
+    expect(over.json.shops.find((s: { id: string }) => s.id === shop.coralville).rule).toMatch(/front-desk clock/);
     expect(JSON.stringify(over.json)).not.toMatch(/face|fingerprint|biometric/i);
 
     const none = await call("POST", "clock/punch", { token: t.accessToken, body: { shopId: shop.coralville, type: "in", confirmTimeOff: true } });
     expect(none.status).toBe(403);
+    expect(none.json.error.details).toMatchObject({ reason: "kiosk_required" });
+    const gps = await call("POST", "clock/in", { token: t.accessToken, body: { shopId: shop.coralville, gps: { lat: 41.6767, lng: -91.5811, accuracyM: 5 }, confirmTimeOff: true } });
+    expect(gps.status).toBe(403);
+    const tag = (await qrOf(await nfcTagUrl(shop.coralville))).get("tag")!;
+    expect((await call("POST", "clock/punch", { token: t.accessToken, body: { shopId: shop.coralville, type: "in", proof: { tag }, confirmTimeOff: true } })).status).toBe(403);
 
-    const scanned = await qrOf(clockProofUrl(shop.coralville, { qr: clockQrCode(shop.coralville).code }));
+    const scanned = await qrOf(desk.qr());
     expect(scanned.get("shop")).toBe(shop.coralville);
     const inn = await call("POST", "clock/punch", { token: t.accessToken, body: { shopId: scanned.get("shop"), type: "in", proof: { qr: scanned.get("qr") }, confirmTimeOff: true } });
     expect(inn.status, JSON.stringify(inn.json)).toBe(200);
     expect(inn.json).toMatchObject({ kind: "done", type: "in" });
+    const reused = await call("POST", "clock/breaks/start", { token: t.accessToken, body: { proof: { qr: scanned.get("qr") }, plannedMin: 15 } });
+    expect(reused.status).toBe(409);
+    expect(reused.json.error.details).toMatchObject({ reason: "qr_used" });
 
-    const tag = (await qrOf(await nfcTagUrl(shop.coralville))).get("tag")!;
-    const brk = await call("POST", "clock/breaks/start", { token: t.accessToken, body: { proof: { tag }, plannedMin: 15 } });
+    const brk = await call("POST", "clock/breaks/start", { token: t.accessToken, body: { proof: { qr: (await qrOf(desk.qr())).get("qr") }, plannedMin: 15 } });
     expect(brk.json).toMatchObject({ kind: "done", type: "break_start" });
     expect((await call("GET", "clock", { token: t.accessToken })).json.state).toBe("on_break");
-    expect((await call("POST", "clock/breaks/end", { token: t.accessToken, body: { proof: { tag: "forged-tag-0000000000" } } })).status).toBe(403);
-    expect((await call("POST", "clock/breaks/end", { token: t.accessToken, body: { proof: { tag } } })).json.type).toBe("break_end");
+    expect((await call("POST", "clock/breaks/end", { token: t.accessToken, body: { proof: { qr: `${desk.id}.forgedforgedforged1.k0.forged` } } })).status).toBe(403);
+    expect((await call("POST", "clock/breaks/end", { token: t.accessToken, body: { proof: { qr: (await qrOf(desk.qr())).get("qr") } } })).json.type).toBe("break_end");
     const attestation = (await call("GET", "clock", { token: t.accessToken })).json.cashTips?.attestation;
     expect(attestation).toMatch(/\w/);
-    expect((await call("POST", "clock/punch", { token: t.accessToken, body: { shopId: shop.coralville, type: "out", proof: { tag }, cashTips: { cents: 2500, attest: false } } })).status).toBe(400);
-    const out = await call("POST", "clock/punch", { token: t.accessToken, body: { shopId: shop.coralville, type: "out", proof: { tag }, cashTips: { cents: 2500, attest: true } } });
+    expect((await call("POST", "clock/punch", { token: t.accessToken, body: { shopId: shop.coralville, type: "out", proof: { qr: (await qrOf(desk.qr())).get("qr") }, cashTips: { cents: 2500, attest: false } } })).status).toBe(400);
+    const out = await call("POST", "clock/punch", { token: t.accessToken, body: { shopId: shop.coralville, type: "out", proof: { qr: (await qrOf(desk.qr())).get("qr") }, cashTips: { cents: 2500, attest: true } } });
     expect(out.json).toMatchObject({ type: "out", cashTips: { declared: { businessDate: today, amountCents: 2500 }, error: null } });
     const [d] = await m.db.db.select().from(S().tipDeclarations).where(eq(S().tipDeclarations.id, out.json.cashTips.declared.id));
     expect(d).toMatchObject({ staffId: ids.makenna, shopId: shop.coralville, source: "clock_out", attestation });
 
     const punches = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.id, inn.json.punchId));
-    expect(punches[0]).toMatchObject({ method: "qr", source: "self" });
+    expect(punches[0]).toMatchObject({ method: "qr", source: "self", deviceId: desk.id });
+  });
+
+  it("every punch request carries X-Clock-Nonce and X-Clock-Timestamp: a replay is 409, a missing or stale one 400", async () => {
+    await offTheClock(ids.makenna);
+    const t = await login("makenna@rayz.test");
+    const desk = await frontDesk(shop.coralville);
+    const send = (headers: Record<string, string>, type = "in") =>
+      call("POST", "clock/punch", { token: t.accessToken, noNonce: true, headers, body: { shopId: shop.coralville, type, proof: { qr: new URL(desk.qr()).searchParams.get("qr") }, confirmTimeOff: true } });
+    const missing = await send({});
+    expect(missing.status).toBe(400);
+    expect(missing.json.error.details).toMatchObject({ field: "nonce", reason: "nonce_required" });
+    expect((await send({ "x-clock-nonce": crypto.randomUUID() })).json.error.details).toMatchObject({ reason: "timestamp_required" });
+    const stale = await send({ "x-clock-nonce": crypto.randomUUID(), "x-clock-timestamp": String(Date.now() - 5 * 60_000) });
+    expect(stale.status).toBe(400);
+    expect(stale.json.error.details).toMatchObject({ reason: "stale_request" });
+    const headers = { "x-clock-nonce": crypto.randomUUID(), "x-clock-timestamp": new Date().toISOString() };
+    const first = await send(headers);
+    expect(first.status, JSON.stringify(first.json)).toBe(200);
+    const replay = await send(headers, "out");
+    expect(replay.status).toBe(409);
+    expect(replay.json.error.details).toMatchObject({ reason: "nonce_replayed" });
+    expect((await call("GET", "clock", { token: t.accessToken })).json.state).toBe("working");
+    expect((await send({ "x-clock-nonce": crypto.randomUUID(), "x-clock-timestamp": String(Date.now()) }, "out")).status).toBe(200);
   });
 
   it("a punch tapped with no signal goes in at the time it was tapped, flagged offline, and only once; too old, too new or out of order is refused (ST-I18)", async () => {
-    const { nfcTagUrl } = await import("@/server/clock-codes");
     const moline = shop.moline;
-    const before = (await m.db.db.query.shops.findFirst({ where: eq(S().shops.id, moline) }))!.timeClock;
-    onTestFinished(async () => {
-      await m.db.db.update(S().shops).set({ timeClock: before }).where(eq(S().shops.id, moline));
-    });
-    await m.db.db
-      .update(S().shops)
-      .set({ timeClock: { ...(before as Record<string, unknown>), methods: ["qr", "nfc"] } })
-      .where(eq(S().shops.id, moline));
     await m.db.db
       .update(S().timePunches)
       .set({ voidedAt: new Date() })
       .where(m.drizzle.and(eq(S().timePunches.staffId, ids.kat), m.drizzle.isNull(S().timePunches.voidedAt)));
     const t = await login("kat@rayz.test");
-    const punchAt = (path: string, body: Record<string, unknown>) => call("POST", path, { token: t.accessToken, body: { shopId: moline, ...body } });
-    const tag = (await qrOf(await nfcTagUrl(moline))).get("tag")!;
+    // Signed in as themselves on the shop's own front-desk clock, which lost its signal.
+    const desk = await frontDesk(moline);
+    const punchAt = (path: string, body: Record<string, unknown>) => call("POST", path, { token: t.accessToken, headers: { "x-clock-device": desk.token }, body: { shopId: moline, ...body } });
 
     const tapped = new Date(Date.now() - 40 * 60_000);
     const clientPunchId = crypto.randomUUID();
-    const queued = { type: "in", proof: { tag }, queuedAt: tapped.toISOString(), clientPunchId, confirmTimeOff: true };
+    const queued = { type: "in", queuedAt: tapped.toISOString(), clientPunchId, confirmTimeOff: true };
     const first = await punchAt("clock/punch", queued);
     expect(first.status, JSON.stringify(first.json)).toBe(200);
     expect(first.json).toMatchObject({ kind: "done", type: "in", at: tapped.toISOString(), flags: expect.arrayContaining(["offline"]) });
@@ -380,50 +414,43 @@ describe("the time clock", () => {
     expect(again.json).toMatchObject({ punchId: first.json.punchId, at: tapped.toISOString(), alreadySent: true });
     const rows = await m.db.db.select().from(S().timePunches).where(eq(S().timePunches.clientPunchId, clientPunchId));
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ staffId: ids.kat, method: "nfc", ip: null });
+    expect(rows[0]).toMatchObject({ staffId: ids.kat, method: "device", ip: null });
     const [log] = await m.db.db.select().from(S().auditLog).where(m.drizzle.and(eq(S().auditLog.action, "timeclock.punch"), eq(S().auditLog.entityId, first.json.punchId)));
     expect(log.details).toMatchObject({ offline: true, receivedAt: expect.any(String) });
 
     const old = new Date(Date.now() - 25 * 3600_000);
-    const tooOld = await punchAt("clock/punch", { type: "out", proof: { tag }, queuedAt: old.toISOString() });
+    const tooOld = await punchAt("clock/punch", { type: "out", queuedAt: old.toISOString() });
     expect(tooOld.status).toBe(400);
     expect(tooOld.json.error).toMatchObject({ details: { field: "queuedAt" }, message: expect.stringMatching(/manager/) });
     const ahead = new Date(Date.now() + 10 * 60_000);
-    expect((await punchAt("clock/punch", { type: "out", proof: { tag }, queuedAt: ahead.toISOString() })).status).toBe(400);
+    expect((await punchAt("clock/punch", { type: "out", queuedAt: ahead.toISOString() })).status).toBe(400);
 
-    expect((await punchAt("clock/punch", { type: "out", proof: { tag } })).status).toBe(200);
+    expect((await punchAt("clock/punch", { type: "out" })).status).toBe(200);
     const behind = new Date(Date.now() - 15 * 60_000);
-    const late = await punchAt("clock/breaks/start", { proof: { tag }, queuedAt: behind.toISOString() });
+    const late = await punchAt("clock/breaks/start", { queuedAt: behind.toISOString() });
     expect(late.status).toBe(409);
     expect(late.json.error.message).toMatch(/later punch/);
   });
 
   it("a QR punch goes in at the server's UTC time, never the phone's: a queued one is put in when it arrives, with a code good then", async () => {
-    const { clockQrCode } = await import("@/server/clock-codes");
     const moline = shop.moline;
-    const before = (await m.db.db.query.shops.findFirst({ where: eq(S().shops.id, moline) }))!.timeClock;
-    onTestFinished(async () => {
-      await m.db.db.update(S().shops).set({ timeClock: before }).where(eq(S().shops.id, moline));
-    });
-    await m.db.db
-      .update(S().shops)
-      .set({ timeClock: { ...(before as Record<string, unknown>), methods: ["qr"] } })
-      .where(eq(S().shops.id, moline));
     await m.db.db
       .update(S().timePunches)
       .set({ voidedAt: new Date() })
       .where(m.drizzle.and(eq(S().timePunches.staffId, ids.kat), m.drizzle.isNull(S().timePunches.voidedAt)));
     const t = await login("kat@rayz.test");
+    const desk = await frontDesk(moline);
+    const code = (at?: Date) => new URL(desk.qr(at)).searchParams.get("qr");
     const punchAt = (path: string, body: Record<string, unknown>) => call("POST", path, { token: t.accessToken, body: { shopId: moline, ...body } });
 
     // The code the phone scanned 40 minutes ago, sent now: no good at the server's time.
     const tapped = new Date(Date.now() - 40 * 60_000);
-    const stale = await punchAt("clock/punch", { type: "in", proof: { qr: clockQrCode(moline, tapped).code }, queuedAt: tapped.toISOString(), confirmTimeOff: true });
+    const stale = await punchAt("clock/punch", { type: "in", proof: { qr: code(tapped) }, queuedAt: tapped.toISOString(), confirmTimeOff: true });
     expect(stale.status).toBe(403);
 
     // A good code with the phone's clock set back: it goes in now, not offline, and the phone's time is only noted.
     const sentAt = Date.now();
-    const r = await punchAt("clock/punch", { type: "in", proof: { qr: clockQrCode(moline).code }, queuedAt: new Date(sentAt - 20 * 60_000).toISOString(), confirmTimeOff: true });
+    const r = await punchAt("clock/punch", { type: "in", proof: { qr: code() }, queuedAt: new Date(sentAt - 20 * 60_000).toISOString(), confirmTimeOff: true });
     expect(r.status, JSON.stringify(r.json)).toBe(200);
     const at = new Date(r.json.at).getTime();
     expect(r.json.at).toMatch(/Z$/);
@@ -436,7 +463,7 @@ describe("the time clock", () => {
     const [log] = await m.db.db.select().from(S().auditLog).where(m.drizzle.and(eq(S().auditLog.action, "timeclock.punch"), eq(S().auditLog.entityId, r.json.punchId)));
     expect(log.details).toMatchObject({ deviceTimeIgnored: new Date(sentAt - 20 * 60_000).toISOString() });
     expect(log.details).not.toHaveProperty("offline");
-    expect((await punchAt("clock/punch", { type: "out", proof: { qr: clockQrCode(moline).code } })).status).toBe(200);
+    expect((await punchAt("clock/punch", { type: "out", proof: { qr: code() } })).status).toBe(200);
   });
 
   it("cash tip declarations: list, declare, correct with a reason; only at your own shops; no attestation, no declaration", async () => {

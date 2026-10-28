@@ -1072,6 +1072,13 @@
       "when": 1796642820000,
       "tag": "core_0152_surcharge_off_by_default",
       "breakpoints": true
+    },
+    {
+      "idx": 153,
+      "version": "7",
+      "when": 1796642880000,
+      "tag": "core_0153_clock_nonces",
+      "breakpoints": true
     }
   ]
 }

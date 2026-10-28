@@ -23,6 +23,8 @@ export interface CallOpts {
   body?: unknown;
   headers?: Record<string, string>;
   shop?: string;
+  /** Leave out the X-Clock-Nonce and X-Clock-Timestamp a POST gets otherwise (a fresh pair each call, as the app sends). */
+  noNonce?: boolean;
 }
 
 export async function staffApp() {
@@ -46,6 +48,7 @@ export async function staffApp() {
       "content-type": "application/json",
       ...(o.token ? { authorization: `Bearer ${o.token}` } : {}),
       ...(o.shop ? { "x-shop-id": o.shop } : {}),
+      ...(method === "POST" && !o.noNonce ? { "x-clock-nonce": crypto.randomUUID(), "x-clock-timestamp": String(Date.now()) } : {}),
       ...(o.headers ?? {}),
     };
     const res = await handler(new Request(`${STAFF_BASE}/${bare}${search ? `?${search}` : ""}`, { method, headers, body: o.body === undefined ? undefined : JSON.stringify(o.body) }), {

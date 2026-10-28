@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Button, Input, Select } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { PUNCH_LABEL, isRepeatedWallTime, type PunchType } from "@/domain/time-clock";
-import { clearPinAction } from "../clock/actions";
+import { clearPinAction, unlockPinAction } from "../clock/actions";
 import { addPunchAction, approveManagerAction, approveOwnAction, editPunchAction, lockPeriodAction, unlockPeriodAction, voidPunchAction } from "./actions";
 import { DateTimeInput } from "@/components/time-input";
 import { hhmmLabel } from "@/lib/time";
@@ -170,6 +170,19 @@ export function ClearPin({ staffId, shopId }: { staffId: string; shopId: string 
     <span className="inline-flex items-center gap-2">
       <Button size="sm" variant="secondary" disabled={pending} onClick={() => confirm("Clear their front-desk PIN? They set a new one on their Time clock page.") && run(() => clearPinAction(staffId, shopId))}>
         Clear PIN
+      </Button>
+      <Err error={error} />
+    </span>
+  );
+}
+
+export function UnlockPin({ staffId, shopId }: { staffId: string; shopId: string }) {
+  const { pending, error, run } = useAction();
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className="text-sm text-red-700">PIN locked after 5 wrong tries</span>
+      <Button size="sm" variant="dark" disabled={pending} onClick={() => run(() => unlockPinAction(staffId, shopId))}>
+        Unlock PIN
       </Button>
       <Err error={error} />
     </span>

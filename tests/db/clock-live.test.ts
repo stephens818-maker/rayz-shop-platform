@@ -35,7 +35,7 @@ const clockTo = (min: number) => {
   return now;
 };
 async function punchAt(type: "in" | "out" | "break_start" | "break_end", now: Date) {
-  const r = await tc.punch({ staffId: mk.id, shopId: cv, type, source: "self", evidence: { deviceShopId: null, ip: null, gps: HERE }, deviceId: null, photo: null, actor: { staffId: mk.id, label: mk.displayLabel }, now });
+  const r = await tc.punch({ staffId: mk.id, shopId: cv, type, source: "self", evidence: { deviceShopId: cv, ip: null, gps: HERE }, deviceId: null, photo: null, actor: { staffId: mk.id, label: mk.displayLabel }, now, nonce: { id: crypto.randomUUID(), at: now } });
   if (r.kind !== "done") throw new Error(r.message);
   return r;
 }

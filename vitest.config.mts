@@ -8,7 +8,8 @@ export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts"],
     environment: "node",
-    env: { TZ: "UTC" },
+    // The time clock fails closed without its signing key; tests that check that unset it themselves.
+    env: { TZ: "UTC", CLOCK_HMAC_SECRET: "test-only-clock-signing-key-0123456789abcdef" },
     fileParallelism: false,
     // The on-disk module cache keys on a file's own text, so the `import.meta.glob` of admin pages in
     // tests/db/render.ts kept serving the old page list after a page was added.

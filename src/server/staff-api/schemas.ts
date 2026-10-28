@@ -49,9 +49,9 @@ const Gps = z
   .nullish()
   .describe("Only where the shop's rule uses location");
 const Proof = z
-  .object({ qr: z.string().max(64).optional(), tag: z.string().max(64).optional() })
+  .object({ qr: z.string().max(200).optional(), tag: z.string().max(64).optional() })
   .optional()
-  .describe("The qr or tag from the front-desk QR code's or the NFC sticker's link (/admin/clock?shop=…&qr=… or &tag=…)");
+  .describe("The qr from the front-desk clock's QR code link (/admin/clock?shop=…&qr=…): signed, single-use, good for a minute. Without it (or a paired front-desk clock) a phone can't punch; an NFC sticker's tag no longer punches on its own");
 const Photo = z.string().max(400_000).nullish().describe("A data: URL (jpeg, png or webp) where the shop asks for a punch photo; never face-matched");
 
 const CashTips = z

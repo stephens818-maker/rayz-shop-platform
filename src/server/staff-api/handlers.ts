@@ -521,8 +521,15 @@ export const postKioskRegister = staffRoute({ perms: "settings.shop", message: "
   return json(await registerKiosk(ctx, v.shopId, v.label), 201);
 });
 
-/** POST /clock/kiosk/pair: a manager's pairing code makes this install a front-desk clock, with no staff sign-in. */
+const KIOSK_PAIR = { perms: "settings.shop", message: "Only a manager can pair a front-desk clock." } as const;
+
+/**
+ * POST /clock/kiosk/pair: a manager's pairing code makes this install a front-desk clock, with no
+ * staff sign-in. Sent with a staff token, the token has to be a manager's, so a barber signed in on
+ * their own phone can't make it the shop's clock with a code they saw.
+ */
 export const postKioskPair = signInRoute(async (req) => {
+  if (req.headers.get("authorization")) await guardedStaff(req, KIOSK_PAIR);
   const v = await body(req, S.KioskPairBody);
   return json(await pairKiosk(req, v), 201);
 });

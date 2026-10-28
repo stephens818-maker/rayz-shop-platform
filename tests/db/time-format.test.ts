@@ -40,7 +40,7 @@ const at = (date: string, min: number) => m.time.zonedWallTime(date, min).toJSDa
 const HERE = { lat: 41.6767, lng: -91.5811, accuracyM: 10 };
 
 async function punchAt(staff: { id: string; displayLabel: string }, shopId: string, type: "in" | "out", now: Date) {
-  const r = await tc.punch({ staffId: staff.id, shopId, type, source: "self", evidence: { deviceShopId: null, ip: null, gps: HERE }, deviceId: null, photo: null, actor: { staffId: staff.id, label: staff.displayLabel }, now });
+  const r = await tc.punch({ staffId: staff.id, shopId, type, source: "self", evidence: { deviceShopId: shopId, ip: null, gps: HERE }, deviceId: null, photo: null, actor: { staffId: staff.id, label: staff.displayLabel }, now, nonce: { id: crypto.randomUUID(), at: now } });
   if (r.kind !== "done") throw new Error(r.message);
 }
 

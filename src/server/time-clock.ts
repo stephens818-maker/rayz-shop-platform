@@ -27,7 +27,7 @@ import { dailyHours, overtimeSlices, sliceKey, splitByLocalDay, weekStartOf, typ
 import type { PayrollSettings } from "@/domain/payroll/calc";
 import {
   FLAG_LABEL,
-  PIN_LOCK_MINUTES,
+  PIN_LOCKED_UNTIL_UNLOCKED,
   PIN_MAX_FAILURES,
   PROBLEM_LABEL,
   allowedNext,
@@ -67,8 +67,9 @@ import { usableReason } from "./block-reasons";
 import { enqueueShopEmail } from "./notifications/queue";
 import { queueStaffNotice, releaseHeldStaffNotices } from "./staff-alerts";
 import { brandCalendar, DEFAULT_CALENDAR, ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings } from "./payroll/groups";
-import { randomToken, sha256 } from "./auth/tokens";
-import { nfcValid, qrValid } from "./clock-codes";
+import { randomToken, sameSecret, sha256 } from "./auth/tokens";
+import { rateCheck, rateLimit, rateRecord } from "./rate-limit";
+import { QR_TTL_MS, claimClockNonce, clockSecret, installHash, verifyKioskQr, type ClockNonce } from "./clock-security";
 
 /**
  * The time clock: punches, the shifts and paid time worked out from them, timesheets with the
@@ -170,17 +171,21 @@ export async function saveShopClock(shopId: string, v: { settings: ShopClockSett
 
 // ───────────────────────────── Devices ─────────────────────────────
 
-/** The registered device this browser's token belongs to, if it's still in use. Marks it seen. */
-export async function deviceFromToken(token: string | null | undefined, now = new Date()) {
+/**
+ * The registered device this browser's token belongs to, if it's still in use. Marks it seen. One
+ * paired to an app install works only with that install's id (X-Device-Id), so a copied token isn't a kiosk.
+ */
+export async function deviceFromToken(token: string | null | undefined, installId: string | null = null, now = new Date()) {
   if (!token) return null;
   const [d] = await db
-    .select({ id: clockDevices.id, shopId: clockDevices.shopId, label: clockDevices.label, shop: shops.name })
+    .select({ id: clockDevices.id, shopId: clockDevices.shopId, label: clockDevices.label, shop: shops.name, installHash: clockDevices.installHash })
     .from(clockDevices)
     .innerJoin(shops, eq(shops.id, clockDevices.shopId))
     .where(and(eq(clockDevices.tokenHash, sha256(token)), isNull(clockDevices.revokedAt)));
   if (!d) return null;
+  if (d.installHash && !(installId && sameSecret(d.installHash, installHash(installId)))) return null;
   await db.update(clockDevices).set({ lastSeenAt: now }).where(eq(clockDevices.id, d.id));
-  return d;
+  return { id: d.id, shopId: d.shopId, label: d.label, shop: d.shop };
 }
 
 /** Registers the browser asking as one of the shop's front-desk devices. The caller sets the returned token as a cookie. */
@@ -226,7 +231,8 @@ export async function onShopTeam(shopId: string, staffId: string) {
 export async function setPin(staffId: string, pin: string, actor: Actor) {
   const p = pinProblem(pin);
   if (p) throw bad(p);
-  await db.update(staff).set({ clockPinHash: await bcrypt.hash(pin, 10), clockPinFailures: 0, clockPinLockedUntil: null }).where(eq(staff.id, staffId));
+  // A new PIN leaves a lock in place: only a manager lifts it.
+  await db.update(staff).set({ clockPinHash: await bcrypt.hash(pin, 10) }).where(eq(staff.id, staffId));
   await audit(actor, "timeclock.pin_set", "staff", staffId, {});
 }
 
@@ -248,24 +254,65 @@ export async function unlockPin(staffId: string, actor: Actor, shopId: string) {
   await audit(actor, "timeclock.pin_unlock", "staff", staffId, {}, shopId);
 }
 
-/** Checks a PIN typed on a shop's device. Five wrong tries lock that person's PIN for five minutes. */
-export async function checkPin(staffId: string, pin: string, now = new Date()): Promise<void> {
+/** Where a PIN was typed: the front-desk clock (its device and shop), for the per-device limit and the audit log. */
+export interface PinPlace {
+  deviceId: string | null;
+  shopId: string | null;
+  via: "kiosk_web" | "kiosk_app";
+  by: string;
+}
+
+const PIN_RATE_WINDOW_MS = 15 * 60_000;
+/** Wrong PINs on one front-desk clock, whoever's tile was tapped, before it refuses PINs for the window. */
+export const PIN_DEVICE_FAILURES = 10;
+/** PIN tries for one person, right or wrong, from anywhere. */
+export const PIN_STAFF_TRIES = 30;
+export const PIN_LOCKED = "This PIN is locked after too many wrong tries. Ask a manager to unlock it.";
+
+/**
+ * Checks someone's PIN. Five wrong in a row lock it until a manager unlocks it. A try takes its slot
+ * (an atomic increment that refuses once five are used) before the PIN is compared, so sending many
+ * at once can't get past five. Every try is audit-logged, refusals included; on a front-desk clock,
+ * wrong PINs are also limited per device and tries per person.
+ */
+export async function checkPin(staffId: string, pin: string, now = new Date(), where?: PinPlace): Promise<void> {
+  if (where) clockSecret();
   const s = await db.query.staff.findFirst({ where: and(eq(staff.id, staffId), eq(staff.active, true)) });
   if (!s || s.kind !== "person") throw notFound("Staff member");
   if (!s.clockPinHash) throw bad(`${s.displayLabel} hasn't set a time clock PIN yet. They set one on their Time clock page.`);
-  if (s.clockPinLockedUntil && s.clockPinLockedUntil > now) throw new AppError("conflict", `Too many wrong PINs. Try again after ${formatTime(s.clockPinLockedUntil)}, or ask a manager.`);
+  const shopId = where?.shopId ?? null;
+  const attempt = (ok: boolean, details: Record<string, unknown>) =>
+    audit({ staffId: null, label: where?.by ?? "pin check" }, "timeclock.pin_attempt", "staff", staffId, { ok, via: where?.via ?? "approval", deviceId: where?.deviceId ?? null, ...details }, shopId);
+  try {
+    await rateLimit("clock_pin_staff", staffId, PIN_STAFF_TRIES, PIN_RATE_WINDOW_MS, "Too many PIN tries. Wait 15 minutes, or ask a manager.");
+    if (where?.deviceId) await rateCheck("clock_pin_device", where.deviceId, PIN_DEVICE_FAILURES, PIN_RATE_WINDOW_MS, "Too many wrong PINs on this clock. Wait 15 minutes, or ask a manager.");
+  } catch (e) {
+    await attempt(false, { refused: "rate_limited" });
+    throw e;
+  }
+  const [slot] = await db
+    .update(staff)
+    .set({ clockPinFailures: sql`${staff.clockPinFailures} + 1` })
+    .where(and(eq(staff.id, staffId), lt(staff.clockPinFailures, PIN_MAX_FAILURES), or(isNull(staff.clockPinLockedUntil), lte(staff.clockPinLockedUntil, now))))
+    .returning({ failures: staff.clockPinFailures });
+  if (!slot) {
+    await attempt(false, { refused: "locked" });
+    throw new AppError("conflict", PIN_LOCKED, { reason: "pin_locked" });
+  }
   if (await bcrypt.compare(pin, s.clockPinHash)) {
-    if (s.clockPinFailures) await db.update(staff).set({ clockPinFailures: 0, clockPinLockedUntil: null }).where(eq(staff.id, staffId));
+    await db.update(staff).set({ clockPinFailures: 0, clockPinLockedUntil: null }).where(eq(staff.id, staffId));
+    await attempt(true, {});
     return;
   }
-  const failures = s.clockPinFailures + 1;
+  const failures = slot.failures;
+  if (where?.deviceId) await rateRecord("clock_pin_device", where.deviceId);
   const lock = failures >= PIN_MAX_FAILURES;
-  await db
-    .update(staff)
-    .set({ clockPinFailures: lock ? 0 : failures, clockPinLockedUntil: lock ? new Date(now.getTime() + PIN_LOCK_MINUTES * 60_000) : null })
-    .where(eq(staff.id, staffId));
-  if (lock) await audit(SYSTEM, "timeclock.pin_locked", "staff", staffId, { failures });
-  throw bad(lock ? `Wrong PIN. That was ${PIN_MAX_FAILURES} wrong tries, so this PIN is locked for ${PIN_LOCK_MINUTES} minutes.` : "Wrong PIN.");
+  if (lock) {
+    await db.update(staff).set({ clockPinLockedUntil: PIN_LOCKED_UNTIL_UNLOCKED }).where(eq(staff.id, staffId));
+    await audit(SYSTEM, "timeclock.pin_locked", "staff", staffId, { failures, deviceId: where?.deviceId ?? null }, shopId);
+  }
+  await attempt(false, { failures });
+  throw bad(lock ? `Wrong PIN. That was ${PIN_MAX_FAILURES} wrong tries in a row, so this PIN is locked until a manager unlocks it.` : "Wrong PIN.");
 }
 
 // ───────────────────────────── Punches and shifts ─────────────────────────────
@@ -383,8 +430,10 @@ export interface PunchRequest {
   type: PunchType;
   source: Exclude<PunchSource, "manager">;
   evidence: PunchEvidence;
-  /** P1: the front-desk QR code or NFC tag from the address the phone opened; checked here. */
+  /** The front-desk clock's QR code from the address the phone opened; checked and used up here. An NFC tag no longer punches. */
   proof?: { qr?: string | null; tag?: string | null };
+  /** The request's single-use nonce and the time the client sent it; claimed before anything else. */
+  nonce: ClockNonce;
   deviceId: string | null;
   photo: string | null;
   /** Clock in anyway during time off, after the warning. */
@@ -412,18 +461,30 @@ function photoProblem(photo: string | null): string | null {
   return null;
 }
 
+/** A phone's scan of the front-desk clock's QR code: signed for this shop, fresh, and drawn by one of its devices that's still paired. */
+async function kioskQrProof(shopId: string, code: string | null | undefined, now: Date) {
+  if (!code) return null;
+  const q = verifyKioskQr(shopId, code, now);
+  const [d] = q ? await db.select({ shopId: clockDevices.shopId }).from(clockDevices).where(and(eq(clockDevices.id, q.deviceId), isNull(clockDevices.revokedAt))) : [];
+  if (!q || d?.shopId !== shopId) throw new AppError("forbidden", "That QR code has expired or isn't from this shop's front-desk clock. Scan the one on the clock now.", { reason: "qr_invalid" });
+  return q;
+}
+
 /**
- * One punch from someone's phone or the shop's front-desk device. Refused when it doesn't follow
- * from where they stand, the shop's verification rule isn't met, or the period is locked. Clocking in
- * during time off asks first. Late, early and off-schedule punches are flagged, never refused.
+ * One punch on the shop's front-desk clock, or from a phone that just scanned the QR code it shows.
+ * Refused without the request's single-use nonce, from a phone on its own (kiosk_required), when it
+ * doesn't follow from where they stand, or when the period is locked. Clocking in during time off
+ * asks first. Late, early, off-schedule and off-site punches are flagged, never refused.
  */
 export async function punch(req: PunchRequest): Promise<PunchResult> {
+  clockSecret();
   // Kiosk and QR punches go in at the server's time (a UTC instant), never a device's: one queued
   // offline goes in when it arrives, and its QR code has to be good then.
   const serverTime = req.source === "kiosk" || !!req.proof?.qr;
   const offline = serverTime ? undefined : req.offline;
   const deviceAt = serverTime && req.offline ? req.now : undefined;
   const now = serverTime && req.offline ? req.offline.receivedAt : (req.now ?? new Date());
+  await claimClockNonce({ nonce: req.nonce, kind: "request", staffId: req.staffId, deviceId: req.deviceId }, req.offline?.receivedAt ?? req.now ?? new Date());
   const who = await db.query.staff.findFirst({ where: and(eq(staff.id, req.staffId), eq(staff.active, true)) });
   if (!who || who.kind !== "person") throw forbidden("Shop logins can't punch. Use the front-desk clock with your own PIN.");
   const access = await loadStaffAccess(req.staffId);
@@ -456,20 +517,18 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
 
   let method: PunchMethod;
   let distanceM: number | null = null;
+  let qr: Awaited<ReturnType<typeof kioskQrProof>> = null;
   if (req.source === "kiosk") {
     if (req.evidence.deviceShopId !== req.shopId) throw forbidden(`This isn't one of ${clock.name}'s registered time clock devices.`);
     method = "device";
   } else {
-    const evidence: PunchEvidence = {
-      ...req.evidence,
-      qrShopId: qrValid(req.shopId, req.proof?.qr, now) ? req.shopId : null,
-      nfcShopId: nfcValid(req.shopId, clock.settings.nfcTagVersion, req.proof?.tag) ? req.shopId : null,
-    };
-    const v = verifyPunch(req.shopId, clock, clock.settings, evidence);
+    qr = req.evidence.deviceShopId === req.shopId ? null : await kioskQrProof(req.shopId, req.proof?.qr, now);
+    const v = verifyPunch(req.shopId, clock, { ...req.evidence, qrShopId: qr ? req.shopId : null });
     distanceM = v.distanceM;
-    if (!v.ok) throw forbidden(v.problem);
+    if (!v.ok) throw new AppError("forbidden", v.problem, { reason: "kiosk_required" });
     method = v.method;
   }
+  const deviceId = req.deviceId ?? qr?.deviceId ?? null;
   const pp = photoProblem(req.photo);
   if (pp) throw bad(pp);
   if (clock.settings.photo === "required" && !req.photo) throw bad("This shop needs a photo with every punch. Take one and try again.");
@@ -508,7 +567,7 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
     offScheduleMin = o.minutes;
     if (o.flag) flags.push(o.flag);
   }
-  if (distanceM !== null && clock.settings.methods.length && method !== "gps" && distanceM > clock.settings.radiusM * 3) flags.push("off_site");
+  if (distanceM !== null && distanceM > clock.settings.radiusM * 3) flags.push("off_site");
 
   let breakReasonId: string | null = null;
   let plannedMin: number | null = null;
@@ -525,6 +584,7 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
 
   const gps = req.evidence.gps;
   const result = await db.transaction(async (tx) => {
+    if (qr) await claimClockNonce({ nonce: { id: qr.nonce, at: qr.issuedAt }, kind: "qr", deviceId: qr.deviceId, staffId: req.staffId, windowMs: QR_TTL_MS }, now, tx);
     const [row] = await tx
       .insert(timePunches)
       .values({
@@ -535,7 +595,7 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
         originalAt: now,
         source: req.source,
         method,
-        deviceId: req.deviceId,
+        deviceId,
         latitude: gps?.lat ?? null,
         longitude: gps?.lng ?? null,
         accuracyM: gps?.accuracyM ?? null,
@@ -1384,7 +1444,7 @@ export async function remindClockOuts(now = new Date()): Promise<number> {
     if (busy) continue;
     const [first] = await db.insert(clockAlertLog).values({ key: `out_reminder:${x.inId}`, shopId: x.shopId, sentAt: now }).onConflictDoNothing().returning({ key: clockAlertLog.key });
     if (!first) continue;
-    n += (await queueStaffNotice("clock_out", x.staffId, { body: `You're still clocked in. Your hours ended at ${formatTime(end)}. Clock out in the Ray'z Team app if you're done.`, shopId: x.shopId, now })) ? 1 : 0;
+    n += (await queueStaffNotice("clock_out", x.staffId, { body: `You're still clocked in. Your hours ended at ${formatTime(end)}. Clock out on the front-desk clock if you're done (or scan its QR code in the Ray'z Team app).`, shopId: x.shopId, now })) ? 1 : 0;
   }
   return n;
 }
@@ -1421,7 +1481,7 @@ export async function promptMealPeriods(now = new Date()): Promise<number> {
     if (!first) continue;
     const by = new Date(x.start.getTime() + rule.startByHours * 3_600_000);
     n += (await queueStaffNotice("meal_break", x.staffId, {
-      body: `Time for your ${rule.minutes}-minute meal break: it needs to start by ${formatTime(by)}. Start a break in the Ray'z Team app.`,
+      body: `Time for your ${rule.minutes}-minute meal break: it needs to start by ${formatTime(by)}. Start one on the front-desk clock (or scan its QR code in the Ray'z Team app).`,
       shopId: x.shopId,
       now,
     }))

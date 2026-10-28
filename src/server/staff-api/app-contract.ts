@@ -16,7 +16,7 @@ import { stepUp } from "@/server/auth/sign-in-guard";
 import { can } from "@/server/auth/staff";
 import { signToken } from "@/server/auth/tokens";
 import { approvePairing, pairedDevice, startPairing } from "@/server/clock-pairing";
-import { QR_STEP_MS } from "@/server/clock-codes";
+import { QR_REFRESH_MS } from "@/server/clock-security";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { settlementAccount } from "@/server/payments/connect";
 import { tipToBarberShops } from "@/server/payments/settlement";
@@ -172,7 +172,7 @@ export function clockFromToken(raw: string): { shopId: string; proof: { qr: stri
   const qr = url.searchParams.get("qr");
   const tag = url.searchParams.get("tag");
   if (!shopId || !ShopId.safeParse(shopId).success) return null;
-  if (qr && qr.length <= 64) return { shopId, proof: { qr } };
+  if (qr && qr.length <= 200) return { shopId, proof: { qr } };
   if (tag && tag.length <= 64) return { shopId, proof: { tag } };
   return null;
 }
@@ -321,7 +321,7 @@ export const ON_DEMAND_OFF =
 
 // ───────────────────────────── The kiosk ─────────────────────────────
 
-const KIOSK_ACTIONS = ["timeclock.pairing_start", "kiosk.approve", "timeclock.device_pair", "timeclock.device_revoke", "timeclock.device_register", "timeclock.pin_unlock", "timeclock.pin_clear"];
+const KIOSK_ACTIONS = ["timeclock.pairing_start", "kiosk.approve", "timeclock.device_pair", "timeclock.device_revoke", "timeclock.device_register", "timeclock.pin_unlock", "timeclock.pin_clear", "timeclock.pin_locked"];
 export const KIOSK_CASH_TIPS = "Cash tips aren't taken on the kiosk. Declare them in the app on your phone.";
 
 /** A kiosk call with its credential as the Bearer token (or X-Clock-Device): a paired front-desk clock, with no staff sign-in. */
@@ -374,7 +374,7 @@ export async function kioskRoster({ device }: KioskCaller) {
 export async function kioskQrToken(k: KioskCaller, shopId?: string) {
   if (shopId && shopId !== k.device.shopId) throw notFound("Shop");
   const q = await kioskQr(k);
-  return { token: q.url, url: q.url, expiresAt: q.expiresAt, shopId: k.device.shopId, kioskId: k.device.id, rotatesSeconds: QR_STEP_MS / 1000 };
+  return { token: q.url, url: q.url, expiresAt: q.expiresAt, shopId: k.device.shopId, kioskId: k.device.id, rotatesSeconds: QR_REFRESH_MS / 1000 };
 }
 
 /** POST /kiosk/pin: their PIN, then the punch (in when direction is left out). */

@@ -42,7 +42,7 @@ const clockTo = (min: number) => {
 const actorOf = (s: { id: string; displayLabel: string }) => ({ staffId: s.id, label: s.displayLabel });
 const manager = () => ({ actor: actorOf(mi), staffId: mi.id, isOwner: false, shopIds: [cv] });
 async function punchAt(type: "in" | "out" | "break_start" | "break_end", now: Date, extra: { breakReasonId?: string | null; plannedMin?: number | null } = {}) {
-  const r = await tc.punch({ staffId: mk.id, shopId: cv, type, source: "self", evidence: { deviceShopId: null, ip: null, gps: HERE }, deviceId: null, photo: null, actor: actorOf(mk), now, ...extra });
+  const r = await tc.punch({ staffId: mk.id, shopId: cv, type, source: "self", evidence: { deviceShopId: cv, ip: null, gps: HERE }, deviceId: null, photo: null, actor: actorOf(mk), now, nonce: { id: crypto.randomUUID(), at: now }, ...extra });
   if (r.kind !== "done") throw new Error(r.message);
   return r;
 }

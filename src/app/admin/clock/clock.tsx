@@ -47,6 +47,9 @@ type Done = {
 const time = (d: Date | string) =>
   formatTime(d);
 
+/** A new single-use nonce for every send, retries included: the server refuses one it has seen. */
+const freshNonce = () => ({ id: crypto.randomUUID(), at: Date.now() });
+
 const BUTTON_TONE: Record<
   PunchType,
   "primary" | "secondary" | "danger" | "dark"
@@ -311,6 +314,7 @@ export function ClockPanel({
         ...(proof?.shopId === shopId ? { proof: { qr: proof.qr, tag: proof.tag } } : {}),
         ...planOf(type, breakReasonId, planned),
         cashTips: declaring ? { cents: tipCents, attest } : null,
+        nonce: freshNonce(),
       });
       if (!r.ok) return setError(r.error);
       if (r.data.kind === "confirm") {
@@ -637,6 +641,7 @@ export function Kiosk({
         photo: shot,
         confirmTimeOff,
         ...planOf(type, breakReasonId, planned),
+        nonce: freshNonce(),
       });
       if (!r.ok) return setError(r.error);
       if (r.data.kind === "confirm") {
@@ -776,7 +781,7 @@ export function Kiosk({
   );
 }
 
-/** P1: the front-desk clock's QR code. Staff scan it with their phone's camera to punch on their own phone. */
+/** The front-desk clock's QR code. Staff scan it with their phone's camera to punch on their own phone; each code works once. */
 export function ClockQr() {
   const [qr, setQr] = useState<{ svg: string; expiresAt: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -801,7 +806,7 @@ export function ClockQr() {
   }, []);
   return (
     <Card>
-      <CardHeader title="Punch on your phone" subtitle="Scan with your phone's camera. The code changes every 30 seconds." />
+      <CardHeader title="Punch on your phone" subtitle="Scan with your phone's camera. Each code works once and changes every 15 seconds." />
       <div className="flex justify-center p-4">
         {qr ? <div className="h-48 w-48" data-testid="clock-qr" dangerouslySetInnerHTML={{ __html: qr.svg }} /> : <div className="h-48 w-48 animate-pulse rounded bg-zinc-100" />}
       </div>

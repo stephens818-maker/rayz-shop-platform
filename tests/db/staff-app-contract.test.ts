@@ -4,7 +4,7 @@
  * from the same server code and rules as the routes beside them. The employee is always the one
  * signed in; amounts are integer cents; My Earnings is gross only, private no-store, and every
  * view is in the audit log; a range that cuts a workweek can't be exported; clock-in takes the
- * shop's scanned code and never anything biometric; and the front-desk kiosk is paired by a
+ * kiosk's single-use scanned code and never anything biometric; and the front-desk kiosk is paired by a
  * manager, punches by PIN with its own credential, and is audited.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
@@ -242,7 +242,7 @@ describe("the clock and the front-desk kiosk", () => {
 
     const qr = await call("GET", "kiosk/qr", { token: kiosk });
     expect(qr.status, qr.text).toBe(200);
-    expect(qr.json).toMatchObject({ shopId: shop.coralville, kioskId: ok.json.kioskId, rotatesSeconds: 30 });
+    expect(qr.json).toMatchObject({ shopId: shop.coralville, kioskId: ok.json.kioskId, rotatesSeconds: 15 });
     expect(qr.json.token).toContain(`shop=${shop.coralville}`);
     expect((await call("GET", `kiosk/qr?shopId=${shop.moline}`, { token: kiosk })).status).toBe(404);
 

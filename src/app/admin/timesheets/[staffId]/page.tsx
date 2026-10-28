@@ -5,7 +5,7 @@ import { and, asc, eq, gte, inArray, lt } from "drizzle-orm";
 import { db } from "@/db";
 import { shops, staff, timePunches } from "@/db/schema";
 import { Badge, Card, CardHeader, Empty, Notice, PageHeader, Table, Td, Th, cx } from "@/components/ui";
-import { FLAG_LABEL, METHOD_LABEL, PUNCH_LABEL, wallStamp, type PunchFlag, type PunchType } from "@/domain/time-clock";
+import { FLAG_LABEL, METHOD_LABEL, PUNCH_LABEL, pinLocked, wallStamp, type PunchFlag, type PunchType } from "@/domain/time-clock";
 import { formatDate, formatDateTime, formatTime, todayLocal } from "@/lib/time";
 import { workShopIds } from "@/server/auth/access";
 import { can, canAny, guardPage } from "@/server/auth/staff";
@@ -13,7 +13,7 @@ import { inTenant } from "@/server/tenant";
 import { chosenPeriod, recentPeriods, timesheetView } from "@/server/time-clock";
 import { declarationRules, myDeclarations } from "@/server/tips/declarations";
 import { DeclarationList, DeclareCashTips } from "../../my-tips/declare";
-import { AddPunch, ApproveOwn, ClearPin, EditPunch, ManagerApprove } from "../timesheets";
+import { AddPunch, ApproveOwn, ClearPin, EditPunch, ManagerApprove, UnlockPin } from "../timesheets";
 import { formatPayHours } from "@/lib/hours";
 
 export const metadata: Metadata = { title: "Timesheet" };
@@ -48,7 +48,7 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
       .orderBy(asc(timePunches.at)),
     db.select({ id: shops.id, name: shops.name }).from(shops).orderBy(asc(shops.name)),
     workShopIds(staffId),
-    db.select({ pin: staff.clockPinHash }).from(staff).where(eq(staff.id, staffId)),
+    db.select({ pin: staff.clockPinHash, pinFailures: staff.clockPinFailures, pinLockedUntil: staff.clockPinLockedUntil }).from(staff).where(eq(staff.id, staffId)),
   ]);
   const shopName = new Map(shopRows.map((s) => [s.id, s.name]));
   const [tipRules, mine] = await Promise.all([declarationRules(), myDeclarations(staffId, period.start, today)]);
@@ -287,7 +287,8 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
         </Card>
       )}
       {canEdit && !own && who?.pin && pickShops[0] && (
-        <div className="text-right">
+        <div className="flex items-center justify-end gap-2">
+          {pinLocked(who, new Date()) && <UnlockPin staffId={staffId} shopId={pickShops[0].id} />}
           <ClearPin staffId={staffId} shopId={pickShops[0].id} />
         </div>
       )}
