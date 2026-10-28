@@ -17,8 +17,9 @@ Each dir (default: tests/fixtures/payroll-golden/anon and, when present, .../pri
 - totals_expected.json, grand: otPay, trainingPay, trainingOtPay, trainingCost, laborCost and
   grossProfitAfterLabor.
 
-The workbook's OT hours are typed, so these are the typed hours' shares: the OT the workbook misses
-by leaving training out of the 40 isn't here (docs/payroll-workbook-discrepancies.md section 16).
+The workbook's OT hours are typed, so these are the typed hours' shares: the OT the workbook missed
+by leaving training out of the 40 isn't here; Charles resolved it outside the platform
+(docs/payroll-workbook-discrepancies.md section 16).
 The export is unchanged: it carries OT and training hours only. Prints totals for the anonymized
 fixture and counts only for the real one.
 """

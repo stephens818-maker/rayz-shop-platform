@@ -155,7 +155,7 @@ for (const fx of FIXTURES) {
       }
     });
 
-    it("Q11: the workbook leaves training out of the 40, so its typed OT is short; an estimate from an even weekly split, never corrected automatically", () => {
+    it("Q11, for the record: the workbook left training out of the 40, so its typed OT was short (an even-split estimate); Charles resolved it outside the platform, so the typed OT stands", () => {
       const { blocks } = g();
       // Each person's production + training over the period's two weeks, split evenly: OT is what's over 40 each week.
       const short = blocks
@@ -163,10 +163,10 @@ for (const fx of FIXTURES) {
         .filter((l) => l.trainingHours > 0)
         .map((l) => ({ l, hours: Math.max(0, 2 * Math.max(0, (l.hours + l.otHours + l.trainingHours) / 2 - 40) - l.otHours) }))
         .filter((x) => x.hours > 1e-9);
-      // Those hours are already paid once at the base rate, so what's owed is the half-time premium on them.
+      // Those hours were already paid once at the base rate, so the shortfall was the half-time premium on them.
       const premium = short.reduce((a, x) => a + 0.5 * (x.l.input.zeroHourlyPay ? 0 : x.l.wage) * x.hours, 0);
       const hours = Math.round(short.reduce((a, x) => a + x.hours, 0) * 100) / 100;
-      // docs/payroll-workbook-discrepancies.md section 16: about 12.9 hours for 4 barbers, roughly $101, in the real workbook.
+      // docs/payroll-workbook-discrepancies.md section 16: about 12.9 hours for 4 barbers, roughly $101, in the real workbook; resolved by Charles outside the platform.
       expect([short.length, hours, Math.round(premium)]).toEqual(fx.real ? [4, 12.9, 101] : [1, 2, 16]);
       for (const b of blocks) for (const l of b.lines) expect(l.otHours).toBe(l.input.otHours);
     });

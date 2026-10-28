@@ -1202,10 +1202,10 @@ The plan's P0 cases must all pass in the sandbox before the pilot. Status by cas
 - [x] OT hours in the existing `E_Overtime 1.5_Hours` column, the format unchanged; iSolved applies the rate.
 - [x] Training cost and its share of OT cost in labor cost on the Payroll Report (Training Cost, inside Labor Cost) and in the reconciliation gate. Commission's regular-rate half-time is spread over production plus training hours.
 - [x] Golden tests: 38 production + 4 training = 2 OT hours, and training at a second shop (`tests/payroll-training-ot.test.ts`, `tests/db/training-overtime.test.ts`); the golden fixtures' labor cost includes training.
-- [x] The discrepancy doc flags that the workbook misses this: claude's estimate, about 12.9 OT hours short for 4 barbers this period, roughly $101, from an even weekly split, labelled an estimate (section 16).
+- [x] The discrepancy doc records that the workbook missed this: claude's estimate, about 12.9 OT hours short for 4 barbers this period, roughly $101, from an even weekly split, labelled an estimate (section 16). **Resolved by Charles outside the platform** (Oct 28): kept for the record, not owed, no open adjustment.
 - [x] `/me/earnings` counts training hours in weekly OT, with training's share on its `training` line.
 - [ ] **Ask the CPA:** is training hours worked under the FLSA? Everything above rests on it.
-- [ ] **Ask Charles and his CPA:** correct past periods the workbook ran without this? Nothing is corrected automatically.
+- [x] Past periods: Charles settled the shortfall with the affected barbers himself (Oct 28). No retroactive correction on the platform; the go-forward rule is unchanged.
 
 ## Deferred by decision
 

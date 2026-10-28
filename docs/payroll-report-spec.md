@@ -146,7 +146,7 @@ Training is never counted twice. Where a training entry falls inside the same pe
 
 **The regular rate (C1).** Training on top of clocked hours is hours worked too, so commission's half-time premium (§3.4) is spread over production plus training hours.
 
-**Earlier periods.** The workbook left training out of the 40 (discrepancies §16). Correcting past periods is Charles's call with his CPA; the platform doesn't build retro corrections automatically.
+**Earlier periods.** The workbook left training out of the 40 (discrepancies §16). Charles resolved that shortfall outside the platform, so nothing is owed or shown as an adjustment, and the platform builds no retro corrections.
 
 ### 3.4 Regular rate for overtime (C1)
 
@@ -400,7 +400,7 @@ Charles's golden data (33 employee rows, the seven iSolved tabs) holds real name
 `tests/payroll-golden.test.ts` runs against both (the private one only when present):
 
 - every row's Hourly Total, Gross /Hr, Commission$, Service Total, Product Total, NetComm, Total Wages and Total % of Gross, and the platform's O.T. Pay, Training Pay, training's share of O.T. Pay, Training Cost and Labor Cost (`scripts/payroll-golden-labor-cost.py`);
-- the OT the workbook misses by leaving training out of the 40, as an estimate from an even weekly split (discrepancies §16);
+- the OT the workbook missed by leaving training out of the 40, as an estimate from an even weekly split, kept for the record (discrepancies §16; resolved by Charles outside the platform);
 - every typed workbook cell as an adjustment with a reason;
 - the workbook's cached totals as known bugs, and the corrected all-rows totals. Each total's formula is checked first (`totalsFormulaProblems`): a range that includes its own cell (circular), runs outside the shop's block or skips rows is flagged, and a circular total's cached value is never compared, because Excel's value for it is stale (I12);
 - the summary;

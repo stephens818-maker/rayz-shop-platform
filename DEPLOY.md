@@ -394,7 +394,7 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
 56. Training toward overtime (Charles, Q11: training hours are on top of clocked hours; migration `core_0146_training_toward_ot`, which turns **Payroll → Setup → Training counts toward OT** back on where it was saved off). Each Chicago Sun–Sat workweek's 40 is production plus training hours at every shop added up; OT goes to each shop in proportion, training included, and goes out in `E_Overtime 1.5_Hours` as before. Training pay stays outside the greater-of, and the Payroll Report's labor cost now carries **Training Cost** (training pay plus its share of OT pay).
     - It rests on training counting as hours worked under the FLSA. **Charles's CPA still needs to confirm it**; the setting stays on Payroll → Setup so it can be turned off on the CPA's advice.
     - A period approved but not locked before the deploy shows its approval as stale (its figures change): approve it again before locking. Locked periods keep what their lock kept.
-    - Earlier periods aren't corrected automatically. The workbook's missed OT (docs/payroll-workbook-discrepancies.md §16) is Charles's call with his CPA.
+    - No retroactive correction. The workbook's missed OT (docs/payroll-workbook-discrepancies.md §16) was resolved by Charles outside the platform; nothing is owed or adjusted here.
     - The next free migration is `core_0147`.
 
 ## Launch day: every surface at once, at the pilot shop
