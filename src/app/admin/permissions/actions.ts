@@ -23,6 +23,7 @@ import {
   overrideChanges,
   roleChangeDenied,
   roleFitsShop,
+  shopLoginGrantDenied,
   userAccessChangeDenied,
 } from "@/domain/permissions";
 import { todayLocal } from "@/lib/time";
@@ -163,9 +164,11 @@ export async function saveUserAccessAction(raw: z.input<typeof UserSchema>) {
       { activeOwners: await activeOwnerCount() },
     );
     if (denied) throw forbidden(denied);
-    const diff = diffPermissions(current.permissions, next.permissions);
     const was = await db.query.staff.findFirst({ where: eq(staff.id, p.staffId), columns: { permissionOverrides: true, permissionOverrideExpires: true, moneyLimits: true, scopeRegionId: true } });
     const before = { overrides: cleanOverrides(was?.permissionOverrides), expires: cleanExpiries(was?.permissionOverrideExpires) };
+    const brandOnly = kind === "shop" && shopLoginGrantDenied(staffGrantor(ctx), before.overrides, overrides);
+    if (brandOnly) throw forbidden(brandOnly);
+    const diff = diffPermissions(current.permissions, next.permissions);
     const oldLimits = cleanLimits(was?.moneyLimits);
     await db.transaction(async (tx) => {
       await tx

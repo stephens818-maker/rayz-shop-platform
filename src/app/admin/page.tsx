@@ -57,6 +57,7 @@ import { timesFor } from "@/server/service-times";
 import { ServiceTimer } from "./calendar/service-times-panel";
 import { SendToCheckoutButton } from "./checkout/send-to-checkout";
 import { TodayAlerts } from "./today/alerts";
+import { FrontDeskHome } from "./front-desk";
 import { byShop, salesSummary } from "@/server/reports";
 import { todayMilestones } from "@/server/milestones/views";
 import { congratsLine } from "@/domain/milestones";
@@ -73,6 +74,7 @@ export default async function Dashboard({
 }) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin");
+  if (ctx.staff.kind === "shop") return <FrontDeskHome ctx={ctx} denied={!!sp.denied} />;
   const today = todayLocal();
   const shopIds = reportShopIds(ctx);
   const ownBook = !can(ctx, "calendar.manage");

@@ -10,6 +10,7 @@ import {
   Permission,
   REPORTS,
   ReportKey,
+  SHOP_LOGIN_BRAND_GRANTED,
   SHOP_LOGIN_NEVER,
   ShopScope,
   permissionLabel,
@@ -422,6 +423,7 @@ export function blockedBecause(p: Permission, c: Pick<SourceContext, "held" | "s
   if (BRAND_LEVEL_ONLY.has(p) && !c.brandLevel) return "brand-level roles only";
   if (BRAND_ONLY.has(p) && c.scope !== "all") return "needs access to all shops";
   if (c.shopLogin && SHOP_LOGIN_NEVER.has(p)) return "never for a shared shop login";
+  if (c.shopLogin && SHOP_LOGIN_BRAND_GRANTED.has(p)) return "set by the brand: a shop login has it only when the brand allows it for that login";
   const report = p.match(/^report\.(.+)\.export$/);
   if (report && !c.held.has(`report.${report[1]}.view` as Permission)) return "needs the report's view permission";
   if (p === "exports.accounting" && !c.held.has(reportView("sales_summary"))) return "needs the Sales summary report";

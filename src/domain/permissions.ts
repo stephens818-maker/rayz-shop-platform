@@ -1543,12 +1543,55 @@ export const SHOP_LOGIN_NEVER: ReadonlySet<Permission> = new Set<Permission>([
   "reports.all_shops",
 ]);
 
+/**
+ * A shop login is the front desk's POS, not an admin console (Charles, Oct 28, as in Squire). Settings,
+ * prices and the menu, staff setup, the payout tracker, the Campaign Center (but We have openings) and
+ * integrations are the brand's, sent to shops through brand sync. A shop login's role never gives it
+ * these; the brand (someone with access to all shops) can allow one for one login with a per-login
+ * override (shopLoginGrantDenied). Pay, payroll, roles and sign-in are in SHOP_LOGIN_NEVER, and
+ * brand-only permissions never work at one shop.
+ */
+export const SHOP_LOGIN_BRAND_GRANTED: ReadonlySet<Permission> = new Set<Permission>([
+  "settings.shop",
+  "settings.shop_details",
+  "settings.shop_hours",
+  "settings.shop_booking",
+  "settings.shop_checkout",
+  "settings.shop_phone",
+  "settings.taxes",
+  "scheduling.timing",
+  "blocks.reasons",
+  "notifications.send",
+  "catalog.prices",
+  "promos.manage",
+  "inventory.manage",
+  "schedules.edit",
+  "payouts.view",
+  "campaign_center.view",
+  "campaign_center.create",
+  "campaign_center.send",
+  "campaign_center.own_clients",
+  "clients.campaigns",
+]);
+
+/** The brand-controlled permissions a per-login override allows. */
+export const shopLoginBrandGrants = (overrides: Overrides): ReadonlySet<Permission> =>
+  new Set((Object.keys(overrides) as Permission[]).filter((p) => overrides[p] === true && SHOP_LOGIN_BRAND_GRANTED.has(p)));
+
+/** Giving a shop login a brand-controlled permission, or taking one back, is the brand's: someone with access to all shops. */
+export function shopLoginGrantDenied(caller: Pick<Grantor, "scope">, before: Overrides, after: Overrides): string | null {
+  if (caller.scope === "all") return null;
+  const changed = [...SHOP_LOGIN_BRAND_GRANTED].find((p) => (before[p] === true) !== (after[p] === true));
+  return changed ? `"${permissionLabel(changed)}" is set by the brand, so only someone with access to all shops can allow it for a shop login` : null;
+}
+
 /** A limit whose permissions are all gone is zero. */
 export const trimLimits = (limits: MoneyLimits, perms: ReadonlySet<Permission>): MoneyLimits =>
   Object.fromEntries(MONEY_LIMITS.map((l) => [l.key, l.perms.some((p) => perms.has(p)) ? limits[l.key] : 0])) as MoneyLimits;
 
-export const sharedLoginAccess = <A extends Access>(a: A): A => {
-  const permissions = new Set([...a.permissions].filter((p) => !SHOP_LOGIN_NEVER.has(p)));
+/** What a shop login can do: never SHOP_LOGIN_NEVER, and brand-controlled permissions only where the brand allowed them for it. */
+export const sharedLoginAccess = <A extends Access>(a: A, brandGrants: ReadonlySet<Permission> = new Set()): A => {
+  const permissions = new Set([...a.permissions].filter((p) => !SHOP_LOGIN_NEVER.has(p) && (!SHOP_LOGIN_BRAND_GRANTED.has(p) || brandGrants.has(p))));
   return { ...a, isOwner: false, permissions, limits: trimLimits(a.limits, permissions) };
 };
 

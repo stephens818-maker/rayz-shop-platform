@@ -19,6 +19,7 @@ import {
   noAccess,
   sameAccess,
   sharedLoginAccess,
+  shopLoginBrandGrants,
   unionAccess,
 } from "@/domain/permissions";
 import { todayLocal } from "@/lib/time";
@@ -142,9 +143,10 @@ export async function accessFor(s: typeof staff.$inferSelect, role: Role, tx: DB
     scope,
     personalLimits,
   );
+  const brandGrants = shopLoginBrandGrants(overrides);
   const base =
     s.kind === "shop"
-      ? { byShop: new Map([...computed.byShop].map(([id, a]) => [id, sharedLoginAccess(a)] as const)), union: sharedLoginAccess(computed.union), uniform: computed.uniform }
+      ? { byShop: new Map([...computed.byShop].map(([id, a]) => [id, sharedLoginAccess(a, brandGrants)] as const)), union: sharedLoginAccess(computed.union, brandGrants), uniform: computed.uniform }
       : computed;
   const grants = heldGrants(await grantsInForce(s.id, shopRows.map((r) => r.id), tx), s.id);
   const { byShop, union, uniform } = applyGrants(base.byShop, base.union, grants);

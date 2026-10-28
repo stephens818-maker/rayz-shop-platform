@@ -20,7 +20,7 @@ export default async function ShopLoginsPage() {
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader
         title="Shop logins"
-        subtitle="Shared sign-ins for one shop, like the front-desk computer. A shop login sees only its shop: its calendar, sales, drawer, stock, staff and reports. Personal logins for managers and barbers are under Staff."
+        subtitle="Shared sign-ins for one shop's front desk: its calendar and booking, check-in and checkout, client lookup, the front-desk clock, We have openings and the shop's reports, on a touch screen. Settings, prices, staff setup, roles, payroll, payouts, the Campaign Center and integrations stay with the brand: a shop login gets one only when the brand allows it for that login. Personal logins for managers and barbers are under Staff."
       />
       {shopList.length === 0 && <Empty title="No shops in your access" />}
       {shopList.map((shop) => {

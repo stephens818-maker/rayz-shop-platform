@@ -150,6 +150,28 @@ body {
   }
 }
 
+/*
+ * Shop logins run on a front-desk tablet (layout.tsx): every control is at least 48px to tap, and
+ * text fields use 16px type so iPad Safari doesn't zoom. Calendar blocks are sized by their length
+ * (absolutely placed), so they keep their size; `min-h-0` opts a control out.
+ */
+@layer base {
+  .touch-ui
+    :where(button, summary, [role="button"], select, textarea, input:not([type="checkbox"], [type="radio"], [type="hidden"], [type="range"]), a.inline-flex.rounded-lg):where(:not(.absolute)) {
+    min-height: 3rem;
+  }
+  .touch-ui :where(button, [role="button"], a.inline-flex.rounded-lg):where(:not(.absolute)) {
+    min-width: 3rem;
+  }
+  .touch-ui :where(select, textarea, input:not([type="checkbox"], [type="radio"], [type="hidden"], [type="range"])) {
+    font-size: 1rem;
+  }
+  .touch-ui :where(input[type="checkbox"], input[type="radio"]) {
+    width: 1.375rem;
+    height: 1.375rem;
+  }
+}
+
 @layer base {
   /* A visible keyboard focus ring wherever a component doesn't draw its own */
   :where(a, button, summary, [role="button"], [role="radio"], [role="tab"], [tabindex]:not([tabindex="-1"])):focus-visible {

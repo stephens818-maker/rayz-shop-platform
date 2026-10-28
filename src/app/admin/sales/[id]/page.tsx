@@ -140,7 +140,14 @@ export default async function SalePage({ params, searchParams }: { params: Promi
           {sp.rebookError && <Notice tone="amber">Couldn&apos;t rebook: {sp.rebookError}</Notice>}
           {sp.stock && <Notice tone="amber">{sp.stock}</Notice>}
           <div className="flex flex-wrap gap-2">
-            <LinkButton href="/admin/calendar">Back to calendar</LinkButton>
+            {ctx.staff.kind === "shop" && (
+              <LinkButton href="/admin" size="lg" data-testid="next-client">
+                Next client
+              </LinkButton>
+            )}
+            <LinkButton href="/admin/calendar" variant={ctx.staff.kind === "shop" ? "secondary" : "primary"}>
+              Back to calendar
+            </LinkButton>
             {can(ctx, "walkins.manage") && (
               <LinkButton href="/admin/walk-ins" variant="secondary">
                 Next walk-in
