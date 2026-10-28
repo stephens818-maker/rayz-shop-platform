@@ -20,7 +20,7 @@ import {
   trainingLine,
   type TrainingLine,
 } from "@/domain/my-earnings";
-import { type ClientCounts, clientCountsOf, linesPph } from "@/domain/pph";
+import { type ClientCounts, clientCountsOf, linesPph, perClientCents } from "@/domain/pph";
 import { appPayoutStatus, appTransferStatus } from "@/domain/staff-payouts";
 import { employeeFeeCents, receivedCents } from "@/domain/tips";
 import { SHOP_TZ, addDays, diffDays, endOfLocalDay, isValidLocalDate, localDateOf, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
@@ -29,6 +29,7 @@ import { audit } from "@/server/audit";
 import { AppError, forbidden } from "@/server/errors";
 import { approvalOf, buildPayroll, dayFigures, ensurePayGroups, lockedRunsOver, type DayFigures, type PayrollView } from "@/server/payroll/run";
 import { PAID, rows, uuids } from "@/server/report-sql";
+import { clientVisits } from "@/server/service-tickets";
 import { notSquireEra } from "@/server/squire-era";
 import { staffAccount } from "@/server/tips/accounts";
 import { currentDeclarationsOf } from "@/server/tips/declarations";
@@ -448,7 +449,8 @@ function weeksOf(view: PayrollView | null, staffId: string, p: MyPeriod) {
  * GET /me/earnings?period=current|<id> (or periodId=<id>): one pay period at every shop of theirs on
  * it, from their line of the Payroll Report. Parts they may not see are null: pay without
  * compensation.own, tips without tips.own, sales without report.my_sales.view and reports.money,
- * hours without timesheet.own. totalCents needs both pay and tips, pph both sales and hours.
+ * hours without timesheet.own. totalCents needs both pay and tips, pph both sales and hours,
+ * productPerClient their sales.
  */
 export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: LocalDate = todayLocal()) {
   const see = sees(ctx);
@@ -457,15 +459,17 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
   const per = earningsPeriod(cals, q, today);
   const shopIds = per.cals.map((c) => c.shop.id);
   const view = await buildPayroll(per.start, per.end, { clockChecks: false });
-  const [state, ledger, days, declared, covered, setup] = await Promise.all([
+  const [state, ledger, days, declared, covered, setup, visits] = await Promise.all([
     periodStates([per], today, new Map([[per.start, view]])).then((m) => m.get(per.start)!),
     see.tips ? myLedger(me, shopIds, { from: per.start, to: per.end }) : [],
     see.tips ? myDays(me, shopIds, per.start, per.end, today) : [],
     see.tips ? currentDeclarationsOf(me, shopIds, per.start, per.end) : [],
     see.tips ? shopCoveredRefunds(me, shopIds, per.start, per.end) : [],
     payoutSetup(ctx),
+    see.sales ? clientVisits({ shopIds, staffIds: [me] }, per.start, per.end) : [],
   ]);
   const tickets = clientCountsOf(view?.blocks ?? []);
+  const servedAt = (ids: readonly string[]) => new Set(visits.filter((v) => ids.includes(v.shopId)).map((v) => v.client)).size;
   const routes = await tipRoutesOf(setup);
   const countsTowardOt = (view?.settings ?? DEFAULT_PAYROLL_SETTINGS).trainingCountsTowardOt;
   const trainingOf = (lines: readonly Line[]) => (see.wages ? seenTraining(trainingLine(lines, { countsTowardOt }), see.hours) : null);
@@ -508,6 +512,7 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
         training: trainingOf(line ? [line] : []),
         hours: see.hours ? shopHours(line) : null,
         pph: pphOut(line ? [line] : [], see, tickets),
+        productPerClient: perClientOut(line ? [line] : [], see, servedAt([c.shop.id])),
         reconciliation: reconciliationOf(see, block, line),
       },
     };
@@ -549,6 +554,11 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
       see,
       tickets,
     ),
+    productPerClient: perClientOut(
+      slices.flatMap((s) => (s.line ? [s.line] : [])),
+      see,
+      servedAt(shopIds),
+    ),
     cardTipsCents: tipsOf("cardTipsCents"),
     cashTipsCents: tipsOf("cashTipsCents"),
     giftCardTipsCents: tipsOf("giftCardTipsCents"),
@@ -587,6 +597,18 @@ function pphOut(lines: readonly Line[], see: Sees, tickets: ClientCounts) {
     clientsPerHour: p.clientsPerHour === null ? null : r2(p.clientsPerHour),
     na: p.servicePph === null,
   };
+}
+
+/**
+ * Their own product sales per client (src/domain/pph.ts): Product$ on their lines of the Payroll
+ * Report over the unique clients of their completed tickets in the period (a client they saw at two
+ * shops is one; a walk-in is one per ticket). Needs their sales; null (N/A) with no clients.
+ */
+function perClientOut(lines: readonly Line[], see: Sees, clients: number) {
+  if (!see.sales) return null;
+  const productSalesCents = lines.reduce((a, l) => a + toCents(l.product), 0);
+  const v = perClientCents(productSalesCents, clients);
+  return { productSalesCents, uniqueClients: clients, productSalesPerClientCents: v, na: v === null };
 }
 
 /** The training line with its hours left out for someone who may see pay but not their hours. */
