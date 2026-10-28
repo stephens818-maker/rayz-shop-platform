@@ -121,6 +121,8 @@ Charles approved separate charges and transfers on 2026-10-28. The platform is t
 
 Decided 2026-10-28, superseding the earlier Express wording. Shops' own connected accounts stay Express; this is only the barbers'.
 
+- **Shops on Express are deliberate** (confirmed 2026-10-28, mobile PR #7): a shop's account receives its sale transfers, so the owner gets Stripe's Express dashboard for those transfers, payouts and bank changes (`ensureConnectedAccount` and `ensureEntityAccount` in `src/server/payments/connect.ts`, with the platform paying fees and carrying losses). Barbers stay recipient accounts with `stripe_dashboard: none`. `tests/charge-path-guard.test.ts` holds both: Express only in `connect.ts`, `none` and the recipient agreement in `staffAccountParams`. Open question for Charles: shops still request `card_payments`, and go-live waits on `charges_enabled`, though with separate charges they only need `transfers`.
+
 - **Account type:** a Connect **recipient** account (`tos_acceptance.service_agreement = recipient`, the `transfers` capability only) with `controller.stripe_dashboard.type = none` (ST-I9), `fees.payer = application`, `losses.payments = application`, `requirement_collection = stripe`, manual payouts. Barbers get **no Stripe Dashboard login**, and **1099 tax reporting stays off** (`taxForms = will_not_file`; their tips are W-2 wages). `staffAccountParams` in `src/server/tips/accounts.ts` is the one place the account is described. The brand settings can't pick Express, `full` or hosted any more; older stored values read as these.
 - **Onboarding:** Stripe's **embedded components** in the staff app: `POST /api/staff/v1/banking/account-session` returns an Account Session for `account_onboarding`, `account_management` (changing the card or bank) and `notification_banner`. `POST /banking/onboarding-link` (Stripe's hosted page) is the **fallback only**, for when the embedded component can't load.
 - **No dashboard:** `POST /banking/dashboard-link` returns **409** (`details.reason` `no_stripe_dashboard`) outside the simulator. Change the card or bank in the embedded account management.
@@ -547,17 +549,18 @@ Append-only `analytics_events`, written by database triggers on the tables both 
       - `reconciliation`: each column of their iSolved row against their Payroll Report line, with `matches`.
     - **The identities:** `greaterOfCents + productCommissionCents + lateCommissionCents + commSalesAdjustmentCents = hourlyPayCents + commSalesCents`, and `totalCents = wagesCents + totalTipsCents`, both exactly.
   - `GET /me/earnings/days?periodId=` (or `period`, or any `from`/`to` up to 31 days) → `{ from, to, periodId, periodStatus, isEstimate, days: [{ date, fromLock, shopIds, cardTipsCents, cashTipsCents, serviceSalesCents, productSalesCents, productionHours, trainingHours, tickets, giftCardTipsCents, cashOnTicketsCents, declaredCashTipsCents, tipAdjustmentsCents, totalTipsCents, ptoHours }] }`. Over a pay period the days add up to `/me/earnings`.
-  - `GET /me/earnings/tickets?periodId=<id|current>&date=<YYYY-MM-DD>` → `{ periodId, date, timezone, periodStatus, isEstimate, tickets, refunds }`. Both parameters are required, and `date` is a Chicago calendar day inside that period. Anything else is 400, and a period id no period starts on is 404. Each ticket has:
+  - `GET /me/earnings/tickets?periodId=<id|current>` (or `period`, or `from` and `to` up to 31 days), optionally with `date=<YYYY-MM-DD>` → `{ periodId, date, timezone, periodStatus, isEstimate, tickets, refunds }`. Without `date` it's every ticket in the span; with it, that Chicago calendar day only, which must be inside the span. No span, or both `period` and `periodId`, is 400; a period id no period starts on is 404. Each ticket has:
     - `saleId`, `shopId`, `shopName`, `clientFirstName` (the first name only, `Walk-in` when there's no client), `startedAt` and `serviceName`.
     - `serviceCents` and `productCents`: what payroll credits them on that ticket.
     - `cardTipCents`, `cashTipCents` and `giftCardTipCents`: their share only on a split ticket, with `shared: true`.
     - `tipDisposition` (`stripe`, `payroll` or `cash`; `payroll` where the shop's tip switch is off).
     - The transfer and its payout as separate flat fields: `transferStatus` (`pending`, `paid`, or `reversed` with `transferReversedBy: "stripe"`) with `transferArrivalDate`, then `payoutId`, `payoutStatus` (Stripe's: `pending`, `in_transit`, `paid`, `failed` or `canceled`; a payout is never `reversed`) and `payoutArrivalDate`. These are null where there's none.
+    - The same as the app's objects (PR #7): `transfer: { status, amountCents, arrivalDate }` and `payout: { status, amountCents, arrivalDate, bankLast4, failureMessage }`, null where there's none. Each object's `status` is its own: the transfer's on `transfer`, Stripe's payout status on `payout`.
     - `originalDate` and `postedDate` for a late tip, and `lateDeclaration`.
   - `GET /me/payouts?periodId=` (or `period`, or `from`/`to` up to 31 days) → `{ from, to, periodId, periodStatus, isEstimate, bankLast4, tipTransfersEnabled, payrollCopy, shops, transfers, payouts }`.
     - `shops`: each shop's tip switch, `{ shopId, tipToBarber, tipTransfersEnabled, payrollCopy }`. Where the switch is off, card tips are paid through payroll.
-    - `transfers`: each card tip's transfer to their Stripe account at the sale, `{ id, saleId, shopId, amountCents, transferStatus, transferReversedBy, transferArrivalDate, date, payoutId, payoutStatus, payoutArrivalDate }`. `transferStatus` is `pending` or `paid` (in their Stripe account). A transfer Stripe refused at the sale shows `pending`: it's paid with their next payout.
-    - `payouts`: the Stripe payouts to their bank or debit card, `{ id, shopId, payoutStatus, amountCents, arrivalDate, bankLast4, failureMessage, feeCents, instant, returned, createdAt, paidAt }`. `payoutStatus` is Stripe's own: `pending`, `in_transit`, `paid`, `failed` or `canceled`, never `reversed`. `arrivalDate` is Stripe's `arrival_date`, from `payout.created` and `payout.updated` on the Connect webhook.
+    - `transfers`: each card tip's transfer to their Stripe account at the sale, `{ id, saleId, shopId, amountCents, transferStatus, transferReversedBy, transferArrivalDate, date, payoutId, payoutStatus, payoutArrivalDate }`. `transferStatus` is `pending` or `paid` (in their Stripe account). A transfer Stripe refused at the sale shows `pending`: it's paid with their next payout. `status` and `arrivalDate` repeat `transferStatus` and `transferArrivalDate` for the app.
+    - `payouts`: the Stripe payouts to their bank or debit card, `{ id, shopId, payoutStatus, amountCents, arrivalDate, bankLast4, failureMessage, feeCents, instant, returned, createdAt, paidAt }`. `payoutStatus` is Stripe's own: `pending`, `in_transit`, `paid`, `failed` or `canceled`, never `reversed`; `status` repeats it for the app. `arrivalDate` is Stripe's `arrival_date`, from `payout.created` and `payout.updated` on the Connect webhook.
     - **Tip transfers are never reversed.** Ray'z never reverses one (`payment_transfers_tips_kept`). A transfer is `reversed` (`transferReversedBy: "stripe"`) only when Stripe itself reversed it (`transfer.reversed`), which is recorded and logged. A payout their bank returns is `failed` with `returned: true`, but its transfers stay `paid`: the money is back in their Stripe balance and goes out with their next payout.
   - **Tests:**
     - **`tests/my-earnings-contract.test.ts`:** for every golden row, `periodPay` equals the report row and the export row to the cent: every `exportRowChecks` column, hours, greater-of, tips, wages, the OT estimate, and labor cost with OT pay. It runs the anonymized rows, plus the private audit rows when present locally. The report's Total Wages is rounded once and may differ by 1 cent (PY-RD-01).
@@ -574,6 +577,39 @@ Append-only `analytics_events`, written by database triggers on the tables both 
   - Approved-device sign-in is in (L36, 2026-10-27): see the log entry. The app needs the screen for it.
   - A location block that starts after sign-in turns token requests into 401 "Please sign in again"; signing in again then shows the block message (403, `details.networkBlocked`).
   - Shop goals (ST-I2) are in (L37, 2026-10-27): `shopGoals` in `GET /me/milestones`; see the log entry.
+
+### The Ray'z Staff app's contract (mobile PR #7, `mobile/packages/mock-api`)
+
+Core answers every `/api/staff/v1` route the mock serves, under the mock's names, from the same server code and rules as the routes beside them (`src/server/staff-api/app-contract.ts`). Nothing existing changed meaning: the app's fields are added next to core's. `openapi/staff-v1.json` lists each one with its permission. The employee is always the one signed in (`staffId` or any unknown parameter is 400), amounts are integer cents, every My Earnings answer is `private, no-store` and in the audit log (`staff.earnings_view`), and nothing is net of tax.
+
+| The app calls | Core |
+| --- | --- |
+| `GET /config` | core's config plus `timezone`, `timeFormat`, `weekStartDay: 0` (workweeks start Sunday), `appName`, `minSupportedVersion`, `latestVersion`, `tipTransfersDefault`, `supportPhone`, `supportEmail`, `privacyUrl`, `termsUrl` and `shops[]` (`id`, `slug`, `launched`, `launchAt`, `closedCopy`, `booking` native, external or closed, `externalBookingUrl`, `payments`, `clockIn`, `tipTransfers`) |
+| `POST /auth/otp/start`, `POST /auth/otp/verify` | `/auth/code/start` and `/auth/code/verify` (email or phone). Start adds `destination`, masked from what was typed. Verify answers the tokens flat with `staff: { id, firstName, shops }`; with two-step sign-in it's still `{ twoFactor }` for `/auth/login/code` |
+| `POST /auth/step-up` | `/me/step-up`; `pin` is read as their authenticator code (never the clock PIN). `{ stepUpToken, expiresIn: 900, required }`. The MFA is kept on the session, so `X-Step-Up` isn't needed |
+| `GET /me` | adds `id`, `firstName` and `shopIds` (core's `shops` stays the list of objects) |
+| `GET /me/calendar` | adds `shopId` and `appointments` (`id`, `startsAt`, `clientId`, `clientFirstName`, `serviceName`, `status`) |
+| `POST /appointments/{id}/status` | takes `status` (the one to move to) as well as `action`; the appointment comes back, and again as `appointment` |
+| `POST /clock/in`, `POST /clock/out` | take `token` (the scanned QR link from `GET /kiosk/qr`, or the NFC sticker's link) instead of `shopId` and `proof`, and `cashTipCents` with `attestation` at clock-out. Reply adds `punch { id, staffId, shopId, inAt, outAt, cashTipCents, attestation }`. A `biometric` field is 400 |
+| `GET /me/pay-periods`, `/me/earnings` (period or from/to), `/me/earnings/days`, `/me/earnings/tickets`, `/me/payouts` | as above; tickets take `period` and an optional `date`, and carry `transfer` and `payout`; transfers and payouts carry `status` |
+| `GET /me/earnings/report?format=csv\|pdf` | My Earnings as a file for a pay period or whole workweeks (a range that cuts a workweek is 400 "Export a whole workweek."). The CSV is the gross label, the mock's header, then the row. Audited |
+| `POST /me/cash-tips` | `/tips/declarations`; 201 `{ adjustment }` (`late_declaration` when its period locked) |
+| `POST /me/devices` | `/devices`; `reminders` is `pushEnabled`, `marketing` is ignored |
+| `GET /me/payout-account`, `POST /me/payout-account/session`, `.../session/complete` | their recipient account as `PayoutAccount` (core's `AccountState` values); the embedded components' client secret (null in the simulator); complete reads Stripe and ignores a sent `state` |
+| `POST /me/instant-payouts/quote`, `PATCH /me/payout-preferences` | the instant fee (1.5%, 50¢ minimum by default) and who pays it; the instant switch (`acceptInstantFee` where the brand asks) |
+| `POST /me/instant-payouts` | 409 `on_demand_off`: cashing out on demand isn't offered (needs Charles). With instant on, each approved tip payout goes instantly |
+| `POST /kiosk/pair`, `POST /kiosk/pair/{id}/approve`, `POST /kiosk/{id}/revoke`, `GET /audit` | `settings.shop` at that shop. Approve answers the kiosk credential once; revoke stops it at once; all audited (`kiosk.approve`, `timeclock.*`) |
+| `GET /kiosk/roster`, `GET /kiosk/qr`, `POST /kiosk/pin` | the kiosk credential as the Bearer token (or `X-Clock-Device`). A staff sign-in token is 403, anything else 401. First names only |
+| `POST /kiosk/pin/unlock` | `timesheet.edit` at the kiosk's shop, never their own PIN; audited `timeclock.pin_unlock` |
+
+Where core keeps its own rule (the mock differs):
+- **QR codes** are the shop's, change every 30 seconds and are taken for about a minute by anyone on the team who scans them there. They aren't single-use nonces.
+- **PINs:** a wrong PIN is 400; five lock it for five minutes (409) until then or a manager's unlock. The mock's 401, 423 and 429 aren't used.
+- **Cash tips** aren't taken on the kiosk; staff declare them on their phone. `/kiosk/pin` answers `cashTips.error` saying so.
+- **Error codes:** core's `{ error: { code, message, details } }` with its codes. A refused request with bad fields is 400, not 422. A missing step-up is 403 `forbidden` with `details.reason: "step_up_required"` and `details.mfaRequired`.
+- **Adjustment kinds** are `late_tip`, `late_declaration` and `tip_refunded_after_export`.
+
+Tests: `tests/db/staff-app-contract.test.ts` (every route above, shapes, audit, no-store, own-only, the kiosk flow, the report, whole workweeks, the scanned clock-in, biometrics refused).
 
 ## Shop login vs Squire
 
@@ -644,6 +680,17 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Requests for the other agent
 
+- (core → the Rayz App builder) **PR #7's staff routes are live on core (2026-10-28)**: see "The Ray'z Staff app's contract". This supersedes the tickets and flat-fields bullets of the earlier request below: `period`, an optional `date`, the `transfer` and `payout` objects and `status` are all back, next to the flat fields. Please:
+  - read `shopIds` on `GET /me` (core's `shops` is a list of objects);
+  - send the authenticator code as `code` to `POST /auth/step-up` (`pin` works and is read as the code), and treat 403 with `details.reason: "step_up_required"` (or `details.mfaRequired`) as the step-up prompt; `enroll` means set up two-step sign-in first;
+  - handle `{ twoFactor }` from `POST /auth/otp/verify` (send the code to `/auth/login/code`);
+  - widen the adjustment kinds to `late_tip`, `late_declaration` and `tip_refunded_after_export`;
+  - expect 400 (not 422) for bad fields, a wrong kiosk PIN as 400 and a locked one as 409, and the shop's rotating QR (not single-use);
+  - declare cash tips on the phone, not the kiosk; show 409 `on_demand_off` for cashing out now;
+  - expect `clientSecret: null` from `payout-account/session` in the simulator;
+  - generate the API types from the committed `openapi/v1.json` and `openapi/staff-v1.json`: `pnpm generate:api` at the repo root installs the platform from its lockfile and then runs your generate. Please point `mobile/packages/api/scripts/regenerate.mjs` at those files (or `pnpm openapi:dump`) instead of `tsx -e`, and don't add a root `pnpm-workspace.yaml` (Vercel would install Expo). Core keeps `mobile/` out of its tsc, ESLint and the Vercel upload (`.vercelignore`).
+- (core → claude's mobile agent) **The customer routes PR #7 needs** (`/app/config`, home, family, cards, pay, receipts, account deletion, rebook, live wait) are yours on `/api/v1`. Core's side: `shopGates()` in `src/server/staff-api/app-contract.ts` builds each shop's launched, booking, payments, clock and tip gates for the staff app's `/config`; please reuse it for `/app/config` rather than reading the shop columns again. Pay stays on `finalizeSale` (I10; now tested end to end through app pay, the customer screen and the Terminal). `openapi/v1.json` is a committed copy of your `openApiDocument`, and `tests/openapi-committed.test.ts` fails when it drifts: run `pnpm openapi:dump` with each change to `src/server/openapi.ts`. Tell core here before anything touches core tables.
+
 - (core → the Rayz App builder) **My Earnings changed with claude bot's corrections (2026-10-28). Some changes break the app's current calls; please update `mobile/`.** Details are under "My Earnings" in "Staff app API".
   - **MFA screens:** every My Earnings endpoint can answer 403 with `error.details.mfaRequired`.
     - For `code`: ask for their authenticator code, send it to `POST /me/step-up`, then retry.
@@ -651,8 +698,8 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
     - If setup answers 403 `stepUpRequired: "two_factor"`, ask for their password at `POST /me/step-up` first.
     - After that, sign-in returns `{ twoFactor }`, so the app needs the code step at `/auth/login/code` (already in the API).
     - It's on in production, off in the sandbox demo.
-  - **Tickets:** `GET /me/earnings/tickets` needs `periodId` (an id or `current`) and `date` (a Chicago day inside it). `date` alone, `period=` and `from`/`to` are now 400. The answer is `{ periodId, date, timezone, periodStatus, isEstimate, tickets, refunds }`.
-  - **Transfer and payout are separate flat fields:**
+  - **Tickets** (superseded by PR #7's request above: `period`, `from`/`to` and no `date` work again): `GET /me/earnings/tickets` needs `periodId` (an id or `current`) and `date` (a Chicago day inside it). `date` alone, `period=` and `from`/`to` are now 400. The answer is `{ periodId, date, timezone, periodStatus, isEstimate, tickets, refunds }`.
+  - **Transfer and payout are separate flat fields** (still there; PR #7's `transfer`, `payout` and `status` are back next to them):
     - On tickets, the nested `transfer` and `payout` objects are gone. Use `transferStatus`, `transferReversedBy`, `transferArrivalDate`, `payoutId`, `payoutStatus` and `payoutArrivalDate`.
     - On `/me/payouts`, `transfers[].status`, `reversedBy` and `arrivalDate` are now `transferStatus`, `transferReversedBy` and `transferArrivalDate`.
     - `payouts[].status` is now `payoutStatus`, and it's never `reversed`.
@@ -819,6 +866,7 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 - Launch day (L71), for Charles: the date and time (the first day of a pay period), which shop is the pilot, and whether the Play Console account is personal or an organization's. Answered Oct 28: every surface at once, one pilot shop, the rest after one clean pay period (PR #4's option B).
 - Rollout, to confirm in the sandbox: whether Squire's Commissions report can be run for one shop, or only brand-wide (then export it with a Shop or Location column).
 - C18 review login and the wallet fee: flags are off until Charles decides.
+- Staff app (PR #7), for Charles: cashing out tips on demand (`POST /me/instant-payouts` is 409 `on_demand_off` until he decides; instant payouts with each approved tip payout work now). And whether shops' accounts can drop `card_payments` now that the platform takes every charge (go-live would then wait on `transfers` instead of `charges_enabled`).
 - I10 fee model: the platform keeps an application fee equal to the processing estimate, and doesn't return it on refunds, so each shop's P&L carries its own card cost. Charles to confirm, or name a platform margin on top.
 - I10, decided: separate charges and transfers (Charles, 2026-10-28). Still for Charles: the refund or dispute amount the shop's transfer can't cover (for example a dispute on a charge that's mostly tip) is carried by the platform (`uncovered_cents`), as is Stripe's dispute fee; and the shop pays the instant payout fee on tips already in a barber's balance. `FEATURE_TIP_TO_BARBER` is on since the CPA approved it (Oct 28).
 - Payroll, for the CPA: Charles answered Q11 (2026-10-28): training hours are on top of clocked production hours and count toward the weekly 40. The CPA still needs to confirm that training is hours worked under the FLSA, which this rests on. The workbook's training-OT shortfall (claude's estimate, about 12.9 OT hours for 4 barbers, roughly $101: discrepancies section 16) was resolved by Charles outside the platform; nothing is owed or corrected here. Also Q17 (the owner row and the Coralville NetComm gap, flagged and not fixed), the full-time hours basis and window (default: clocked worked hours over a rolling 4 weeks), and 2-decimal half-up rounding of the export (off).
@@ -838,6 +886,15 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 - My Earnings, PY-RD-01: the report's Total Wages is rounded once, while the paycheck rounds each part. They can differ by 1 cent (the contract test shows it). Keep the report's figure, or round each part there too?
 
 ## Log
+
+### 2026-10-28: core, the Ray'z Staff app's contract (mobile PR #7), for the Rayz App builder and the mobile agent
+
+1. **The full `/api/staff/v1` surface the mock serves.** Every one of its 32 staff routes answers on core (see "The Ray'z Staff app's contract"), using the existing rules: the employee from the token, cents, `no-store`, audit logging and gross only. **Staging: pending.**
+2. **Separate charges and transfers (I10) end to end.** Checkout already used it (`chargeCard` is the one PaymentIntent, `planSaleTransfers` and `settleSale` the transfers). New sandbox tests take a card on the counter's Terminal reader, on the customer screen and in the app (`/api/v1` pay), and check the same platform charge, `sale_<id>` group, shop and tip transfers with `source_transaction`. **Staging: pending.**
+3. **`pnpm generate:api`.** A root script installs the platform from its lockfile, writes `openapi/v1.json` and `openapi/staff-v1.json` (committed, with a drift test) and runs mobile's generate. `mobile/` is kept out of the root tsc, ESLint and Vercel upload; there's no root workspace. **Staging: pending.**
+4. **Shops on Express are deliberate; barbers are recipient accounts with `stripe_dashboard: none`** (see "Barber payout accounts"), with a guard test. **Staging: pending.**
+- **Requests:** to the Rayz App builder and to the mobile agent, in "Requests for the other agent".
+- **Tests:** `tests/db/staff-app-contract.test.ts`, `tests/db/separate-charges.test.ts` ("every way a card is taken"), `tests/openapi-committed.test.ts`, `tests/charge-path-guard.test.ts`.
 
 ### 2026-10-28: core, the tip is paid once (the review of mobile PR #6), for the mobile agent and the Rayz App builder
 
