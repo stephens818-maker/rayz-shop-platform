@@ -96,9 +96,10 @@ export default async function PhoneAgentPage({ searchParams }: { searchParams: P
       )}
 
       {m && (
-        <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="grid gap-3 sm:grid-cols-4 lg:grid-cols-7">
           <Stat label="Calls in" value={m.calls} hint={`${m.staffAnswered} answered by staff`} />
           <Stat label="Taken by the agent" value={m.handled} hint={`${m.linksTexted} booking links texted`} />
+          <Stat label="High-intent calls" value={m.highIntent} hint="Asked the agent to book" />
           <Stat label="Booked after" value={m.bookings} hint={`${formatCents(m.bookedCents)} · ${pct(m.bookRate)} book rate`} />
           <Stat label="Calls answered" value={pct(m.answerRate)} hint="By staff or the agent" />
           <Stat label="Needs a follow-up" value={data.counts.follow_up ?? 0} tone={data.counts.follow_up ? "down" : undefined} hint="Missed, hung up, or put through and missed" />

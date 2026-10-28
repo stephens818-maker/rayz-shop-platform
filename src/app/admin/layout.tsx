@@ -71,7 +71,9 @@ export default async function AdminLayout({
             </Link>
             <div className="mr-auto shrink-0 leading-tight xl:mr-0" data-testid="workspace">
               <div className="text-base font-semibold text-white">{here?.name ?? ctx.assignedShops[0]?.name ?? "Shop"}</div>
-              <div className="text-xs text-zinc-400">{ctx.staff.displayLabel}</div>
+              <div className="text-xs text-zinc-400" data-testid="shared-login">
+                Shared shop login · {ctx.staff.displayLabel}
+              </div>
             </div>
             <FrontDeskBar tabs={tabs} more={frontDeskMore(sections)} />
             <form action={logout} className="shrink-0 xl:order-last">

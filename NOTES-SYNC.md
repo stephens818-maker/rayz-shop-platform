@@ -503,6 +503,73 @@ Append-only `analytics_events`, written by database triggers on the tables both 
   - A location block that starts after sign-in turns token requests into 401 "Please sign in again"; signing in again then shows the block message (403, `details.networkBlocked`).
   - Shop goals (ST-I2) are in (L37, 2026-10-27): `shopGoals` in `GET /me/milestones`; see the log entry.
 
+## Shop login vs Squire
+
+Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire's single-shop (kiosk) login at Le Claire (observed Oct 20). Charles's rule: the shop login works like Squire's, with the POS and front desk first and everything else at the brand level. **Same** means it already matched. **Closed** means it was a gap and is now built. **Intentional** means it differs on purpose, with the reason. **Open** means it still differs and needs a decision.
+
+**Banner and shell**
+- **Closed:** the banner. Squire says "logged in as a kiosk user". Our touch header shows the shop's name and, under it, "Shared shop login · <shop> desk" (`data-testid="shared-login"`, test plan FD-01). The label had been dropped when the shop login got its tablet header.
+- **Same:** Handoff. Squire has a Handoff toggle for customer-facing tip and pay. Ours is **Hand to customer** on the ticket, and the device comes back to staff after the thank-you or with a time clock PIN.
+- **Same:** Log out. **Sign out** is in the header.
+- **Intentional:** no location switcher. A shop login is one shop, as in Squire.
+
+**Navigation.** Squire has Appointments, Clients, Staff, Services, Reports, Help, Settings, Support chat, Operator and Log out.
+- **Same:** Appointments is our **Calendar** tab, and **Front desk** (today's check-in and check-out list) comes first.
+- **Same:** Clients is the **Clients** tab.
+- **Same:** Reports is the **Reports** tab (see Reports below).
+- **Same:** Operator is our **Phone agent** under More.
+- **Same:** Help and Support chat are the Rayz Assistant panel, when the brand turns it on.
+- **Closed:** Services. The shop login couldn't open Services, because the catalog editor needs `catalog.prices` or `catalog.manage`. Now there is a read-only **Service menu** (`/admin/services/menu`, under More). It lists each item's name, category, length, price and tax at this shop, and whether it's on here and online. It opens for anyone with `checkout.any`, `calendar.manage`, `catalog.prices` or `catalog.manage`.
+- **Intentional:** no Staff screen. Squire's kiosk lists staff with their phone and email. Our front desk sees the barbers on the calendar and the clock, while the staff list and staff contact (`staff.view`, `staff.contact`) are brand-level.
+- **Intentional:** no Settings. Squire's kiosk edits shop details and each barber's booking settings (intervals, days in advance, cancellation, booking tips, reminders). Here those are brand settings, pushed to shops by brand sync or edited by a manager the brand allows. The shop login never gets `settings.*`.
+- **Intentional:** our extras for the desk, which Squire's kiosk doesn't have: **Walk-ins**, **Time clock**, **Openings** (the Campaign Center's We have openings, on by brand grant), **Call-ins**, **Inbox**, **Time off**, **Milestones** and the **All-shops day board**.
+
+**POS.** Squire uses a floating button to `/register`, with Register, Cash Register, Daily Summary, Custom Charge and Gift Cards.
+- **Same:** the **Checkout** tab is always in the header, in place of the floating button. Register is the ticket, and Custom Charge is the custom line on the ticket.
+- **Same:** Cash Register is **Cash drawer** (under More). It opens with the shop's usual $300.00 (`shops.drawer_opening_cents`), takes paid in and paid out, has no sale, and closes with a count.
+- **Same:** Daily Summary is the **End of day** report.
+- **Same:** Gift Cards is **Gift cards** (under More).
+- **Intentional:** the card fee isn't a tax line. Squire puts the 3% card fee on the ticket as a tax. Ours is a separate card fee line: shown before pay, on the receipt, and on the Service menu as "a fee, not tax".
+
+**Brand-only in Squire, and here too:** Products and Inventory, Marketing (except We have openings, above), Payouts, the location switcher and Add barber. None reaches a shop login (`SHOP_LOGIN_NEVER`).
+
+**What the shop can do**
+- **Same:** add an appointment or client, block time, the waiting list, and clocking staff in and out (the front-desk clock).
+- **Intentional:** refunding and reassigning tickets take a manager's time clock PIN (`needsManager`), and so does voiding. In Squire the kiosk does these alone. A shared login can't be traced to a person, so the approving manager is recorded on the refund, void or reassignment.
+- **Intentional:** no editing shop details or each barber's booking settings. They're brand-level (see Settings).
+- **Same:** opening and closing the cash drawer, with $300 by default.
+- **Intentional:** no report CSV or PDF exports and no full client list download. Squire's kiosk has both. A shared login never downloads (`SHOP_LOGIN_NEVER` has every `*.export`), and the client list export is the Brand Owner's alone. Printing a report page still works.
+- **Intentional:** no full client phone or email, and no staff phone or email. Squire shows both at the kiosk. Ours shows client contact masked by default (`brand_settings.shop_login.clientContact`: masked or hidden), and only brand-level roles see full contact. Staff contact is brand-level.
+
+**Reports.** Squire's kiosk has a date-range filter only, with no barber filter.
+- **Intentional:** ours adds a barber filter where it makes sense (`NO_BARBER_REPORTS` lists the exceptions).
+- **Same:** these Squire reports have a match here:
+
+| Squire | Ours |
+| --- | --- |
+| Leaderboard (service and product sales, productivity, average ticket, new clients, tickets with product, top services, products and barbers) | Leaderboard |
+| Total Gross, Gross Net | Sales summary |
+| Sales by Service, Sales by Product, Services | Services vs products |
+| Sales by Barber, Barber Sales Summary, Barber, Employee Summary | Barber performance |
+| Appointments | Appointments |
+| Time Track | Attendance |
+| Daily, End of Day | End of day |
+| Iowa monthly tax, Quarterly taxes | Sales tax by state (monthly or quarterly per the brand's filing setting) |
+| Total Collected | Card vs cash |
+| Retention (quarter, visits to qualify 1, 2 or 3, existing and new retention, lost to another professional) | Client retention (the same options, and "Went to another barber or shop") |
+| Acquisition channels | Acquisition |
+
+- **Intentional:** Commission Payout and TIPS, and each barber's tips in End of day and Barber performance. These are pay data, the brand's (Charles, Oct 28): the shop login, Shop Manager and Regional Manager don't see them unless the brand grants Tips and payroll. Shop tip totals still show.
+- **Intentional:** Locate duplicates is brand-level (`clients.merge`).
+- **Open:** Deposits. Squire's kiosk has a Deposits report. Here a booking deposit exists only for group bookings, under the brand's group rule (held as a gift card and applied at checkout). Bank deposits are the brand's Payouts page. Whether shops take single-booking deposits, and so need a shop Deposits report, is for Charles.
+
+**Services list.** Squire shows name, duration, price, tax (the shop's tax, plus the 3% card fee as a tax line), category, and enabled or disabled.
+- **Closed:** the Service menu shows the same fields, with the card fee noted as a fee (see POS above).
+
+**Operator.** Squire has an AI phone agent per shop, with a dashboard (dollars booked, minutes saved, appointments booked, calls answered, high-intent calls, book rate), contacts and logs.
+- **Same:** the Phone agent page has calls in, calls answered, booked after (with dollars and book rate) and staff minutes saved, plus the call log. Each caller links to their client profile, which takes the place of Squire's contacts.
+- **Closed:** high-intent calls. The "High-intent calls" stat counts the calls where the caller asked the agent to book (`operatorMetrics().highIntent`).
+
 ## Requests for the other agent
 
 - (core → the Rayz App builder) **The Critical endpoints your apps are gated on are live in the sandbox (checked 2026-10-28 at c1b5fb3 and later).** Core called each one on the sandbox, signed in as the demo users, not against a mock. PR #1's launch list has the same lists as tables ("Staff endpoints the apps are gated on" in section 3, "Customer endpoints the apps are gated on" in section 4). Please switch `mobile/` from the mock to the sandbox for these as you go, and post here when a screen runs against them.

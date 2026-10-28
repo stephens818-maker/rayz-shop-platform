@@ -46,8 +46,12 @@ Both run on **Vercel** (the app) and **Neon** (Postgres). Supabase works in plac
 | Shop login | `coralville@rayz.test` (or any shop: `moline@rayz.test`, `kimberly@rayz.test`, …) | One shop's front desk: calendar, walk-ins, checkout, drawer, stock |
 | Barber | `makenna@rayz.test` | Her own column, clients (contact details masked), and sales |
 | Shop manager | `michelle@rayz.test` | Coralville's manager tools and reports |
+| Apprentice | `apprentice.test@rayz.test` | A barber's view at Coralville with no discounts, price changes or refunds |
+| Bookkeeper / Accountant | `bookkeeper.test@rayz.test` | Read-only reports, payroll and tips for every shop; no POS, calendar edits or settings |
+| Front desk, Moline | `frontdesk2.test@rayz.test` | A personal front desk login at Moline, for cross-shop checks |
+| Barber, two shops | `barber2.test@rayz.test` | Bookable at Moline (Mon–Wed) and Coralville (Thu–Sat, 30-minute slots) |
 
-The password is `rayz2026!` unless you set `SEED_PASSWORD`. The [README](README.md#logins-seeded-password-rayz2026) lists more logins: admin, regional, front desk, a multi-shop barber.
+The last four are the launch test plan's accounts. Every build adds any that are missing (`scripts/demo-logins.ts`), so a sandbox seeded earlier has them too. The password is `rayz2026!` unless you set `SEED_PASSWORD`. The [README](README.md#logins-seeded-password-rayz2026) lists more logins: admin, regional, front desk, a multi-shop barber.
 
 Things to try:
 

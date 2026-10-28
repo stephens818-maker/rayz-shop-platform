@@ -172,6 +172,8 @@ export function operatorMetrics(calls: readonly OperatorCall[], minutesPerCall: 
     handled: handled.length,
     missed: calls.filter((c) => !c.operator && (c.status === "missed" || c.status === "after_hours")).length,
     linksTexted: handled.filter((c) => c.autoTextSent).length,
+    /** Callers who asked to book, whether or not they did. */
+    highIntent: handled.filter((c) => c.choice === "book").length,
     bookings: booked.length,
     bookedCents: booked.reduce((a, c) => a + (c.bookedCents ?? 0), 0),
     bookRate: handled.length ? booked.length / handled.length : null,

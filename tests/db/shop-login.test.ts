@@ -297,3 +297,18 @@ describe("new reports", () => {
     for (const label of ["End of day", "Tips", "Gross and net sales", "Employee summary", "Total collected", "Iowa monthly sales tax"]) expect(hub.text).toContain(label);
   });
 });
+
+describe("the service menu", () => {
+  it("shows the desk this shop's items, prices, lengths and tax, read-only", async () => {
+    await as("coralville@rayz.test");
+    const page = await open("/admin/services/menu");
+    expect(page.kind).toBe("ok");
+    expect(page.text).toContain("Service menu");
+    expect(page.text).toMatch(/\$\d+\.\d\d/);
+    expect(page.text).toMatch(/\d+ min/);
+    expect(page.text).toContain("not as tax");
+    expect((await open("/admin/services")).kind).not.toBe("ok");
+    await as("makenna@rayz.test");
+    expect((await open("/admin/services/menu")).kind).not.toBe("ok");
+  });
+});

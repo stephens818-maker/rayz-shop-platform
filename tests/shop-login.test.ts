@@ -281,7 +281,7 @@ describe("phone operator", () => {
     expect(strongerChoice("book", "none")).toBe("book");
   });
 
-  it("counts calls, bookings, book rate and minutes saved", () => {
+  it("counts calls, high-intent calls, bookings, book rate and minutes saved", () => {
     const m = operatorMetrics(
       [
         { operator: true, status: "after_hours", autoTextSent: true, choice: "book", bookedCents: 4_500 },
@@ -292,7 +292,7 @@ describe("phone operator", () => {
       ],
       3,
     );
-    expect(m).toMatchObject({ calls: 5, staffAnswered: 1, handled: 3, missed: 1, linksTexted: 1, bookings: 2, bookedCents: 7_500, minutesSaved: 6 });
+    expect(m).toMatchObject({ calls: 5, staffAnswered: 1, handled: 3, missed: 1, linksTexted: 1, highIntent: 1, bookings: 2, bookedCents: 7_500, minutesSaved: 6 });
     expect(m.bookRate).toBeCloseTo(2 / 3);
     expect(m.answerRate).toBeCloseTo(4 / 5);
     expect(operatorMetrics([], 3).bookRate).toBeNull();
