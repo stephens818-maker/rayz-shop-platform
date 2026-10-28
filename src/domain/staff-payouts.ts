@@ -47,10 +47,12 @@ export type AfterPayoutRule = (typeof AFTER_PAYOUT_RULES)[number];
 /**
  * A refund (or lost dispute) bigger than the sale's portion of the charge, once its tip is with the
  * barber: tips are never clawed back, so the tip part is either the platform's loss, logged
- * (platform), or the shop's, taken from its next transfers (shop). Confirm with Charles.
+ * (platform), or the shop's, taken from its next transfers (shop). A brand setting sent to the shops
+ * picked (shops.tip_refund_overflow), not part of StaffPayoutSettings. Confirm with Charles.
  */
 export const TIP_REFUND_OVERFLOW = ["platform", "shop"] as const;
 export type TipRefundOverflow = (typeof TIP_REFUND_OVERFLOW)[number];
+export const DEFAULT_TIP_REFUND_OVERFLOW: TipRefundOverflow = "platform";
 /** Which day a tip belongs to: the sale's business date, or the payment's (a tip added after the sale). */
 export const TIP_DATE_RULES = ["sale_date", "payment_date"] as const;
 export type TipDateRule = (typeof TIP_DATE_RULES)[number];
@@ -69,8 +71,6 @@ export interface StaffPayoutSettings {
   /** A full refund within this many days of the sale takes the tip back; later, the shop absorbs it. */
   reversalWindowDays: number;
   afterPayoutRefunds: AfterPayoutRule;
-  /** Who carries the tip part of a refund or lost dispute the shop's transfer can't cover. Confirm with Charles. */
-  tipRefundOverflow: TipRefundOverflow;
   tipDate: TipDateRule;
   taxForms: TaxFormFiling;
   /** The month (1 to 12) the yearly tax form check comes due, before Stripe files for the year just ended. */
@@ -92,7 +92,6 @@ export const DEFAULT_STAFF_PAYOUT_SETTINGS: StaffPayoutSettings = {
   reversalRule: "never",
   reversalWindowDays: 7,
   afterPayoutRefunds: "shop_cost",
-  tipRefundOverflow: "platform",
   tipDate: "sale_date",
   taxForms: "will_not_file",
   taxCheckMonth: 1,
@@ -114,7 +113,6 @@ export function staffPayoutSettings(raw: unknown): StaffPayoutSettings {
     reversalRule: pick(REVERSAL_RULES, r.reversalRule, d.reversalRule),
     reversalWindowDays: int(r.reversalWindowDays, REVERSAL_WINDOW_DAYS.min, REVERSAL_WINDOW_DAYS.max, d.reversalWindowDays),
     afterPayoutRefunds: pick(AFTER_PAYOUT_RULES, r.afterPayoutRefunds, d.afterPayoutRefunds),
-    tipRefundOverflow: pick(TIP_REFUND_OVERFLOW, r.tipRefundOverflow, d.tipRefundOverflow),
     tipDate: pick(TIP_DATE_RULES, r.tipDate, d.tipDate),
     taxForms: pick(TAX_FORM_FILING, r.taxForms, d.taxForms),
     taxCheckMonth: int(r.taxCheckMonth, 1, 12, d.taxCheckMonth),

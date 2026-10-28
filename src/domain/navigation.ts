@@ -40,7 +40,7 @@ export const PAGE_ACCESS = {
   "/admin/my-pay": ["compensation.own"],
   "/admin/tips": ["tips.approve"],
   "/admin/tips/[id]": ["tips.approve"],
-  "/admin/tips/settings": ["tips.settings"],
+  "/admin/tips/settings": ["tips.settings", "tips.barber_payouts"],
   "/admin/tips/onboarding": ["tips.approve"],
   "/admin/tips/tracker": ["payouts.view"],
   "/admin/staff": ["staff.view", "staff.manage", "schedules.edit"],

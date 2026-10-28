@@ -967,6 +967,13 @@
       "when": 1796621040000,
       "tag": "core_0137_platform_losses",
       "breakpoints": true
+    },
+    {
+      "idx": 138,
+      "version": "7",
+      "when": 1796622840000,
+      "tag": "core_0138_tip_payout_controls",
+      "breakpoints": true
     }
   ]
 }

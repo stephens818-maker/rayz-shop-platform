@@ -2,14 +2,15 @@
  * I10, separate charges and transfers (Charles, 2026-10-28), against a stand-in Stripe that records
  * every transfer: each card sale is charged on the platform with its transfer_group, then the shop's
  * portion goes to the shop's connected account and, with FEATURE_TIP_TO_BARBER on (the launch
- * default, unset here), each tip to its barber's Express account, all with source_transaction. Off,
- * brand-wide (FEATURE_TIP_TO_BARBER=false) or at one shop (its Tips to barbers switch), the tip is in
+ * default, unset here), each tip to its barber's recipient account, all with source_transaction. Off,
+ * brand-wide (FEATURE_TIP_TO_BARBER=false) or at the shops the brand picks (tip_to_barber), the tip is in
  * the shop's transfer and goes on the paycheck. Either way every tip is in the iSolved figures, under
  * E_Cash Tips Recd. Refunds and disputes are taken
  * back from the shop's transfer only; a tip is never clawed back; a won dispute goes back to the shop.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { TIP_DEPOSIT_CONSENT_VERSION } from "@/domain/tip-deposit-consent";
+import { brandSet } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 
 vi.mock("server-only", () => ({}));
@@ -251,9 +252,10 @@ describe("a shop's Tips to barbers switch (the per-shop kill switch)", () => {
     const first = await cardSale(shop.id, staffId, 900);
     expect(first.tipRows).toEqual([expect.objectContaining({ staffId, destinationAccount: "acct_fake_sarah", amountCents: 900, status: "sent" })]);
 
-    expect(await tl.setShopTipToBarber(shop.id, false, actor)).toBe(false);
+    // The brand turns it off at this shop only, through the shop picker.
+    await brandSet("shop_setting", "tip_to_barber", { enabled: false }, { shops: [shop.id] });
     const logs = await m.db.db.select().from(s().auditLog).where(and(eq(s().auditLog.action, "tips.tip_to_barber"), eq(s().auditLog.entityId, shop.id)));
-    expect(logs.map((l) => l.details)).toEqual([{ before: true, after: false }]);
+    expect(logs.map((l) => l.details)).toEqual([{ setting: "tip_to_barber", before: { enabled: true }, after: { enabled: false }, via: "brand_sync" }]);
     expect([...(await settlement.tipToBarberShops([shop.id, other.id]))]).toEqual([other.id]);
 
     const before = await payrollLine(shop.id, staffId);
@@ -273,7 +275,7 @@ describe("a shop's Tips to barbers switch (the per-shop kill switch)", () => {
     expect(calls.map((c) => [c.op, c.params.amount, c.opts?.stripeAccount])).toEqual([["payout", 900, "acct_fake_sarah"]]);
 
     // Back on, the next card tip goes to her account again.
-    await tl.setShopTipToBarber(shop.id, true, actor);
+    await brandSet("shop_setting", "tip_to_barber", { enabled: true }, { shops: [shop.id] });
     const third = await cardSale(shop.id, staffId, 400);
     expect(third.tipRows).toEqual([expect.objectContaining({ amountCents: 400, status: "sent" })]);
   });
@@ -368,15 +370,16 @@ describe("refunds and disputes: the shop's transfer only, never a tip", () => {
   });
 });
 
-describe("a refund bigger than the sale's portion (the brand's tipRefundOverflow, confirm with Charles)", () => {
-  async function overflowSetting(v: "platform" | "shop") {
-    const [{ staffPayouts: was }] = await m.db.db.select({ staffPayouts: s().brandSettings.staffPayouts }).from(s().brandSettings);
-    await m.db.db.update(s().brandSettings).set({ staffPayouts: { ...was, tipRefundOverflow: v } });
-    onTestFinished(async () => void (await m.db.db.update(s().brandSettings).set({ staffPayouts: was })));
+describe("a refund bigger than the sale's portion (the brand's tip_refund_overflow, sent to the shops picked; confirm with Charles)", () => {
+  async function overflowSetting(v: "platform" | "shop", slug: string) {
+    const shop = (await m.db.db.query.shops.findFirst({ where: eq(s().shops.slug, slug) }))!;
+    await brandSet("shop_setting", "tip_refund_overflow", { bearer: v }, { shops: [shop.id] });
+    onTestFinished(async () => void (await brandSet("shop_setting", "tip_refund_overflow", { bearer: "platform" })));
   }
 
   it("the shop: the tip part is taken from its next transfers (never the barber's tip), a refund of that later sale reopens it, and the one after takes it again", async () => {
-    await overflowSetting("shop");
+    await overflowSetting("shop", "le-claire");
+    expect(await settlement.tipRefundOverflowAt((await m.db.db.query.shops.findFirst({ where: eq(s().shops.slug, "coralville") }))!.id)).toBe("platform");
     const { shop, staffId } = await setup("le-claire", "Audra");
     const jamie = (await setup("le-claire", "Jamie")).staffId;
     await m.db.db.delete(s().staffPayoutAccounts).where(eq(s().staffPayoutAccounts.staffId, jamie));
@@ -409,7 +412,7 @@ describe("a refund bigger than the sale's portion (the brand's tipRefundOverflow
   });
 
   it("the platform (the default): the tip part is logged as the platform's loss and nothing is taken from the shop later", async () => {
-    await overflowSetting("platform");
+    await overflowSetting("platform", "le-claire");
     const { shop, staffId } = await setup("le-claire", "Em");
     await barberOnStripe(staffId, "acct_fake_em");
     const first = await cardSale(shop.id, staffId, 1200);
@@ -421,7 +424,7 @@ describe("a refund bigger than the sale's portion (the brand's tipRefundOverflow
   });
 
   it("a shop on the brand's account: the sale's portion is on the platform already, and only the part of a refund past it (a tip with the barber) is a loss, always the platform's", async () => {
-    await overflowSetting("shop");
+    await overflowSetting("shop", "silvis");
     const { shop, staffId } = await setup("silvis", "Abigail");
     await m.db.db.update(s().shops).set({ paymentsMode: "brand" }).where(eq(s().shops.id, shop.id));
     onTestFinished(async () => void (await m.db.db.update(s().shops).set({ paymentsMode: "connected" }).where(eq(s().shops.id, shop.id))));

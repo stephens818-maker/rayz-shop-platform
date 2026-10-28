@@ -8,6 +8,7 @@ import {
   REVERSAL_RULES,
   SERVICE_AGREEMENTS,
   TIP_REFUND_OVERFLOW,
+  DEFAULT_TIP_REFUND_OVERFLOW,
   accountState,
   bankingStatusOf,
   canReceiveIn,
@@ -59,7 +60,7 @@ describe("staff payout settings", () => {
   });
 
   it("keeps good values and drops bad ones to the default", () => {
-    expect(staffPayoutSettings({ reversalWindowDays: 30, tipDate: "payment_date", taxCheckMonth: 12, tipRefundOverflow: "shop" })).toMatchObject({ reversalWindowDays: 30, tipDate: "payment_date", taxCheckMonth: 12, tipRefundOverflow: "shop" });
+    expect(staffPayoutSettings({ reversalWindowDays: 30, tipDate: "payment_date", taxCheckMonth: 12 })).toMatchObject({ reversalWindowDays: 30, tipDate: "payment_date", taxCheckMonth: 12 });
     expect(staffPayoutSettings({ dashboard: "full", reversalWindowDays: 500, owedVia: "twice", taxCheckMonth: 13, taxForms: "file", instantFeeAck: "yes", tipsOnPaycheck: "on" })).toEqual(DEFAULT_STAFF_PAYOUT_SETTINGS);
     expect(staffPayoutSettings({ reversalWindowDays: 2.5 }).reversalWindowDays).toBe(7);
   });
@@ -71,10 +72,10 @@ describe("staff payout settings", () => {
     expect(staffPayoutSettings({ dashboard: "express", serviceAgreement: "full", onboarding: "hosted" })).toMatchObject({ dashboard: "none", serviceAgreement: "recipient", onboarding: "embedded", taxForms: "will_not_file" });
   });
 
-  it("a refund bigger than the sale's portion is absorbed by the platform unless the brand picks the shop", () => {
-    expect(DEFAULT_STAFF_PAYOUT_SETTINGS.tipRefundOverflow).toBe("platform");
+  it("a refund bigger than the sale's portion is absorbed by the platform unless the brand picks the shop; it's a per-shop brand setting, not part of staff payouts", () => {
+    expect(DEFAULT_TIP_REFUND_OVERFLOW).toBe("platform");
     expect(TIP_REFUND_OVERFLOW).toEqual(["platform", "shop"]);
-    expect(staffPayoutSettings({ tipRefundOverflow: "barber" }).tipRefundOverflow).toBe("platform");
+    expect(staffPayoutSettings({ tipRefundOverflow: "shop" })).not.toHaveProperty("tipRefundOverflow");
   });
 
   it("instant payouts are off by default (ST-I12)", () => {

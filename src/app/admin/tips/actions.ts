@@ -11,7 +11,7 @@ import { safe } from "@/server/action";
 import { StaffContext, assertShopAccess, authorize } from "@/server/auth/staff";
 import { AppError, notFound } from "@/server/errors";
 import { requireInTenant } from "@/server/tenant";
-import { saveShopTipSettings, setShopTipToBarber, shopTipConfig } from "@/server/tips/ledger";
+import { saveShopTipSettings, shopTipConfig } from "@/server/tips/ledger";
 import { acknowledgeCashPayout, adjustPayout, approveBatch, buildBatch, cancelBatch, holdPayout, releasePayout, removePayout } from "@/server/tips/payouts";
 
 function refresh(batchId?: string) {
@@ -102,19 +102,6 @@ const shopSchema = z.object({
   weeklyDay: z.number().int().min(0).max(6),
   defaultMethod: z.enum(TIP_METHODS),
 });
-
-export async function setShopTipToBarberAction(shopId: string, on: boolean) {
-  return safe(async () => {
-    const ctx = await authorize("tips.settings");
-    assertShopAccess(ctx, shopId);
-    if (!ctx.isOwner) throw new AppError("forbidden", "Only the Brand Owner can turn tips to barbers' Stripe accounts on or off");
-    const r = await setShopTipToBarber(shopId, z.boolean().parse(on), ctx.actor);
-    refresh();
-    revalidatePath("/admin/tips/settings");
-    revalidatePath("/admin/tips/tracker");
-    return r;
-  });
-}
 
 export async function saveShopTipSettingsAction(shopId: string, input: z.input<typeof shopSchema>) {
   return safe(async () => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { SyncMsg, useSettingSync, useSyncSave } from "@/components/brand-sync";
 import { Button, Card, CardHeader, Field, Input, Select } from "@/components/ui";
 import type { SyncFormField } from "@/domain/brand-sync";
@@ -111,10 +111,21 @@ export interface BrandShopSetting {
 }
 
 /** Settings each shop keeps in its own record (online booking, phone operator, customer screen): set once here and sent to the shops you pick. */
-export function BrandShopSettingsEditor({ settings }: { settings: BrandShopSetting[] }) {
+export function BrandShopSettingsEditor({
+  settings,
+  title = "Shop settings",
+  subtitle = "Each shop has its own of these. Set one here, then pick the shops it goes to. A shop that changed its own shows as overridden.",
+  children,
+}: {
+  settings: BrandShopSetting[];
+  title?: string;
+  subtitle?: string;
+  children?: ReactNode;
+}) {
   return (
     <Card>
-      <CardHeader title="Shop settings" subtitle="Each shop has its own of these. Set one here, then pick the shops it goes to. A shop that changed its own shows as overridden." />
+      <CardHeader title={title} subtitle={subtitle} />
+      {children}
       <div className="divide-y divide-zinc-100" data-testid="brand-shop-settings">
         {settings.map((s) => (
           <ShopSettingForm key={s.key} setting={s} />

@@ -39,6 +39,7 @@ export const PRIVILEGED_PERMISSIONS = [
   "compensation.settings",
   "tips.approve",
   "tips.settings",
+  "tips.barber_payouts",
   "payouts.manage",
   "payouts.chain",
   "payments.accounts",

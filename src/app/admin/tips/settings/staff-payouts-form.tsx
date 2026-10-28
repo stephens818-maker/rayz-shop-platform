@@ -18,8 +18,6 @@ import {
   TAX_FORM_FILING,
   TIP_DATE_LABEL,
   TIP_DATE_RULES,
-  TIP_REFUND_OVERFLOW,
-  TIP_REFUND_OVERFLOW_LABEL,
 } from "@/domain/staff-payouts";
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -78,14 +76,6 @@ export function StaffPayoutsForm({ settings, directPayouts }: { settings: StaffP
           <Field label="A tip refunded after it was paid" hint="Or once it's in a payout, or from an earlier pay period. Never taken back from the barber, so there's nothing to choose.">
             <p className="text-sm text-zinc-700">{AFTER_PAYOUT_LABEL.shop_cost}</p>
           </Field>
-          <Choice
-            label="A refund bigger than the sale's portion"
-            hint="Refunds come out of the shop's portion first. Past it, the tip is already with the barber and never taken back. Confirm with Charles."
-            value={s.tipRefundOverflow}
-            options={TIP_REFUND_OVERFLOW}
-            labels={TIP_REFUND_OVERFLOW_LABEL}
-            onChange={put("tipRefundOverflow")}
-          />
           <Choice label="A tip belongs to" value={s.tipDate} options={TIP_DATE_RULES} labels={TIP_DATE_LABEL} onChange={put("tipDate")} />
           <Choice label="Stripe tax forms (1099)" value={s.taxForms} options={TAX_FORM_FILING} labels={TAX_FORMS_LABEL} onChange={put("taxForms")} />
           <Field label="Yearly tax form check due in" hint="Before Stripe files for the year just ended; the brand is emailed weekly until it's recorded.">

@@ -17,7 +17,8 @@ import { flags } from "@/lib/flags";
 import { todayLocal } from "@/lib/time";
 import { SYSTEM, audit } from "@/server/audit";
 import { canReceive, issues1099K, staffAccount } from "@/server/tips/accounts";
-import { methodFor, staffPayoutConfig } from "@/server/tips/ledger";
+import { DEFAULT_TIP_REFUND_OVERFLOW, type TipRefundOverflow } from "@/domain/staff-payouts";
+import { methodFor } from "@/server/tips/ledger";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { createSaleTransfer, directPayoutsAvailable, reverseShopTransfer } from "./money-movement";
 
@@ -36,8 +37,9 @@ import { createSaleTransfer, directPayoutsAvailable, reverseShopTransfer } from 
  *   tip row). Before the transfer has been tried, it's lowered instead (netted). What the shop's
  *   transfer can't cover (uncovered_cents) is booked as a platform loss (bookLoss) once it's final:
  *   at the refund, or when a dispute is lost. A won dispute sends what it took back to the shop.
- * - Who carries a loss's tip part is the brand's tipRefundOverflow: the platform (the default), or
- *   the shop, recovered from its next transfers in planSaleTransfers. The fee part is the platform's.
+ * - Who carries a loss's tip part is the shop's tip_refund_overflow (a brand setting sent to the
+ *   shops picked): the platform (the default), or the shop, recovered from its next transfers in
+ *   planSaleTransfers. The fee part is the platform's.
  * - settleSale, right after the commit, and settlementCron send what's pending, every Stripe call
  *   idempotent on the row's key ({saleId}:shop, {saleId}:tip), with source_transaction so a transfer
  *   waits for the charge's funds and the platform's balance never goes negative.
@@ -47,7 +49,7 @@ const MAX_ATTEMPTS = 5;
 
 /**
  * Of these shops, the ones where tips go to barbers' Stripe accounts: FEATURE_TIP_TO_BARBER is on and
- * the Brand Owner hasn't turned the shop's switch off. A tip already transferred at the sale stays
+ * the brand's tip_to_barber setting is on there. A tip already transferred at the sale stays
  * with the barber when either goes off; new card tips stay in the shop's transfer.
  */
 export async function tipToBarberShops(shopIds: readonly string[], tx: DBorTx = db): Promise<Set<string>> {
@@ -57,6 +59,12 @@ export async function tipToBarberShops(shopIds: readonly string[], tx: DBorTx = 
 }
 
 export const tipToBarberAt = async (shopId: string, tx: DBorTx = db) => (await tipToBarberShops([shopId], tx)).has(shopId);
+
+/** Who covers the tip part of a loss at this shop: the brand's tip_refund_overflow setting as synced to it. */
+export async function tipRefundOverflowAt(shopId: string, tx: DBorTx = db): Promise<TipRefundOverflow> {
+  const [r] = await tx.select({ v: shops.tipRefundOverflow }).from(shops).where(eq(shops.id, shopId));
+  return r?.v ?? DEFAULT_TIP_REFUND_OVERFLOW;
+}
 
 /** The barber's Stripe account when their tip can go to it at the sale, or null. */
 async function tipAccount(staffId: string, shopId: string, shopOn: boolean, tx: DBorTx): Promise<string | null> {
@@ -233,8 +241,8 @@ type LossPayment = Pick<typeof payments.$inferSelect, "id" | "saleId" | "shopId"
 /**
  * Books what a refund or lost dispute cost the platform: what the shop's transfer couldn't cover
  * (connected shops, `uncoveredCents` from takeBack) or, at a shop on the brand's account, what came
- * out of tips already with barbers. A tip transfer is never reversed for it. With tipRefundOverflow
- * "shop", a connected shop carries the tip part, recovered from its next transfers.
+ * out of tips already with barbers. A tip transfer is never reversed for it. With the shop's
+ * tip_refund_overflow "shop", a connected shop carries the tip part, recovered from its next transfers.
  */
 async function bookLoss(tx: Tx, p: LossPayment, src: { kind: PlatformLossKind; refundId?: string; disputeId?: string; cents: number; transfer: TransferRow | null; uncoveredCents?: number }) {
   if (!p.saleId) return null;
@@ -266,7 +274,7 @@ async function bookLoss(tx: Tx, p: LossPayment, src: { kind: PlatformLossKind; r
   const cents = tipCents + feeCents;
   if (cents <= 0) return null;
   const connected = !!src.transfer;
-  const bearer = connected && tipCents > 0 && (await staffPayoutConfig(tx)).tipRefundOverflow === "shop" ? ("shop" as const) : ("platform" as const);
+  const bearer = connected && tipCents > 0 && (await tipRefundOverflowAt(p.shopId, tx)) === "shop" ? ("shop" as const) : ("platform" as const);
   const [loss] = await tx
     .insert(platformLosses)
     .values({ paymentId: p.id, saleId: p.saleId, shopId: p.shopId, kind: src.kind, refundId: src.refundId ?? null, stripeDisputeId: src.disputeId ?? null, cents, tipCents, bearer, businessDate: todayLocal() })

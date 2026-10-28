@@ -53,7 +53,7 @@ export default async function TipsPage() {
                 Report
               </LinkButton>
             )}
-            {can(ctx, "tips.settings") && (
+            {(can(ctx, "tips.settings") || can(ctx, "tips.barber_payouts")) && (
               <LinkButton variant="secondary" href="/admin/tips/settings">
                 Settings
               </LinkButton>

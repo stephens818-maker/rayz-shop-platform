@@ -24,7 +24,7 @@ import {
   TipMethod,
   TipSchedule,
 } from "@/domain/tips";
-import { saveShopTipSettingsAction, setShopTipToBarberAction } from "../actions";
+import { saveShopTipSettingsAction } from "../actions";
 import { useSettingSync } from "@/components/brand-sync";
 
 const WEEKDAYS = [
@@ -229,48 +229,35 @@ export function PolicyForm({
   );
 }
 
-/** The shop's kill switch for tips to barbers' Stripe accounts (shops.tip_to_barber). Only the Brand Owner changes it. */
-function TipToBarberSwitch({
-  shopId,
+/** Where the shop stands on the brand's tips to barbers settings (tip_to_barber, tip_refund_overflow). Read-only: the brand login sets them. */
+function TipToBarberLine({
   shopName,
   on,
   brandOn,
-  canChange,
+  overflow,
 }: {
-  shopId: string;
   shopName: string;
   on: boolean;
   brandOn: boolean;
-  canChange: boolean;
+  overflow: string;
 }) {
-  const { pending, msg, save } = useSave();
   return (
-    <div className="md:col-span-2 space-y-1 rounded border border-zinc-200 p-3">
-      <Check
-        checked={on}
-        disabled={!canChange || pending}
-        onChange={(v) => save(() => setShopTipToBarberAction(shopId, v))}
-      >
-        <span className="font-medium">
-          Card tips go to each barber&rsquo;s Stripe account at the sale
-        </span>
-      </Check>
+    <div className="md:col-span-2 space-y-1 rounded border border-zinc-200 p-3 text-sm">
+      <div>
+        <span className="font-medium">Tips to barbers&rsquo; Stripe accounts:</span>{" "}
+        {brandOn && on ? "On" : "Off"}
+        {!brandOn && " (FEATURE_TIP_TO_BARBER=false turns it off for the whole brand)"}
+      </div>
+      <div>
+        <span className="font-medium">A refund bigger than the sale&rsquo;s portion:</span>{" "}
+        {overflow}
+      </div>
       <p className="text-xs text-zinc-500">
-        {!brandOn
-          ? "Turned off for the whole brand (FEATURE_TIP_TO_BARBER=false), so this has no effect until it's back on. "
-          : ""}
         Off, {shopName}&rsquo;s card tips stay with the shop and are paid with the
         paycheck; tips already in a barber&rsquo;s Stripe account stay theirs.
-        Either way every tip goes to iSolved as Cash Tips Recd.
-        {canChange ? "" : " Only the Brand Owner can change this."}
+        Either way every tip goes to iSolved as Cash Tips Recd. The brand login
+        sets both, for every shop or the shops it picks.
       </p>
-      {(pending || msg) && (
-        <span
-          className={`text-sm ${msg && !msg.ok ? "text-red-600" : "text-emerald-700"}`}
-        >
-          {pending ? "Saving…" : msg?.text}
-        </span>
-      )}
     </div>
   );
 }
@@ -286,7 +273,7 @@ export function ShopTipForm({
   shopName: string;
   settings: ShopTipSettings;
   policy: BrandTipPolicy;
-  tipToBarber: { on: boolean; brandOn: boolean; canChange: boolean };
+  tipToBarber: { on: boolean; brandOn: boolean; overflow: string };
 }) {
   const [s, setS] = useState(settings);
   const { pending, msg, save } = useSave();
@@ -387,7 +374,7 @@ export function ShopTipForm({
           Card processing fees are never taken out of tips; the shop pays them.
         </p>
         {policy.methods.includes("stripe") && (
-          <TipToBarberSwitch shopId={shopId} shopName={shopName} {...tipToBarber} />
+          <TipToBarberLine shopName={shopName} {...tipToBarber} />
         )}
         <div className="md:col-span-2 flex items-center gap-3">
           <Button

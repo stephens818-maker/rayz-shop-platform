@@ -190,6 +190,7 @@ export const AREAS: readonly Area[] = [
     rows: [
       row("tips", "Tip payouts", [lv("none"), lv("own", ["tips.own"]), lv("approve", ["tips.approve"])]),
       on("tips.settings", "Tip payout settings"),
+      on("tips.barber_payouts", "Tips to barbers on or off, and refunds past the sale"),
       row("payouts", "Payout tracker", [lv("none"), lv("view", ["payouts.view"]), lv("edit", ["payouts.manage"], "Manage")]),
       on("payouts.chain", "Payout tracker for every shop"),
     ],

@@ -405,6 +405,13 @@ export const FEATURE_PERMISSIONS = [
     brandOnly: true,
   },
   {
+    key: "tips.barber_payouts",
+    group: "Tip payouts",
+    label: "Turn tips to barbers' Stripe accounts on or off, and choose who covers a refund past the sale",
+    hint: "Brand settings sent to every shop or the shops picked; every change is in the audit log. Brand Owner and Brand Admin to start.",
+    brandOnly: true,
+  },
+  {
     key: "payouts.view",
     group: "Tip payouts",
     label: "See the payout tracker at their shops",

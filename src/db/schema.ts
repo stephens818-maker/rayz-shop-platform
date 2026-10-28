@@ -238,8 +238,10 @@ export const shops = pgTable("shops", {
   staffTime: jsonb("staff_time").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Where card money settles (src/domain/connect.ts): the brand's own Stripe account, the shop's own connected account, or no cards at all. */
   paymentsMode: text("payments_mode").$type<PaymentsMode>().notNull().default("connected"),
-  /** Tips to barbers' Stripe accounts here (I10, FEATURE_TIP_TO_BARBER): the Brand Owner's kill switch for this shop. Off, its card tips stay in the shop's transfer and are paid through payroll. */
+  /** Tips to barbers' Stripe accounts here (I10, FEATURE_TIP_TO_BARBER): the per-shop kill switch, a brand setting sent to the shops picked (shop_setting tip_to_barber, tips.barber_payouts). Off, its card tips stay in the shop's transfer and are paid through payroll. */
   tipToBarber: boolean("tip_to_barber").notNull().default(true),
+  /** Who covers the tip part of a refund or lost dispute past this shop's transfer: the platform, or the shop from its next transfers (shop_setting tip_refund_overflow). Confirm with Charles. */
+  tipRefundOverflow: text("tip_refund_overflow").$type<PlatformLossBearer>().notNull().default("platform"),
   /** What clients see on their card statement. On a connected account it's the account's own descriptor; on the brand account it's the suffix after the brand's prefix. */
   statementDescriptor: text("statement_descriptor"),
   /** Receipt branding (ReceiptBranding in src/domain/connect.ts); missing keys use the defaults. */

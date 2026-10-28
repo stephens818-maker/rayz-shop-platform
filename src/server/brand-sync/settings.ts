@@ -41,8 +41,6 @@ import {
   TAX_FORM_FILING,
   TIP_DATE_LABEL,
   TIP_DATE_RULES,
-  TIP_REFUND_OVERFLOW,
-  TIP_REFUND_OVERFLOW_LABEL,
   type StaffPayoutSettings,
   staffPayoutSettings,
 } from "@/domain/staff-payouts";
@@ -294,7 +292,6 @@ const StaffPayoutsInput = z.object({
     .min(REVERSAL_WINDOW_DAYS.min, `The reversal window is ${REVERSAL_WINDOW_DAYS.min} to ${REVERSAL_WINDOW_DAYS.max} days`)
     .max(REVERSAL_WINDOW_DAYS.max, `The reversal window is ${REVERSAL_WINDOW_DAYS.min} to ${REVERSAL_WINDOW_DAYS.max} days`),
   afterPayoutRefunds: z.enum(AFTER_PAYOUT_RULES),
-  tipRefundOverflow: z.enum(TIP_REFUND_OVERFLOW),
   tipDate: z.enum(TIP_DATE_RULES),
   taxForms: z.enum(TAX_FORM_FILING),
   taxCheckMonth: z.number().int().min(1).max(12),
@@ -618,7 +615,6 @@ export const SETTINGS: readonly SettingDef[] = [
       reversalRule: "Refunds take the tip back",
       reversalWindowDays: "Reversal window (days)",
       afterPayoutRefunds: "Refunds of tips already paid",
-      tipRefundOverflow: "A refund bigger than the sale's portion",
       tipDate: "A tip's date",
       taxForms: "1099 tax forms",
       taxCheckMonth: "Yearly tax form check (month)",
@@ -633,7 +629,6 @@ export const SETTINGS: readonly SettingDef[] = [
       "Refunds take the tip back": REVERSAL_RULE_LABEL[v.reversalRule],
       "Reversal window": `${v.reversalWindowDays} days`,
       "Refunds of tips already paid": AFTER_PAYOUT_LABEL[v.afterPayoutRefunds],
-      "A refund bigger than the sale's portion": TIP_REFUND_OVERFLOW_LABEL[v.tipRefundOverflow],
       "A tip's date": TIP_DATE_LABEL[v.tipDate],
       "1099 tax forms": TAX_FORMS_LABEL[v.taxForms],
       "Yearly tax form check": `From month ${v.taxCheckMonth}`,

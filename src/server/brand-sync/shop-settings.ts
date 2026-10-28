@@ -7,6 +7,7 @@ import { AFTER_PAYMENT, DEFAULT_SHOP_HANDOFF, ShopHandoff, THANK_YOU_SECONDS, TI
 import type { Permission } from "@/domain/permissions";
 import { DEFAULT_OPERATOR, OPERATOR_ANSWER_LABEL, PhoneOperator, cleanOperator, operatorProblem } from "@/domain/phone-operator";
 import { BrandTipPolicy, DEFAULT_SHOP_TIP_SETTINGS, METHOD_LABEL, SCHEDULE_LABEL, ShopTipSettings, TIP_METHODS, TIP_SCHEDULES, settingsProblem, shopTipSettings } from "@/domain/tips";
+import { DEFAULT_TIP_REFUND_OVERFLOW, TIP_REFUND_OVERFLOW, TIP_REFUND_OVERFLOW_LABEL, type TipRefundOverflow } from "@/domain/staff-payouts";
 import { railed } from "@/server/tips/payout-model";
 import { audit } from "../audit";
 import { AppError } from "../errors";
@@ -203,6 +204,36 @@ export const SHOP_SETTINGS: readonly ShopSettingDef[] = [
       return { tipPayouts: { ...v } };
     },
     audit: "tips.settings",
+  }),
+  def<{ enabled: boolean }>({
+    key: "tip_to_barber",
+    label: "Tips to barbers' Stripe accounts",
+    area: "tips",
+    perms: ["tips.barber_payouts"],
+    paths: ["/admin/tips/settings", "/admin/tips", "/admin/tips/tracker", "/admin/tips/onboarding"],
+    note: "On, each card tip goes to its barber's Stripe account at the sale. Off at a shop, its card tips stay in the shop's transfer and are paid with the paycheck, and payout setup isn't offered there; tips already in a barber's account stay theirs. Either way every tip goes to iSolved as Cash Tips Recd. FEATURE_TIP_TO_BARBER=false turns it off everywhere.",
+    columns: ["tipToBarber"],
+    builtin: { enabled: true },
+    fields: [{ key: "enabled", label: "Card tips go to each barber's Stripe account at the sale", kind: "bool" }],
+    read: (r) => ({ enabled: r.tipToBarber }),
+    parse: (raw, before) => zparse(z.object({ enabled: z.boolean() }), { ...before, ...raw }, "Turn tips to barbers on or off"),
+    patch: (v) => ({ tipToBarber: v.enabled }),
+    audit: "tips.tip_to_barber",
+  }),
+  def<{ bearer: TipRefundOverflow }>({
+    key: "tip_refund_overflow",
+    label: "A refund bigger than the sale's portion",
+    area: "tips",
+    perms: ["tips.barber_payouts"],
+    paths: ["/admin/tips/settings"],
+    note: "Refunds come out of the sale's portion first. Past it, the tip is already with the barber and never taken back. Confirm with Charles.",
+    columns: ["tipRefundOverflow"],
+    builtin: { bearer: DEFAULT_TIP_REFUND_OVERFLOW },
+    fields: [{ key: "bearer", label: "The tip portion", kind: "choice", options: choices(TIP_REFUND_OVERFLOW, TIP_REFUND_OVERFLOW_LABEL) }],
+    read: (r) => ({ bearer: r.tipRefundOverflow }),
+    parse: (raw, before) => zparse(z.object({ bearer: z.enum(TIP_REFUND_OVERFLOW) }), { ...before, ...raw }, "Pick who covers it"),
+    patch: (v) => ({ tipRefundOverflow: v.bearer }),
+    audit: "tips.tip_refund_overflow",
   }),
 ];
 

@@ -29,6 +29,7 @@ import {
   templateRow,
   userAccessChangeDenied,
 } from "@/domain/permissions";
+import { PRIVILEGED_PERMISSIONS } from "@/domain/staff-auth";
 
 const A = "11111111-1111-1111-1111-111111111111";
 const B = "22222222-2222-2222-2222-222222222222";
@@ -93,6 +94,14 @@ describe("permission catalog and templates", () => {
     for (const k of ["regional_manager", "shop_manager", "front_desk", "barber"]) expect(access(k).permissions.has("tips.settings"), k).toBe(false);
     expect(access("brand_admin").permissions.has("tips.settings")).toBe(true);
     expect(effectiveAccess(role("brand_admin"), {}, null, "selected").permissions.has("tips.settings")).toBe(false);
+  });
+
+  it("tips to barbers on or off and the refund rule: their own permission, Brand Owner and Brand Admin only to start, brand-wide, with two-step sign-in", () => {
+    for (const t of ROLE_TEMPLATES) expect(effectiveAccess(t).permissions.has("tips.barber_payouts"), t.key).toBe(t.key === "brand_owner" || t.key === "brand_admin");
+    expect(effectiveAccess(role("brand_admin"), {}, null, "selected").permissions.has("tips.barber_payouts")).toBe(false);
+    expect(FEATURE_PERMISSIONS.find((p) => p.key === "tips.barber_payouts")).toMatchObject({ group: "Tip payouts", brandOnly: true });
+    expect(PRIVILEGED_PERMISSIONS).toContain("tips.barber_payouts");
+    expect(pageAllowed(new Set<Permission>(["tips.barber_payouts"]), "/admin/tips/settings")).toBe(true);
   });
 
   it("only the Brand Owner can export the client list by default; managers can reveal, everyone who books can call and text", () => {
