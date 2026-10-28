@@ -310,8 +310,6 @@ describe("cash tips from the drawer", () => {
 });
 
 describe("Stripe payouts and webhooks", () => {
-  beforeAll(() => void (process.env.FEATURE_TIP_TO_BARBER = "true"));
-  afterAll(() => void delete process.env.FEATURE_TIP_TO_BARBER);
   const secret = "whsec_test_tips";
   const connectEvent = (type: string, object: object, account: string) => {
     const payload = JSON.stringify({ id: `evt_${Math.random().toString(36).slice(2)}`, object: "event", type, account, data: { object } });

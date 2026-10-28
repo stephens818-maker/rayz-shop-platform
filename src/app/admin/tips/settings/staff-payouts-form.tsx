@@ -50,7 +50,7 @@ export function StaffPayoutsForm({ settings, directPayouts }: { settings: StaffP
       <div className="space-y-3 p-4">
         {!directPayouts && (
           <Notice tone="blue">
-            Direct Stripe payouts are off in this deployment: live Stripe keys wait for the CPA&rsquo;s sign-off (MONEY_MOVEMENT_LIVE). Stripe tips are owed until then; with owed tips through
+            Direct Stripe payouts are off in this deployment: FEATURE_TIP_TO_BARBER is set to false, or live Stripe keys wait for their end-to-end test (MONEY_MOVEMENT_LIVE). Stripe tips are owed until then; with owed tips through
             payroll, they&rsquo;re paid with the paycheck at the cutoff.
           </Notice>
         )}

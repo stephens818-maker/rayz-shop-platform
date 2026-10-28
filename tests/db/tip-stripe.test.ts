@@ -75,7 +75,6 @@ beforeAll(async () => {
   await tl.recordOpeningTips(m.time.addDays(today, 1));
   // Each test picks its transfer path; the platform's is the default outside tests.
   mm.registerMoneyMovement(null);
-  process.env.FEATURE_TIP_TO_BARBER = "true";
   await setModes("brand");
 }, 180_000);
 
@@ -87,7 +86,6 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  delete process.env.FEATURE_TIP_TO_BARBER;
   if (m) await setModes("connected");
   await m?.db.closeDb();
 });
@@ -210,7 +208,7 @@ describe("test mode only", () => {
     await tp.approveBatch(r.batchId, actor);
     expect(moved).toEqual([]);
     expect(calls.filter((c) => STRIPE_MONEY.includes(c.op))).toEqual([]);
-    await expect(tp.releasePayout(held.id, actor)).rejects.toThrow(/until the CPA signs off/);
+    await expect(tp.releasePayout(held.id, actor)).rejects.toThrow(/tested end to end/);
 
     process.env.MONEY_MOVEMENT_LIVE = "true";
     expect(mm.moneyMovementReady()).toBe(true);

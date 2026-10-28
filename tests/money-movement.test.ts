@@ -1,4 +1,4 @@
-/** The platform transfer path (ST-C11) is the one in use unless a test swaps it, tips move only with FEATURE_TIP_TO_BARBER, and live keys stay off until MONEY_MOVEMENT_LIVE. */
+/** The platform transfer path (ST-C11) is the one in use unless a test swaps it, tips move unless FEATURE_TIP_TO_BARBER or the shop's switch turns them off, and live keys stay off until MONEY_MOVEMENT_LIVE. */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 type Call = { op: string; params: Record<string, unknown>; opts?: Record<string, unknown> };
@@ -41,7 +41,8 @@ describe("money movement", () => {
     expect(mm.platformTipTransfers.name).toBe("platform_transfers");
   });
 
-  it("FEATURE_TIP_TO_BARBER off: no direct payouts anywhere, and holds name the switch", async () => {
+  it("FEATURE_TIP_TO_BARBER=false: no direct payouts anywhere, and holds name the switch", async () => {
+    process.env.FEATURE_TIP_TO_BARBER = "false";
     const mm = await import("@/server/payments/money-movement");
     expect(mm.directPayoutsAvailable()).toBe(false);
     expect(mm.transfersPendingReason()).toBe(mm.TIP_TO_BARBER_REASON);
@@ -50,8 +51,16 @@ describe("money movement", () => {
     expect(mm.transfersPendingReason()).toMatch(/FEATURE_TIP_TO_BARBER/);
   });
 
-  it("on: the simulator always pays; test keys can; live keys wait for the switch, and holds say so", async () => {
-    process.env.FEATURE_TIP_TO_BARBER = "true";
+  it("a shop's switch off: no direct payouts there, and holds name the shop's switch; the brand's off wins", async () => {
+    const mm = await import("@/server/payments/money-movement");
+    expect([mm.directPayoutsAvailable(), mm.directPayoutsAvailable(true), mm.directPayoutsAvailable(false)]).toEqual([true, true, false]);
+    expect(mm.transfersPendingReason(false)).toBe(mm.SHOP_TIP_TO_BARBER_REASON);
+    expect(mm.SHOP_TIP_TO_BARBER_REASON).toMatch(/turned off at this shop.*paid through payroll/);
+    process.env.FEATURE_TIP_TO_BARBER = "false";
+    expect(mm.transfersPendingReason(false)).toBe(mm.TIP_TO_BARBER_REASON);
+  });
+
+  it("on by default: the simulator always pays; test keys can; live keys wait for the switch, and holds say so", async () => {
     const mm = await import("@/server/payments/money-movement");
     expect(mm.directPayoutsAvailable()).toBe(true);
     process.env.STRIPE_SECRET_KEY = "sk_test_x";
@@ -76,7 +85,6 @@ describe("money movement", () => {
   });
 
   it("a payout of tips already in the barber's balance transfers only the rest, and none when it's all there", async () => {
-    process.env.FEATURE_TIP_TO_BARBER = "true";
     process.env.STRIPE_SECRET_KEY = "sk_test_x";
     const mm = await import("@/server/payments/money-movement");
     const some = await mm.platformTipTransfers.send(payout({ amountCents: 5000, prefundedCents: 3000 }), async () => {});
@@ -92,6 +100,7 @@ describe("money movement", () => {
   });
 
   it("with the switch off, a payout that needs a transfer moves nothing", async () => {
+    process.env.FEATURE_TIP_TO_BARBER = "false";
     process.env.STRIPE_SECRET_KEY = "sk_test_x";
     const mm = await import("@/server/payments/money-movement");
     await expect(mm.platformTipTransfers.send(payout({ amountCents: 5000, prefundedCents: 0 }), async () => {})).rejects.toThrow(/FEATURE_TIP_TO_BARBER/);
@@ -103,6 +112,7 @@ describe("money movement", () => {
 
     it("the shop's portion waits for the charge's funds (source_transaction), keyed on its row, even with the switch off and live keys", async () => {
       process.env.STRIPE_SECRET_KEY = "sk_live_x";
+      process.env.FEATURE_TIP_TO_BARBER = "false";
       const mm = await import("@/server/payments/money-movement");
       expect(await mm.createSaleTransfer(shop)).toMatch(/^tr_/);
       expect(calls).toEqual([
@@ -114,12 +124,13 @@ describe("money movement", () => {
       ]);
     });
 
-    it("a tip transfer needs FEATURE_TIP_TO_BARBER, and live keys need MONEY_MOVEMENT_LIVE too", async () => {
+    it("a tip transfer is refused with FEATURE_TIP_TO_BARBER=false, and live keys need MONEY_MOVEMENT_LIVE too", async () => {
       process.env.STRIPE_SECRET_KEY = "sk_test_x";
+      process.env.FEATURE_TIP_TO_BARBER = "false";
       const mm = await import("@/server/payments/money-movement");
       const tip = { ...shop, key: "row-2", kind: "tip" as const, amountCents: 1000, destination: "acct_barber" };
       await expect(mm.createSaleTransfer(tip)).rejects.toMatchObject({ details: { reason: "tip_to_barber_off" } });
-      process.env.FEATURE_TIP_TO_BARBER = "true";
+      delete process.env.FEATURE_TIP_TO_BARBER;
       expect(await mm.createSaleTransfer(tip)).toMatch(/^tr_/);
       process.env.STRIPE_SECRET_KEY = "sk_live_x";
       await expect(mm.createSaleTransfer(tip)).rejects.toThrow(/test mode only/);

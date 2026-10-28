@@ -225,14 +225,8 @@ describe("reminders", () => {
 describe("tips wait, never lost, until onboarding is done", () => {
   // Cash tips Stripe pays come from the brand's balance, so Coralville is on the brand's account here, with tips to barbers on.
   const coralvilleMode = (mode: "brand" | "connected") => m.db.db.update(s().shops).set({ paymentsMode: mode }).where(eq(s().shops.slug, "coralville"));
-  beforeAll(async () => {
-    process.env.FEATURE_TIP_TO_BARBER = "true";
-    await coralvilleMode("brand");
-  });
-  afterAll(async () => {
-    delete process.env.FEATURE_TIP_TO_BARBER;
-    await coralvilleMode("connected");
-  });
+  beforeAll(() => coralvilleMode("brand"));
+  afterAll(() => coralvilleMode("connected"));
   it("a Stripe payout for someone not set up is held for them, not paid another way; it goes out by itself once they finish", async () => {
     const coralville = await shop("coralville");
     const jessica = await who("Jessica");

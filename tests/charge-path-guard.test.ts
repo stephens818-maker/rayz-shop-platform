@@ -50,20 +50,22 @@ describe("I10: one charge path, separate charges and transfers", () => {
   describe("FEATURE_TIP_TO_BARBER", () => {
     afterEach(() => vi.unstubAllEnvs());
 
-    it("is off unless exactly true", () => {
-      vi.stubEnv("FEATURE_TIP_TO_BARBER", "");
-      expect(flags.tipToBarber()).toBe(false);
-      for (const v of ["1", "yes", "TRUE", "on"]) {
+    it("is on at launch, unset or not, and only false turns it off", () => {
+      vi.stubEnv("FEATURE_TIP_TO_BARBER", undefined);
+      expect(flags.tipToBarber()).toBe(true);
+      for (const v of ["", "true", "1", "no", "off"]) {
+        vi.stubEnv("FEATURE_TIP_TO_BARBER", v);
+        expect(flags.tipToBarber()).toBe(true);
+      }
+      for (const v of ["false", "FALSE", " false "]) {
         vi.stubEnv("FEATURE_TIP_TO_BARBER", v);
         expect(flags.tipToBarber()).toBe(false);
       }
-      vi.stubEnv("FEATURE_TIP_TO_BARBER", "true");
-      expect(flags.tipToBarber()).toBe(true);
     });
 
-    it("isn't set in .env.example", () => {
+    it("is only an example in .env.example, so a copy keeps it on", () => {
       const env = readFileSync(resolve(__dirname, "../.env.example"), "utf8");
-      expect(env).toMatch(/^# FEATURE_TIP_TO_BARBER=$/m);
+      expect(env).toMatch(/^# FEATURE_TIP_TO_BARBER=false$/m);
       expect(env).not.toMatch(/^FEATURE_TIP_TO_BARBER=/m);
     });
   });

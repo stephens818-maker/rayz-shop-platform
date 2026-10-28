@@ -10,8 +10,9 @@ import { stripe } from "./processor";
  * (reverseShopTransfer; a tip transfer is never reversed), and tip payouts to an employee's bank or
  * debit card (platformTipTransfers).
  *
- * Tip transfers, at the sale or at a payout, need FEATURE_TIP_TO_BARBER, off until the CPA signs
- * off; off, a card tip is in the shop's transfer and is paid through payroll. Live keys are refused
+ * Tip transfers, at the sale or at a payout, need FEATURE_TIP_TO_BARBER (on unless "false") and the
+ * shop's own Tips to barbers switch; off, a card tip is in the shop's transfer and is paid through
+ * payroll. Live keys are refused
  * for anything that touches an employee's account until MONEY_MOVEMENT_LIVE=true. A shop's own
  * transfer is the shop's sales, not an employee's money, so it runs whenever cards do. The
  * simulator moves nothing, so demos and tests still run end to end.
@@ -40,7 +41,7 @@ export function moneyClient(): Stripe | null {
 export const moneyMovementReady = () => !stripe() || !liveKey() || moneyMovementLive();
 
 export const LIVE_SWITCH_REASON =
-  "Live tip transfers are off until the CPA signs off (MONEY_MOVEMENT_LIVE). These tips are owed and are paid through payroll at the pay period cutoff, unless transfers are on by then.";
+  "Live tip transfers are off until live Stripe keys have been tested end to end (MONEY_MOVEMENT_LIVE). These tips are owed and are paid through payroll at the pay period cutoff, unless transfers are on by then.";
 
 export interface MovedIds {
   /** Whatever the implementation drew the money from first (a charge, or nothing), if anything. */
@@ -157,18 +158,29 @@ export function registerMoneyMovement(m: MoneyMovement | null) {
 /** The transfer path, or null when there is none. */
 export const moneyMovement = (): MoneyMovement | null => registered;
 
-/** Tips can go straight to an employee's account here: FEATURE_TIP_TO_BARBER is on, and the simulator, or real Stripe with a transfer path and test keys or the live switch on. */
-export const directPayoutsAvailable = () => flags.tipToBarber() && (!stripe() || (registered !== null && moneyMovementReady()));
+/**
+ * Tips can go straight to an employee's account here: FEATURE_TIP_TO_BARBER is on, so is the shop's
+ * switch (`shopOn`, from tipToBarberAt; leave it out for the brand as a whole), and the simulator, or
+ * real Stripe with a transfer path and test keys or the live switch on.
+ */
+export const directPayoutsAvailable = (shopOn = true) => shopOn && flags.tipToBarber() && (!stripe() || (registered !== null && moneyMovementReady()));
 
-export const TIP_TO_BARBER_OFF = "Tips to barbers' Stripe accounts are off until the CPA signs off (FEATURE_TIP_TO_BARBER)";
+export const TIP_TO_BARBER_OFF = "Tips to barbers' Stripe accounts are turned off in this deployment (FEATURE_TIP_TO_BARBER=false)";
 
-export const TIP_TO_BARBER_REASON = `${TIP_TO_BARBER_OFF}. Card tips stay with the shop, and these tips are owed and are paid through payroll at the pay period cutoff.`;
+const OWED_TO_PAYROLL = "Card tips stay with the shop, and these tips are owed and are paid through payroll at the pay period cutoff.";
+
+export const TIP_TO_BARBER_REASON = `${TIP_TO_BARBER_OFF}. ${OWED_TO_PAYROLL}`;
+
+export const SHOP_TIP_TO_BARBER_OFF = "Tips to barbers' Stripe accounts are turned off at this shop (Tip payout settings)";
+
+export const SHOP_TIP_TO_BARBER_REASON = `${SHOP_TIP_TO_BARBER_OFF}. ${OWED_TO_PAYROLL}`;
 
 export const TRANSFERS_PENDING_REASON =
   "Direct transfers to employees' Stripe accounts aren't switched on in this deployment. These tips are owed and are paid through payroll at the pay period cutoff, unless transfers are on by then.";
 
-/** Why direct payouts are off here, for the hold: FEATURE_TIP_TO_BARBER, the live switch, or no transfer path at all. */
-export const transfersPendingReason = () => (!flags.tipToBarber() ? TIP_TO_BARBER_REASON : stripe() && !moneyMovementReady() ? LIVE_SWITCH_REASON : TRANSFERS_PENDING_REASON);
+/** Why direct payouts are off here, for the hold: FEATURE_TIP_TO_BARBER, the shop's switch, the live switch, or no transfer path at all. */
+export const transfersPendingReason = (shopOn = true) =>
+  !flags.tipToBarber() ? TIP_TO_BARBER_REASON : !shopOn ? SHOP_TIP_TO_BARBER_REASON : stripe() && !moneyMovementReady() ? LIVE_SWITCH_REASON : TRANSFERS_PENDING_REASON;
 
 // ───────────────────────────── A sale's transfers (I10) ─────────────────────────────
 
