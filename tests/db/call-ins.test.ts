@@ -5,7 +5,7 @@
  * works; "1" and "2" by text answer; STOP, START and 9 are honoured; the follow-up retries once and
  * then flags; missed calls get one auto-text; staff reply from the inbox without seeing the number.
  */
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { brandSettings } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
@@ -201,6 +201,10 @@ describe("marking a call-in", () => {
 });
 
 describe("reassign or rebook", () => {
+  // Texts only go out 9 AM to 8 PM, whatever the shop's own quiet hours, so these run at midday.
+  beforeEach(() => void vi.useFakeTimers({ toFake: ["Date"], now: at(m.time.todayLocal(), 12 * 60) }));
+  afterEach(() => void vi.useRealTimers());
+
   it("reassign moves the client to a free barber at the same time and texts them; with nobody free it sends a rebook link instead", async () => {
     const makenna = await staffBy({ email: "makenna@rayz.test" });
     const jessica = await staffBy({ label: "Jessica" });

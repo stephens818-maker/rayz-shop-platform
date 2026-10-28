@@ -5,6 +5,7 @@
  * load rows and call these.
  */
 import { addDays, localDateOf, localMinutesOf, minutesToLabel, weekdayOf, zonedWallTime } from "@/lib/time";
+import { SEND_END, SEND_START, outsideSendWindow } from "./quiet-hours";
 
 export type CallInKind = "sick" | "emergency" | "other";
 export type OutreachOption = "reassign" | "rebook" | "voice";
@@ -147,14 +148,17 @@ export function optionProblem(option: OutreachOption, c: Channels): string | nul
 export interface OutreachRules {
   /** Hours to wait for an answer before the one retry, and again before the appointment is flagged for staff. */
   retryAfterHours: number;
-  /** No automated texts or calls between these local times (minutes after midnight). Equal values: no quiet hours. */
+  /**
+   * No automated texts or calls between these local times (minutes after midnight), on top of the
+   * 9 AM to 8 PM send window that always applies. Equal values: only the send window.
+   */
   quietStartMin: number;
   quietEndMin: number;
   /** How long a rebook link works. */
   linkTtlHours: number;
 }
 
-export const DEFAULT_OUTREACH_RULES: OutreachRules = { retryAfterHours: 3, quietStartMin: 21 * 60, quietEndMin: 8 * 60, linkTtlHours: 72 };
+export const DEFAULT_OUTREACH_RULES: OutreachRules = { retryAfterHours: 3, quietStartMin: 20 * 60, quietEndMin: 9 * 60, linkTtlHours: 72 };
 
 const intIn = (v: unknown, min: number, max: number) => (typeof v === "number" && Number.isInteger(v) && v >= min && v <= max ? v : undefined);
 
@@ -184,21 +188,27 @@ export function outreachRulesProblem(raw: Record<string, unknown>): string | nul
 }
 
 export function inQuietHours(minutes: number, r: Pick<OutreachRules, "quietStartMin" | "quietEndMin">): boolean {
+  if (outsideSendWindow(minutes)) return true;
   const { quietStartMin: s, quietEndMin: e } = r;
   if (s === e) return false;
   return s < e ? minutes >= s && minutes < e : minutes >= s || minutes < e;
 }
 
 export const quietLabel = (r: Pick<OutreachRules, "quietStartMin" | "quietEndMin">) =>
-  r.quietStartMin === r.quietEndMin ? "none" : `${minutesToLabel(r.quietStartMin)} to ${minutesToLabel(r.quietEndMin)}`;
+  r.quietStartMin === r.quietEndMin
+    ? `${minutesToLabel(SEND_END)} to ${minutesToLabel(SEND_START)}`
+    : `${minutesToLabel(r.quietStartMin)} to ${minutesToLabel(r.quietEndMin)}, and always ${minutesToLabel(SEND_END)} to ${minutesToLabel(SEND_START)}`;
 
 /** When an automated message started now may go out: now, or when quiet hours end. */
 export function sendTime(now: Date, r: Pick<OutreachRules, "quietStartMin" | "quietEndMin">): Date {
-  const m = localMinutesOf(now);
-  if (!inQuietHours(m, r)) return now;
-  const today = localDateOf(now);
-  const day = r.quietStartMin > r.quietEndMin && m >= r.quietStartMin ? addDays(today, 1) : today;
-  return zonedWallTime(day, r.quietEndMin).toJSDate();
+  let t = now;
+  for (let i = 0; i < 4 && inQuietHours(localMinutesOf(t), r); i++) {
+    const m = localMinutesOf(t);
+    const day = localDateOf(t);
+    const ends = [r.quietEndMin, SEND_START].map((e) => zonedWallTime(e > m ? day : addDays(day, 1), e).toJSDate()).sort((a, b) => a.getTime() - b.getTime());
+    t = ends.find((x) => !inQuietHours(localMinutesOf(x), r)) ?? ends[ends.length - 1];
+  }
+  return t;
 }
 
 /** Too late to bother: the message would land under an hour before the appointment. Staff should phone instead. */

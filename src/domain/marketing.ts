@@ -530,7 +530,7 @@ const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a time like 21:0
 
 export const MarketingSettingsSchema = z.object({
   /** No marketing goes out from quietStart to quietEnd, in each location's time zone. */
-  quietStart: hhmm.default("21:00"),
+  quietStart: hhmm.default("20:00"),
   quietEnd: hhmm.default("09:00"),
   /** Most marketing messages one client gets, all campaigns together. */
   capPerWeek: z.number().int().min(1).max(14).default(2),

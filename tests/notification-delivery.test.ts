@@ -60,42 +60,44 @@ describe("reminders and quiet hours (America/Chicago)", () => {
   });
 
   it("waits for quiet hours to end when that's still 30 minutes before the appointment", () => {
-    const starts = at("2026-10-23", "09:00");
-    expect(placeReminder(at("2026-10-23", "07:00"), starts, now, quiet)).toEqual(at("2026-10-23", "08:00"));
+    const starts = at("2026-10-23", "10:00");
+    expect(placeReminder(at("2026-10-23", "07:00"), starts, now, quiet)).toEqual(at("2026-10-23", "09:00"));
   });
 
   it("otherwise sends it the minute before quiet hours began, and drops it when that's past", () => {
-    const starts = at("2026-10-23", "08:15");
-    expect(placeReminder(at("2026-10-23", "06:15"), starts, now, quiet)).toEqual(at("2026-10-22", "20:59"));
-    expect(placeReminder(at("2026-10-23", "06:15"), starts, at("2026-10-22", "22:00"), quiet)).toBeNull();
+    const starts = at("2026-10-23", "09:15");
+    expect(placeReminder(at("2026-10-23", "07:15"), starts, now, quiet)).toEqual(at("2026-10-22", "19:59"));
+    expect(placeReminder(at("2026-10-23", "07:15"), starts, at("2026-10-22", "22:00"), quiet)).toBeNull();
   });
 
   it("drops the second reminder when quiet hours push it next to the first", () => {
     const starts = at("2026-10-23", "08:15");
     const t = reminderTimes(starts, now, { firstHours: 12, secondHours: 2 }, quiet);
-    expect(t.first).toEqual(at("2026-10-22", "20:15"));
+    expect(t.first).toEqual(at("2026-10-22", "19:59"));
     expect(t.second).toBeNull();
   });
 
   it("is right across the fall DST change (Nov 1, 2026)", () => {
-    const starts = at("2026-11-01", "09:00");
+    const starts = at("2026-11-01", "11:00");
     const t = reminderTimes(starts, at("2026-10-30", "12:00"), { firstHours: 24, secondHours: 2 }, quiet);
     expect(t.first?.getTime()).toBe(starts.getTime() - 24 * 3_600_000);
-    expect(t.first).toEqual(at("2026-10-31", "10:00"));
-    expect(t.second).toEqual(at("2026-11-01", "08:00"));
+    expect(t.first).toEqual(at("2026-10-31", "12:00"));
+    expect(t.second).toEqual(at("2026-11-01", "09:00"));
   });
 
   it("is right across the spring DST change (Mar 8, 2026)", () => {
     const starts = at("2026-03-08", "10:00");
     const t = reminderTimes(starts, at("2026-03-06", "12:00"), { firstHours: 24, secondHours: 2 }, quiet);
     expect(t.first).toEqual(at("2026-03-07", "09:00"));
-    expect(t.second).toEqual(at("2026-03-08", "08:00"));
+    expect(t.second).toEqual(at("2026-03-08", "09:00"));
   });
 
-  it("does nothing special with no quiet hours", () => {
-    const starts = at("2026-10-23", "08:15");
+  it("with no brand quiet hours, still only 9 AM to 8 PM (Charles, Oct 28)", () => {
     const none = { ...quiet, quietStartMin: 0, quietEndMin: 0 };
-    expect(placeReminder(at("2026-10-23", "06:15"), starts, now, none)).toEqual(at("2026-10-23", "06:15"));
+    expect(placeReminder(at("2026-10-23", "08:59"), at("2026-10-23", "12:00"), now, none)).toEqual(at("2026-10-23", "09:00"));
+    expect(placeReminder(at("2026-10-22", "20:30"), at("2026-10-23", "12:00"), now, none)).toEqual(at("2026-10-23", "09:00"));
+    expect(placeReminder(at("2026-10-23", "06:15"), at("2026-10-23", "08:15"), now, none)).toEqual(at("2026-10-22", "19:59"));
+    expect(placeReminder(at("2026-10-23", "19:59"), at("2026-10-24", "12:00"), now, none)).toEqual(at("2026-10-23", "19:59"));
   });
 });
 

@@ -190,18 +190,32 @@ describe("STOP, START and HELP (C20)", () => {
 });
 
 describe("quiet hours where the recipient is (C20)", () => {
-  it("holds a marketing text to a Los Angeles number until 8 AM Pacific, and leaves appointment texts alone", async () => {
+  it("holds marketing and reminders to a Los Angeles number until 9 AM Pacific; a confirmation goes now (Charles, Oct 28)", async () => {
     const shop = (await m.db.db.query.shops.findFirst({ where: eq(m.schema.shops.slug, "coralville") }))!;
+    const barber = (await m.db.db.query.staffShops.findFirst({ where: eq(m.schema.staffShops.shopId, shop.id) }))!;
     const la = phone("213");
     const now = m.time.zonedWallTime(m.time.addDays(m.time.todayLocal(), 30), 9 * 60).toJSDate(); // 9 AM Central, 7 AM Pacific
-    const [mk] = await m.db.db.insert(m.schema.notificationJobs).values({ kind: "marketing", channel: "sms", to: la, body: "Open chair", shopId: shop.id, runAt: now }).returning();
-    const [appt] = await m.db.db.insert(m.schema.notificationJobs).values({ kind: "reminder_2h", channel: "sms", to: la, body: "See you soon", shopId: shop.id, runAt: now }).returning();
-    const stats = await m.queue.processDueJobs({ now, ids: [mk.id, appt.id] });
-    expect(stats.deferred).toBe(1);
-    const held = (await m.db.db.query.notificationJobs.findFirst({ where: eq(m.schema.notificationJobs.id, mk.id) }))!;
-    expect(held.status).toBe("pending");
-    expect(held.runAt.getTime() - now.getTime()).toBe(3600_000);
-    expect((await m.db.db.query.notificationJobs.findFirst({ where: eq(m.schema.notificationJobs.id, appt.id) }))?.status).not.toBe("pending");
+    const soon = new Date(now.getTime() + 90 * 60_000);
+    const [a] = await m.db.db
+      .insert(m.schema.appointments)
+      .values({ code: `Q${crypto.randomUUID().slice(0, 7).toUpperCase()}`, shopId: shop.id, staffId: barber.staffId, startsAt: soon, endsAt: new Date(soon.getTime() + 30 * 60_000), status: "booked", source: "staff", estimateCents: 2300 })
+      .returning();
+    const job = async (kind: string, appointmentId: string | null = null) =>
+      (await m.db.db.insert(m.schema.notificationJobs).values({ kind, channel: "sms", to: la, body: "Hi", shopId: shop.id, runAt: now, appointmentId }).returning())[0];
+    const mk = await job("marketing");
+    const remind = await job("reminder_24h");
+    const late = await job("reminder_2h", a.id);
+    const confirm = await job("confirmation");
+    const stats = await m.queue.processDueJobs({ now, ids: [mk.id, remind.id, late.id, confirm.id] });
+    expect(stats.deferred).toBe(2);
+    const get = async (id: string) => (await m.db.db.query.notificationJobs.findFirst({ where: eq(m.schema.notificationJobs.id, id) }))!;
+    for (const held of [await get(mk.id), await get(remind.id)]) {
+      expect(held.status).toBe("pending");
+      expect(held.runAt.getTime() - now.getTime()).toBe(2 * 3600_000);
+    }
+    // 9 AM Pacific is after the appointment starts: not sent at all.
+    expect(await get(late.id)).toMatchObject({ status: "suppressed", lastError: expect.stringMatching(/9 AM to 8 PM/) });
+    expect((await get(confirm.id)).status).not.toBe("pending");
   });
 });
 

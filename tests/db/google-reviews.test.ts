@@ -286,7 +286,9 @@ describe("the follow-up after a visit", () => {
     const t = await paid(paidAt, { smsOptIn: true });
     expect(await RV.queueReviewFollowUps(at(day, "22:00"))).toEqual({ queued: 0, skipped: 0, quiet: true });
     expect(await reviewRows(t.saleId)).toHaveLength(0);
-    await RV.queueReviewFollowUps(at("2028-02-10", "08:05"));
+    // 9 AM to 8 PM only (Charles, Oct 28).
+    expect(await RV.queueReviewFollowUps(at("2028-02-10", "08:55"))).toMatchObject({ queued: 0, quiet: true });
+    await RV.queueReviewFollowUps(at("2028-02-10", "09:05"));
     expect(await reviewRows(t.saleId)).toEqual([expect.objectContaining({ channel: "sms", skipped: null })]);
   });
 

@@ -112,9 +112,9 @@ describe("automated campaigns", () => {
 
 describe("sending rules", () => {
   const s = MARKETING_DEFAULTS;
-  it("quiet hours 9 PM to 9 AM, wrapping midnight", () => {
-    expect(inQuiet(20 * 60 + 59, s)).toBe(false);
-    expect(inQuiet(21 * 60, s)).toBe(true);
+  it("quiet hours 8 PM to 9 AM by default, wrapping midnight", () => {
+    expect(inQuiet(19 * 60 + 59, s)).toBe(false);
+    expect(inQuiet(20 * 60, s)).toBe(true);
     expect(inQuiet(3 * 60, s)).toBe(true);
     expect(inQuiet(9 * 60, s)).toBe(false);
     expect(inQuiet(13 * 60, { quietStart: "12:00", quietEnd: "14:00" })).toBe(true);
@@ -155,7 +155,7 @@ describe("sending rules", () => {
 
   it("bad settings fall back field by field", () => {
     const m = marketingSettings({ quietStart: "25:00", capPerWeek: 3, address: "1 Main" });
-    expect(m).toMatchObject({ quietStart: "21:00", capPerWeek: 3, address: "1 Main", capPerMonth: 6 });
+    expect(m).toMatchObject({ quietStart: "20:00", capPerWeek: 3, address: "1 Main", capPerMonth: 6 });
   });
 });
 

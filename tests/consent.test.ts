@@ -53,17 +53,20 @@ describe("marketing quiet hours", () => {
   const at = (iso: string) => new Date(iso);
   const brand = { quietStart: "21:00", quietEnd: "09:00" };
 
-  it("sends 8 AM to 9 PM where the recipient is, and where the shop is", () => {
+  it("sends 9 AM to 8 PM where the recipient is, and where the shop is (Charles, Oct 28)", () => {
     // 2026-11-10 15:00Z is 9 AM Central, 7 AM Pacific, 10 AM Eastern.
     expect(mayMarketAt(at("2026-11-10T15:00:00Z"), "+13195551234", "America/Chicago", brand)).toBe(true);
+    expect(mayMarketAt(at("2026-11-10T14:59:00Z"), "+13195551234", "America/Chicago")).toBe(false);
     expect(mayMarketAt(at("2026-11-10T15:00:00Z"), "+12135551234", "America/Chicago", brand)).toBe(false);
-    expect(nextMarketingTime(at("2026-11-10T15:00:00Z"), "+12135551234", "America/Chicago", brand)?.toISOString()).toBe("2026-11-10T16:00:00.000Z");
-    // 8:30 PM Eastern is fine for most of the country, not Florida.
-    expect(mayMarketAt(at("2026-11-11T01:30:00Z"), "+12125551234", "America/New_York")).toBe(true);
-    expect(mayMarketAt(at("2026-11-11T01:30:00Z"), "+13055551234", "America/New_York")).toBe(false);
+    // 9 AM Pacific.
+    expect(nextMarketingTime(at("2026-11-10T15:00:00Z"), "+12135551234", "America/Chicago", brand)?.toISOString()).toBe("2026-11-10T17:00:00.000Z");
+    // 7:59 PM Central is the last minute; 8 PM is out, in every state.
+    expect(mayMarketAt(at("2026-11-11T01:59:00Z"), "+13195551234", "America/Chicago")).toBe(true);
+    expect(mayMarketAt(at("2026-11-11T02:00:00Z"), "+13195551234", "America/Chicago")).toBe(false);
+    expect(mayMarketAt(at("2026-11-11T01:30:00Z"), "+12125551234", "America/New_York")).toBe(false);
     // An unknown area code is held to the shop's time.
-    expect(mayMarketAt(at("2026-11-10T14:30:00Z"), "+18005551234", "America/Chicago")).toBe(true);
-    expect(mayMarketAt(at("2026-11-10T14:30:00Z"), "+18005551234", "America/Chicago", brand)).toBe(false);
+    expect(mayMarketAt(at("2026-11-10T15:30:00Z"), "+18005551234", "America/Chicago")).toBe(true);
+    expect(mayMarketAt(at("2026-11-10T14:30:00Z"), "+18005551234", "America/Chicago")).toBe(false);
   });
 
   it("has nothing to offer when the brand's quiet hours cover the whole legal day", () => {

@@ -17,7 +17,7 @@ export function MarketingSettingsForm({ initial, mayEdit, mayExport, campaigns }
       {!mayEdit && <Notice tone="blue">The brand sets these for every location. Someone with Campaign Center: create and access to all shops can change them.</Notice>}
       <fieldset disabled={!mayEdit} className="space-y-5">
         <Card>
-          <CardHeader title="Quiet hours and limits" subtitle="Nothing marketing goes out in quiet hours, in each location's own time zone; messages due then wait until they end." />
+          <CardHeader title="Quiet hours and limits" subtitle="Nothing marketing goes out in quiet hours, in each location's own time zone, and never before 9 AM or after 8 PM where the client is; messages due then wait until they end." />
           <div className="grid gap-3 p-4 sm:grid-cols-4">
             <Field label="Quiet from">
               <ClockInput aria-label="Quiet from" className="w-full" value={v.quietStart} onChange={(t) => set("quietStart", t)} />

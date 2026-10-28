@@ -119,18 +119,25 @@ describe("reassign versus rebook", () => {
 describe("quiet hours", () => {
   const r = DEFAULT_OUTREACH_RULES;
 
-  it("wraps past midnight", () => {
+  it("wraps past midnight, and 9 AM to 8 PM always applies (Charles, Oct 28)", () => {
     expect(inQuietHours(22 * 60, r)).toBe(true);
-    expect(inQuietHours(7 * 60 + 59, r)).toBe(true);
-    expect(inQuietHours(8 * 60, r)).toBe(false);
-    expect(inQuietHours(20 * 60 + 59, r)).toBe(false);
-    expect(inQuietHours(3 * 60, { quietStartMin: 0, quietEndMin: 0 })).toBe(false);
+    expect(inQuietHours(8 * 60 + 59, r)).toBe(true);
+    expect(inQuietHours(9 * 60, r)).toBe(false);
+    expect(inQuietHours(19 * 60 + 59, r)).toBe(false);
+    expect(inQuietHours(20 * 60, r)).toBe(true);
+    // A shop's own window can only add quiet time, never send earlier or later.
+    expect(inQuietHours(3 * 60, { quietStartMin: 0, quietEndMin: 0 })).toBe(true);
+    expect(inQuietHours(12 * 60, { quietStartMin: 0, quietEndMin: 0 })).toBe(false);
+    expect(inQuietHours(8 * 60 + 30, { quietStartMin: 22 * 60, quietEndMin: 7 * 60 })).toBe(true);
+    expect(inQuietHours(9 * 60 + 30, { quietStartMin: 18 * 60, quietEndMin: 10 * 60 })).toBe(true);
   });
 
   it("holds a message until quiet hours end, the next morning when it's late evening", () => {
     expect(sendTime(at(DAY, "12:00"), r)).toEqual(at(DAY, "12:00"));
-    expect(sendTime(at(DAY, "22:30"), r)).toEqual(at("2026-10-24", "08:00"));
-    expect(sendTime(at("2026-10-24", "06:15"), r)).toEqual(at("2026-10-24", "08:00"));
+    expect(sendTime(at(DAY, "22:30"), r)).toEqual(at("2026-10-24", "09:00"));
+    expect(sendTime(at("2026-10-24", "06:15"), r)).toEqual(at("2026-10-24", "09:00"));
+    expect(sendTime(at("2026-10-24", "06:15"), { quietStartMin: 18 * 60, quietEndMin: 10 * 60 })).toEqual(at("2026-10-24", "10:00"));
+    expect(sendTime(at("2026-10-24", "06:15"), { quietStartMin: 22 * 60, quietEndMin: 7 * 60 })).toEqual(at("2026-10-24", "09:00"));
   });
 
   it("is too late when the held message would land under an hour before the appointment", () => {

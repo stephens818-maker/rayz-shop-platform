@@ -1,9 +1,9 @@
 import { and, eq, inArray, lte, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { EmailAttachment, contactOptOuts, notificationJobs, shops } from "@/db/schema";
+import { EmailAttachment, appointments, contactOptOuts, notificationJobs, shops } from "@/db/schema";
 import { MergeValues, SavedTemplates, cutoffText, fill, isTemplateKind, templateFor } from "@/domain/message-templates";
 import { icsCalendar, locationDescription } from "@/domain/ics";
-import { OPT_OUT_REASON, clientEmailHtml, reminderTimes, withUnsubscribe } from "@/domain/notification-delivery";
+import { OPT_OUT_REASON, REMINDER_MIN_LEAD_MIN, clientEmailHtml, reminderTimes, withUnsubscribe } from "@/domain/notification-delivery";
 import type { OutreachRules } from "@/domain/outreach";
 import type { MarketingSettings } from "@/domain/marketing";
 import { brandColumn, settingAt, settingFor } from "../brand-sync/settings";
@@ -82,12 +82,20 @@ export type NotificationKind =
   | "milestone";
 
 /**
- * Texts and push sent under marketing consent. They go out only 8 AM to 9 PM where the recipient is
+ * Texts and push sent under marketing consent. They go out only 9 AM to 8 PM where the recipient is
  * (domain/quiet-hours.ts), checked again at send time since a job can wait in the queue, and through
  * the marketing Messaging Service (its own 10DLC campaign) when TWILIO_MARKETING_MESSAGING_SERVICE_SID is set.
  */
 const MARKETING_SMS = new Set<string>(["marketing", "fill_offer", "rebook_nudge"]);
-const quietHoursApply = (j: { kind: string; channel: string }) => MARKETING_SMS.has(j.kind) && (j.channel === "sms" || j.channel === "push");
+/**
+ * Scheduled messages to clients that answer nothing they or staff just did: the same 9 AM to 8 PM window
+ * where the recipient is. Confirmations, codes, receipts, waitlist and shop-line replies, and call-in
+ * texts a manager sends, go when asked for (call-in follow-ups are placed in the window by sendTime).
+ */
+const SCHEDULED_TO_CLIENTS = new Set<string>(["reminder_24h", "reminder_2h", "rebook_reminder", "no_show_reminder", "review_request"]);
+const quietHoursApply = (j: { kind: string; channel: string }) =>
+  (MARKETING_SMS.has(j.kind) && (j.channel === "sms" || j.channel === "push")) || (SCHEDULED_TO_CLIENTS.has(j.kind) && j.channel !== "email");
+const QUIET_LATE_ERROR = "Not sent: 9 AM to 8 PM where the client is left no time before the appointment";
 const QUIET_ERROR = "Not sent: the brand's quiet hours leave no time to send marketing";
 
 /** The number a client's messages go to (the parent's for a child), for their local time. */
@@ -485,6 +493,10 @@ export async function processDueJobs(
       tx,
     );
     const stillWanted = await reminderConsent(due, tx);
+    const heldIds = [...new Set(timed.flatMap((j) => (j.appointmentId && !MARKETING_SMS.has(j.kind) ? [j.appointmentId] : [])))];
+    const appointmentStarts = new Map(
+      heldIds.length ? (await tx.select({ id: appointments.id, startsAt: appointments.startsAt }).from(appointments).where(inArray(appointments.id, heldIds))).map((a) => [a.id, a.startsAt]) : [],
+    );
 
     for (const job of due) {
       const provider = job.channel === "sms" ? sms : job.channel === "voice" ? voice : job.channel === "push" ? push : email;
@@ -502,14 +514,17 @@ export async function processDueJobs(
         continue;
       }
       if (quietHoursApply(job)) {
-        const phone = job.channel === "sms" ? job.to : job.customerId ? (pushPhones.get(job.customerId) ?? null) : null;
-        const at = nextMarketingTime(now, phone, (job.shopId && zones.get(job.shopId)) || SHOP_TZ, quietAt ? quietAt(job.shopId) : null);
+        const phone = job.channel === "sms" || job.channel === "voice" ? job.to : job.customerId ? (pushPhones.get(job.customerId) ?? null) : null;
+        const marketing = MARKETING_SMS.has(job.kind);
+        const at = nextMarketingTime(now, phone, (job.shopId && zones.get(job.shopId)) || SHOP_TZ, marketing && quietAt ? quietAt(job.shopId) : null);
         if (!at || at.getTime() !== now.getTime()) {
+          const startsAt = job.appointmentId ? appointmentStarts.get(job.appointmentId) : undefined;
+          const late = !!at && !!startsAt && at.getTime() > startsAt.getTime() - REMINDER_MIN_LEAD_MIN * 60_000;
           await tx
             .update(notificationJobs)
-            .set(at ? { runAt: at } : { status: "suppressed", lastError: QUIET_ERROR })
+            .set(at && !late ? { runAt: at } : { status: "suppressed", lastError: late ? QUIET_LATE_ERROR : QUIET_ERROR })
             .where(eq(notificationJobs.id, job.id));
-          if (at) stats.deferred++;
+          if (at && !late) stats.deferred++;
           else stats.suppressed++;
           continue;
         }

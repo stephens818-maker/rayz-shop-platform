@@ -253,7 +253,7 @@ export function OutreachRulesEditor({ rules }: { rules: OutreachRules }) {
   const [ttl, setTtl] = useState(String(rules.linkTtlHours));
   return (
     <Card>
-      <CardHeader title="Outreach rules" subtitle="For every shop. Automated texts, emails and calls wait for the end of quiet hours; missed-call texts answer the call at once." />
+      <CardHeader title="Outreach rules" subtitle="For every shop. Automated texts, emails and calls wait for the end of quiet hours, and never go before 9 AM or after 8 PM; missed-call texts answer the call at once." />
       <div className="grid gap-3 p-4 sm:grid-cols-4">
         <Field label="Follow up after (hours)" hint="One retry, then flagged for staff">
           <Input type="number" min={1} max={48} value={retry} onChange={(e) => setRetry(e.target.value)} />

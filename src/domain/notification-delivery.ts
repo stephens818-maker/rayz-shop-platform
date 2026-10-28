@@ -3,7 +3,7 @@
  * opted out), add-to-calendar links, when reminders go out around quiet hours, and the email
  * providers' delivery events. Pure: no database, no network.
  */
-import { addDays, localDateOf, localMinutesOf, zonedWallTime } from "@/lib/time";
+import { localMinutesOf } from "@/lib/time";
 import { marketingEmailHtml } from "./marketing-email";
 import { inQuietHours, sendTime, type OutreachRules } from "./outreach";
 
@@ -151,15 +151,15 @@ export const REMINDER_MIN_GAP_MIN = 120;
 
 type Quiet = Pick<OutreachRules, "quietStartMin" | "quietEndMin">;
 
-/** When the quiet hours that `at` falls in began, in shop time. */
+/** When the quiet hours that `at` falls in began, in shop time (the send window and the brand's own may overlap). */
 function quietStartedAt(at: Date, r: Quiet): Date {
-  const today = localDateOf(at);
-  const day = r.quietStartMin > r.quietEndMin && localMinutesOf(at) < r.quietStartMin ? addDays(today, -1) : today;
-  return zonedWallTime(day, r.quietStartMin).toJSDate();
+  let t = Math.floor(at.getTime() / 60_000) * 60_000;
+  for (let i = 0; i < 24 * 60 && inQuietHours(localMinutesOf(new Date(t - 60_000)), r); i++) t -= 60_000;
+  return new Date(t);
 }
 
 /**
- * When a reminder due at `target` goes out: then, unless that's in quiet hours (America/Chicago).
+ * When a reminder due at `target` goes out: then, unless that's in quiet hours (shop time, 9 AM to 8 PM at most).
  * Then it waits for quiet hours to end if that's still REMINDER_MIN_LEAD_MIN before the appointment,
  * else it goes the minute before quiet hours began. Null: nothing sensible is left (already past).
  */
