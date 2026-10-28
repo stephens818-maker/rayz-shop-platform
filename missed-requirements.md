@@ -1111,6 +1111,20 @@ These supersede any earlier wording that conflicts.
 - [x] **Audit:** every change is logged per shop (`tips.tip_to_barber`, `tips.tip_refund_overflow`, with who, before and after) and for the brand, plus the sync itself (`brand_sync.apply`, `brand_sync.rollback`).
 - [x] Tests: `tests/db/tip-payout-controls.test.ts`, `tests/db/separate-charges.test.ts`, `tests/permissions.test.ts`, `tests/staff-payouts.test.ts`.
 
+## 51. Shop login: the front desk's POS (Charles, Oct 28)
+
+As in Squire, a shop login is a POS and front-desk tool, not an admin console (launch checklist L79).
+
+- [x] **What a shop login does:** its shop's calendar and booking; check-in; checkout and the POS (services, products, tips, card, cash or split tender, the card fee as the brand set it); client lookup; the time clock and kiosk; We have openings per barber; and its shop's own reports, as its role allows. That's the Shop Login role, as before.
+- [x] **What stays the brand's:** settings, prices and the menu, staff setup and commission rates, roles and permissions, payroll, the Stripe and tip payout switches, the Campaign Center and integrations. The brand sends them to shops through brand sync.
+- [x] **No role makes a shop login an admin console:** owner-only and brand-only permissions never reach a shop login, whatever its role. The brand-controlled shop permissions (`SHOP_LOGIN_BRAND_GRANTED`: shop settings part by part, taxes, booking timing, block reasons, notifications, shop prices, promos, inventory, schedules, the payout tracker, the Campaign Center and client campaigns) are off for a shop login even on the Shop Manager role. Refunds, voids, exports, staff contact, pay and roles were already never allowed (`SHOP_LOGIN_NEVER`).
+- [x] **Unless the brand grants it:** someone with access to all shops can allow one of those for one shop login, as a per-login override under Roles and permissions. A shop manager who can manage permissions can't add or take back one of those on a shop login. Brand sync's **Shop edits** (Sync status) still decides which synced settings any shop may change; by default it can't.
+- [x] **Touch-first for front-desk tablets:** a shop login gets big tabs (Front desk, Calendar, Checkout, Clients, Walk-ins, Time clock, Openings, Reports, only those it can open), with everything else under More, instead of the sidebar. Buttons, fields and links are at least 48 pixels tall, with 16-pixel text in fields so tablets don't zoom.
+- [x] **Fast checkout:** the shop login's home is today's clients with one big Check in, then Check out, button each; the checkout queue (ready tickets first); and New sale. After payment the receipt offers **Next client**, back to the home. The home refreshes every 30 seconds.
+- [x] The permissions screen says why a shop login doesn't have a brand-controlled permission ("set by the brand").
+- [x] Tests: `tests/shop-login.test.ts`, `tests/db/front-desk.test.ts`, `tests/db/tenant.test.ts`.
+- [ ] **Ask Charles:** a person on the Shop Manager role (not a shop login) still changes the shop settings their role gives them, as brand sync's Shop edits allow. Should managers follow the same brand-only rule?
+
 ## Deferred by decision
 
 - I10 is decided: separate charges and transfers (section 5), with tips to barbers' recipient accounts on (`FEATURE_TIP_TO_BARBER`, the CPA approved it on 2026-10-28), turned off per shop with the brand setting `tip_to_barber` (section 50). Live tip transfers also need `MONEY_MOVEMENT_LIVE`.

@@ -382,6 +382,10 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
     - Both settings are under **Tip payout settings → Tips to barbers** in the brand login: **Tips to barbers' Stripe accounts** (on or off) and **A refund bigger than the sale's portion**. Each is sent with the brand picker: all shops or the shops chosen, keep or replace a shop's own value, now or later. Every change is in the audit log, per shop and for the brand, and a sync can be undone from **Sync status → History** (which also needs `tips.barber_payouts`).
     - Only `tips.barber_payouts` can change them: Brand Owner and Brand Admin to start. Grant it to another brand-wide role from **Roles** if needed. `tips.settings` alone no longer covers them.
     - The next free migration is `core_0139`.
+55. The shop login as the front desk's POS (no migration). Charles's call (Oct 28).
+    - Shop logins open as a touch-first front desk (big tabs, today's clients, the checkout queue). Nobody else's screens or access change.
+    - **This takes access away from shop logins only:** whatever their role, they lose owner-only and brand-only permissions and the brand-controlled shop permissions (shop settings, taxes, booking timing, shop prices, promos, inventory, schedules, the payout tracker, the Campaign Center). Before deploying, check **Permissions** for shop logins on a role other than **Shop Login**; where the brand wants one to keep, say, shop hours, someone with access to all shops adds it as an override on that login afterwards.
+    - The next free migration is still `core_0139`.
 
 ## Launch day: every surface at once, at the pilot shop
 

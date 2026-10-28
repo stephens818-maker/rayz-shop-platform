@@ -652,6 +652,12 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 
 ## Log
 
+### 2026-10-28: core, the shop login is the front desk's POS (Charles), FYI for the mobile agent and the Rayz App builder
+
+- On the web, a shop login (`staff.kind = shop`) now opens as a touch-first front desk: big tabs, today's clients with Check in and Check out, the checkout queue and New sale, and Next client after payment.
+- Settings, prices and the menu, staff setup and commission, roles, payroll, tip payout switches, the Campaign Center and integrations stay the brand's. No role gives a shop login those; someone with access to all shops can allow one per login.
+- Nothing changes in `/api/v1` or `/api/staff/v1`, and no migration. The staff app's kiosk mode keeps using the kiosk API as before. The next free migration is still `core_0139`.
+
 ### 2026-10-28: core, tips to barbers and the refund rule are brand settings with the shop picker (Charles), FYI for the mobile agent and the Rayz App builder
 - **Decided (Charles):** the tip payout on/off control is a brand setting in the brand login, sent with the standard brand-sync shop picker (every shop, or the shops he picks), behind its own permission, every change audited. The same goes for who covers a refund past the sale's portion. This replaces the Brand Owner's per-shop checkbox on **Tip payout settings** and the `tipRefundOverflow` field in `staff_payouts`.
 - **Settings:** shop settings (sync type `shop_setting`) `tip_to_barber` (`{ enabled }`, on `shops.tip_to_barber`) and `tip_refund_overflow` (`{ bearer: "platform" | "shop" }`, on the new `shops.tip_refund_overflow`, platform by default). Edited on **Tip payout settings → Tips to barbers** and **Brand defaults → Shop settings**, in the brand login only; each shop's current value is listed there and in **Sync status**, with history and undo.
