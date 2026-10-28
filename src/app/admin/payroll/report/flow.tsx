@@ -19,7 +19,7 @@ export function ApprovalNotice({ view, approval, status, preparers = [] }: { vie
       <Notice tone="blue">
         Approved {formatDateTime(approval.approvedAt)}
         {approval.approvedBy && ` by ${approval.approvedBy}`}
-        {approval.note && ` (${approval.note})`}: Service Sales {fmtMoney(approval.totals.service)}, Employee Cost {fmtMoney(approval.totals.employeeCost)}. The iSolved files download now. Lock the
+        {approval.note && ` (${approval.note})`}: Service Sales {fmtMoney(approval.totals.service)}, Total Wages {fmtMoney(approval.totals.employeeCost)} (the workbook&apos;s Employee Cost, before O.T. and training pay). The iSolved files download now. Lock the
         period to finish; any change before then needs approving again.
       </Notice>
     );
