@@ -147,5 +147,5 @@ export async function payrollDetailFile(
   const rows = detailRows(blocks, view.tips.rows.filter((r) => blocks.some((b) => b.shopId === r.shopId)));
   const label = brand ? "All shops" : blocks.length === 1 ? blocks[0].shop : "Shops";
   const fileName = `${status === "draft" ? "DRAFT - " : ""}Payroll detail ${label} ${start} to ${end}.csv`.replace(/[^\w .-]/g, "");
-  return { fileName, body: `${heading}\n${toCsv(DETAIL_HEADERS, rows)}\n`, status, rows: blocks.reduce((a, b) => a + b.lines.length, 0), shops: blocks.map((b) => b.shopId) };
+  return { fileName, body: `${heading}\n${toCsv(DETAIL_HEADERS, rows)}`, status, rows: blocks.reduce((a, b) => a + b.lines.length, 0), shops: blocks.map((b) => b.shopId) };
 }
