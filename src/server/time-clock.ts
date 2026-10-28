@@ -355,6 +355,21 @@ export async function clockState(staffId: string, now = new Date()): Promise<Clo
   return { state, shift: { shopId: open.shopId, shop: names.get(open.shopId) ?? "", start: open.start, breakStart: br?.start ?? null }, stale: null, next: allowedNext(state) };
 }
 
+/**
+ * Paid time so far on shifts still on the clock at these shops, worked out as clock-out will write it
+ * (unpaid breaks taken out) with now as the end. Stale shifts and ones flagged as forgotten
+ * clock-outs aren't someone at work, so they're left out.
+ */
+export async function openShiftWork(shopIds: readonly string[], staffIds: readonly string[] | null, now = new Date()): Promise<TimeEntry[]> {
+  if (!shopIds.length) return [];
+  const punches = await punchesBetween(staffIds, new Date(now.getTime() - STALE_OPEN_MS), new Date(now.getTime() + 60_000), db, shopIds);
+  const byId = new Map(punches.map((p) => [p.id, p]));
+  const open = pairPunches(punches.map(asLike)).shifts.filter((s) => s.end === null && !byId.get(s.inId)?.forgotFlaggedAt && now.getTime() - s.start.getTime() <= STALE_OPEN_MS);
+  if (!open.length) return [];
+  const rules = await clockRulesAt([...new Set(open.map((s) => s.shopId))]);
+  return open.flatMap((s) => shiftWork(s, rules(s.shopId), now).segments.map((seg) => ({ staffId: s.staffId, shopId: s.shopId, kind: "worked" as const, startsAt: seg.start, endsAt: seg.end })));
+}
+
 export interface PunchRequest {
   staffId: string;
   shopId: string;

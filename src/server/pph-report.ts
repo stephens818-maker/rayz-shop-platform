@@ -2,7 +2,7 @@ import "server-only";
 import { and, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { staff, timeEntries } from "@/db/schema";
-import { dailyHours } from "@/domain/payroll/overtime";
+import { type TimeEntry, dailyHours } from "@/domain/payroll/overtime";
 import {
   CLIENTS_LABEL,
   NA,
@@ -57,8 +57,12 @@ export interface PphRow {
 type Sel = Pick<ReportScope, "shopIds" | "staffId" | "staffIds">;
 const k2 = (staffId: string, shopId: string) => `${staffId}|${shopId}`;
 
-/** Worked centi-hours per person, shop and day in [from, to]: each day's punches rounded to hundredths, as payroll adds them up. */
-export async function workedDays(s: Sel, from: LocalDate, to: LocalDate): Promise<{ staffId: string; shopId: string; date: LocalDate; centi: number }[]> {
+/**
+ * Worked centi-hours per person, shop and day in [from, to]: each day's punches rounded to hundredths,
+ * as payroll adds them up. `open` is worked time not yet in the time entries (a shift still on the
+ * clock, to now), counted the same way.
+ */
+export async function workedDays(s: Sel, from: LocalDate, to: LocalDate, open: readonly TimeEntry[] = []): Promise<{ staffId: string; shopId: string; date: LocalDate; centi: number }[]> {
   const sel = staffSelection(s);
   if (!s.shopIds.length || (sel && !sel.length)) return [];
   const list = await db
@@ -73,7 +77,8 @@ export async function workedDays(s: Sel, from: LocalDate, to: LocalDate): Promis
         gt(timeEntries.endsAt, startOfLocalDay(from)),
       ),
     );
-  return dailyHours(list)
+  const extra = open.filter((e) => e.kind === "worked" && s.shopIds.includes(e.shopId) && (!sel || sel.includes(e.staffId)));
+  return dailyHours([...list, ...extra])
     .filter((d) => d.date >= from && d.date <= to && d.worked > 0)
     .map((d) => ({ staffId: d.staffId, shopId: d.shopId, date: d.date, centi: d.worked }));
 }
@@ -130,11 +135,23 @@ export async function pphRows(s: Sel, from: LocalDate, to: LocalDate): Promise<P
   return rowsOf(days, tickets, await salesBetween(s, from, to, squire), from, to);
 }
 
+/**
+ * The same for each of several ranges (which may overlap), from one read of the hours, tickets and
+ * Squire-era sales over them all. `open` is as in workedDays.
+ */
+export async function pphRowsFor(s: Sel, ranges: readonly { start: LocalDate; end: LocalDate }[], open: readonly TimeEntry[] = []): Promise<PphRow[][]> {
+  if (!ranges.length) return [];
+  const from = ranges.reduce((a, r) => (r.start < a ? r.start : a), ranges[0].start);
+  const to = ranges.reduce((a, r) => (r.end > a ? r.end : a), ranges[0].end);
+  const [days, squire, tickets] = await Promise.all([workedDays(s, from, to, open), squireDays(s, from, to), serviceTicketDays(s, from, to)]);
+  const sales = await Promise.all(ranges.map((r) => salesBetween(s, r.start, r.end, squire)));
+  return ranges.map((r, i) => rowsOf(days, tickets, sales[i], r.start, r.end));
+}
+
 /** The same, for each period of a trend, from one read of the hours and tickets. */
 async function pphTrendRows(s: Sel, from: LocalDate, to: LocalDate, buckets: readonly Bucket[]): Promise<{ range: PphRow[]; buckets: PphRow[][] }> {
-  const [days, squire, tickets] = await Promise.all([workedDays(s, from, to), squireDays(s, from, to), serviceTicketDays(s, from, to)]);
-  const [range, ...each] = await Promise.all([salesBetween(s, from, to, squire), ...buckets.map((b) => salesBetween(s, b.start, b.end, squire))]);
-  return { range: rowsOf(days, tickets, range, from, to), buckets: buckets.map((b, i) => rowsOf(days, tickets, each[i], b.start, b.end)) };
+  const [range, ...each] = await pphRowsFor(s, [{ start: from, end: to }, ...buckets]);
+  return { range, buckets: each };
 }
 
 export const totalOf = (xs: readonly PphRow[]): Pph =>
