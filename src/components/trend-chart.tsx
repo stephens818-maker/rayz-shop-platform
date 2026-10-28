@@ -13,11 +13,26 @@ const PAD = { l: 40, r: 12, t: 12, b: 28 };
 const COLOR = { main: "var(--color-zinc-900)", brand: "var(--color-zinc-400)", alt: "var(--color-red-700)" };
 const colorOf = (s: TrendSeries) => (s.dashed ? COLOR.brand : s.tone === "alt" ? COLOR.alt : COLOR.main);
 
-/** A line chart of rates (0 to 100%) by period. Gaps where a period has nothing; the same numbers are in the table below it. */
-export function TrendChart({ id, title, labels, series }: { id: string; title: string; labels: string[]; series: TrendSeries[] }) {
+/** A round top for a dollar axis: 1, 2, 2.5 or 5 times a power of ten, at or above the highest value. */
+export function moneyAxisTop(maxCents: number): number {
+  if (maxCents <= 0) return 100;
+  const p = 10 ** Math.floor(Math.log10(maxCents));
+  return ([1, 2, 2.5, 5, 10].find((m) => m * p >= maxCents) ?? 10) * p;
+}
+
+const dollarsOf = (cents: number) => `$${(cents / 100).toLocaleString("en-US", { maximumFractionDigits: cents < 1000 ? 2 : 0 })}`;
+
+/**
+ * A line chart by period: rates (0 to 100%), or dollar amounts in cents on an axis from $0 to a round
+ * top (`kind: "money"`). Gaps where a period has nothing; the same numbers are in the table below it.
+ */
+export function TrendChart({ id, title, labels, series, kind = "pct" }: { id: string; title: string; labels: string[]; series: TrendSeries[]; kind?: "pct" | "money" }) {
   const n = labels.length;
+  const top = kind === "money" ? moneyAxisTop(Math.max(0, ...series.flatMap((s) => s.values.filter((v): v is number => v !== null)))) : 1;
+  const tick = (g: number) => (kind === "money" ? dollarsOf(g * top) : `${Math.round(g * 100)}%`);
+  const shown = (v: number) => (kind === "money" ? dollarsOf(v) : `${Math.round(v * 100)}%`);
   const x = (i: number) => PAD.l + (n <= 1 ? (W - PAD.l - PAD.r) / 2 : (i * (W - PAD.l - PAD.r)) / (n - 1));
-  const y = (v: number) => PAD.t + (1 - Math.max(0, Math.min(1, v))) * (H - PAD.t - PAD.b);
+  const y = (v: number) => PAD.t + (1 - Math.max(0, Math.min(1, v / top))) * (H - PAD.t - PAD.b);
   const every = Math.max(1, Math.ceil(n / 8));
   const runs = (vals: (number | null)[]) => {
     const out: { i: number; v: number }[][] = [];
@@ -42,9 +57,9 @@ export function TrendChart({ id, title, labels, series }: { id: string; title: s
           <svg viewBox={`0 0 ${W} ${H}`} className="h-auto w-full" role="img" aria-label={title}>
             {[0, 0.25, 0.5, 0.75, 1].map((g) => (
               <g key={g}>
-                <line x1={PAD.l} x2={W - PAD.r} y1={y(g)} y2={y(g)} className="stroke-zinc-200" strokeWidth={1} />
-                <text x={PAD.l - 6} y={y(g) + 4} textAnchor="end" fontSize={11} className="fill-zinc-500">
-                  {Math.round(g * 100)}%
+                <line x1={PAD.l} x2={W - PAD.r} y1={y(g * top)} y2={y(g * top)} className="stroke-zinc-200" strokeWidth={1} />
+                <text x={PAD.l - 6} y={y(g * top) + 4} textAnchor="end" fontSize={11} className="fill-zinc-500">
+                  {tick(g)}
                 </text>
               </g>
             ))}
@@ -69,7 +84,7 @@ export function TrendChart({ id, title, labels, series }: { id: string; title: s
                   )}
                   {run.map((p) => (
                     <circle key={p.i} cx={x(p.i)} cy={y(p.v)} r={s.dashed ? 2 : 3} style={{ fill: colorOf(s) }}>
-                      <title>{`${labels[p.i]}: ${s.label} ${Math.round(p.v * 100)}%`}</title>
+                      <title>{`${labels[p.i]}: ${s.label} ${shown(p.v)}`}</title>
                     </circle>
                   ))}
                 </g>

@@ -38,6 +38,10 @@ export interface ReportTable {
   exportOnly?: boolean;
   /** An export-only table with its own download link on the page. */
   downloadLabel?: string;
+  /** Per column, the report options a click on its heading switches to (re-sorting the table); null where it doesn't sort. */
+  sortBy?: (Record<string, string> | null)[];
+  /** The column the rows are sorted by, and which way. */
+  sorted?: { column: number; dir: "asc" | "desc" };
 }
 
 export type LocationView = "combined" | "shops";

@@ -73,7 +73,7 @@ export const REPORT_TYPES = {
     keys: ["my_sales", "sales_summary", "end_of_day", "sales_by_barber", "leaderboard", "services_vs_products", "card_vs_cash", "sales_tax", "discounts_refunds", "gift_cards", "cash_drawer", "analytics", "morning_dashboard"],
   },
   pnl: { label: "Reports: P&L and payouts", keys: ["shop_accounts", "rollup", "tip_payouts"] },
-  payroll: { label: "Reports: payroll and labor", keys: ["tips_payroll", "labor", "commission_payout", "attendance"] },
+  payroll: { label: "Reports: payroll and labor", keys: ["tips_payroll", "labor", "pph", "commission_payout", "attendance"] },
   payroll_pay: {
     label: "Reports: payroll (iSolved)",
     keys: ["payroll_report", "payroll_summary", "payroll_timesheets", "payroll_tips", "payroll_commission", "payroll_full_time", "payroll_aca", "payroll_labor", "payroll_overtime", "payroll_isolved", "payroll_tips_paid", "payroll_w2_codes", "payroll_fica_tip_credit", "payroll_paid_leave"],

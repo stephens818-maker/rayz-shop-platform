@@ -27,13 +27,15 @@ interface MoneyBearing {
   tables: ReportTable[];
   notes?: string[];
   bars?: { kind: string }[];
+  charts?: { kind?: string }[];
 }
 
-/** What a report shows someone who may not see dollar amounts. Line charts are rates and counts, so they stay; dollar bar charts go. */
+/** What a report shows someone who may not see dollar amounts. Rate and count charts stay; dollar charts go. */
 export function withoutMoney<D extends MoneyBearing>(d: D): D {
   return {
     ...d,
     ...(d.bars ? { bars: d.bars.filter((b) => b.kind !== "money") } : {}),
+    ...(d.charts ? { charts: d.charts.filter((c) => c.kind !== "money") } : {}),
     stats: d.stats.map((s) => ({ ...s, value: scrubDollars(s.value), ...(s.hint ? { hint: scrubDollars(s.hint) } : {}) })),
     tables: d.tables.map(tableWithoutMoney),
     notes: [MONEY_HIDDEN_NOTE, ...(d.notes ?? []).map(scrubDollars)],

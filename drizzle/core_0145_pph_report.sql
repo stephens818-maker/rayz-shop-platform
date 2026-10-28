@@ -1,0 +1,4 @@
+-- Production per hour (PPH) report: its view and export permissions go to every role that already has the Labor hours and cost report (export only where that report's export is), and view-only to the Barber and Apprentice roles, which see only their own numbers without "See every barber's numbers". No schema change.
+UPDATE "roles" SET "permissions" = "permissions" || '["report.pph.view"]'::jsonb WHERE "permissions" ? 'report.labor.view' AND NOT ("permissions" ? 'report.pph.view');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" || '["report.pph.view"]'::jsonb WHERE "key" IN ('barber', 'apprentice') AND NOT ("permissions" ? 'report.pph.view');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" || '["report.pph.export"]'::jsonb WHERE "permissions" ? 'report.labor.export' AND NOT ("permissions" ? 'report.pph.export');

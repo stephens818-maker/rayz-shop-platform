@@ -66,10 +66,21 @@ export function ReportTabs({ ctx, active }: { ctx: StaffContext; active: ReportK
 const ROW_STYLE = { subtotal: "bg-zinc-50 font-medium", total: "bg-zinc-100 font-semibold" } as const;
 
 /** One report table: per-row number formats for metric tables, shaded subtotal and total rows. */
-export function ReportTableCard({ t, csv, rowAction }: { t: ReportTable; csv: string | null; rowAction?: (row: number) => ReactNode }) {
+export function ReportTableCard({ t, csv, rowAction, sortHref }: { t: ReportTable; csv: string | null; rowAction?: (row: number) => ReactNode; sortHref?: (options: Record<string, string>) => string }) {
   const right = numericKind;
   const kindAt = (i: number, j: number) => (t.rowKinds?.[i] && j > 0 ? t.rowKinds[i] : t.columns[j]?.kind);
   const last = t.columns.length - 1;
+  const heading = (label: string, j: number) => {
+    const to = sortHref && t.sortBy?.[j];
+    if (!to) return label;
+    const on = t.sorted?.column === j ? t.sorted.dir : null;
+    return (
+      <a href={sortHref(to)} className="underline decoration-dotted underline-offset-2 hover:text-zinc-900" title="Sort by this column">
+        {label}
+        {on && <span aria-hidden> {on === "asc" ? "▲" : "▼"}</span>}
+      </a>
+    );
+  };
   return (
     <Card className="mt-4">
       <CardHeader
@@ -92,8 +103,8 @@ export function ReportTableCard({ t, csv, rowAction }: { t: ReportTable; csv: st
           <thead>
             <tr>
               {t.columns.map((c, j) => (
-                <Th key={j} right={t.rowKinds ? j > 0 : right(c.kind)} className={cx(t.totalColumn && j === last && "bg-zinc-100 text-zinc-700")}>
-                  {c.label}
+                <Th key={j} right={t.rowKinds ? j > 0 : right(c.kind)} sort={t.sorted?.column === j ? (t.sorted.dir === "asc" ? "ascending" : "descending") : undefined} className={cx(t.totalColumn && j === last && "bg-zinc-100 text-zinc-700")}>
+                  {heading(c.label, j)}
                 </Th>
               ))}
               {rowAction && <Th />}
@@ -200,6 +211,7 @@ export async function ReportPage({
   const query = cleanViewQuery(new URLSearchParams(Object.entries(params).filter((e): e is [string, string] => !!e[1])).toString());
   const ms = Math.round(performance.now() - t0);
   const csv = (table: string) => (canExport ? `/admin/reports/export?${reportQuery(scope, { ...optionValues(data.options), type: report, table, from: scope.from, to: scope.to })}` : null);
+  const sortHref = (o: Record<string, string>) => `${meta.href}?${reportQuery(scope, { ...optionValues(data.options), ...o, ...(scope.preset ? { preset: scope.preset } : { from: scope.from, to: scope.to }) })}`;
   const view = viewOf(scope.loc);
   const barberLabel = scope.barbers?.pickable && scope.barbers.selection.staffIds ? scope.barbers.label : null;
   const exportAll = data.tables.find((t) => t.exportOnly && !t.downloadLabel && t.id !== "heatmap");
@@ -262,7 +274,7 @@ export async function ReportPage({
       {data.charts && (
         <div className={cx(data.charts.length > 1 && "grid gap-x-4 xl:grid-cols-2")}>
           {data.charts.map((c) => (
-            <TrendChart key={c.id} id={c.id} title={c.title} labels={c.labels} series={c.series} />
+            <TrendChart key={c.id} id={c.id} title={c.title} labels={c.labels} series={c.series} kind={c.kind} />
           ))}
         </div>
       )}
@@ -284,7 +296,7 @@ export async function ReportPage({
       {data.tables
         .filter((t) => !t.exportOnly)
         .map((t) => (
-          <ReportTableCard key={t.id} t={t} csv={csv(t.id)} rowAction={actions[t.id]} />
+          <ReportTableCard key={t.id} t={t} csv={csv(t.id)} rowAction={actions[t.id]} sortHref={t.sortBy ? sortHref : undefined} />
         ))}
       {canExport && data.tables.some((t) => t.exportOnly && t.downloadLabel) && (
         <p className="mt-2 flex flex-wrap justify-end gap-4 text-xs">

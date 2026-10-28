@@ -722,6 +722,12 @@ export const REPORTS = [
     hint: "Clocked hours per shop and barber, sales per labor hour, and (with pay rates) labor cost and labor % of sales.",
   },
   {
+    key: "pph",
+    label: "Production per hour (PPH)",
+    href: "/admin/reports/pph",
+    hint: "Service, product and total sales per clocked worked hour (before tax and tips) per barber, location and the brand, for any dates or pay period, ranked, with a trend.",
+  },
+  {
     key: "commission_payout",
     label: "Commission payout",
     href: "/admin/reports/commission-payout",
@@ -1161,6 +1167,7 @@ const BARBER_FEATURES: Permission[] = [
   "reports.money",
   ...reports(["my_sales", "service_times"]),
   reportView("rebook_rate"),
+  reportView("pph"),
 ];
 const NOT_FOR_APPRENTICES = new Set<Permission>(["pos.discount", "pos.price_override", "sales.refund", "sales.void"]);
 
@@ -1382,6 +1389,7 @@ const TEMPLATES: RoleTemplate[] = [
         "purchasing",
         "gift_cards",
         "labor",
+        "pph",
         "commission_payout",
         "cash_drawer",
         "tip_payouts",

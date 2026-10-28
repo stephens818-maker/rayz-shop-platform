@@ -74,6 +74,7 @@ import { lapsedReportData } from "./marketing/lapsed-report";
 import { openingsReportData } from "./marketing/openings-report";
 import { milestonesReportData } from "./milestones/views";
 import { attendanceData, laborData } from "./labor-report";
+import { pphReportData } from "./pph-report";
 import { tipPayoutsData } from "./tips/report";
 import {
   payrollCommissionData,
@@ -137,12 +138,13 @@ export interface ReportOption {
   /** A dropdown next to the dates instead of a row of choices, for long lists. */
   select?: boolean;
 }
-/** A line chart of rates over periods, drawn above the tables. Its numbers are also in a table. */
+/** A line chart of rates (or, with kind money, amounts in cents) over periods, drawn above the tables. Its numbers are also in a table. */
 export interface ReportChart {
   id: string;
   title: string;
   labels: string[];
   series: { label: string; values: (number | null)[]; dashed?: boolean; tone?: "alt" }[];
+  kind?: "pct" | "money";
 }
 export interface ReportData {
   stats: ReportStat[];
@@ -808,6 +810,10 @@ export const REPORT_LOADERS: Record<ReportKey, (i: ReportInput) => Promise<Repor
 
   async labor({ scope, loc, viewer }) {
     return laborData(scope, loc, viewer.permissions);
+  },
+
+  async pph({ scope, loc, params, viewer }) {
+    return pphReportData(scope, loc, params, { brandWide: viewer.brandWide });
   },
 
   async commission_payout({ scope, loc }) {

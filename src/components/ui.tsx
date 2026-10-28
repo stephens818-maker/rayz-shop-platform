@@ -173,8 +173,12 @@ export function Table({ children, className, label }: { children: ReactNode; cla
     </div>
   );
 }
-export function Th({ children, className, right }: { children?: ReactNode; className?: string; right?: boolean }) {
-  return <th className={cx("whitespace-nowrap border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500", right ? "text-right" : "text-left", className)}>{children}</th>;
+export function Th({ children, className, right, sort }: { children?: ReactNode; className?: string; right?: boolean; sort?: "ascending" | "descending" }) {
+  return (
+    <th aria-sort={sort} className={cx("whitespace-nowrap border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500", right ? "text-right" : "text-left", className)}>
+      {children}
+    </th>
+  );
 }
 export function Td({ children, className, right }: { children?: ReactNode; className?: string; right?: boolean }) {
   return <td className={cx("whitespace-nowrap border-b border-zinc-100 px-3 py-2", right && "tabular text-right", className)}>{children}</td>;
