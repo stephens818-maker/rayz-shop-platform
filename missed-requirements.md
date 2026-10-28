@@ -100,8 +100,9 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 ## 5. Stripe Connect, merchant of record (I10)
 
 - [x] One platform account, and a connected (Express) account per shop.
-- [x] Destination charges (`on_behalf_of` + `transfer_data`) to the shop where the service happened, with the processing fee as the application fee.
-- [x] Refunds reverse the transfer.
+- [x] Separate charges and transfers (Charles approved, 2026-10-28): each sale is charged on the platform with its `transfer_group`, and the shop's portion (services, products, tax and the card surcharge, less the processing fee) is transferred to the shop where the service happened, with `source_transaction`. `chargeCard` and `settlement.ts` are the only charge and transfer path (`tests/charge-path-guard.test.ts`).
+- [x] Behind `FEATURE_TIP_TO_BARBER` (off until the CPA signs off), each card tip is transferred to the barber's Express account the same way. Off, it's in the shop's transfer and goes on the paycheck. Every tip goes to iSolved either way.
+- [x] Refunds and disputes reverse the shop's transfer only, never a tip; a won dispute is transferred back. What the shop's transfer can't cover stays with the platform. Payments from before keep their destination-charge refunds. `tests/db/separate-charges.test.ts`.
 - [x] Shops that aren't onboarded can't take cards. Shops can also use the brand account or take cash only (see section 13).
 - [x] The location setup wizard creates each shop's account and runs Stripe-hosted onboarding, with a simulator stand-in when there are no keys.
 - [x] The Connect webhook tracks account status, disconnects and payouts.
@@ -988,7 +989,7 @@ README "Staff app API → Staff delta for Squire" has the details. Migrations `c
 
 **Held or not done yet:**
 - [ ] ST-C5's exact punches, cross-shop weekly overtime and buddy-punch rules: held until iSolved Time is decided.
-- [ ] ST-C11 / I10: the tip transfers are built (section 40); the charge side for connected shops is mobile's.
+- [ ] ST-C11 / I10: tips to barbers' Express accounts are built (section 5) and wait on the CPA's sign-off to turn on `FEATURE_TIP_TO_BARBER`, and `MONEY_MOVEMENT_LIVE` for live money.
 - [ ] Legal review of the privacy notice and the agency details. The release gate fails until it's done (DEPLOY step 44).
 - [ ] The CPA's confirmation of the new iSolved columns, the 45B start and the state rates.
 - [ ] The staff app's screens (two-step setup, step-up, pairing, deposit consent, data protection, Question my pay, paystub labels), by the Rayz App builder. The API is ready.
@@ -1089,7 +1090,7 @@ Charles approved the plan: (1) all scope, the apps included, complete and tested
 
 ## Deferred by decision
 
-- I10 stays on destination charges for customers until mobile's charge side lands. Tip payouts to employees (sections 15, 35 and 40) move by platform transfer for brand-settled shops. They're held as owed for connected shops until then, and stay test mode only until the CPA signs off (`MONEY_MOVEMENT_LIVE`).
+- I10 is decided: separate charges and transfers (section 5). Tips to barbers' Express accounts stay off (`FEATURE_TIP_TO_BARBER`) until the CPA signs off; until then card tips stay in the shop's transfer and go on the paycheck. Live tip transfers also need `MONEY_MOVEMENT_LIVE`.
 - The Q11/C2 training setting stays a setting until Charles answers Q11 (on by default since section 46).
 - PR #8 isn't merged.
 - `DEMO_MODE` isn't turned on in production, because it would break the Vercel demo.

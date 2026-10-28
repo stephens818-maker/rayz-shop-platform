@@ -264,7 +264,8 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
    - **App push:** set the `APNS_*` and `FCM_*` keys and `NOTIFICATIONS_PUSH_PROVIDER=native`. Tokens Apple or Google reject are revoked automatically.
    - **Paying in the app (test mode until cutover):**
      - Add `payment_intent.succeeded`, `payment_intent.payment_failed`, `setup_intent.succeeded` and `payment_method.detached` to the platform webhook at `/api/stripe/webhook` (step 4). Every event is stored in `stripe_events`, so a retried event is applied once.
-     - `STRIPE_CHARGE_MODEL` stays `on_behalf_of` until Charles decides the merchant of record (I10); `destination` is the other option, with no code change.
+     - Card charges are separate charges and transfers (I10, Charles, 2026-10-28): the platform is the merchant of record, and the shop's portion is transferred to its connected account after each sale. `core_0135` adds `payment_transfers` and `payment_transfer_reversals`; payments from before keep their destination charges and refund as before. Add `charge.dispute.closed` to the platform webhook. The notifications cron retries transfers and reversals Stripe refused.
+     - Leave `FEATURE_TIP_TO_BARBER` unset until the CPA signs off: card tips stay in the shop's transfer and go on the paycheck. Set it for Preview to test tips to barbers' Express accounts. In production it also needs `MONEY_MOVEMENT_LIVE`.
      - Set `STRIPE_SURCHARGE_FIELD=true` only after Stripe signs off on the surcharge field for the account.
      - Leave `FEATURE_WALLET_FEE` unset: Apple Pay and Google Pay get no card fee.
      - For Apple Pay, create the merchant ID in the Apple team and upload Stripe's Apple Pay certificate, then set `APPLE_PAY_MERCHANT_ID`. Web Apple Pay also needs domain verification, which isn't done.

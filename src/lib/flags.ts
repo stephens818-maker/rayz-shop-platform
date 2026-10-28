@@ -9,10 +9,10 @@
  * - staffTapToPay (ST-I4): Stripe Terminal Tap to Pay in the staff app. Needs Apple's Tap to Pay entitlement and each shop's
  *   Terminal location; until then checkout stays at the front desk.
  * - staffReviewLogin (ST-I19): the Demo Shop reviewer login for the staff app's App Store and Google Play review.
- * - tipToBarber (I10, ST-C11): a connected shop's card tip left on the platform at checkout, so the tip payout's
- *   transfer (platformTipTransfers in money-movement.ts) can pay it. A destination charge (on_behalf_of +
- *   transfer_data.destination, the shop's account) settles the tip to the shop, which can't pay a barber. The switch
- *   is inside chargeCard, the one place a PaymentIntent is created (mobile). Live money stays behind MONEY_MOVEMENT_LIVE.
+ * - tipToBarber (I10, ST-C11): off until the CPA signs off. On, each card tip of a separate charge is transferred to
+ *   its barber's Express account at the sale (settlement.ts, with source_transaction), and their Stripe payout pays it
+ *   out of that balance. Off, the tip stays in the shop's transfer and is paid through payroll. Live money also needs
+ *   MONEY_MOVEMENT_LIVE.
  */
 export const flags = {
   reviewLogin: () => process.env.FEATURE_REVIEW_LOGIN === "true",

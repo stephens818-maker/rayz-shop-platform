@@ -139,7 +139,7 @@ const flagsOf = (acct: Stripe.Account): SavedFlags => ({
   ...(acct.settings ? { payoutSchedule: scheduleOf(acct) } : {}),
 });
 
-/** Creates the shop's connected account if it has none. Express dashboard; the platform carries fees and losses, as destination charges need. */
+/** Creates the shop's connected account if it has none. Express dashboard; the platform carries fees and losses, as the merchant of record of separate charges. */
 export async function ensureConnectedAccount(shopId: string, actor: Actor): Promise<ShopPaymentAccount> {
   const existing = await shopAccount(shopId);
   if (existing && !existing.deauthorizedAt && (connectMode() === "simulator" || !existing.simulated)) return existing;
