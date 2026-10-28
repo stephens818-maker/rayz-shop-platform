@@ -310,6 +310,8 @@ describe("cash tips from the drawer", () => {
 });
 
 describe("Stripe payouts and webhooks", () => {
+  beforeAll(() => void (process.env.FEATURE_TIP_TO_BARBER = "true"));
+  afterAll(() => void delete process.env.FEATURE_TIP_TO_BARBER);
   const secret = "whsec_test_tips";
   const connectEvent = (type: string, object: object, account: string) => {
     const payload = JSON.stringify({ id: `evt_${Math.random().toString(36).slice(2)}`, object: "event", type, account, data: { object } });
@@ -347,7 +349,7 @@ describe("Stripe payouts and webhooks", () => {
     expect(Object.keys(a).filter((k) => k !== "taxForms" && /routing|account_?number|card_?number|ssn|tax|fingerprint|dob|birth/i.test(k))).toEqual([]);
   });
 
-  it("an approved Stripe payout goes out (simulator) and the employee is told", async () => {
+  it("a card tip goes to the employee's Stripe balance at the sale; the approved payout pays it out from there (simulator) and the employee is told", async () => {
     const { shop: sh, barbers: [, c] } = await barbers("silvis", ["Abigail", "Liv"]);
     await m.db.db.update(s().staff).set({ email: "liv.tips@rayz.test" }).where(eq(s().staff.id, c.id));
     const [bs] = await m.db.db.select({ t: s().brandSettings.tipPayouts }).from(s().brandSettings);
@@ -360,20 +362,25 @@ describe("Stripe payouts and webhooks", () => {
     await accounts.setPayoutChoice(c.id, { method: "stripe", instant: true, acceptInstantFee: accounts.currentInstantFeeTerms() }, actor);
     expect((await accounts.staffAccount(c.id))!).toMatchObject({ instant: true, instantFeeTerms: accounts.currentInstantFeeTerms() });
     await agreeToStripeDeposits(c.id);
-    await tipSale(sh.id, c.id, 2500, card);
+    const sale = await tipSale(sh.id, c.id, 2500, card);
+    const [tipTransfer] = await m.db.db.select().from(s().paymentTransfers).where(and(eq(s().paymentTransfers.saleId, sale.id), eq(s().paymentTransfers.kind, "tip")));
+    expect(tipTransfer).toMatchObject({ staffId: c.id, amountCents: 2500, status: "sent", stripeTransferId: expect.stringMatching(/^sim_tr_/) });
     await tl.saveShopTipSettings(sh.id, { schedule: "manual", cardDelayDays: 0, weeklyDay: 1, defaultMethod: "cash" }, actor);
     const r = await tp.buildBatch({ shopId: sh.id, kind: "manual", cutoff: today, actor });
     await tp.approveBatch(r.batchId, actor);
     const p = (await mine(r.batchId, c.id))!;
-    expect(p).toMatchObject({ method: "stripe", status: "paid", instant: true, instantFeeCents: 50, netCents: 2500 });
-    expect(p.stripeTransferId).toMatch(/^sim_tr_/);
+    // Already in their balance, so nothing more is transferred, and the shop pays the instant fee (it can't come out of a transfer).
+    expect(p).toMatchObject({ method: "stripe", status: "paid", instant: true, instantFeeCents: 50, instantFeePaidBy: "shop", netCents: 2500, stripeTransferId: null });
     const [note] = await m.db.db.select().from(s().notificationJobs).where(and(eq(s().notificationJobs.kind, "tip_payout"), eq(s().notificationJobs.to, "liv.tips@rayz.test")));
-    expect(note.subject).toBe("Tip payout: $24.50");
-    expect(note.body).toMatch(/Stripe's instant payout fee was \$0\.50/);
+    expect(note.subject).toBe("Tip payout: $25.00");
+    expect(note.body).toMatch(/The shop paid Stripe's instant payout fee\./);
   });
 
   it("payout.paid marks it paid; payout.failed and transfer.reversed release its tips for the next batch", async () => {
     const { shop: sh, barbers: [b] } = await barbers("silvis", ["Abigail", "Liv"]);
+    // Cash tips paid by Stripe come from the brand's balance, so a shop on the brand's account.
+    await m.db.db.update(s().shops).set({ paymentsMode: "brand" }).where(eq(s().shops.id, sh.id));
+    onTestFinished(async () => void (await m.db.db.update(s().shops).set({ paymentsMode: "connected" }).where(eq(s().shops.id, sh.id))));
     await m.db.db
       .insert(s().staffPayoutAccounts)
       .values({ staffId: b.id, method: "stripe", stripeAccountId: acct, simulated: false, payoutsEnabled: true, detailsSubmitted: true })

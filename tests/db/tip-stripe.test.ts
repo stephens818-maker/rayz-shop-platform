@@ -2,8 +2,10 @@
  * Employees' Stripe tip payouts against a stand-in Stripe client that records every call: test mode
  * only; with no transfer path, approved payouts are held as owed and nothing moves; a transfer path is
  * asked for exactly what reaches the employee and what it costs the shop, and unwinds a failed payout;
- * the platform transfer path (ST-C11) moves tips for brand-settled shops and holds the rest as owed;
- * and the Connect webhooks keep each bank account and card with its last 4 only.
+ * the platform transfer path (ST-C11) moves tips for brand-settled shops; a connected shop's own
+ * tips are never a Stripe payout; and the Connect webhooks keep each bank account and card with its
+ * last 4 only. FEATURE_TIP_TO_BARBER is on here, and the shops whose cash tips are paid by Stripe are
+ * on the brand's account, since a connected shop keeps its own cash (I10).
  */
 import Stripe from "stripe";
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
@@ -73,6 +75,8 @@ beforeAll(async () => {
   await tl.recordOpeningTips(m.time.addDays(today, 1));
   // Each test picks its transfer path; the platform's is the default outside tests.
   mm.registerMoneyMovement(null);
+  process.env.FEATURE_TIP_TO_BARBER = "true";
+  await setModes("brand");
 }, 180_000);
 
 afterEach(() => {
@@ -83,8 +87,13 @@ afterEach(() => {
 });
 
 afterAll(async () => {
+  delete process.env.FEATURE_TIP_TO_BARBER;
+  if (m) await setModes("connected");
   await m?.db.closeDb();
 });
+
+const BRAND_SETTLED = ["moline", "silvis", "utica"];
+const setModes = (mode: "brand" | "connected") => m.db.db.update(m.schema.shops).set({ paymentsMode: mode }).where(m.drizzle.inArray(m.schema.shops.slug, BRAND_SETTLED));
 
 const eq = (...a: Parameters<Mods["drizzle"]["eq"]>) => m.drizzle.eq(...a);
 const and = (...a: Parameters<Mods["drizzle"]["and"]>) => m.drizzle.and(...a);
@@ -247,6 +256,7 @@ describe("the money-movement module, with a stand-in transfer path", () => {
         key: `tip-${draft.id}`,
         shopId: shop.id,
         amountCents: 2450,
+        prefundedCents: 0,
         shopCostCents: 2500,
         to: "acct_fake_jilane",
         group: `tips-${draft.batchId}`,
@@ -324,8 +334,6 @@ describe("the platform transfer path (ST-C11, separate charges and transfers)", 
 
   it("a brand-settled shop: a transfer from the platform balance to the employee's account, then their payout, each idempotent on the payout's id, with no account debit", async () => {
     const { shop, staffId } = await person("silvis", "Abigail");
-    await setMode(shop.id, "brand");
-    onTestFinished(async () => void (await setMode(shop.id, "connected")));
     await readyOnStripe(staffId, "acct_fake_abigail", false);
     usePlatform();
     const { draft, sent, stripeMoney } = await payOne(shop.id, staffId, 1800);
@@ -341,15 +349,22 @@ describe("the platform transfer path (ST-C11, separate charges and transfers)", 
     expect(audit.details).toMatchObject({ via: "platform_transfers", amountCents: 1800 });
   });
 
-  it("a shop on its own Stripe account keeps its card tips there, so its payouts are held as owed and nothing moves", async () => {
-    const { shop, staffId } = await person("moline", "Sara");
-    await readyOnStripe(staffId, "acct_fake_sara_connected", false);
+  it("a shop on its own Stripe account keeps its cash tips, so they're never a Stripe payout: they go on the paycheck", async () => {
+    const { shop, staffId } = await person("moline", "Kat");
+    await setMode(shop.id, "connected");
+    onTestFinished(async () => void (await setMode(shop.id, "brand")));
+    await readyOnStripe(staffId, "acct_fake_kat_connected", false);
     usePlatform();
     expect(mm.directPayoutsAvailable()).toBe(true);
-    const { sent, stripeMoney } = await payOne(shop.id, staffId, 900);
-    expect(stripeMoney).toEqual([]);
-    expect(sent).toMatchObject({ status: "held", holdKind: "transfers_pending", holdReason: mm.CONNECTED_SHOP_REASON, stripeTransferId: null });
-    await expect(tp.releasePayout(sent.id, actor)).rejects.toThrow(/settle to its own Stripe account/);
+    await tipSale(shop.id, staffId, 900);
+    calls.length = 0;
+    fakeStripe(true);
+    const r = await tp.buildBatch({ shopId: shop.id, kind: "manual", cutoff: today, actor });
+    expect(await m.db.db.select().from(s().tipPayouts).where(and(eq(s().tipPayouts.batchId, r.batchId), eq(s().tipPayouts.staffId, staffId)))).toEqual([]);
+    await tp.approveBatch(r.batchId, actor);
+    expect(calls.filter((c) => STRIPE_MONEY.includes(c.op))).toEqual([]);
+    const split = (await tp.payrollTipSplit([shop.id], today, today)).get(`${staffId}|${shop.id}`)!;
+    expect(split.inPayrollCents).toBeGreaterThanOrEqual(900);
   });
 
   it("live keys without MONEY_MOVEMENT_LIVE: direct payouts are off and holds say it waits for the CPA's sign-off", async () => {
@@ -364,8 +379,6 @@ describe("the platform transfer path (ST-C11, separate charges and transfers)", 
 
   it("a payout Stripe refuses after the transfer: the payout fails, the transfer is reversed once, and the tips go back for the next batch", async () => {
     const { shop, staffId } = await person("silvis", "Abigail");
-    await setMode(shop.id, "brand");
-    onTestFinished(async () => void (await setMode(shop.id, "connected")));
     await readyOnStripe(staffId, "acct_fake_abigail_fail", false);
     usePlatform();
     const ok = fake.payouts.create;
