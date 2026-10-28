@@ -1123,7 +1123,20 @@ As in Squire, a shop login is a POS and front-desk tool, not an admin console (l
 - [x] **Fast checkout:** the shop login's home is today's clients with one big Check in, then Check out, button each; the checkout queue (ready tickets first); and New sale. After payment the receipt offers **Next client**, back to the home. The home refreshes every 30 seconds.
 - [x] The permissions screen says why a shop login doesn't have a brand-controlled permission ("set by the brand").
 - [x] Tests: `tests/shop-login.test.ts`, `tests/db/front-desk.test.ts`, `tests/db/tenant.test.ts`.
-- [ ] **Ask Charles:** a person on the Shop Manager role (not a shop login) still changes the shop settings their role gives them, as brand sync's Shop edits allow. Should managers follow the same brand-only rule?
+- [ ] **Ask Charles:** a person on the Shop Manager role (not a shop login) still changes the shop settings their role gives them, as brand sync's Shop edits allow. Should managers follow the same brand-only rule? (Answered for pay data on Oct 28: managers get no payroll or tips unless granted, section 52.)
+
+## 52. Testing Bot's launch test plan and the §6 resolutions (Charles, Oct 28)
+
+The plan's P0 cases must all pass in the sandbox before the pilot. Status by case ID: [docs/test-plan-status.md](docs/test-plan-status.md).
+
+- [x] **Shop login vs Squire:** compared screen by screen (NOTES-SYNC "Shop login vs Squire"); closed the "Shared shop login" label (FD-01), a read-only Service menu for the desk, and high-intent calls on the phone agent.
+- [x] **Roles (G-1, G-10, `core_0139`):** Apprentice and Bookkeeper templates, editable; Shop and Regional Managers have no payroll or tips by default, only by a grant. The test plan's four extra sandbox accounts exist.
+- [x] **Rollback (G-3, `core_0140`):** catalog bulk uploads get a one-step undo, like brand sync's other pushes.
+- [x] **Names (G-4):** marketing messages use the barber's display label, as the booking pages do.
+- [x] **TCPA (G-6, G-8):** boxes unchecked; a client's own opt-out never overwritten; automated client texts only 9 AM to 8 PM in the recipient's local time.
+- [x] **Payroll (G-12 to G-17, G-25):** hours from the built-in time clock; exactly 8 columns; per-tab workbook formats with Roboto; OT pay in labor cost and the golden files; training pay out until Q11; OT per Sun–Sat workweek, attributed to the period with the hours past 40; a flagged Sunday punch in the workweek that starts that Sunday (G-11); FT on a rolling 4 weeks of worked hours; explicit Nov 1 and Mar 14 DST tests; the repeated hour shown with its zone (G-23).
+- [ ] **Ask Charles:** tips owed through payroll now sit in `E_Cash Tips Recd_Dollars`, a memo earning iSolved doesn't pay in the check. They're flagged, and approve-and-lock still marks them paid. Pay that fallback in cash at the desk, or allow one paid earning code?
+- [ ] **Ask Charles:** the export's 2-decimal rounding (Q4) is still off by default; the plan's PY-RD-01 assumes it's on.
 
 ## Deferred by decision
 

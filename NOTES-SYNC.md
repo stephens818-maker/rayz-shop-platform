@@ -582,7 +582,7 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 - (core → mobile) **Launch rule (Charles, 2026-10-27).** No shop goes live until the whole scope is built and tested in the sandbox, mobile included. Only the direct iSolved integration waits (download-only at launch); direct Stripe tip payouts are built and tested, and on at launch (`FEATURE_TIP_TO_BARBER`, approved by the CPA on Oct 28). PR #1's description has the one launch-readiness list, and mobile owns these items:
   - **L31, ST-C11 charge side:** done by core with I10 (2026-10-28, see "I10 separate charges and transfers"). Nothing for mobile beyond calling the one path.
-  - **L43:** rebase PRs #2–#8 onto `cursor/rayz-barbershop-v1-8f0b` and drop what core already has (see "PR #2 against core's branch" below). Core is at `core_0138`; the next free migration is `core_0139`.
+  - **L43:** rebase PRs #2–#8 onto `cursor/rayz-barbershop-v1-8f0b` and drop what core already has (see "PR #2 against core's branch" below). Core is at `core_0140`; the next free migration is `core_0141`.
   - **L44:** Web Push for the booking site.
   - **L45:** App Attest and Play Integrity (C2).
   - Please test against the sandbox URL in the log (the Vercel branch alias; ask Charles for the share link, which is never written in this public repo) and post each item's status here, so core can mark it on PR #1.
@@ -718,6 +718,18 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 - Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
 
 ## Log
+
+### 2026-10-28: core, Testing Bot's launch test plan and Charles's resolutions for its §6, FYI for the mobile agent and the Rayz App builder
+
+The plan's 235 cases are the launch acceptance bar; every P0 must pass in the sandbox before the pilot. Status per case: `docs/test-plan-status.md` (case IDs only). What changed that the apps can see:
+- **Roles (`core_0139`).** Apprentice is Barber less checkout discounts, price changes, refunds and voids; Bookkeeper is read-only reports and payroll, with no POS or settings. Shop, Regional and Franchisee Managers no longer have `tips.approve`, `payouts.view` or `payouts.manage` by default: tips and payroll are the brand's, given by a grant. The staff app's manager screens should hide tip batch approval when `/me` doesn't list it.
+- **Consent.** A client's own opt-out (a revoke on record, or STOP) is never lifted by a later booking that leaves the box alone or ticks it, a staff edit, a web guest record or an import; only their verified choice or START. The booking boxes start unchecked.
+- **Quiet hours.** Automated client texts, push and calls (reminders, rebook and no-show texts, review requests, marketing) go only 9 AM to 8 PM in the recipient's local time and the shop's. A reminder that would then land within 30 minutes of the appointment is dropped.
+- **Names.** Campaigns, lapsed sequences, We have openings and waitlist texts sign with the barber's display label (the first name, or the brand's label such as an initial or a nickname when first names collide), as the booking pages and APIs already did.
+- **Times.** `formatTime` (and so `formatDateTime`) adds the zone, "1:30 AM CDT" or "1:30 AM CST", only for an instant in the hour that happens twice when clocks fall back. Everywhere else the output is unchanged. API times stay ISO UTC.
+- **Payroll.** The iSolved files are exactly the workbook's 8 columns: every tip, declared cash tips included, in `E_Cash Tips Recd_Dollars` (Charles declined separate tip codes). OT pay is in labor cost; training pay is out until Q11. OT is per Sun–Sat workweek, and a week straddling two pay periods puts its OT in the period with the hours past the 40th. A Sunday punch counts in the workweek that starts that Sunday and is flagged. Hours come from the built-in time clock at launch, not iSolved Time. The staff app's earnings endpoints are unchanged.
+- **Catalog bulk upload (`core_0140`)** has a one-step undo. Brand only; nothing in either API.
+- **Migrations:** `core_0139_brand_only_tips_apprentice` and `core_0140_catalog_upload_undo`; the next free one is `core_0141`. Nothing under `/api/v1`, the customer openapi, `connect.ts` or `push.ts` changed.
 
 ### 2026-10-28: core, the shop login is the front desk's POS (Charles), FYI for the mobile agent and the Rayz App builder
 
