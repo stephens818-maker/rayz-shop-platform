@@ -18,6 +18,8 @@ import {
   MorningSection,
   MorningSettings,
   Period,
+  PphBlock,
+  PphFigures,
   RebookBlock,
   ReviewsBlock,
   SalesBlock,
@@ -55,6 +57,8 @@ import { loadMarketingSettings } from "./marketing/settings";
 import { loadMilestoneSettings, teamAt, upcomingFor } from "./milestones/engine";
 import { processDueJobs } from "./notifications/queue";
 import { brandShopIds, rebookAt } from "./rebook-report";
+import { type PphRow, pphRows } from "./pph-report";
+import { pphCents, rankPph } from "@/domain/pph";
 import { loadSettings as loadPayrollSettings } from "./payroll/groups";
 import { ZERO_SALES, availableMinutesAt, dailyTotals, giftCardTotalsByShop, kpisAt, loyaltyActivity, refundTotals, salesTotalsAt } from "./reports";
 import { stockLevels } from "./inventory/stock";
@@ -797,12 +801,54 @@ async function rebookBlock(c: Ctx): Promise<RebookBlock | null> {
   };
 }
 
+const figuresOf = (xs: readonly PphRow[]): PphFigures => ({
+  centi: xs.reduce((a, r) => a + r.centi, 0),
+  service: xs.reduce((a, r) => a + r.serviceCents, 0),
+  product: xs.reduce((a, r) => a + r.productCents, 0),
+});
+
+/**
+ * Production per hour (src/domain/pph.ts) on the day and week to date, as the PPH report works it
+ * out: per location, against the whole brand, and per barber. Without "every barber's numbers" at a
+ * shop, it's their own numbers, as in the report.
+ */
+async function pphBlock(c: Ctx): Promise<PphBlock | null> {
+  const shops = c.allowed(reportView("pph"));
+  if (!shops.length) return null;
+  const ids = idsOf(shops);
+  const ownOnly = shops.some((s) => !canAt(c.access, s.id, "reports.all_staff"));
+  const staffIds = ownOnly ? [c.access.staffId] : null;
+  const allIds = await c.memo.get("brand-shops", brandShopIds);
+  const whole = allIds.every((id) => ids.includes(id));
+  const r = RANGES(c.p);
+  const [t, brandDay, brandWtd] = await Promise.all([
+    per(c, (from, to) => c.memo.get(key("pph", ids, from, to, staffIds), () => pphRows({ shopIds: ids, staffIds }, from, to))),
+    whole || ownOnly ? null : c.memo.get(key("pph", allIds, ...r.day, null), () => pphRows({ shopIds: allIds }, ...r.day)),
+    whole || ownOnly ? null : c.memo.get(key("pph", allIds, ...r.wtd, null), () => pphRows({ shopIds: allIds }, ...r.wtd)),
+  ]);
+  const f = (p: Period) => figuresOf(t[p]);
+  const people = [...new Set([...t.day, ...t.wtd].map((x) => x.staffId))];
+  const byBarber = await Promise.all(people.map(async (staffId) => ({ staffId, label: await c.label(staffId), day: figuresOf(t.day.filter((x) => x.staffId === staffId)), wtd: figuresOf(t.wtd.filter((x) => x.staffId === staffId)) })));
+  const ranked = rankPph(byBarber, (b) => pphCents(b.wtd.service, b.wtd.product, b.wtd.centi).servicePph, (b) => b.label).map((x) => x.item);
+  return {
+    shops,
+    centi: cmpOf((p) => f(p).centi),
+    service: cmpOf((p) => f(p).service),
+    product: cmpOf((p) => f(p).product),
+    byShop: shops.length > 1 ? shops.map((s) => ({ shop: s, day: figuresOf(t.day.filter((x) => x.shopId === s.id)), wtd: figuresOf(t.wtd.filter((x) => x.shopId === s.id)) })) : [],
+    brand: brandDay && brandWtd ? { day: figuresOf(brandDay), wtd: figuresOf(brandWtd) } : null,
+    byBarber: ranked,
+    ownOnly,
+  };
+}
+
 // ───────────────────────────── Assembly ─────────────────────────────
 
 const LOADERS: { [K in MorningSection]: (c: Ctx) => Promise<MorningDashboard[K]> } = {
   sales: salesBlock,
   traffic: trafficBlock,
   utilization: utilizationBlock,
+  pph: pphBlock,
   rebook: rebookBlock,
   loyalty: loyaltyBlock,
   marketing: marketingBlock,

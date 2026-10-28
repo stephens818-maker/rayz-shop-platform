@@ -11,6 +11,7 @@ import {
   EXCEPTION_LABEL,
   MorningDashboard,
   MorningSection,
+  PphFigures,
   SECTION_LABEL,
   SEVERITY_RANK,
   ShopRef,
@@ -18,6 +19,7 @@ import {
   change,
   changeLabel,
   changeWords,
+  cmpOf,
   dashboardLink,
   dollars,
   handleCount,
@@ -30,6 +32,7 @@ import {
   reportLink,
   urgentCount,
 } from "./morning-dashboard";
+import { PPH_LABEL, type PphMeasure, pphCents, pphOf, pphText } from "./pph";
 import { ptsLabel } from "./rebook";
 
 /** `hours` values are minutes, shown as hours. */
@@ -281,6 +284,52 @@ export function morningDoc(d: MorningDashboard, o: { barberRows?: number; except
       });
     blocks.push(...c.more);
     sections.push({ key: "utilization", title: SECTION_LABEL.utilization, link: { label: "Barber performance", href: reportLink(d, "/admin/reports/barbers", p.reportDay, p.reportDay, u.shops) }, blocks: [...blocks, ...partial(d, u.shops)] });
+  }
+
+  if (d.pph) {
+    const x = d.pph;
+    const P = (f: PphFigures) => pphCents(f.service, f.product, f.centi);
+    const at = (per: "day" | "prior" | "wtd" | "wtdPrior"): PphFigures => ({ centi: x.centi[per], service: x.service[per], product: x.product[per] });
+    const row = (label: string, m: PphMeasure): MetricRow => {
+      const v = (per: "day" | "prior" | "wtd" | "wtdPrior") => pphOf(P(at(per)), m);
+      const ch = (cur: number | null, prev: number | null) => (cur === null || prev === null ? "—" : changeLabel(cur, prev));
+      const tn = (cur: number | null, prev: number | null) => (cur === null || prev === null ? "neutral" : tone(cur, prev, false));
+      return { label, day: pphText(v("day"), money), dayChange: ch(v("day"), v("prior")), dayTone: tn(v("day"), v("prior")), wtd: pphText(v("wtd"), money), wtdChange: ch(v("wtd"), v("wtdPrior")), wtdTone: tn(v("wtd"), v("wtdPrior")) };
+    };
+    const blocks: Block[] = [
+      {
+        kind: "metrics",
+        rows: [row(PPH_LABEL.service, "service"), row(PPH_LABEL.product, "product"), row(PPH_LABEL.total, "total"), metric("Worked hours", cmpOf((per) => x.centi[per] * 0.6), "hours")],
+      },
+    ];
+    if (x.brand)
+      blocks.push({ kind: "note", text: `Brand service PPH: ${pphText(P(x.brand.day).servicePph, money)} on the day, ${pphText(P(x.brand.wtd).servicePph, money)} week to date.` });
+    if (x.byShop.length > 1)
+      blocks.push({
+        kind: "table",
+        title: "By location",
+        columns: ["Location", `Service PPH ${L.dayShort}`, "WTD service PPH", "WTD total PPH"],
+        numeric: [false, true, true, true],
+        rows: x.byShop.map((s) => [s.shop.name, pphText(P(s.day).servicePph, money), pphText(P(s.wtd).servicePph, money), pphText(P(s.wtd).totalPph, money)]),
+      });
+    const c = cap(x.byBarber);
+    if (x.byBarber.length)
+      blocks.push({
+        kind: "table",
+        title: x.ownOnly ? "Your PPH" : "By barber, highest week-to-date service PPH first",
+        columns: ["Barber", `Service PPH ${L.dayShort}`, "WTD service PPH", "WTD product PPH", "WTD total PPH", "WTD hours"],
+        numeric: [false, true, true, true, true, true],
+        narrow: [0, 1, 2, 4],
+        rows: c.rows.map((b) => [b.label, pphText(P(b.day).servicePph, money), pphText(P(b.wtd).servicePph, money), pphText(P(b.wtd).productPph, money), pphText(P(b.wtd).totalPph, money), hoursLabel(b.wtd.centi * 0.6)]),
+      });
+    blocks.push(...c.more);
+    sections.push({
+      key: "pph",
+      title: SECTION_LABEL.pph,
+      subtitle: "Sales before tax and tips per clocked worked hour; N/A with no hours",
+      link: { label: "PPH report", href: reportLink(d, "/admin/reports/pph", p.wtdFrom, p.reportDay, x.shops) },
+      blocks: [...blocks, ...partial(d, x.shops)],
+    });
   }
 
   if (d.rebook) {

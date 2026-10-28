@@ -10,13 +10,14 @@ import { weekStartOf } from "./payroll/overtime";
 
 export const MORNING_ROLE_DEFAULTS = ["brand_owner", "brand_admin", "regional_manager", "shop_manager"];
 
-export const MORNING_SECTIONS = ["sales", "traffic", "utilization", "rebook", "loyalty", "marketing", "reviews", "today", "exceptions", "milestones"] as const;
+export const MORNING_SECTIONS = ["sales", "traffic", "utilization", "pph", "rebook", "loyalty", "marketing", "reviews", "today", "exceptions", "milestones"] as const;
 export type MorningSection = (typeof MORNING_SECTIONS)[number];
 
 export const SECTION_LABEL: Record<MorningSection, string> = {
   sales: "Sales",
   traffic: "Clients and bookings",
   utilization: "Barber utilization",
+  pph: "Production per hour (PPH)",
   rebook: "Rebook rate",
   loyalty: "Loyalty and gift cards",
   marketing: "Campaign Center",
@@ -30,6 +31,7 @@ export const SECTION_HINT: Record<MorningSection, string> = {
   sales: "Gross and net sales, services and products, tips, card fees, refunds and voids, tickets and average ticket, by location and barber",
   traffic: "New and returning clients, bookings made online, walk-in and at the desk, visits, cancellations and no-shows",
   utilization: "Booked against available hours per barber, and average time in the chair against the booked time",
+  pph: "Service, product and total sales per clocked worked hour, by location, against the brand, and per barber",
   rebook: "Rebooked at checkout and the new-client rebook rate against the brand average, per barber, future appointments booked and 2nd-visit retention",
   loyalty: "Rewards issued and redeemed, gift cards sold and redeemed, and what's still owed on gift cards",
   marketing: "Campaign Center sends, clicks, bookings, coupon redemptions and attributed revenue",
@@ -251,6 +253,28 @@ export interface UtilizationBlock {
   cutTimes: { avgActualMin: number | null; avgBookedMin: number | null; n: number } | null;
 }
 
+/** Worked centi-hours and sales in cents: a PPH is worked out from these (src/domain/pph.ts), never averaged. */
+export interface PphFigures {
+  centi: number;
+  service: number;
+  product: number;
+}
+
+export interface PphBlock {
+  shops: ShopRef[];
+  /** Worked centi-hours, and service and product sales in cents, for each period. */
+  centi: Cmp;
+  service: Cmp;
+  product: Cmp;
+  /** Each location, when there's more than one. */
+  byShop: { shop: ShopRef; day: PphFigures; wtd: PphFigures }[];
+  /** The whole brand; null when this version is the whole brand or their own numbers only. */
+  brand: { day: PphFigures; wtd: PphFigures } | null;
+  /** Highest week-to-date service PPH first, N/A last; only their own row without "every barber's numbers". */
+  byBarber: { staffId: string; label: string; day: PphFigures; wtd: PphFigures }[];
+  ownOnly: boolean;
+}
+
 export interface RebookBlock {
   shops: ShopRef[];
   /** Visits with a booking time, and how many left with their next visit booked. */
@@ -368,6 +392,7 @@ export interface MorningDashboard {
   sales: SalesBlock | null;
   traffic: TrafficBlock | null;
   utilization: UtilizationBlock | null;
+  pph: PphBlock | null;
   rebook: RebookBlock | null;
   loyalty: LoyaltyBlock | null;
   marketing: MarketingBlock | null;
