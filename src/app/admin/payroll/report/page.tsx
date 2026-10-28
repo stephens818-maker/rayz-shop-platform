@@ -6,7 +6,7 @@ import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, fmtHours, f
 import { formatDate, formatDateTime } from "@/lib/time";
 import { reportView } from "@/domain/permissions";
 import { can, guardPage } from "@/server/auth/staff";
-import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, hoursOpenMessage, payrollTrail, periodChoices, periodKey, preparersOf, RECORD_LABEL, SELF_APPROVAL, type ApprovalStatus, type PeriodChoice, type ApprovalView, type BlockView, type PayrollView } from "@/server/payroll/run";
+import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, hoursOpenMessage, squireMissingMessage, payrollTrail, periodChoices, periodKey, preparersOf, RECORD_LABEL, SELF_APPROVAL, type ApprovalStatus, type PeriodChoice, type ApprovalView, type BlockView, type PayrollView } from "@/server/payroll/run";
 import { ApprovalControls } from "./approval";
 import { LateCommissionForm, OverrideForm } from "./client";
 import { ApprovalNotice, PayrollTrailCard } from "./flow";
@@ -230,6 +230,8 @@ function Report({
         </Notice>
       )}
 
+      <SquireGate view={view} />
+
       <HoursGate view={view} />
 
       <LockCheck view={view} />
@@ -277,7 +279,21 @@ function Report({
   );
 }
 
-const AMBER = new Set(["owner_case", "netcomm_gap", "below_punches", "sales_without_hours", "sales_day_without_hours", "timesheet_not_approved", "hours_not_locked", "hours_not_from_clock"]);
+const AMBER = new Set(["owner_case", "netcomm_gap", "below_punches", "sales_without_hours", "sales_day_without_hours", "timesheet_not_approved", "hours_not_locked", "hours_not_from_clock", "cross_source_ot", "rollout_source"]);
+
+function SquireGate({ view }: { view: PayrollView }) {
+  if (!view.squireMissing.length || view.locked === "all") return null;
+  return (
+    <Card>
+      <CardHeader title="Squire data isn't imported: approve and lock is blocked" subtitle={squireMissingMessage(view.squireMissing)} />
+      <div className="px-4 py-2 text-sm">
+        <Link href="/admin/rollout" className="text-brand-700 underline-offset-2 hover:underline">
+          Rollout →
+        </Link>
+      </div>
+    </Card>
+  );
+}
 
 function HoursGate({ view }: { view: PayrollView }) {
   if (!view.hoursOpen.length || view.locked === "all") return null;
@@ -483,13 +499,27 @@ function ShopBlockCard({ b, view, canRun, downloadable, earlier }: { b: BlockVie
       <CardHeader
         title={
           <>
-            {b.shop} <span className="font-normal text-zinc-500">· pay group {b.payGroup}
+            {b.shop}{" "}
+            {b.source === "squire" && (
+              <Badge tone="blue" className="align-middle">
+                From Squire data
+              </Badge>
+            )}{" "}
+            <span className="font-normal text-zinc-500">· pay group {b.payGroup}
             {b.payGroupCode ? ` (iSolved ${b.payGroupCode})` : " (no iSolved code yet)"}
             {b.employer ? ` · ${b.employer.legalName}${b.employer.isolvedCompanyCode ? ` (iSolved ${b.employer.isolvedCompanyCode})` : ""}` : ""}
             {b.workState ? ` · ${b.workState}` : ""} · period {String(b.period.number).padStart(2, "0")}, due {formatDate(b.period.submitBy ?? b.period.checkDate, "EEE MMM d")}, check {formatDate(b.period.checkDate, "EEE MMM d")}</span>
           </>
         }
-        subtitle={b.locked ? `Locked ${formatDateTime(b.locked.at)}${b.locked.by ? ` by ${b.locked.by}` : ""}` : "Open: live from hours, sales and overrides"}
+        subtitle={
+          b.locked
+            ? `Locked ${formatDateTime(b.locked.at)}${b.locked.by ? ` by ${b.locked.by}` : ""}`
+            : b.source === "squire"
+              ? b.squireImport
+                ? `Open: from Squire's Commissions report (${b.squireImport.fileName ?? "pasted"}, imported ${formatDateTime(b.squireImport.importedAt)}) and overrides. OT, PTO and training hours aren't in Squire's report: type them on the rows.`
+                : "Open: payroll comes from Squire this period, and Squire's Commissions report isn't imported yet (Rollout page)."
+              : "Open: live from hours, sales and overrides"
+        }
         action={
           downloadable ? (
             <a className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700" href={`/admin/payroll/download?group=${b.payGroupId}&start=${view.start}&end=${view.end}`}>

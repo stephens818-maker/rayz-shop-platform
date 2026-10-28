@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, payGroups, payrollApprovals, payrollCommissionAdjustments, payrollEmployers, payrollFinalPays, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, sales as salesTable, staff, timeEntries, timePunches, type PayrollApprovalTotals } from "@/db/schema";
+import { auditLog, payGroups, payrollApprovals, payrollCommissionAdjustments, payrollEmployers, payrollFinalPays, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, payrollSquireImports, payrollSquireInputs, sales as salesTable, shops as shopsTable, staff, timeEntries, timePunches, type PayrollApprovalTotals } from "@/db/schema";
 import { calendarProblem, periodOf, periodStarting, periodsAround, sameCalendar, workweeksOf, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
 import {
   OVERRIDABLE,
@@ -39,6 +39,7 @@ import { audit, type Actor } from "@/server/audit";
 import { loadStaffAccess } from "@/server/auth/access";
 import { AppError } from "@/server/errors";
 import { notSquireEra } from "@/server/squire-era";
+import { loadRolloutPlan, type PayrollSource } from "@/server/rollout-plan";
 import { guaranteeTopUps, exportExtras } from "@/domain/compensation";
 import { loadCompensationSettings, payrollPlans, setupRates } from "@/server/compensation";
 import { payrollSalesBetween, unassignedSalesBetween, type PayrollSalesRow } from "@/server/reports";
@@ -119,6 +120,9 @@ export interface BlockView extends ShopBlock {
   locked: { at: string; by: string | null } | null;
   /** Locked shops: the hash of the inputs of record as approved, and what's changed in the live data since. */
   lockCheck: { hash: string; liveHash: string; drift: LockDrift[]; importedAfterLock: number } | null;
+  /** Where the period's figures come from: punches and tickets here, or (during the rollout) the shop's Squire Commissions report imported for the period. */
+  source: PayrollSource;
+  squireImport: { fileName: string | null; importedAt: string; rows: number; notes: string[] } | null;
 }
 
 export interface PayrollView {
@@ -141,6 +145,8 @@ export interface PayrollView {
   locked: "none" | "some" | "all";
   /** Shops still open whose time clock hours aren't locked for every day of the period. While hours come from the clock, approve and lock waits for them. */
   hoursOpen: { shopId: string; shop: string; periods: { start: LocalDate; end: LocalDate }[]; waiting: string[] }[];
+  /** Shops still open whose payroll for the period comes from Squire and whose Squire report isn't imported yet. Approve and lock waits for them. */
+  squireMissing: { shopId: string; shop: string }[];
 }
 
 export interface EntityStateTotal {
@@ -158,6 +164,8 @@ interface Snapshot {
   block: ShopBlock;
   /** The hash of the inputs of record at the lock; absent on periods locked before it was kept. */
   inputsHash?: string;
+  /** Absent on periods locked before the rollout: they came from here. */
+  source?: PayrollSource;
 }
 
 /**
@@ -237,18 +245,31 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
   const groupOf = new Map(groups.map((g) => [g.shopId, g]));
   const calOf = (shopId: string) => groupOf.get(shopId)?.calendar ?? settings.calendar;
   const runShops = new Set(inRun.map((x) => x.g.shopId));
+  const runs = await db.select().from(payrollRuns).where(and(eq(payrollRuns.periodStart, start), eq(payrollRuns.periodEnd, end)));
+  const runOf = new Map(runs.map((r) => [r.payGroupId, r]));
+  const rollout = await loadRolloutPlan();
+  const sourceOf = new Map(
+    inRun.map(({ g }) => {
+      const run = runOf.get(g.id);
+      return [g.shopId, run ? ((run.snapshot as Snapshot).source ?? "platform") : rollout.sourceOf(g.shopId, start)] as const;
+    }),
+  );
+  const squireShops = new Set([...runShops].filter((id) => sourceOf.get(id) === "squire"));
+  const platformShops = [...runShops].filter((id) => !squireShops.has(id));
 
   const weeks = workweeksOf({ start, end });
   const ftFrom = addDays(weekStartOf(end), -7 * (settings.ftWindowWeeks - 1));
   const from = ftFrom < weeks[0] ? ftFrom : weeks[0];
   const to = addDays(weeks[weeks.length - 1], 6);
-  const entries: TimeEntry[] = await db
-    .select({ staffId: timeEntries.staffId, shopId: timeEntries.shopId, kind: timeEntries.kind, startsAt: timeEntries.startsAt, endsAt: timeEntries.endsAt })
-    .from(timeEntries)
-    .where(and(lt(timeEntries.startsAt, endOfLocalDay(to)), gt(timeEntries.endsAt, startOfLocalDay(from))));
-
-  const runs = await db.select().from(payrollRuns).where(and(eq(payrollRuns.periodStart, start), eq(payrollRuns.periodEnd, end)));
-  const runOf = new Map(runs.map((r) => [r.payGroupId, r]));
+  const entries = withoutSquireDays(
+    await db
+      .select({ staffId: timeEntries.staffId, shopId: timeEntries.shopId, kind: timeEntries.kind, startsAt: timeEntries.startsAt, endsAt: timeEntries.endsAt })
+      .from(timeEntries)
+      .where(and(lt(timeEntries.startsAt, endOfLocalDay(to)), gt(timeEntries.endsAt, startOfLocalDay(from)))),
+    squireShops,
+    start,
+    end,
+  );
   const lockedRows = await db
     .select({ staffId: payrollLockedOt.staffId, shopId: payrollLockedOt.shopId, periodStart: payrollLockedOt.periodStart, weekStart: payrollLockedOt.weekStart, ot: payrollLockedOt.otCenti })
     .from(payrollLockedOt)
@@ -277,17 +298,26 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
     hours.set(k, h);
   }
 
-  const sales = await payrollSalesBetween({ shopIds: [...runShops] }, start, end);
+  const sales = platformShops.length ? await payrollSalesBetween({ shopIds: platformShops }, start, end) : [];
   const salesOf = new Map(sales.map((r) => [`${r.staffId}|${r.shopId}`, r]));
+  const [squireRows, squireImports] = squireShops.size
+    ? await Promise.all([
+        db.select().from(payrollSquireInputs).where(and(eq(payrollSquireInputs.periodStart, start), inArray(payrollSquireInputs.shopId, [...squireShops]))),
+        db.select().from(payrollSquireImports).where(and(eq(payrollSquireImports.periodStart, start), inArray(payrollSquireImports.shopId, [...squireShops]))),
+      ])
+    : [[], []];
+  const squireOf = new Map(squireRows.map((r) => [`${r.staffId}|${r.shopId}`, r]));
+  const squireImportOf = new Map(squireImports.map((r) => [r.shopId, r]));
   const overrides = await db.select().from(payrollOverrides).where(and(eq(payrollOverrides.periodStart, start), inArray(payrollOverrides.shopId, [...runShops])));
   const lateOf = await lateCommissionsFor([...runShops], start, settings);
   const finals = await db.select().from(payrollFinalPays).where(eq(payrollFinalPays.periodStart, start));
   const finalIds = new Set(finals.map((f) => f.staffId));
   const finalInputs: LineInput[] = [];
-  const [tipSplit, declared] = await Promise.all([payrollTipSplit([...runShops], start, end), declaredTipsBetween([...runShops], start, end)]);
+  const [tipSplit, declared] = await Promise.all([payrollTipSplit(platformShops, start, end), declaredTipsBetween(platformShops, start, end)]);
   const keys = new Set([
     ...hours.keys(),
     ...salesOf.keys(),
+    ...squireOf.keys(),
     ...declared.keys(),
     ...overrides.map((o) => `${o.staffId}|${o.shopId}`),
     ...lateOf.keys(),
@@ -337,7 +367,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
     const late = s?.lateTipRefundsCents ?? 0;
     // A refund of tips already paid is always the shop's cost (ST-C15), and tips never go below zero (SB-C2).
     const tipsCents = Math.max(0, raw);
-    const input: LineInput = {
+    const who = {
       staffId,
       name,
       shopId,
@@ -348,27 +378,32 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       servicePct: plan?.servicePct ?? r?.servicePct ?? 0,
       productPct: plan?.productPct ?? r?.productPct ?? 0,
       trainingRate: r?.trainingRate ?? null,
-      workedHours: centi(h.worked),
-      otHours: centi(h.ot),
-      ptoHours: settings.ptoSource === "manager" ? 0 : centi(h.pto),
-      trainingHours: settings.trainingSource === "manager" ? 0 : centi(h.training),
-      ...(h.trainingOverlap && settings.trainingSource !== "manager" ? { trainingOverlapHours: centi(h.trainingOverlap) } : {}),
-      serviceSales: ((s?.serviceSalesCents ?? 0) + baseExtra(s, "service", settings)) / 100,
-      productSales: ((s?.productSalesCents ?? 0) + baseExtra(s, "product", settings)) / 100,
-      tips: tipsCents / 100,
-      tipsInPayroll: (split?.inPayrollCents ?? 0) / 100,
-      tipsPaidOut: (split?.paidOutCents ?? 0) / 100,
-      owedTipsInPayroll: (split?.owedInPayrollCents ?? 0) / 100,
-      tipsPaidByStripe: (split?.paidByStripeCents ?? 0) / 100,
-      declaredCashTips: (declared.get(k) ?? 0) / 100,
-      chargedTips: Math.min(tipsCents, Math.max(0, charged)) / 100,
-      lateTipRefunds: late / 100,
-      salesTax: (s?.salesTaxCents ?? 0) / 100,
       zeroHourlyPay: pr?.zeroHourlyPay ?? false,
       ...(plan?.mixed.length ? { mixedRates: plan.mixed } : {}),
       ...(lateOf.has(k) ? { lateCommissions: lateOf.get(k) } : {}),
       overrides: Object.keys(ov).length ? ov : undefined,
     };
+    const input: LineInput = squireShops.has(shopId)
+      ? { ...who, ...squireFigures(squireOf.get(k)) }
+      : {
+          ...who,
+          workedHours: centi(h.worked),
+          otHours: centi(h.ot),
+          ptoHours: settings.ptoSource === "manager" ? 0 : centi(h.pto),
+          trainingHours: settings.trainingSource === "manager" ? 0 : centi(h.training),
+          ...(h.trainingOverlap && settings.trainingSource !== "manager" ? { trainingOverlapHours: centi(h.trainingOverlap) } : {}),
+          serviceSales: ((s?.serviceSalesCents ?? 0) + baseExtra(s, "service", settings)) / 100,
+          productSales: ((s?.productSalesCents ?? 0) + baseExtra(s, "product", settings)) / 100,
+          tips: tipsCents / 100,
+          tipsInPayroll: (split?.inPayrollCents ?? 0) / 100,
+          tipsPaidOut: (split?.paidOutCents ?? 0) / 100,
+          owedTipsInPayroll: (split?.owedInPayrollCents ?? 0) / 100,
+          tipsPaidByStripe: (split?.paidByStripeCents ?? 0) / 100,
+          declaredCashTips: (declared.get(k) ?? 0) / 100,
+          chargedTips: Math.min(tipsCents, Math.max(0, charged)) / 100,
+          lateTipRefunds: late / 100,
+          salesTax: (s?.salesTaxCents ?? 0) / 100,
+        };
     if (finalIds.has(staffId)) {
       finalInputs.push(input);
       continue;
@@ -391,7 +426,10 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
   const order = (a: LineInput, b: LineInput) =>
     (profile.get(a.staffId)?.exportPosition ?? 1e9) - (profile.get(b.staffId)?.exportPosition ?? 1e9) || a.name.localeCompare(b.name);
 
-  const unassigned = await unassignedSalesBetween([...runShops], start, end);
+  const unassigned = await unassignedSalesBetween(platformShops, start, end);
+  for (const q of squireImports)
+    if (q.totals.unassignedServiceCents || q.totals.unassignedProductCents)
+      unassigned.set(q.shopId, { serviceSalesCents: q.totals.unassignedServiceCents, productSalesCents: q.totals.unassignedProductCents, salesTaxCents: 0 });
   const unassignedOf = (shopId: string) => {
     const u = unassigned.get(shopId);
     return u ? { unassigned: { serviceSales: u.serviceSalesCents / 100, productSales: u.productSalesCents / 100, salesTax: u.salesTaxCents / 100 } } : {};
@@ -429,14 +467,19 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       period: run ? { ...p, checkDate: run.checkDate } : p,
       locked: run ? { at: run.lockedAt.toISOString(), by: run.lockedBy ? (lockedBy.get(run.lockedBy) ?? null) : null } : null,
       lockCheck,
+      source: sourceOf.get(g.shopId) ?? "platform",
+      squireImport: (() => {
+        const q = squireImportOf.get(g.shopId);
+        return q ? { fileName: q.fileName, importedAt: q.importedAt.toISOString(), rows: q.rows, notes: q.notes } : null;
+      })(),
     };
   });
   const grandAndCheck = runs.length ? assembleFromBlocks(blocks) : { grand: live.grand, mismatches: live.mismatches };
-  const openShops = o.clockChecks === false ? [] : blocks.filter((b) => !b.locked).map((b) => b.shopId);
+  const openShops = o.clockChecks === false ? [] : blocks.filter((b) => !b.locked && b.source === "platform").map((b) => b.shopId);
   const [hoursCheck, serviceDays, typed] = await Promise.all([payrollHoursCheck(openShops, start, end), serviceDaysIn(openShops, start, end), typedHoursIn(openShops, start, end)]);
   const shopName = (id: string) => groupOf.get(id)?.shop ?? "Other shop";
   const finalPays = finalPaysOf(finals, finalInputs, person);
-  const tips = await checkPayrollTips(withFinalRows(blocks, finals), start, end);
+  const tips = await checkPayrollTips(withFinalRows(blocks.filter((b) => b.source === "platform"), finals), start, end);
   const tipGate = stripePayoutsOn() ? tips.mismatches.filter((m) => !blocks.find((b) => b.shopId === m.shopId)?.locked) : [];
 
   const ft: Record<string, FtStatus> = {};
@@ -472,7 +515,9 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       ...lockAnomalies(blocks),
       ...finalPayAnomalies(finalPays),
       ...(await lateTipsIn(blocks, start, end)),
-      ...stateAnomalies(blocks, end, await missedMealsIn([...runShops], start, end)),
+      ...stateAnomalies(blocks, end, await missedMealsIn(platformShops, start, end)),
+      ...crossSourceOt(blocks, (id) => groupOf.get(id)?.legalEntity ?? ""),
+      ...(rollout.active ? await rolloutSourceAnomalies(blocks) : []),
     ],
     byEntityState: byEntityState(blocks),
     finalPays,
@@ -485,7 +530,84 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       periods: u.periods,
       waiting: [...new Set(hoursCheck.waiting.filter((w) => w.shopId === u.shopId).map((w) => w.label))],
     })),
+    squireMissing: blocks.filter((b) => !b.locked && b.source === "squire" && !b.squireImport).map((b) => ({ shopId: b.shopId, shop: b.shop })),
   };
+}
+
+/** A shop's figures from its Squire Commissions report: tips were paid by Squire, so they're all "already received" in iSolved, as in the workbook. */
+function squireFigures(q: typeof payrollSquireInputs.$inferSelect | undefined) {
+  return {
+    workedHours: centi(q?.workedCenti ?? 0),
+    otHours: centi(q?.otCenti ?? 0),
+    ptoHours: centi(q?.ptoCenti ?? 0),
+    trainingHours: centi(q?.trainingCenti ?? 0),
+    serviceSales: (q?.serviceCents ?? 0) / 100,
+    productSales: (q?.productCents ?? 0) / 100,
+    tips: Math.max(0, q?.tipsCents ?? 0) / 100,
+    tipsInPayroll: 0,
+    tipsPaidOut: 0,
+    owedTipsInPayroll: 0,
+    tipsPaidByStripe: 0,
+    declaredCashTips: 0,
+    chargedTips: 0,
+    lateTipRefunds: 0,
+    salesTax: (q?.salesTaxCents ?? 0) / 100,
+  } satisfies Partial<LineInput>;
+}
+
+/** Punches at a shop whose payroll for the period comes from Squire don't count: Squire's hours are the record. */
+function withoutSquireDays<T extends TimeEntry>(entries: T[], squireShops: ReadonlySet<string>, start: LocalDate, end: LocalDate): T[] {
+  if (!squireShops.size) return entries;
+  return entries.filter((e) => {
+    const d = localDateOf(e.startsAt);
+    return !(squireShops.has(e.shopId) && d >= start && d <= end);
+  });
+}
+
+/**
+ * Someone who worked at a shop paid from here and one paid from Squire data, for the same employer,
+ * in the same period: overtime is per workweek across both, and Squire's report has only the
+ * period's total, so it can't be worked out here. A manager checks their weeks and types the OT.
+ */
+function crossSourceOt(blocks: readonly BlockView[], entityOf: (shopId: string) => string): Anomaly[] {
+  const out: Anomaly[] = [];
+  const open = blocks.filter((b) => !b.locked);
+  const seen = new Map<string, { name: string; platform: string[]; squire: string[]; worked: number }>();
+  for (const b of open)
+    for (const l of b.lines) {
+      if (l.input.workedHours <= 0) continue;
+      const k = `${l.staffId}|${entityOf(b.shopId)}`;
+      const v = seen.get(k) ?? { name: l.name, platform: [], squire: [], worked: 0 };
+      v[b.source].push(b.shop);
+      v.worked += l.input.workedHours;
+      seen.set(k, v);
+    }
+  for (const [k, v] of seen) {
+    if (!v.platform.length || !v.squire.length) continue;
+    out.push({
+      staffId: k.split("|")[0],
+      shopId: null,
+      kind: "cross_source_ot",
+      message: `${v.name} worked at ${v.platform.join(", ")} (time clock) and ${v.squire.join(", ")} (Squire data) for the same employer: ${fmtHours(v.worked)} in all. Overtime is per week across both, and Squire's report only has the period's total, so check their weeks and type the O.T. hours on the report.`,
+    });
+  }
+  return out;
+}
+
+/** The rollout's flags, per shop: payroll from Squire while the shop books here, or from here while it still books on Squire. */
+async function rolloutSourceAnomalies(blocks: readonly BlockView[]): Promise<Anomaly[]> {
+  const open = blocks.filter((b) => !b.locked);
+  if (!open.length) return [];
+  const mode = new Map((await db.select({ id: shopsTable.id, bookingMode: shopsTable.bookingMode }).from(shopsTable).where(inArray(shopsTable.id, open.map((b) => b.shopId)))).map((s) => [s.id, s.bookingMode]));
+  const out: Anomaly[] = [];
+  for (const b of open) {
+    const here = mode.get(b.shopId) !== "external";
+    if (b.source === "squire" && here)
+      out.push({ staffId: null, shopId: b.shopId, kind: "rollout_source", message: `${b.shop} books here, but its payroll for this period comes from Squire data. If it went live at the start of this period, set its payroll to come from here on the Rollout page.` });
+    if (b.source === "platform" && !here)
+      out.push({ staffId: null, shopId: b.shopId, kind: "rollout_source", message: `${b.shop} still books on Squire, but its payroll for this period comes from here, so tickets rung up in Squire aren't in it. Check the Rollout page.` });
+  }
+  return out;
 }
 
 /** I10: the card surcharge and loyalty rewards in the commission base, when the brand counts them. */
@@ -872,6 +994,10 @@ function weekBreakdowns(slices: Slice[], staffIds: string[], weeks: LocalDate[],
 }
 
 /** Why approve and lock waits: the shops whose clock hours aren't locked, and whose timesheets still need a manager. */
+export function squireMissingMessage(list: PayrollView["squireMissing"]): string {
+  return `Payroll for ${list.map((x) => x.shop).join(", ")} comes from Squire this period, and Squire's Commissions report isn't imported for ${list.length === 1 ? "it" : "them"} yet. Import it on the Rollout page.`;
+}
+
 export function hoursOpenMessage(open: PayrollView["hoursOpen"]): string {
   const waiting = open.flatMap((o) => o.waiting);
   return `Hours come from the time clock, and they aren't locked yet at ${open.map((o) => o.shop).join(", ")}. Lock each shop's timesheets for the period on Timesheets${
@@ -933,6 +1059,7 @@ export function approvalStatus(view: Pick<PayrollView, "locked">, a: Pick<Approv
 /** Why the period can't be approved or locked right now, in a line, or null. */
 export function approvalBlocked(view: PayrollView): string | null {
   if (view.mismatches.length) return `${view.mismatches.length} total${view.mismatches.length === 1 ? " doesn't" : "s don't"} reconcile`;
+  if (view.squireMissing.length) return `Squire's report isn't imported for ${view.squireMissing.map((x) => x.shop).join(", ")}`;
   if (view.settings.hoursFromClock && view.hoursOpen.length) return `Hours aren't locked on the time clock at ${view.hoursOpen.length} shop${view.hoursOpen.length === 1 ? "" : "s"}`;
   return null;
 }
@@ -944,11 +1071,12 @@ function gate(view: PayrollView | null): Refusal | null {
   if (!view) return { error: "No shop has a pay period with those dates." };
   if (view.locked !== "none") return { error: "This pay period is already locked." };
   if (view.mismatches.length) return { error: "Totals don't reconcile, so the period can't be approved or locked.", mismatches: view.mismatches };
+  if (view.squireMissing.length) return { error: squireMissingMessage(view.squireMissing) };
   if (view.settings.hoursFromClock && view.hoursOpen.length) return { error: hoursOpenMessage(view.hoursOpen) };
   return null;
 }
 
-const PREPARING = ["payroll.override", "payroll.override_clear", "payroll.late_commission", "payroll.late_commission_remove"];
+const PREPARING = ["payroll.override", "payroll.override_clear", "payroll.late_commission", "payroll.late_commission_remove", "payroll.squire_import"];
 
 export const SELF_APPROVAL =
   "You changed this pay period's figures (an adjustment, late commission or hours entered by hand), so someone else with Approve and lock approves them. The Brand Owner can approve their own changes; that's recorded.";
@@ -1057,10 +1185,15 @@ export async function lockPayroll(start: LocalDate, end: LocalDate, actor: Actor
   const runShops = new Set(view.blocks.map((b) => b.shopId));
 
   const weeks = workweeksOf({ start, end });
-  const entries: TimeEntry[] = await db
-    .select({ staffId: timeEntries.staffId, shopId: timeEntries.shopId, kind: timeEntries.kind, startsAt: timeEntries.startsAt, endsAt: timeEntries.endsAt })
-    .from(timeEntries)
-    .where(and(lt(timeEntries.startsAt, endOfLocalDay(addDays(weeks[weeks.length - 1], 6))), gt(timeEntries.endsAt, startOfLocalDay(weeks[0]))));
+  const entries = withoutSquireDays(
+    await db
+      .select({ staffId: timeEntries.staffId, shopId: timeEntries.shopId, kind: timeEntries.kind, startsAt: timeEntries.startsAt, endsAt: timeEntries.endsAt })
+      .from(timeEntries)
+      .where(and(lt(timeEntries.startsAt, endOfLocalDay(addDays(weeks[weeks.length - 1], 6))), gt(timeEntries.endsAt, startOfLocalDay(weeks[0])))),
+    new Set(view.blocks.filter((b) => b.source === "squire").map((b) => b.shopId)),
+    start,
+    end,
+  );
   const groupOf = new Map(groups.map((g) => [g.shopId, g]));
   const lockedRows = await db.select().from(payrollLockedOt).where(inArray(payrollLockedOt.weekStart, weeks));
   const slices = overtimeSlices(dailyHours(entries), {
@@ -1077,7 +1210,11 @@ export async function lockPayroll(start: LocalDate, end: LocalDate, actor: Actor
     if (!still || still.hash !== hash || still.revokedAt) throw new AppError("conflict", "The approval changed just now. Reload and try again.");
     let n = 0;
     for (const b of view.blocks) {
-      const snapshot: Snapshot = { block: { shopId: b.shopId, shop: b.shop, lines: b.lines, totals: b.totals, exportRows: b.exportRows, exportHeaders: b.exportHeaders, exportFrom: b.exportFrom }, inputsHash: inputsHash(b.lines) };
+      const snapshot: Snapshot = {
+        block: { shopId: b.shopId, shop: b.shop, lines: b.lines, totals: b.totals, exportRows: b.exportRows, exportHeaders: b.exportHeaders, exportFrom: b.exportFrom },
+        inputsHash: inputsHash(b.lines),
+        source: b.source,
+      };
       const [run] = await tx
         .insert(payrollRuns)
         .values({ payGroupId: b.payGroupId, periodStart: start, periodEnd: end, periodNumber: b.period.number, checkDate: b.period.checkDate, settings, snapshot, lockedBy: actor.staffId ?? null })
@@ -1096,13 +1233,13 @@ export async function lockPayroll(start: LocalDate, end: LocalDate, actor: Actor
         "payroll.lock",
         "payroll_run",
         run.id,
-        { payGroup: b.payGroup, periodStart: start, periodEnd: end, periodNumber: b.period.number, rows: b.lines.length, laborCost: b.totals.laborCost, service: b.totals.service, inputsHash: snapshot.inputsHash, approvalId: approval.id },
+        { payGroup: b.payGroup, periodStart: start, periodEnd: end, periodNumber: b.period.number, rows: b.lines.length, laborCost: b.totals.laborCost, service: b.totals.service, inputsHash: snapshot.inputsHash, approvalId: approval.id, source: b.source },
         b.shopId,
         tx,
       );
       n++;
     }
-    await lockPayrollTips(tx, view.blocks, start, end, actor, { skip: new Set(view.finalPays.map((f) => f.staffId)) });
+    await lockPayrollTips(tx, view.blocks.filter((b) => b.source === "platform"), start, end, actor, { skip: new Set(view.finalPays.map((f) => f.staffId)) });
     return { locked: n };
   });
 }
@@ -1281,7 +1418,8 @@ async function punchedHours(shopId: string, periodStart: LocalDate, staffId: str
 export async function setOverride(shopId: string, periodStart: LocalDate, staffId: string, field: Overridable, value: number | null, reason: string, actor: Actor): Promise<string | null> {
   if (!(OVERRIDABLE as readonly string[]).includes(field)) return "That value can't be typed over.";
   if (await isLockedOn(shopId, periodStart)) return "This pay period is locked.";
-  if (value !== null && (field === "ptoHours" || field === "trainingHours")) {
+  const fromSquire = (await loadRolloutPlan()).sourceOf(shopId, periodStart) === "squire";
+  if (value !== null && !fromSquire && (field === "ptoHours" || field === "trainingHours")) {
     const s = await loadSettings();
     if ((field === "ptoHours" ? s.ptoSource : s.trainingSource) === "clock")
       return `${field === "ptoHours" ? "PTO" : "Training"} hours come from the time clock only (Payroll setup), so they can't be typed on the report. Add a time entry instead.`;
@@ -1293,7 +1431,7 @@ export async function setOverride(shopId: string, periodStart: LocalDate, staffI
   }
   if (!Number.isFinite(value)) return "Enter a number.";
   if (!reason.trim()) return "Say why the value is being typed over.";
-  if (field === "workedHours" || field === "otHours") {
+  if (!fromSquire && (field === "workedHours" || field === "otHours")) {
     const punched = await punchedHours(shopId, periodStart, staffId);
     if (punched && toCents(value) < toCents(punched[field]))
       return `The punches show ${fmtHours(punched[field])} of ${field === "otHours" ? "overtime" : "hours worked"}, and an adjustment can't go below that. If the punches are wrong, fix them on the timesheet.`;

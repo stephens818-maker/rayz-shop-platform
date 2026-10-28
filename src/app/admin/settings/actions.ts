@@ -16,6 +16,7 @@ import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { assertShopAccess, authorize, can } from "@/server/auth/staff";
 import { squireHistory } from "@/server/cutover";
+import { assertMaySwitch } from "@/server/rollout-plan";
 import { assertShopMayEdit, noteShopEdit } from "@/server/brand-sync/engine";
 import { noteShopSetting } from "@/server/brand-sync/shop-settings";
 import { receiptValue } from "@/server/brand-sync/adapters/location";
@@ -87,6 +88,7 @@ export async function saveShopInfoAction(shopId: string, raw: z.input<typeof Inf
     if (v.bookingMode && v.bookingMode !== before.bookingMode && (await squireHistory(shopId))) {
       throw new AppError("conflict", "This shop has Squire history, so moving its online booking to or from Squire happens on Squire cutover, where bookings, loyalty and gift cards are reconciled first");
     }
+    if (v.bookingMode === "platform" && before.bookingMode === "external") await assertMaySwitch(shopId);
     const values = Object.fromEntries(
       Object.entries({ ...v, phone: v.phone === undefined ? undefined : v.phone || null, email: v.email === undefined ? undefined : v.email || null, description: v.description || null, twilioNumber: line, externalBookingUrl: external }).filter(([, x]) => x !== undefined),
     ) as Partial<typeof shops.$inferInsert>;

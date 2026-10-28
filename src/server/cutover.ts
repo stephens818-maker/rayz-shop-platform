@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   appointmentItems,
@@ -15,6 +15,7 @@ import {
   loyaltyRewards,
   sales,
   shopCutovers,
+  shopRollouts,
   shops,
   staff,
 } from "@/db/schema";
@@ -26,6 +27,7 @@ import { AppError } from "./errors";
 import { mapStatus, parseSquireDateTime, readSquireCsv, RowError, shopFinder, squireMoney, ticketAmounts, ticketRef } from "./importer";
 import { getLoyaltyConfig } from "./loyalty";
 import { toCsv } from "./reports";
+import { assertMaySwitch } from "./rollout-plan";
 import { shopOnboardingCounts } from "./tips/onboarding";
 import { stripePayoutsOn } from "./tips/payout-model";
 
@@ -457,12 +459,14 @@ export async function reconcileShop(actor: Actor, shopId: string, files: Partial
  * Squire's payouts for the shop stop with it. With direct Stripe tip payouts on, everyone on the team
  * must have finished Ray'z Stripe payout setup first, unless the owner signs off anyway with a reason
  * (their tips wait for them); with them off, tips go through payroll and nobody has anything to set up.
+ * During the rollout, the shops after the pilot wait for its first clean pay period (src/server/rollout.ts).
  */
 export async function signOffAndSwitch(actor: Actor, shopId: string, now = new Date(), o: { staffWaiver?: string | null } = {}) {
   const shop = await shopOrThrow(shopId);
   const c = await db.query.shopCutovers.findFirst({ where: eq(shopCutovers.shopId, shopId) });
   const stage = cutoverStage(shop, c ?? null);
   if (stage === "live") throw new AppError("conflict", `${shop.name} already books here`);
+  await assertMaySwitch(shopId);
   if (!c?.squireFrozenAt) throw new AppError("conflict", "Record when Squire booking was turned off first");
   if (!c.matched || !c.reconciledAt || c.reconciledAt <= c.squireFrozenAt)
     throw new AppError("conflict", "The last reconciliation didn't match to the cent. Fix the differences, import again, and reconcile");
@@ -555,7 +559,8 @@ export function handBackCsv(rows: Awaited<ReturnType<typeof handBackReport>>["bo
 
 /**
  * Online booking for this shop goes back to Squire. Bookings already made here stay (the desk serves
- * them); the hand-back report lists them for Squire. A later move starts over from the freeze.
+ * them); the hand-back report lists them for Squire. A later move starts over from the freeze. A
+ * pilot's clean pay period sign-off goes with it: the second wave waits for a new one.
  */
 export async function handBack(actor: Actor, shopId: string, externalBookingUrl: string, now = new Date()) {
   const shop = await shopOrThrow(shopId);
@@ -583,7 +588,12 @@ export async function handBack(actor: Actor, shopId: string, externalBookingUrl:
           updatedAt: now,
         },
       });
-    await audit(actor, "cutover.hand_back", "shop", shopId, { externalBookingUrl, upcomingBookingsHere: report.bookings.length, ...report.cards }, shopId, tx);
+    const [unsigned] = await tx
+      .update(shopRollouts)
+      .set({ cleanPeriodStart: null, cleanPeriodEnd: null, cleanCheck: null, cleanNote: null, cleanSignedBy: null, cleanSignedAt: null, updatedAt: now })
+      .where(and(eq(shopRollouts.shopId, shopId), isNotNull(shopRollouts.cleanSignedAt)))
+      .returning({ start: shopRollouts.shopId });
+    await audit(actor, "cutover.hand_back", "shop", shopId, { externalBookingUrl, upcomingBookingsHere: report.bookings.length, ...report.cards, ...(unsigned ? { cleanPeriodSignOffCleared: true } : {}) }, shopId, tx);
   });
   return report;
 }

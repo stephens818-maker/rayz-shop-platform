@@ -1069,7 +1069,9 @@ export type AnomalyKind =
   | "hours_not_from_clock"
   | "unassigned_sales"
   | "mixed_rates"
-  | "hours_source";
+  | "hours_source"
+  | "cross_source_ot"
+  | "rollout_source";
 
 export const MIXED_RATE_NAME: Record<MixedRate, string> = { wage: "hourly wage", servicePct: "service %", productPct: "product %" };
 

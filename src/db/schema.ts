@@ -3160,6 +3160,113 @@ export const shopCutovers = pgTable("shop_cutovers", {
   check("shop_cutovers_cpa", sql`(${t.cpaSignedName} is null) = (${t.cpaRecordedAt} is null) and (${t.cpaSignedOn} is null) = (${t.cpaRecordedAt} is null) and (${t.cpaReport} is null) = (${t.cpaRecordedAt} is null)`),
 ]);
 
+export interface CleanPeriodCheck {
+  label: string;
+  ok: boolean;
+  detail: string;
+}
+
+/**
+ * The rollout Charles approved: one pilot shop (wave 1) goes live while Squire stays as its backup;
+ * the rest (wave 2) switch after the pilot's first clean pay period is signed off (src/server/rollout.ts).
+ */
+export const shopRollouts = pgTable(
+  "shop_rollouts",
+  {
+    shopId: uuid("shop_id")
+      .primaryKey()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    wave: smallint("wave").notNull().default(2),
+    plannedOn: date("planned_on", { mode: "string" }),
+    /** The first pay period whose payroll comes from this platform. Before it (or while null), from the Squire data imported for the period. */
+    payrollFrom: date("payroll_from", { mode: "string" }),
+    /** Squire is kept running for this shop, as the backup, through this day. */
+    squireBackupUntil: date("squire_backup_until", { mode: "string" }),
+    cleanPeriodStart: date("clean_period_start", { mode: "string" }),
+    cleanPeriodEnd: date("clean_period_end", { mode: "string" }),
+    cleanCheck: jsonb("clean_check").$type<CleanPeriodCheck[]>(),
+    cleanNote: text("clean_note"),
+    cleanSignedBy: uuid("clean_signed_by").references(() => staff.id, { onDelete: "set null" }),
+    cleanSignedAt: ts("clean_signed_at"),
+    note: text("note"),
+    updatedBy: uuid("updated_by").references(() => staff.id, { onDelete: "set null" }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("shop_rollouts_one_pilot").on(t.wave).where(sql`${t.wave} = 1`),
+    check("shop_rollouts_wave", sql`${t.wave} in (1, 2)`),
+    check(
+      "shop_rollouts_clean",
+      sql`(${t.cleanPeriodStart} is null) = (${t.cleanSignedAt} is null) and (${t.cleanPeriodEnd} is null) = (${t.cleanSignedAt} is null) and (${t.cleanPeriodEnd} is null or ${t.cleanPeriodEnd} >= ${t.cleanPeriodStart})`,
+    ),
+    check("shop_rollouts_clean_pilot", sql`${t.cleanSignedAt} is null or ${t.wave} = 1`),
+    check("shop_rollouts_note_len", sql`(${t.note} is null or char_length(${t.note}) <= 300) and (${t.cleanNote} is null or char_length(${t.cleanNote}) <= 300)`),
+  ],
+);
+
+export interface SquireImportTotals {
+  workedCenti: number;
+  serviceCents: number;
+  productCents: number;
+  tipsCents: number;
+  salesTaxCents: number;
+  /** Sales on the report with no barber ("Unassigned sales"): reference only, as on the Payroll Report. */
+  unassignedServiceCents: number;
+  unassignedProductCents: number;
+}
+
+/** A shop's Squire Commissions report for a pay period whose payroll still comes from Squire. */
+export const payrollSquireImports = pgTable(
+  "payroll_squire_imports",
+  {
+    id: id(),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    periodEnd: date("period_end", { mode: "string" }).notNull(),
+    fileName: text("file_name"),
+    rows: integer("rows").notNull(),
+    totals: jsonb("totals").$type<SquireImportTotals>().notNull(),
+    notes: jsonb("notes").$type<string[]>().notNull().default([]),
+    importedBy: uuid("imported_by").references(() => staff.id, { onDelete: "set null" }),
+    importedAt: ts("imported_at").notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("payroll_squire_imports_shop_period_uq").on(t.shopId, t.periodStart), check("payroll_squire_imports_dates", sql`${t.periodEnd} >= ${t.periodStart}`)],
+);
+
+/** One employee's figures at a shop for a Squire-sourced pay period, as Squire's report has them. */
+export const payrollSquireInputs = pgTable(
+  "payroll_squire_inputs",
+  {
+    importId: uuid("import_id")
+      .notNull()
+      .references(() => payrollSquireImports.id, { onDelete: "cascade" }),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id, { onDelete: "cascade" }),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    squireName: text("squire_name").notNull(),
+    workedCenti: integer("worked_centi").notNull().default(0),
+    otCenti: integer("ot_centi").notNull().default(0),
+    ptoCenti: integer("pto_centi").notNull().default(0),
+    trainingCenti: integer("training_centi").notNull().default(0),
+    serviceCents: integer("service_cents").notNull().default(0),
+    productCents: integer("product_cents").notNull().default(0),
+    tipsCents: integer("tips_cents").notNull().default(0),
+    salesTaxCents: integer("sales_tax_cents").notNull().default(0),
+  },
+  (t) => [
+    primaryKey({ name: "payroll_squire_inputs_pk", columns: [t.periodStart, t.shopId, t.staffId] }),
+    index("payroll_squire_inputs_import_idx").on(t.importId),
+    check("payroll_squire_inputs_hours", sql`${t.workedCenti} >= 0 and ${t.otCenti} >= 0 and ${t.otCenti} <= ${t.workedCenti} and ${t.ptoCenti} >= 0 and ${t.trainingCenti} >= 0`),
+  ],
+);
+
 /** Each barber's answer, in the staff app, to what the cutover report says Squire still owes them. */
 export const staffPayoutConfirmations = pgTable(
   "staff_payout_confirmations",
