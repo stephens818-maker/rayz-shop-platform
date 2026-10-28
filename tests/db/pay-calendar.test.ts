@@ -56,7 +56,8 @@ describe("iSolved pay group codes", () => {
     const all = await groups();
     expect((await groupOf("rockisland")).code).toBe("B");
     expect((await groupOf("moline")).code).toBe("C");
-    expect(all.filter((g) => g.code).map((g) => g.code).sort()).toEqual(["B", "C"]);
+    // The rest come from iSolved's Payroll Run Schedule (tests/db/pay-schedule.test.ts).
+    expect(all.filter((g) => g.code).map((g) => g.code).sort()).toEqual(["B", "C", "D", "E", "F", "G"]);
     expect(new Set(all.map((g) => g.legalEntity))).toEqual(new Set(["Ray'z Inc."]));
   });
 
@@ -89,12 +90,13 @@ describe("iSolved pay group codes", () => {
 });
 
 describe("each period's check and submit-by dates are on record", () => {
-  it("the current period and the ones ahead are stored from the calendar: due 4 days after the end, check 6", async () => {
+  it("the current period and the ones ahead are stored: due 4 days after the end, check 6, unless iSolved's schedule moved them (a holiday)", async () => {
     const g = await groupOf("moline");
     const today = m.time.todayLocal();
     for (const p of cal.periodsAround(g.calendar, today, 1, 6)) {
       const row = await stored(g.id, p.start);
-      expect(row).toMatchObject({ periodEnd: p.end, periodNumber: p.number, submitBy: m.time.addDays(p.end, 4), checkDate: m.time.addDays(p.end, 6), reason: null });
+      if (p.datesMoved) expect(row).toMatchObject({ periodEnd: p.end, periodNumber: p.number, submitBy: p.submitBy, checkDate: p.checkDate, reason: expect.stringMatching(/^iSolved schedule/) });
+      else expect(row).toMatchObject({ periodEnd: p.end, periodNumber: p.number, submitBy: m.time.addDays(p.end, 4), checkDate: m.time.addDays(p.end, 6), reason: null });
     }
   });
 
