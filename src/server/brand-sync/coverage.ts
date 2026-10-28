@@ -190,6 +190,7 @@ export const TABLES: Record<string, Coverage> = {
   staff_access_shops: is("person", "Which shops one person works at, and their role there"),
   staff_app_tokens: is("person", "One person's staff app sign-ins"),
   staff_known_devices: is("person", "The browsers and app installs one person has signed in on"),
+  staff_report_ranges: is("person", "One person's last date range on each report"),
   staff_web_sessions: is("person", "One person's web sign-ins, one per browser"),
   staff_compensation: is("person", "One person's pay plan"),
   staff_custom_fields: LIST,
