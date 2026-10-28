@@ -7,7 +7,10 @@ import { formatDate, formatDateTime } from "@/lib/time";
 import { reportView } from "@/domain/permissions";
 import { type ClientCounts, type Pph, type PphRank, PPH_RANKS, RANK_LABEL, clientCountsOf, clientKey, clientsText, linePph, linesPph, pphOf, pphText, workedHoursOf } from "@/domain/pph";
 import { can, guardPage } from "@/server/auth/staff";
-import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, hoursOpenMessage, squireMissingMessage, payrollTrail, periodChoices, periodKey, preparersOf, RECORD_LABEL, SELF_APPROVAL, type ApprovalStatus, type PeriodChoice, type ApprovalView, type BlockView, type PayrollView } from "@/server/payroll/run";
+import { approvalBlocked, approvalOf, approvalStatus, hoursOpenMessage, squireMissingMessage, payrollTrail, periodChoices, periodKey, preparersOf, RECORD_LABEL, SELF_APPROVAL, type ApprovalStatus, type PeriodChoice, type ApprovalView, type BlockView, type PayrollView } from "@/server/payroll/run";
+import { ReportFilters, locationProps } from "../../reports/filters";
+import { type PayrollRangeParams, payrollRange, payrollRangeQuery } from "./range";
+import { RangeNotices } from "./range-notices";
 import { ApprovalControls } from "./approval";
 import { LateCommissionForm, OverrideForm } from "./client";
 import { ApprovalNotice, PayrollTrailCard } from "./flow";
@@ -110,60 +113,49 @@ const COLS: Col[] = [
 ];
 const colsFor = (b: BlockView) => COLS.filter((c) => !c.onlyIf || c.onlyIf(b));
 
-export default async function PayrollReportPage({ searchParams }: { searchParams: Promise<{ period?: string }> }) {
+export default async function PayrollReportPage({ searchParams }: { searchParams: Promise<PayrollRangeParams> }) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin/payroll/report");
-  const choices = await periodChoices();
-  const current = choices.findIndex((c) => c.current);
-  const chosen = choices.find((c) => c.key === sp.period) ?? choices[current + 1] ?? choices[0];
-  const view = chosen ? await buildPayroll(chosen.start, chosen.end) : null;
-  const [approval, trail, preparers] = view ? await Promise.all([approvalOf(view), payrollTrail(view.start, view.end), preparersOf(view.start, view.end)]) : [null, [], []];
+  const r = await payrollRange(ctx, sp, "payroll_run");
+  const { view, full, official } = r;
+  const choices = official ? await periodChoices() : [];
+  const [approval, trail, preparers] = official && full ? await Promise.all([approvalOf(full), payrollTrail(full.start, full.end), preparersOf(full.start, full.end)]) : [null, [], []];
   const tickets = clientCountsOf(view?.blocks ?? []);
   const selfPrepared = !ctx.isOwner && preparers.some((p) => p.staffId === ctx.actor.staffId);
-  const status = view ? approvalStatus(view, approval) : "draft";
+  const status = full ? approvalStatus(full, approval) : "draft";
   const canRun = can(ctx, "payroll.run");
   const canApprove = can(ctx, "payroll.approve");
-  const isolved = chosen && can(ctx, reportView("payroll_isolved")) ? `/admin/reports/payroll/isolved?preset=pp:${chosen.start}_${chosen.end}` : null;
-  const reportLink = chosen && can(ctx, reportView("payroll_report")) ? `/admin/reports/payroll/report?period=${chosen.key}` : null;
+  const isolved = official && view && can(ctx, reportView("payroll_isolved")) ? `/admin/reports/payroll/isolved?preset=pp:${view.start}_${view.end}` : null;
+  const reportLink = view && can(ctx, reportView("payroll_report")) ? `/admin/reports/payroll/report?${payrollRangeQuery(r)}` : null;
 
   return (
     <div className="mx-auto max-w-[1400px]">
       <PageHeader
         title="Payroll report"
         subtitle={
-          chosen && (
-            <>
-              {formatDate(chosen.start, "MMM d")} – {formatDate(chosen.end, "MMM d, yyyy")} · {periodNumbers(chosen.groups)} · bi-weekly, Sunday to Saturday
-            </>
-          )
+          <>
+            <span data-testid="payroll-range">{r.heading}</span>
+            {official && view ? ` · ${periodNumbers(view.blocks)} · bi-weekly, Sunday to Saturday` : " · review only"}
+          </>
         }
         actions={
-          view && view.locked === "none" && canApprove ? (
+          official && full && full.locked === "none" && canApprove && r.hidden === 0 ? (
             <ApprovalControls
-              start={view.start}
-              end={view.end}
-              label={`${formatDate(view.start, "MMM d")} – ${formatDate(view.end, "MMM d")} for ${view.blocks.length} shop${view.blocks.length === 1 ? "" : "s"}`}
+              start={full.start}
+              end={full.end}
+              label={`${formatDate(full.start, "MMM d")} – ${formatDate(full.end, "MMM d")} for ${full.blocks.length} shop${full.blocks.length === 1 ? "" : "s"}`}
               status={status}
-              blocked={approvalBlocked(view)}
+              blocked={approvalBlocked(full)}
               approveBlocked={selfPrepared ? SELF_APPROVAL : null}
             />
           ) : undefined
         }
       />
-      <div className="no-print mb-4 flex flex-wrap gap-1.5">
-        {choices.slice(0, 8).map((c) => (
-          <Link
-            key={c.key}
-            href={`/admin/payroll/report?period=${c.key}`}
-            className={cx("rounded-full px-3 py-1 text-sm ring-1", c.key === chosen?.key ? "bg-ink-900 text-white ring-ink-900" : "bg-white ring-zinc-300 hover:bg-zinc-50")}
-          >
-            {formatDate(c.start, "MMM d")} – {formatDate(c.end, "MMM d")}
-            {c.current && " · current"}
-            {c.lockedGroups > 0 && (c.lockedGroups === c.groups.length ? " · locked" : ` · ${c.lockedGroups} locked`)}
-          </Link>
-        ))}
+      <ReportFilters base="/admin/payroll/report" preset={r.range.preset} from={r.range.from} to={r.range.to} scope={r.locations} location={ctx.shops.length > 1 ? locationProps(ctx, r.locations) : null} payPeriods={r.payPeriods} views={false} />
+      <RangeNotices r={r} />
+      <div className="no-print mb-4 flex flex-wrap justify-end gap-3">
         {reportLink && (
-          <Link href={reportLink} className="ml-auto self-center text-sm font-medium text-brand-700 underline-offset-2 hover:underline" data-testid="payroll-report-link">
+          <Link href={reportLink} className="self-center text-sm font-medium text-brand-700 underline-offset-2 hover:underline" data-testid="payroll-report-link">
             Payroll Report (Locations) →
           </Link>
         )}
@@ -173,13 +165,13 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
           </Link>
         )}
       </div>
-      {!view ? (
-        <Notice>No shop has a pay period with those dates.</Notice>
+      {!view || !view.blocks.length ? (
+        <Notice>None of the shops shown has hours or sales to review in these dates.</Notice>
       ) : (
         <Report
           view={view}
-          canRun={canRun}
-          canFiles={canRun || can(ctx, "payroll.export")}
+          canRun={canRun && official}
+          canFiles={(canRun || can(ctx, "payroll.export")) && official}
           approval={approval}
           status={status}
           trail={trail}
@@ -192,11 +184,12 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
   );
 }
 
-function periodNumbers(groups: { label: string; number: number; checkDate: string; submitBy: string }[]) {
+function periodNumbers(blocks: readonly BlockView[]) {
   const by = new Map<string, string[]>();
-  for (const g of groups) {
+  for (const b of blocks) {
+    const g = b.period;
     const k = `period ${String(g.number).padStart(2, "0")}, due in iSolved ${formatDate(g.submitBy, "EEE MMM d")}, check ${formatDate(g.checkDate, "EEE MMM d")}`;
-    by.set(k, [...(by.get(k) ?? []), g.label]);
+    by.set(k, [...(by.get(k) ?? []), b.payGroup]);
   }
   const parts = [...by.entries()];
   return parts.length === 1 ? parts[0][0] : parts.map(([k, labels]) => `${labels.join(", ")}: ${k}`).join(" · ");
@@ -224,12 +217,13 @@ function Report({
   tickets: ClientCounts;
 }) {
   const filesReady = status === "approved" || status === "locked";
+  const review = !!view.review;
   return (
     <div className="space-y-4">
-      <ApprovalNotice view={view} approval={approval} status={status} preparers={preparers} />
+      {!review && <ApprovalNotice view={view} approval={approval} status={status} preparers={preparers} />}
       {view.locked === "all" ? null : view.mismatches.length ? (
         <Card>
-          <CardHeader title="Totals don't reconcile: approval is blocked" subtitle={`Every total has to equal the sum of its rows, each shop's export has to add up to the report, and the Locations totals to the shops.${view.tips.mismatches.length ? " Each employee's tips in the file have to match their tips and payouts (the W-2 tip check)." : ""} Tolerance: $0.00.`} />
+          <CardHeader title={review ? "Totals don't reconcile" : "Totals don't reconcile: approval is blocked"} subtitle={`Every total has to equal the sum of its rows, each shop's export has to add up to the report, and the Locations totals to the shops.${view.tips.mismatches.length ? " Each employee's tips in the file have to match their tips and payouts (the W-2 tip check)." : ""} Tolerance: $0.00.`} />
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-red-50 text-left text-xs text-red-800">
@@ -259,16 +253,17 @@ function Report({
         <Notice tone="green">
           Every total reconciles to the cent: each shop&apos;s totals are the sum of its rows, each shop&apos;s iSolved file adds up to its report columns, and the Locations totals are the sum
           of the shops.{view.locked === "some" && " Some shops in this period are already locked."}
+          {review && " A review of these dates is worked out live and is never approved, locked or exported."}
         </Notice>
       )}
 
-      <SquireGate view={view} />
+      {!review && <SquireGate view={view} />}
 
-      <HoursGate view={view} />
+      {!review && <HoursGate view={view} />}
 
       <LockCheck view={view} />
 
-      <TipCheckNotice view={view} />
+      {!review && <TipCheckNotice view={view} />}
 
       <Locations view={view} tickets={tickets} />
 
@@ -307,12 +302,12 @@ function Report({
         />
       ))}
 
-      <PayrollTrailCard trail={trail} names={new Map(view.blocks.flatMap((b) => b.lines.map((l) => [l.staffId, l.name] as const)))} />
+      {!review && <PayrollTrailCard trail={trail} names={new Map(view.blocks.flatMap((b) => b.lines.map((l) => [l.staffId, l.name] as const)))} />}
     </div>
   );
 }
 
-const AMBER = new Set(["owner_case", "netcomm_gap", "below_punches", "sales_without_hours", "sales_day_without_hours", "timesheet_not_approved", "hours_not_locked", "hours_not_from_clock", "cross_source_ot", "rollout_source", "sunday_punch"]);
+const AMBER = new Set(["owner_case", "netcomm_gap", "below_punches", "sales_without_hours", "sales_day_without_hours", "timesheet_not_approved", "hours_not_locked", "hours_not_from_clock", "cross_source_ot", "rollout_source", "sunday_punch", "partial_workweek"]);
 
 function SquireGate({ view }: { view: PayrollView }) {
   if (!view.squireMissing.length || view.locked === "all") return null;
@@ -573,11 +568,14 @@ function ShopBlockCard({
             <span className="font-normal text-zinc-500">· pay group {b.payGroup}
             {b.payGroupCode ? ` (iSolved ${b.payGroupCode})` : " (no iSolved code yet)"}
             {b.employer ? ` · ${b.employer.legalName}${b.employer.isolvedCompanyCode ? ` (iSolved ${b.employer.isolvedCompanyCode})` : ""}` : ""}
-            {b.workState ? ` · ${b.workState}` : ""} · period {String(b.period.number).padStart(2, "0")}, due {formatDate(b.period.submitBy ?? b.period.checkDate, "EEE MMM d")}, check {formatDate(b.period.checkDate, "EEE MMM d")}</span>
+            {b.workState ? ` · ${b.workState}` : ""}
+            {view.review ? " · review of these dates, not a pay period" : ` · period ${String(b.period.number).padStart(2, "0")}, due ${formatDate(b.period.submitBy ?? b.period.checkDate, "EEE MMM d")}, check ${formatDate(b.period.checkDate, "EEE MMM d")}`}</span>
           </>
         }
         subtitle={
-          b.locked
+          view.review
+            ? "Review only: live from hours and sales over these dates, with no adjustments, late commission or final pay (those belong to a pay period)."
+            : b.locked
             ? `Locked ${formatDateTime(b.locked.at)}${b.locked.by ? ` by ${b.locked.by}` : ""}`
             : b.source === "squire"
               ? b.squireImport
@@ -586,7 +584,9 @@ function ShopBlockCard({
               : "Open: live from hours, sales and overrides"
         }
         action={
-          downloadable ? (
+          view.review ? (
+            <span className="text-xs text-zinc-500">No iSolved file: not an official pay period.</span>
+          ) : downloadable ? (
             <a className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700" href={`/admin/payroll/download?group=${b.payGroupId}&start=${view.start}&end=${view.end}`}>
               Download iSolved file
             </a>
@@ -719,7 +719,7 @@ function ShopBlockCard({
                                 <td className="py-0.5">{i === 0 ? formatDate(w.weekStart, "MMM d") : ""}</td>
                                 <td className="py-0.5">
                                   {x.shop}
-                                  {x.periodStart !== view.start && ` (period from ${formatDate(x.periodStart, "MMM d")})`}
+                                  {view.review ? !x.inThisRun && " (outside these dates)" : x.periodStart !== view.start && ` (period from ${formatDate(x.periodStart, "MMM d")})`}
                                   {x.locked && " · locked"}
                                 </td>
                                 <td className="py-0.5 text-right tabular-nums">{hrs(x.basis)}</td>
@@ -766,7 +766,7 @@ function ShopBlockCard({
           </div>
         </>
       )}
-      <ExportPreview b={b} />
+      {!view.review && <ExportPreview b={b} />}
     </Card>
   );
 }

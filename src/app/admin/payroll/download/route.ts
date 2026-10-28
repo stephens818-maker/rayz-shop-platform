@@ -1,6 +1,6 @@
 import { audit } from "@/server/audit";
 import { routeStaff } from "@/server/auth/staff";
-import { approvedExport } from "@/server/payroll/run";
+import { NOT_OFFICIAL, approvedExport, officialGroups } from "@/server/payroll/run";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -13,6 +13,7 @@ export async function GET(req: Request) {
   const start = url.searchParams.get("start") ?? "";
   const end = url.searchParams.get("end") ?? "";
   if (!/^[0-9a-f-]{36}$/i.test(group) || !DATE.test(start) || !DATE.test(end)) return new Response("Bad request", { status: 400 });
+  if (!(await officialGroups(start, end)).some((g) => g.id === group)) return new Response(NOT_OFFICIAL, { status: 409 });
   const f = await approvedExport(group, start, end);
   if (!f) return new Response("That pay period isn't approved yet, or its figures changed since the approval, so there's nothing to download.", { status: 409 });
   await audit(ctx.actor, "payroll.download", f.runId ? "payroll_run" : "payroll_approval", f.runId ?? f.approvalId, { file: f.fileName, periodStart: start, periodEnd: end, locked: !!f.runId }, null);

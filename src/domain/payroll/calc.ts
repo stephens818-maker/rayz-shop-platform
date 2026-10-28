@@ -1240,7 +1240,8 @@ export type AnomalyKind =
   | "tips_in_payroll_memo"
   | "sunday_punch"
   | "no_training_rate"
-  | "training_overtime";
+  | "training_overtime"
+  | "partial_workweek";
 
 export const MIXED_RATE_NAME: Record<MixedRate, string> = { wage: "hourly wage", servicePct: "service %", productPct: "product %", trainingRate: "training rate" };
 

@@ -3,11 +3,15 @@ import Link from "next/link";
 import { Badge, Card, CardHeader, Notice, PageHeader, cx } from "@/components/ui";
 import { LOCATIONS_COLUMNS, MIXED_RATE_NAME, locationSummary, type Line, type Overridable } from "@/domain/payroll/calc";
 import { reportExport } from "@/domain/permissions";
-import { formatDate, isValidLocalDate, todayLocal } from "@/lib/time";
+import { formatDate, todayLocal } from "@/lib/time";
 import { can, guardPage } from "@/server/auth/staff";
 import { NO_VALUE, locationBlocks, locationsRow, locationsTotals, titleFill, type LocationsCell, type LocationsColumnKey } from "@/server/payroll/locations";
-import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, payrollTrail, periodChoices, preparersOf, SELF_APPROVAL, type ApprovalStatus, type BlockView, type PeriodChoice } from "@/server/payroll/run";
+import { approvalBlocked, approvalOf, approvalStatus, payrollTrail, periodKey, preparersOf, SELF_APPROVAL, type ApprovalStatus, type BlockView } from "@/server/payroll/run";
+import { reportContext } from "@/server/report-access";
 import { ApprovalControls } from "../../../payroll/report/approval";
+import { type PayrollRangeParams, payrollRange, payrollRangeQuery } from "../../../payroll/report/range";
+import { RangeNotices } from "../../../payroll/report/range-notices";
+import { ReportFilters, locationProps } from "../../filters";
 import { ApprovalNotice, PayrollTrailCard } from "../../../payroll/report/flow";
 
 export const metadata: Metadata = { title: "Payroll Report" };
@@ -45,159 +49,132 @@ const STATUS: Record<ApprovalStatus, { label: string; tone: "amber" | "blue" | "
   locked: { label: "Approved and locked", tone: "green" },
 };
 
-const PERIOD = /^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/;
-
-export default async function Page({ searchParams }: { searchParams: Promise<{ period?: string; preset?: string; shop?: string }> }) {
+export default async function Page({ searchParams }: { searchParams: Promise<PayrollRangeParams> }) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin/reports/payroll/report");
-  const choices = await periodChoices();
-  const current = choices.findIndex((c) => c.current);
-  const asked = PERIOD.exec(sp.period ?? sp.preset?.replace(/^pp:/, "") ?? "");
-  const chosen: PeriodChoice | undefined =
-    choices.find((c) => c.key === asked?.[0]) ??
-    (asked && isValidLocalDate(asked[1]) && isValidLocalDate(asked[2]) && asked[1] <= asked[2] ? { key: asked[0], start: asked[1], end: asked[2], groups: [], lockedGroups: 0, current: false } : (choices[current + 1] ?? choices[0]));
-  const view = chosen ? await buildPayroll(chosen.start, chosen.end) : null;
+  const r = await payrollRange(await reportContext(ctx, "payroll_report"), sp, "payroll_report");
+  const { view, full, official } = r;
   const rates = can(ctx, "payroll.rates");
-  const mine = view ? view.blocks.filter((b) => ctx.shopIds.includes(b.shopId)) : [];
-  const shopId = sp.shop && mine.some((b) => b.shopId === sp.shop) ? sp.shop : null;
-  const blocks = view ? locationBlocks(view, (shopId ? [shopId] : mine.map((b) => b.shopId))) : [];
-  const [approval, trail, preparers] = view ? await Promise.all([approvalOf(view), payrollTrail(view.start, view.end), preparersOf(view.start, view.end)]) : [null, [], []];
+  const blocks = view ? locationBlocks(view, view.blocks.map((b) => b.shopId)) : [];
+  const [approval, trail, preparers] = official && full ? await Promise.all([approvalOf(full), payrollTrail(full.start, full.end), preparersOf(full.start, full.end)]) : [null, [], []];
   const selfPrepared = !ctx.isOwner && preparers.some((p) => p.staffId === ctx.actor.staffId);
-  const status = view ? approvalStatus(view, approval) : "draft";
-  const canApprove = can(ctx, "payroll.approve") && ctx.brandWide;
-  const canExport = can(ctx, reportExport("payroll_report"));
-  const canFiles = can(ctx, "payroll.export") || can(ctx, "payroll.run");
+  const status = full ? approvalStatus(full, approval) : "draft";
+  const canApprove = can(ctx, "payroll.approve") && ctx.brandWide && official && r.hidden === 0;
+  const canExport = can(ctx, reportExport("payroll_report")) && official;
+  const canFiles = (can(ctx, "payroll.export") || can(ctx, "payroll.run")) && official;
   const drill = can(ctx, "payroll.run") || can(ctx, "payroll.approve");
   const filesReady = status === "approved" || status === "locked";
-  const q = (extra: Record<string, string>) => new URLSearchParams({ ...(chosen ? { period: chosen.key } : {}), ...(shopId ? { shop: shopId } : {}), ...extra }).toString();
+  const one = blocks.length === 1 && r.locations.selection.shopIds.length === 1 ? blocks[0].shopId : null;
+  const q = (extra: Record<string, string>) => new URLSearchParams({ ...(view ? { period: periodKey(view.start, view.end) } : {}), ...(one ? { shop: one } : {}), ...extra }).toString();
+  const drillQuery = payrollRangeQuery(r);
   const names = new Map(view ? view.blocks.flatMap((b) => b.lines.map((l) => [l.staffId, l.name] as const)) : []);
-  const label = chosen ? `${formatDate(chosen.start, "MMM d")} – ${formatDate(chosen.end, "MMM d, yyyy")}` : "";
+  const label = view ? `${formatDate(view.start, "MMM d")} – ${formatDate(view.end, "MMM d, yyyy")}` : "";
 
   return (
     <div className="mx-auto max-w-[1500px] space-y-4">
       <PageHeader
         title="Payroll Report"
         subtitle={
-          chosen && (
-            <>
-              {label} · {shopId ? blocks[0]?.shop : "all shops"} <Badge tone={STATUS[status].tone}>{STATUS[status].label}</Badge>
-            </>
-          )
+          <>
+            <span data-testid="payroll-range">{r.heading}</span> · {r.locations.label}{" "}
+            {official ? <Badge tone={STATUS[status].tone}>{STATUS[status].label}</Badge> : <Badge tone="amber">Not an official pay period</Badge>}
+          </>
         }
         actions={
-          view && canApprove && rates ? (
-            <ApprovalControls start={view.start} end={view.end} label={`${label} for ${view.blocks.length} shop${view.blocks.length === 1 ? "" : "s"}`} status={status} blocked={approvalBlocked(view)} approveBlocked={selfPrepared ? SELF_APPROVAL : null} />
+          full && canApprove && rates ? (
+            <ApprovalControls start={full.start} end={full.end} label={`${label} for ${full.blocks.length} shop${full.blocks.length === 1 ? "" : "s"}`} status={status} blocked={approvalBlocked(full)} approveBlocked={selfPrepared ? SELF_APPROVAL : null} />
           ) : undefined
         }
       />
-      <div className="no-print flex flex-wrap gap-1.5">
-        {choices.slice(0, 8).map((c) => (
-          <Link
-            key={c.key}
-            href={`${HREF}?${new URLSearchParams({ period: c.key, ...(shopId ? { shop: shopId } : {}) })}`}
-            className={cx("rounded-full px-3 py-1 text-sm ring-1", c.key === chosen?.key ? "bg-ink-900 text-white ring-ink-900" : "bg-white ring-zinc-300 hover:bg-zinc-50")}
-          >
-            {formatDate(c.start, "MMM d")} – {formatDate(c.end, "MMM d")}
-            {c.current && " · current"}
-            {c.lockedGroups > 0 && (c.lockedGroups === c.groups.length ? " · locked" : ` · ${c.lockedGroups} locked`)}
-          </Link>
-        ))}
-      </div>
-      {mine.length > 1 && (
-        <div className="no-print flex flex-wrap gap-1.5 text-sm">
-          <Link href={`${HREF}?${new URLSearchParams(chosen ? { period: chosen.key } : {})}`} className={cx("rounded-full px-3 py-1 ring-1", !shopId ? "bg-ink-900 text-white ring-ink-900" : "bg-white ring-zinc-300 hover:bg-zinc-50")}>
-            All shops
-          </Link>
-          {locationBlocks(view!, mine.map((b) => b.shopId)).map((b) => (
-            <Link
-              key={b.shopId}
-              href={`${HREF}?${new URLSearchParams({ ...(chosen ? { period: chosen.key } : {}), shop: b.shopId })}`}
-              className={cx("rounded-full px-3 py-1 ring-1", shopId === b.shopId ? "bg-ink-900 text-white ring-ink-900" : "bg-white ring-zinc-300 hover:bg-zinc-50")}
-            >
-              {b.shop}
-            </Link>
-          ))}
-        </div>
-      )}
+      <ReportFilters base={HREF} preset={r.range.preset} from={r.range.from} to={r.range.to} scope={r.locations} location={ctx.shops.length > 1 ? locationProps(ctx, r.locations) : null} payPeriods={r.payPeriods} views={false} />
+      <RangeNotices r={r} />
 
       {!view || !blocks.length ? (
-        <Notice>None of your shops has a pay period with those dates.</Notice>
+        <Notice>None of the shops shown has hours or sales in these dates.</Notice>
       ) : !rates ? (
         <Notice>The Payroll Report shows pay rates and wages, so it needs &quot;See pay rates and labor cost&quot;.</Notice>
       ) : (
         <>
-          <p className="text-sm text-zinc-600" data-testid="payroll-due">
-            {dueLine(blocks)}
-          </p>
-          {status !== "locked" && <DueNotice blocks={blocks} />}
-          <ApprovalNotice view={view} approval={approval} status={status} preparers={preparers} />
-          {approvalBlocked(view) && status !== "locked" && (
+          {official && (
+            <p className="text-sm text-zinc-600" data-testid="payroll-due">
+              {dueLine(blocks)}
+            </p>
+          )}
+          {official && status !== "locked" && <DueNotice blocks={blocks} />}
+          {official && full && <ApprovalNotice view={full} approval={approval} status={status} preparers={preparers} />}
+          {official && full && approvalBlocked(full) && status !== "locked" && (
             <Notice tone="red">
-              {approvalBlocked(view)}, so the period can&apos;t be approved yet.{" "}
+              {approvalBlocked(full)}, so the period can&apos;t be approved yet.{" "}
               {drill && (
-                <Link href={`/admin/payroll/report?period=${chosen!.key}`} className="font-medium underline">
+                <Link href={`/admin/payroll/report?${drillQuery}`} className="font-medium underline">
                   See what to fix
                 </Link>
               )}
             </Notice>
           )}
 
-          <Card>
-            <CardHeader title="Downloads" subtitle="Every download is recorded in the audit trail below." />
-            <div className="flex flex-wrap items-center gap-2 px-4 pb-4 text-sm">
-              {canExport && (
-                <>
-                  <a className="rounded-lg bg-brand-600 px-3 py-1.5 font-medium text-white hover:bg-brand-700" href={`${HREF}/file?${q({ format: "xlsx" })}`} data-testid="payroll-report-xlsx">
-                    Payroll Report (.xlsx)
-                  </a>
-                  <a className="rounded-lg px-3 py-1.5 font-medium ring-1 ring-zinc-300 hover:bg-zinc-50" href={`${HREF}/file?${q({ format: "csv" })}`}>
-                    CSV
-                  </a>
-                </>
-              )}
-              {canFiles &&
-                (filesReady ? (
+          {official ? (
+            <Card>
+              <CardHeader title="Downloads" subtitle="Every download is recorded in the audit trail below." />
+              <div className="flex flex-wrap items-center gap-2 px-4 pb-4 text-sm">
+                {canExport && (
                   <>
-                    <span className="ml-2 text-zinc-500">iSolved files:</span>
-                    {blocks.map((b) => (
-                      <a
-                        key={b.shopId}
-                        className="rounded-lg px-3 py-1.5 font-medium ring-1 ring-zinc-300 hover:bg-zinc-50"
-                        href={`/admin/payroll/download?group=${b.payGroupId}&start=${view.start}&end=${view.end}`}
-                        data-testid="isolved-shop-file"
-                      >
-                        {b.shop}
-                        {b.payGroupCode && <span className="ml-1 font-normal text-zinc-500">({b.payGroupCode})</span>}
-                      </a>
-                    ))}
-                    {can(ctx, reportExport("payroll_isolved")) && can(ctx, "payroll.export") && (
-                      <a className="rounded-lg px-3 py-1.5 font-medium ring-1 ring-zinc-300 hover:bg-zinc-50" href={`/admin/reports/payroll/isolved/file?start=${view.start}&end=${view.end}`}>
-                        All shops (one workbook)
-                      </a>
-                    )}
+                    <a className="rounded-lg bg-brand-600 px-3 py-1.5 font-medium text-white hover:bg-brand-700" href={`${HREF}/file?${q({ format: "xlsx" })}`} data-testid="payroll-report-xlsx">
+                      Payroll Report (.xlsx)
+                    </a>
+                    <a className="rounded-lg px-3 py-1.5 font-medium ring-1 ring-zinc-300 hover:bg-zinc-50" href={`${HREF}/file?${q({ format: "csv" })}`}>
+                      CSV
+                    </a>
                   </>
-                ) : (
-                  <span className="ml-2 text-zinc-500">The iSolved files download once the figures are approved.</span>
-                ))}
-            </div>
-          </Card>
+                )}
+                {canFiles &&
+                  (filesReady ? (
+                    <>
+                      <span className="ml-2 text-zinc-500">iSolved files:</span>
+                      {blocks.map((b) => (
+                        <a
+                          key={b.shopId}
+                          className="rounded-lg px-3 py-1.5 font-medium ring-1 ring-zinc-300 hover:bg-zinc-50"
+                          href={`/admin/payroll/download?group=${b.payGroupId}&start=${view.start}&end=${view.end}`}
+                          data-testid="isolved-shop-file"
+                        >
+                          {b.shop}
+                          {b.payGroupCode && <span className="ml-1 font-normal text-zinc-500">({b.payGroupCode})</span>}
+                        </a>
+                      ))}
+                      {can(ctx, reportExport("payroll_isolved")) && can(ctx, "payroll.export") && (
+                        <a className="rounded-lg px-3 py-1.5 font-medium ring-1 ring-zinc-300 hover:bg-zinc-50" href={`/admin/reports/payroll/isolved/file?start=${view.start}&end=${view.end}`}>
+                          All shops (one workbook)
+                        </a>
+                      )}
+                    </>
+                  ) : (
+                    <span className="ml-2 text-zinc-500">The iSolved files download once the figures are approved.</span>
+                  ))}
+              </div>
+            </Card>
+          ) : (
+            <p className="text-sm text-zinc-500" data-testid="no-downloads">
+              No downloads for a review: the Payroll Report file and the iSolved files are for a full pay period.
+            </p>
+          )}
 
-          <Anomalies blocks={blocks} anomalies={view.anomalies} periodKey={chosen!.key} drill={drill} />
+          <Anomalies blocks={blocks} anomalies={view.anomalies} drillQuery={drillQuery} drill={drill} />
 
           {blocks.map((b) => (
-            <LocationBlock key={b.shopId} b={b} periodKey={chosen!.key} drill={drill && !b.locked} />
+            <LocationBlock key={b.shopId} b={b} drillQuery={drillQuery} drill={drill && !b.locked} />
           ))}
 
           <Summary blocks={blocks} />
 
-          <PayrollTrailCard trail={trail} names={names} />
+          {official && <PayrollTrailCard trail={trail} names={names} />}
         </>
       )}
     </div>
   );
 }
 
-function Anomalies({ blocks, anomalies, periodKey, drill }: { blocks: BlockView[]; anomalies: { staffId: string | null; shopId: string | null; kind: string; message: string }[]; periodKey: string; drill: boolean }) {
+function Anomalies({ blocks, anomalies, drillQuery, drill }: { blocks: BlockView[]; anomalies: { staffId: string | null; shopId: string | null; kind: string; message: string }[]; drillQuery: string; drill: boolean }) {
   const ids = new Set(blocks.map((b) => b.shopId));
   const list = anomalies.filter((a) => !a.shopId || ids.has(a.shopId));
   if (!list.length) return <Notice tone="green">No anomalies to review for these shops.</Notice>;
@@ -210,7 +187,7 @@ function Anomalies({ blocks, anomalies, periodKey, drill }: { blocks: BlockView[
             <Badge tone={a.kind === "below_minimum_wage" || a.kind === "missed_punch" || a.kind === "unassigned_sales" ? "red" : "amber"}>{a.kind.replace(/_/g, " ")}</Badge>
             <span className="flex-1">{a.message}</span>
             {drill && a.shopId && a.staffId && (
-              <Link href={`/admin/payroll/report?period=${periodKey}#${a.shopId}-${a.staffId}`} className="text-brand-700 underline-offset-2 hover:underline">
+              <Link href={`/admin/payroll/report?${drillQuery}#${a.shopId}-${a.staffId}`} className="text-brand-700 underline-offset-2 hover:underline">
                 Review →
               </Link>
             )}
@@ -258,7 +235,7 @@ function DueNotice({ blocks }: { blocks: readonly BlockView[] }) {
   return null;
 }
 
-function LocationBlock({ b, periodKey, drill }: { b: BlockView; periodKey: string; drill: boolean }) {
+function LocationBlock({ b, drillQuery, drill }: { b: BlockView; drillQuery: string; drill: boolean }) {
   const fill = titleFill(b.shop);
   const gp = b.totals.service - b.totals.totalWages;
   return (
@@ -297,7 +274,7 @@ function LocationBlock({ b, periodKey, drill }: { b: BlockView; periodKey: strin
                       return (
                         <td key={c.key} className="sticky left-0 bg-white px-2 py-1.5 font-medium">
                           {drill ? (
-                            <Link href={`/admin/payroll/report?period=${periodKey}#${b.shopId}-${l.staffId}`} className="hover:underline" title="Drill down: hours by week, OT, and adjustments">
+                            <Link href={`/admin/payroll/report?${drillQuery}#${b.shopId}-${l.staffId}`} className="hover:underline" title="Drill down: hours by week, OT, and adjustments">
                               {l.name}
                             </Link>
                           ) : (
