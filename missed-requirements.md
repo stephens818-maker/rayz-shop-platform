@@ -1065,6 +1065,9 @@ The web platform, the iOS and Android customer apps and the Ray'z Staff app go l
 - [ ] Charles: the launch date and time, whether all 8 shops leave Squire at that time, and whether the Play Console account is a personal or an organization account (a personal account adds a 14-day closed test).
 - [ ] Mobile: the customer apps submitted to App Review and Google Play at least 3 weeks ahead (5 for a new personal Play account), held for release.
 - [ ] Staff app builder: the same for the Ray'z Staff app, with kiosk mode (ST-I6).
+- [ ] Each app tested in the sandbox against the real API (PR #7's apps run on a mock today), its status posted in NOTES-SYNC.
+- [ ] Mobile: PR #3's `LAUNCH_AT` rebased and landed first, so one instant opens every surface.
+- [ ] Charles: does the rule replace PR #4's option B (shops opening one by one)?
 - [ ] All four surfaces tested together in the sandbox on the builds being released.
 
 ## Deferred by decision
