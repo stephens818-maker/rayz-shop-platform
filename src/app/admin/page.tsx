@@ -43,7 +43,6 @@ import {
   canAny,
   guardPage,
   reasonViewer,
-  reportShopIds,
 } from "@/server/auth/staff";
 import { todayAlerts, viewerOf } from "@/server/today";
 import { badgeCounts, shownBadges } from "@/server/badges";
@@ -66,33 +65,72 @@ import { DismissCongrats } from "./milestones/client";
 import { myRebook } from "@/server/rebook-report";
 import { pctText, ptsLabel } from "@/domain/rebook";
 import { parseCardPeriod } from "@/domain/pph-card";
+import { priorPeriod, rangeHeading, rangeText } from "@/domain/report-range";
+import { payPeriodPicker } from "@/server/payroll/periods";
 import { DashboardPph, PphCardSkeleton } from "./pph-card";
+import { ReportFilters, locationProps, reportQuery } from "./reports/filters";
+import { resolveLocations, resolveRange } from "./reports/scope";
 
 export const metadata: Metadata = { title: "Today" };
 
 export default async function Dashboard({
   searchParams,
 }: {
-  searchParams: Promise<{ denied?: string; pph?: string; ppc?: string }>;
+  searchParams: Promise<{
+    denied?: string;
+    pph?: string;
+    ppc?: string;
+    preset?: string;
+    from?: string;
+    to?: string;
+    shop?: string | string[];
+  }>;
 }) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin");
-  const pphBy = parseCardPeriod(sp.pph);
-  const ppcBy = parseCardPeriod(sp.ppc);
-  if (ctx.staff.kind === "shop") return <FrontDeskHome ctx={ctx} denied={!!sp.denied} pphBy={pphBy} ppcBy={ppcBy} />;
+  if (ctx.staff.kind === "shop")
+    return (
+      <FrontDeskHome
+        ctx={ctx}
+        denied={!!sp.denied}
+        pphBy={parseCardPeriod(sp.pph)}
+        ppcBy={parseCardPeriod(sp.ppc)}
+      />
+    );
   const today = todayLocal();
-  const shopIds = reportShopIds(ctx);
+  const locs = await resolveLocations(ctx, { shop: sp.shop }).catch(() =>
+    resolveLocations(ctx, {}),
+  );
+  const shopIds = locs.selection.shopIds;
+  const range = await resolveRange(sp, {
+    shopIds,
+    defaultPreset: "today",
+    memory: { staffId: ctx.staff.id, key: "dashboard" },
+  });
+  const isToday = range.from === today && range.to === today;
+  const heading = rangeHeading({
+    from: range.from,
+    to: range.to,
+    label: range.rangeLabel,
+  });
+  const cardRange = isToday
+    ? null
+    : { from: range.from, to: range.to, label: range.rangeLabel ?? "Custom range" };
+  const pphBy = parseCardPeriod(sp.pph, !!cardRange);
+  const ppcBy = parseCardPeriod(sp.ppc, !!cardRange);
+  const rangeQuery = reportQuery(
+    locs,
+    range.preset ? { preset: range.preset } : { from: range.from, to: range.to },
+  ).toString();
   const ownBook = !can(ctx, "calendar.manage");
   const ownSales = !can(ctx, "sales.view");
   const salesStaffId = ownSales ? ctx.staff.id : null;
   const staffId = ownBook ? ctx.staff.id : null;
-  const scope = { shopIds, from: today, to: today, staffId: salesStaffId };
-  const lastWeek = {
-    shopIds,
-    from: addDays(today, -7),
-    to: addDays(today, -7),
-    staffId: salesStaffId,
-  };
+  const scope = { shopIds, from: range.from, to: range.to, staffId: salesStaffId };
+  const priorDates = isToday
+    ? { from: addDays(today, -7), to: addDays(today, -7) }
+    : priorPeriod(range.from, range.to, range.preset);
+  const lastWeek = { shopIds, ...priorDates, staffId: salesStaffId };
   const seesWalkins = can(ctx, "walkins.manage");
   const now = new Date();
   const apptWhere = and(
@@ -101,16 +139,28 @@ export default async function Dashboard({
     gt(appointments.endsAt, startOfLocalDay(today)),
     staffId ? eq(appointments.staffId, staffId) : undefined,
   );
+  const countsWhere = (where: ReturnType<typeof and>) =>
+    db
+      .select({ status: appointments.status, n: sql<number>`count(*)::int` })
+      .from(appointments)
+      .where(where)
+      .groupBy(appointments.status);
 
-  const [summary, prior, statusCounts, upcoming, waitlist, shopRows, alerts] =
+  const [
+    summary,
+    prior,
+    statusCounts,
+    upcoming,
+    waitlist,
+    shopRows,
+    alerts,
+    rangeCounts,
+    payPeriods,
+  ] =
     await Promise.all([
       salesSummary(scope),
       salesSummary(lastWeek),
-      db
-        .select({ status: appointments.status, n: sql<number>`count(*)::int` })
-        .from(appointments)
-        .where(apptWhere)
-        .groupBy(appointments.status),
+      countsWhere(apptWhere),
       db
         .select({
           id: appointments.id,
@@ -155,10 +205,21 @@ export default async function Dashboard({
                 eq(waitlistEntries.status, "waiting"),
               ),
             ),
-      ctx.currentShopId === null && !ownSales
+      shopIds.length > 1 && !ownSales
         ? byShop(scope)
         : Promise.resolve([]),
       todayAlerts(viewerOf(ctx), now),
+      isToday
+        ? Promise.resolve(null)
+        : countsWhere(
+            and(
+              inArray(appointments.shopId, shopIds),
+              lt(appointments.startsAt, endOfLocalDay(range.to)),
+              gt(appointments.endsAt, startOfLocalDay(range.from)),
+              staffId ? eq(appointments.staffId, staffId) : undefined,
+            ),
+          ),
+      payPeriodPicker(shopIds, today),
     ]);
   const seesTeam = canAny(ctx, [
     "calendar.manage",
@@ -320,19 +381,25 @@ export default async function Dashboard({
   const sends = (a: { staffId: string; status: string }) =>
     (a.staffId === ctx.staff.id || can(ctx, "checkout.any")) &&
     (a.status === "checked_in" || a.status === "in_service");
-  const count = (s: string[]) =>
-    statusCounts
-      .filter((c) => s.includes(c.status))
-      .reduce((a, c) => a + c.n, 0);
+  const countIn = (rows: typeof statusCounts, s: string[]) =>
+    rows.filter((c) => s.includes(c.status)).reduce((a, c) => a + c.n, 0);
+  const count = (s: string[]) => countIn(statusCounts, s);
+  const booked = (s: string[]) => countIn(rangeCounts ?? statusCounts, s);
   const delta = (a: number, b: number) =>
     b
-      ? `${a >= b ? "▲" : "▼"} ${Math.abs(Math.round(((a - b) / b) * 100))}% vs last ${formatDate(today, "EEEE")}`
+      ? `${a >= b ? "▲" : "▼"} ${Math.abs(Math.round(((a - b) / b) * 100))}% vs ${
+          isToday
+            ? `last ${formatDate(today, "EEEE")}`
+            : rangeText(priorDates.from, priorDates.to)
+        }`
       : undefined;
+  const when = isToday ? "today" : "in range";
   const notificationsOff =
     (process.env.NOTIFICATIONS_SMS_PROVIDER ?? "disabled") === "disabled" &&
     (process.env.NOTIFICATIONS_EMAIL_PROVIDER ?? "disabled") === "disabled";
-  const scopeName =
-    ctx.currentShopId === null
+  const scopeName = locs.shopParam
+    ? locs.label
+    : ctx.currentShopId === null
       ? ctx.brandWide
         ? "All shops"
         : "All my shops"
@@ -342,7 +409,18 @@ export default async function Dashboard({
     <div className="mx-auto max-w-6xl space-y-5">
       <PageHeader
         title={`Hi ${ctx.staff.firstName}`}
-        subtitle={`${scopeName} · ${formatDate(today, "EEEE, MMMM d")}`}
+        subtitle={
+          <>
+            {scopeName} · {formatDate(today, "EEEE, MMMM d")}
+            {!isToday && (
+              <>
+                {" "}
+                · Metrics:{" "}
+                <span data-testid="dashboard-range">{heading}</span>
+              </>
+            )}
+          </>
+        }
         actions={
           <>
             <LinkButton href="/admin/calendar" variant="secondary">
@@ -409,28 +487,39 @@ export default async function Dashboard({
         </Notice>
       )}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <ReportFilters
+        base="/admin"
+        preset={range.preset}
+        from={range.from}
+        to={range.to}
+        scope={locs}
+        location={ctx.shops.length > 1 ? locationProps(ctx, locs) : null}
+        payPeriods={payPeriods}
+        views={false}
+      />
+
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="dashboard-stats">
         <Stat
-          label={ownSales ? "My services today" : "Net sales today"}
+          label={ownSales ? `My services ${when}` : `Net sales ${when}`}
           value={formatCents(summary.netSalesCents)}
           hint={delta(summary.netSalesCents, prior.netSalesCents)}
           tone={summary.netSalesCents >= prior.netSalesCents ? "up" : "down"}
         />
         <Stat
-          label="Tips today"
+          label={`Tips ${when}`}
           value={formatCents(summary.tipsCents)}
           hint={`${summary.tickets} tickets`}
         />
         <Stat
           label="Appointments"
-          value={count([
+          value={booked([
             "booked",
             "confirmed",
             "checked_in",
             "in_service",
             "completed",
           ])}
-          hint={`${count(["completed"])} done · ${count(["no_show"])} no-show`}
+          hint={`${booked(["completed"])} done · ${booked(["no_show"])} no-show`}
         />
         <Stat
           label={ownBook ? "Waiting for me" : "Waiting now"}
@@ -440,7 +529,16 @@ export default async function Dashboard({
       </div>
 
       <Suspense fallback={<PphCardSkeleton />}>
-        <DashboardPph ctx={ctx} rankBy={pphBy} perClientBy={ppcBy} today={today} now={now} />
+        <DashboardPph
+          ctx={ctx}
+          rankBy={pphBy}
+          perClientBy={ppcBy}
+          today={today}
+          now={now}
+          shopIds={shopIds}
+          range={cardRange}
+          query={rangeQuery}
+        />
       </Suspense>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -642,7 +740,9 @@ export default async function Dashboard({
             <MyRebookCard r={myRebookRate} />
           )}
           <Card className="p-4 text-sm">
-            <div className="font-semibold">Today so far</div>
+            <div className="font-semibold">
+              {isToday ? "Today so far" : heading}
+            </div>
             <dl className="mt-2 space-y-1 tabular">
               <div className="flex justify-between">
                 <dt className="text-zinc-500">Services</dt>
@@ -671,8 +771,11 @@ export default async function Dashboard({
 
       {shopRows.length > 0 && (
         <Card>
-          <CardHeader title="By shop today" />
-          <Table label="By shop today">
+          <CardHeader
+            title={isToday ? "By shop today" : "By shop"}
+            subtitle={isToday ? undefined : heading}
+          />
+          <Table label={isToday ? "By shop today" : "By shop"}>
             <thead>
               <tr>
                 <Th>Shop</Th>

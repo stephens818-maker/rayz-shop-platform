@@ -10,10 +10,14 @@ import type { LocalDate } from "@/lib/time";
 import { type Pph, type PphRank, type Ranked, perClientCents, pphCents, pphOf, rankPph, uniqueClients } from "./pph";
 
 export const CARD_PERIODS = ["today", "yesterday", "period"] as const;
-export type CardPeriod = (typeof CARD_PERIODS)[number];
-export const CARD_PERIOD_LABEL: Record<CardPeriod, string> = { today: "Today", yesterday: "Yesterday", period: "Period to date" };
-/** The leaderboards rank the pay period to date unless another period is picked. */
-export const parseCardPeriod = (v: unknown): CardPeriod => (CARD_PERIODS.includes(v as CardPeriod) ? (v as CardPeriod) : "period");
+/** With a date range picked on the dashboard, its tile follows the others and the leaderboards rank it. */
+export type CardPeriod = (typeof CARD_PERIODS)[number] | "range";
+export const CARD_PERIOD_LABEL: Record<CardPeriod, string> = { today: "Today", yesterday: "Yesterday", period: "Period to date", range: "Selected range" };
+export const cardPeriods = (withRange: boolean): CardPeriod[] => (withRange ? [...CARD_PERIODS, "range"] : [...CARD_PERIODS]);
+/** The leaderboards rank the selected range, or without one the pay period to date, unless another period is picked. */
+export const parseCardPeriod = (v: unknown, withRange = false): CardPeriod => (cardPeriods(withRange).includes(v as CardPeriod) ? (v as CardPeriod) : withRange ? "range" : "period");
+/** The most days a range's sparkline shows: its last ones. */
+export const RANGE_SPARK_DAYS = 62;
 
 /** Days on the sparkline, today last. */
 export const SPARK_DAYS = 14;
@@ -32,7 +36,8 @@ export interface CardRow {
 }
 
 export interface CardInput {
-  rows: Record<CardPeriod, readonly CardRow[]>;
+  /** `range` only with a selected range. */
+  rows: Record<(typeof CARD_PERIODS)[number], readonly CardRow[]> & { range?: readonly CardRow[] };
   /** Each day on the sparkline, oldest first. */
   days: readonly { date: LocalDate; rows: readonly CardRow[] }[];
   shops: readonly { id: string; name: string }[];
@@ -76,7 +81,7 @@ export function pphCard(x: CardInput): PphCardData {
   const rank: PphRank = x.money ? "service" : "clients";
   const value = (e: BoardEntry) => pphOf(e.p, rank);
   const name = (e: BoardEntry) => e.name;
-  const ranked = x.rows[x.rankBy];
+  const ranked = x.rows[x.rankBy] ?? [];
   const multi = x.shops.length > 1;
   const shopName = new Map(x.shops.map((s) => [s.id, s.name]));
   const byStaff = new Map<string, CardRow[]>();
@@ -89,7 +94,7 @@ export function pphCard(x: CardInput): PphCardData {
   }));
   const shops = multi ? x.shops.map((s) => ({ id: s.id, name: s.name, detail: null, p: cardTotal(ranked.filter((r) => r.shopId === s.id)) })) : [];
   return {
-    total: { today: cardTotal(x.rows.today), yesterday: cardTotal(x.rows.yesterday), period: cardTotal(x.rows.period) },
+    total: { today: cardTotal(x.rows.today), yesterday: cardTotal(x.rows.yesterday), period: cardTotal(x.rows.period), range: cardTotal(x.rows.range ?? []) },
     rank,
     rankBy: x.rankBy,
     barbers: rankPph(barbers, value, name),
@@ -133,7 +138,7 @@ export function perClientTotal(rs: readonly CardRow[]): PerClient {
 }
 
 export function perClientCard(x: Omit<CardInput, "money">): PerClientCardData {
-  const ranked = x.rows[x.rankBy];
+  const ranked = x.rows[x.rankBy] ?? [];
   const multi = x.shops.length > 1;
   const shopName = new Map(x.shops.map((s) => [s.id, s.name]));
   const byStaff = new Map<string, CardRow[]>();
@@ -148,7 +153,7 @@ export function perClientCard(x: Omit<CardInput, "money">): PerClientCardData {
   const value = (e: PerClientEntry) => e.f.perClient;
   const name = (e: PerClientEntry) => e.name;
   return {
-    total: { today: perClientTotal(x.rows.today), yesterday: perClientTotal(x.rows.yesterday), period: perClientTotal(x.rows.period) },
+    total: { today: perClientTotal(x.rows.today), yesterday: perClientTotal(x.rows.yesterday), period: perClientTotal(x.rows.period), range: perClientTotal(x.rows.range ?? []) },
     rankBy: x.rankBy,
     barbers: rankPph(barbers, value, name),
     shops: rankPph(shops, value, name),

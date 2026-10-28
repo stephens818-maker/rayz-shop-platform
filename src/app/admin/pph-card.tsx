@@ -2,7 +2,8 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { Card, CardHeader, Table, cx } from "@/components/ui";
 import { Sparkline } from "@/components/sparkline";
-import { BOARD_ROWS, CARD_PERIODS, CARD_PERIOD_LABEL, type CardPeriod, type PerClient, type PerClientCardData } from "@/domain/pph-card";
+import { BOARD_ROWS, CARD_PERIOD_LABEL, type CardPeriod, type PerClient, type PerClientCardData } from "@/domain/pph-card";
+import { rangeText } from "@/domain/report-range";
 import { CLIENTS_LABEL, PER_CLIENT_LABEL, PPH_LABEL, type Pph, type Ranked, clientsText, pphText } from "@/domain/pph";
 import { formatCents } from "@/lib/money";
 import { type LocalDate, formatDate } from "@/lib/time";
@@ -22,8 +23,29 @@ const countText = (n: number) => n.toLocaleString("en-US");
  * only the shops where they may see the PPH report. Productivity Per Hour, then product sales per
  * client beside it when they may see dollar amounts. Nothing when there are no such shops.
  */
-export async function DashboardPph({ ctx, rankBy, perClientBy, today, now }: { ctx: StaffContext; rankBy: CardPeriod; perClientBy: CardPeriod; today: LocalDate; now: Date }) {
-  const ids = reportShopIds(ctx);
+export async function DashboardPph({
+  ctx,
+  rankBy,
+  perClientBy,
+  today,
+  now,
+  shopIds,
+  range = null,
+  query = "",
+}: {
+  ctx: StaffContext;
+  rankBy: CardPeriod;
+  perClientBy: CardPeriod;
+  today: LocalDate;
+  now: Date;
+  /** The dashboard's shops; its current shop, or all of them, by default. */
+  shopIds?: readonly string[];
+  /** The dashboard's date range when it isn't today. */
+  range?: { from: LocalDate; to: LocalDate; label: string } | null;
+  /** The dashboard's shops and dates, kept by the leaderboard links. */
+  query?: string;
+}) {
+  const ids = shopIds ?? reportShopIds(ctx);
   const d = await pphDashboard({
     access: ctx.access,
     shops: ids.map((id) => ({ id, name: ctx.shops.find((s) => s.id === id)?.name ?? "" })),
@@ -32,11 +54,12 @@ export async function DashboardPph({ ctx, rankBy, perClientBy, today, now }: { c
     now,
     rankBy,
     perClientBy,
+    range,
   });
   if (!d) return null;
   const shop = d.scope === "brand" ? "all" : d.shopIds.join(",");
-  const href = (pph: CardPeriod, ppc: CardPeriod) => `/admin?pph=${pph}&ppc=${ppc}`;
-  const report = `/admin/reports/pph?preset=pp:current&shop=${shop}`;
+  const href = (pph: CardPeriod, ppc: CardPeriod) => `/admin?${query ? `${query}&` : ""}pph=${pph}&ppc=${ppc}`;
+  const report = `/admin/reports/pph?${range ? `from=${range.from}&to=${range.to}` : "preset=payperiod"}&shop=${shop}`;
   return (
     <>
       <PphCard d={d} rankHref={(p) => href(p, perClientBy)} reportHref={report} />
@@ -62,7 +85,10 @@ const periodSubs = (d: PphDashboard): Record<CardPeriod, string> => ({
   today: `${formatDate(d.dates.today, "EEE MMM d")}, so far`,
   yesterday: formatDate(d.dates.yesterday, "EEE MMM d"),
   period: d.period ? `${d.period.label} pay period` : "Each location's pay period",
+  range: d.range ? `${d.range.label}: ${rangeText(d.range.from, d.range.to > d.dates.today ? d.dates.today : d.range.to)}` : "",
 });
+
+const tileGrid = (n: number) => cx("grid grid-cols-1 gap-3 p-4", n === 4 ? "sm:grid-cols-2 lg:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,1.2fr)]" : "sm:grid-cols-3 lg:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.2fr)]");
 
 /** The dashboard's Productivity Per Hour card: today, yesterday and the period to date, the leaderboards and a 14-day sparkline. */
 export function PphCard({ d, rankHref, reportHref }: { d: PphDashboard; rankHref: (p: CardPeriod) => string; reportHref: string }) {
@@ -83,8 +109,8 @@ export function PphCard({ d, rankHref, reportHref }: { d: PphDashboard; rankHref
           </Link>
         }
       />
-      <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3 lg:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.2fr)]">
-        {CARD_PERIODS.map((k) => {
+      <div className={tileGrid(d.periods.length)}>
+        {d.periods.map((k) => {
           const p = d.total[k];
           return (
             <Tile key={k} id={`pph-${k}`} period={k} head={head(p)} unit={what} sub={sub[k]}>
@@ -98,10 +124,10 @@ export function PphCard({ d, rankHref, reportHref }: { d: PphDashboard; rankHref
             </Tile>
           );
         })}
-        <Trend id="pph-trend" spark={d.spark} shown={(v) => (d.money ? formatCents(v) : v.toFixed(2))} label={what} gap="A gap is a day nobody worked." />
+        <Trend id="pph-trend" spark={d.spark} today={d.dates.today} inRange={!!d.range} shown={(v) => (d.money ? formatCents(v) : v.toFixed(2))} label={what} gap="A gap is a day nobody worked." />
       </div>
       {d.scope !== "own" && (
-        <Boards rankBy={d.rankBy} rankHref={rankHref} two={d.shops.length > 0}>
+        <Boards periods={d.periods} rankBy={d.rankBy} rankHref={rankHref} two={d.shops.length > 0}>
           <Board id="pph-barbers" title="Barbers" rankBy={d.rankBy} heads={heads} rows={rowsOf(d.barbers)} total={cells(d.total[d.rankBy])} totalLabel={d.totalLabel} detail={d.shops.length > 0} reportHref={reportHref} label={what} />
           {d.shops.length > 0 && <Board id="pph-locations" title="Locations" rankBy={d.rankBy} heads={heads} rows={rowsOf(d.shops)} total={cells(d.total[d.rankBy])} totalLabel={d.totalLabel} detail={false} reportHref={reportHref} label={what} />}
         </Boards>
@@ -128,8 +154,8 @@ export function PerClientCard({ d, c, rankHref, reportHref }: { d: PphDashboard;
           </Link>
         }
       />
-      <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3 lg:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.2fr)]">
-        {CARD_PERIODS.map((k) => {
+      <div className={tileGrid(d.periods.length)}>
+        {d.periods.map((k) => {
           const f = c.total[k];
           return (
             <Tile key={k} id={`per-client-${k}`} period={k} head={money(f.perClient)} unit={PER_CLIENT_LABEL} sub={sub[k]}>
@@ -138,10 +164,10 @@ export function PerClientCard({ d, c, rankHref, reportHref }: { d: PphDashboard;
             </Tile>
           );
         })}
-        <Trend id="per-client-trend" spark={c.spark} shown={formatCents} label={PER_CLIENT_LABEL} gap="A gap is a day with no clients." />
+        <Trend id="per-client-trend" spark={c.spark} today={d.dates.today} inRange={!!d.range} shown={formatCents} label={PER_CLIENT_LABEL} gap="A gap is a day with no clients." />
       </div>
       {d.scope !== "own" && (
-        <Boards rankBy={c.rankBy} rankHref={rankHref} two={many}>
+        <Boards periods={d.periods} rankBy={c.rankBy} rankHref={rankHref} two={many}>
           <Board id="per-client-barbers" title="Barbers" rankBy={c.rankBy} heads={heads} rows={rowsOf(c.barbers)} total={cells(c.total[c.rankBy])} totalLabel={d.totalLabel} detail={many} reportHref={reportHref} label={PER_CLIENT_LABEL} empty="No clients" />
           {many && <Board id="per-client-locations" title="Locations" rankBy={c.rankBy} heads={heads} rows={rowsOf(c.shops)} total={cells(c.total[c.rankBy])} totalLabel={d.totalLabel} detail={false} reportHref={reportHref} label={PER_CLIENT_LABEL} empty="No clients" />}
         </Boards>
@@ -171,27 +197,29 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Trend({ id, spark, shown, label, gap }: { id: string; spark: { date: LocalDate; value: number | null }[]; shown: (v: number) => string; label: string; gap: string }) {
+function Trend({ id, spark, today, inRange, shown, label, gap }: { id: string; spark: { date: LocalDate; value: number | null }[]; today: LocalDate; inRange: boolean; shown: (v: number) => string; label: string; gap: string }) {
   const first = spark[0]?.date;
+  const last = spark[spark.length - 1]?.date;
+  const title = inRange ? `Each day of the range${spark.length ? `, ${spark.length} days` : ""}` : `Last ${spark.length} days`;
   return (
-    <div className="rounded-lg bg-zinc-50 p-3 sm:col-span-3 lg:col-span-1" data-testid={id}>
-      <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">Last {spark.length} days</div>
-      <Sparkline values={spark.map((s) => s.value)} labels={spark.map((s) => formatDate(s.date, "EEE MMM d"))} shown={shown} label={`${label} by day, last ${spark.length} days`} />
+    <div className="rounded-lg bg-zinc-50 p-3 sm:col-span-full lg:col-span-1" data-testid={id}>
+      <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">{title}</div>
+      <Sparkline values={spark.map((s) => s.value)} labels={spark.map((s) => formatDate(s.date, "EEE MMM d"))} shown={shown} label={`${label} by day, ${title.toLowerCase()}`} />
       <div className="mt-1 flex justify-between text-[11px] text-zinc-400">
         <span>{first ? formatDate(first, "MMM d") : ""}</span>
-        <span>Today</span>
+        <span>{last === today ? "Today" : last ? formatDate(last, "MMM d") : ""}</span>
       </div>
       <p className="mt-1 text-[11px] text-zinc-500">Each day on its own. {gap}</p>
     </div>
   );
 }
 
-function Boards({ rankBy, rankHref, two, children }: { rankBy: CardPeriod; rankHref: (p: CardPeriod) => string; two: boolean; children: ReactNode }) {
+function Boards({ periods, rankBy, rankHref, two, children }: { periods: readonly CardPeriod[]; rankBy: CardPeriod; rankHref: (p: CardPeriod) => string; two: boolean; children: ReactNode }) {
   return (
     <div className="border-t border-zinc-100 px-4 pb-4 pt-3">
       <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
         <span className="text-zinc-500">Leaderboards:</span>
-        {CARD_PERIODS.map((k) => (
+        {periods.map((k) => (
           <Link
             key={k}
             scroll={false}
@@ -218,7 +246,7 @@ interface BoardRow {
 
 function Board(p: { id: string; title: string; rankBy: CardPeriod; heads: string[]; rows: BoardRow[]; total: string[]; totalLabel: string; detail: boolean; reportHref: string; label: string; empty?: string }) {
   const shown = p.rows.slice(0, BOARD_ROWS);
-  const when = p.rankBy === "period" ? "this pay period" : p.rankBy;
+  const when = p.rankBy === "period" ? "this pay period" : p.rankBy === "range" ? "in this range" : p.rankBy;
   return (
     <div data-testid={p.id}>
       <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">

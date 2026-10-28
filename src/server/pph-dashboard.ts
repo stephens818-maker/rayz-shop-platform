@@ -4,8 +4,8 @@ import { db } from "@/db";
 import { staff } from "@/db/schema";
 import { periodOf } from "@/domain/payroll/calendar";
 import { reportView, type Permission } from "@/domain/permissions";
-import { type CardPeriod, type CardRow, type PerClientCardData, type PphCardData, SPARK_DAYS, perClientCard, pphCard } from "@/domain/pph-card";
-import { type LocalDate, addDays } from "@/lib/time";
+import { type CardPeriod, type CardRow, type PerClientCardData, type PphCardData, RANGE_SPARK_DAYS, SPARK_DAYS, cardPeriods, perClientCard, pphCard } from "@/domain/pph-card";
+import { type LocalDate, addDays, diffDays } from "@/lib/time";
 import type { StaffAccess } from "./auth/access";
 import { brandCalendar, ensurePayGroups } from "./payroll/groups";
 import { periodLabel } from "./payroll/periods";
@@ -27,6 +27,10 @@ export interface PphDashboard extends PphCardData {
   money: boolean;
   shopIds: string[];
   dates: { today: LocalDate; yesterday: LocalDate };
+  /** The tiles shown, in order: the selected range last when there is one. */
+  periods: CardPeriod[];
+  /** The dashboard's selected range (other than today), its tile and what the leaderboards rank by default. */
+  range: { from: LocalDate; to: LocalDate; label: string } | null;
   /** The pay period the period to date is in; null where the shops' calendars differ (each shop's own). */
   period: { start: LocalDate; end: LocalDate; label: string } | null;
   /** Product sales per client over the same shops and periods; null without money (it's a dollar figure). */
@@ -60,6 +64,8 @@ export interface PphDashboardInput {
   rankBy: CardPeriod;
   /** The period the product sales per client leaderboards rank; the PPH one's by default. */
   perClientBy?: CardPeriod;
+  /** The dashboard's date range when it isn't today: a tile of its own, the leaderboards' default, and the sparkline's days. */
+  range?: { from: LocalDate; to: LocalDate; label: string } | null;
 }
 
 /**
@@ -77,24 +83,35 @@ export async function pphDashboard(o: PphDashboardInput): Promise<PphDashboard |
   const dayRanges = days.map((d) => ({ start: d, end: d }));
   const [periods, open] = await Promise.all([currentPeriods(shopIds, o.today), openShiftWork(shopIds, sel.staffIds, o.now)]);
   const toDate = (p: { start: LocalDate }) => ({ start: p.start > o.today ? o.today : p.start, end: o.today });
+  // A range runs to today at the latest: nothing is worked or sold after it.
+  const r = o.range ?? null;
+  const rangeEnd = r ? (r.to > o.today ? o.today : r.to) : null;
+  const rangeOn = !!r && r.from <= rangeEnd!;
+  const rangeDays = rangeOn ? Array.from({ length: Math.min(RANGE_SPARK_DAYS, diffDays(rangeEnd!, r!.from) + 1) }, (_, i) => addDays(rangeEnd!, i - Math.min(RANGE_SPARK_DAYS, diffDays(rangeEnd!, r!.from) + 1) + 1)) : [];
+  const extra = [...(rangeOn ? [{ start: r!.from, end: rangeEnd! }] : []), ...rangeDays.map((d) => ({ start: d, end: d }))];
 
   let daily: CardRow[][];
   let period: CardRow[];
+  let rest: CardRow[][];
   if (periods.length === 1) {
-    const all = await pphRowsFor(sel, [...dayRanges, toDate(periods[0])], open);
+    const all = await pphRowsFor(sel, [...dayRanges, toDate(periods[0]), ...extra], open);
     daily = all.slice(0, SPARK_DAYS);
     period = all[SPARK_DAYS];
+    rest = all.slice(SPARK_DAYS + 1);
   } else {
-    const [d, ...each] = await Promise.all([pphRowsFor(sel, dayRanges, open), ...periods.map((p) => pphRowsFor({ ...sel, shopIds: p.shopIds }, [toDate(p)], open))]);
-    daily = d;
+    const [d, ...each] = await Promise.all([pphRowsFor(sel, [...dayRanges, ...extra], open), ...periods.map((p) => pphRowsFor({ ...sel, shopIds: p.shopIds }, [toDate(p)], open))]);
+    daily = d.slice(0, SPARK_DAYS);
+    rest = d.slice(SPARK_DAYS);
     period = each.flatMap((x) => x[0]);
   }
+  const rangeRows = rangeOn ? rest[0] : [];
+  const rangeDaily = rangeOn ? rest.slice(1) : [];
 
-  const people = [...new Set([...daily.flat(), ...period].map((r) => r.staffId))];
+  const people = [...new Set([...daily.flat(), ...period, ...rangeRows].map((r) => r.staffId))];
   const names = new Map((people.length ? await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, people)) : []).map((s) => [s.id, s.label]));
   const input = {
-    rows: { today: daily[SPARK_DAYS - 1], yesterday: daily[SPARK_DAYS - 2], period },
-    days: days.map((date, i) => ({ date, rows: daily[i] })),
+    rows: { today: daily[SPARK_DAYS - 1], yesterday: daily[SPARK_DAYS - 2], period, ...(r ? { range: rangeRows } : {}) },
+    days: r ? rangeDays.map((date, i) => ({ date, rows: rangeDaily[i] })) : days.map((date, i) => ({ date, rows: daily[i] })),
     shops: ownOnly ? [] : shops,
     names,
   };
@@ -109,6 +126,8 @@ export async function pphDashboard(o: PphDashboardInput): Promise<PphDashboard |
     money,
     shopIds,
     dates: { today: o.today, yesterday: addDays(o.today, -1) },
+    periods: cardPeriods(!!r),
+    range: r,
     period: periods.length === 1 ? { start: periods[0].start, end: periods[0].end, label: periodLabel(periods[0]) } : null,
     perClient: pc && { ...pc, barbers: ownOnly ? [] : pc.barbers },
   };
