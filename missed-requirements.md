@@ -123,7 +123,8 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 - [x] Per-shop iSolved xlsx in the workbook's exact format, OT hours only, unrounded by default, formatting copied per tab and diffed in a test. Downloads once the figures are approved (sheet named for the shop, `0.00` by default, the Key's cell type kept). No iSolved API.
 - [x] FT/PT: averaging more than 32 h/week; basis and window are settings.
 - [x] `docs/payroll-report-spec.md` and the anonymized `docs/payroll-workbook-discrepancies.md`.
-- [ ] Charles: Q11 (training inside clocked hours; C2 flag off), Q17 (the owner row and the Coralville NetComm gap), the FT basis and window, and 2-decimal rounding (off).
+- [x] Charles: Q11, training on top of clocked hours, C2 on (§56).
+- [ ] Charles: Q17 (the owner row and the Coralville NetComm gap), the FT basis and window, and 2-decimal rounding (off).
 - [x] Payroll Report under Reports (Charles's spec): the workbook's Locations tab per shop, totals over every employee, Gross Profit, the Service Sales / Employee Cost / Gross Profit summary, sales tax for reference only, unassigned sales, matching by employee ID, adjustments with reasons instead of typed-over cells, product sales and OT from the system, and xlsx and CSV downloads.
 - [x] Run → review (drill-down, anomalies) → approve → lock, with an audit trail. A change after approval makes it stale; take-backs need a reason; approvals can't be edited or deleted (migration `core_0128_payroll_approvals`, DEPLOY step 48).
 - [x] Effective-dated rates by checkout date from Staff → Compensation, shown as "mixed" when they change inside a period (needs compensation plans on and Payroll using them).
@@ -1056,7 +1057,8 @@ The iSolved file's columns, headers, order and codes stay exactly as in Charles'
 - [x] Privacy: the docs and tests carry only made-up figures, and a test guards it.
 - [ ] C1 (Needs Charles): regular-rate OT on commission is computed and flagged; the file column is a switch, off.
 - [ ] C3 (Needs Charles and his CPA): card tips off Cash Tips Recd; the column setting is unchanged.
-- [ ] Q11 (training inside clocked hours) and Q15 (loyalty in the commission base).
+- [x] Q11: training on top of clocked hours (§56).
+- [ ] Q15 (loyalty in the commission base).
 
 ## 47. Launch day: every surface at the same time (Charles, Oct 28)
 
@@ -1173,8 +1175,8 @@ The plan's P0 cases must all pass in the sandbox before the pilot. Status by cas
 - [x] Its own line in `/me/earnings`, top level and per shop, to the cent with the report (`tests/db/training-pay.test.ts`, `tests/my-earnings-contract.test.ts`).
 - [x] C2 stays a setting, on by default. Overtime past the hours clocked at a shop comes off that shop's training, never negative regular hours (`training_overtime`).
 - [x] Locked periods keep their figures.
-- [ ] **Ask Charles and the CPA (Q11):** does training count toward the weekly 40, and are training hours on top of clocked hours? Until then, training counts (FLSA: training is generally hours worked).
-- [ ] **Ask Charles and the CPA:** when training on top of clocked hours takes a week past 40, the overtime comes out of regular hours as any overtime does, so the hourly side of the greater-of drops by those hours. Keep that, or take the overtime from training first?
+- [x] **Answered (Charles, Q11, section 56): training is on top of clocked hours and counts.** Asked: does training count toward the weekly 40, and are training hours on top of clocked hours? Until then, training counts (FLSA: training is generally hours worked).
+- [x] **Answered (section 56): OT comes out of regular hours and every training hour is paid at the training rate.** Asked: when training on top of clocked hours takes a week past 40, the overtime comes out of regular hours as any overtime does, so the hourly side of the greater-of drops by those hours. Keep that, or take the overtime from training first?
 - [ ] **Ask Charles:** My Earnings shows only the shops someone works at. Should it also show another shop where they have hours in the period, such as a day of training there? It's on the Payroll Report and in the iSolved file either way.
 
 ## 55. PPH, Productivity Per Hour (Charles, Oct 28)
@@ -1192,9 +1194,22 @@ The plan's P0 cases must all pass in the sandbox before the pilot. Status by cas
 - [ ] **Ask Charles:** on the dashboard, today counts open shifts up to now. Is that how he wants a live PPH read, or only clocked-out hours? And should a shop's dashboard show the brand figure beside the shop's (it doesn't now; he said a shop's shows only that shop)?
 - [ ] **Ask Charles:** Squire-era tickets count toward PPH on the days they were sold, though payroll leaves them out. Keep that? And should a commission base with the card fee or loyalty added (I10) also count in PPH, as the Payroll Report's Service$ does? For clients per hour: is a ticket the right unit (a family ticket counts once), and should a $0 comp service count as a client (it does now)?
 
+## 56. Training toward overtime (Charles, Q11, Oct 28)
+
+- [x] Training hours are on top of clocked production hours: production + training over 40 per Chicago Sun–Sat workweek is overtime, summed across every shop (C2 on; migration `core_0146` turns it on where it was saved off).
+- [x] OT shared out to the shops in proportion to their hours, each shop's training counted. Training at a second shop gets its share there, taken from the training hours when nothing was clocked there (`training_overtime`).
+- [x] Training pay = training hours × the flat training rate, outside the greater-of; OT comes out of regular hours.
+- [x] OT hours in the existing `E_Overtime 1.5_Hours` column, the format unchanged; iSolved applies the rate.
+- [x] Training cost and its share of OT cost in labor cost on the Payroll Report (Training Cost, inside Labor Cost) and in the reconciliation gate. Commission's regular-rate half-time is spread over production plus training hours.
+- [x] Golden tests: 38 production + 4 training = 2 OT hours, and training at a second shop (`tests/payroll-training-ot.test.ts`, `tests/db/training-overtime.test.ts`); the golden fixtures' labor cost includes training.
+- [x] The discrepancy doc flags that the workbook misses this: claude's estimate, about 12.9 OT hours short for 4 barbers this period, roughly $101, from an even weekly split, labelled an estimate (section 16).
+- [x] `/me/earnings` counts training hours in weekly OT, with training's share on its `training` line.
+- [ ] **Ask the CPA:** is training hours worked under the FLSA? Everything above rests on it.
+- [ ] **Ask Charles and his CPA:** correct past periods the workbook ran without this? Nothing is corrected automatically.
+
 ## Deferred by decision
 
 - I10 is decided: separate charges and transfers (section 5), with tips to barbers' recipient accounts on (`FEATURE_TIP_TO_BARBER`, the CPA approved it on 2026-10-28), turned off per shop with the brand setting `tip_to_barber` (section 50). Live tip transfers also need `MONEY_MOVEMENT_LIVE`.
-- The Q11/C2 training setting stays a setting until Charles and the CPA answer Q11 (on by default since section 46; training pay itself is settled, section 54).
+- The C2 training setting stays a setting, on: Charles answered Q11 (section 56), and the CPA is to confirm training is hours worked under the FLSA.
 - PR #8 isn't merged.
 - `DEMO_MODE` isn't turned on in production, because it would break the Vercel demo.

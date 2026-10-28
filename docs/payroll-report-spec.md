@@ -74,6 +74,7 @@ The platform adds three columns to the right. The export never contains them.
 | T | O.T. Pay | 1.5 × C × Q (base rate) |
 | U | Training Pay | training rate × S (§3.3): their Staff page's rate in effect each day, else Payroll setup's, else C (flagged) |
 | V | Labor Cost | N + T + U + any guarantee top-up + the regular-rate OT premium owed (§3.4) |
+|  | Training Cost | U + training's share of T (§3.3): what training adds, inside V, never added to it |
 
 ### 2.1 What Total Wages leaves out
 
@@ -84,6 +85,7 @@ The platform counts both as labor cost:
 - **O.T. Pay** (T) is real labor cost on the report: in each person's and each shop's Labor Cost, in the Locations view, in every total and in the reconciliation gate. It uses the base rate after the cross-shop split, so it follows the same share-of-hours rule as the OT hours. iSolved's "Overtime 1.5" earning is blended OT from its accumulators and includes commission in the regular rate, so the real figure can be higher. The drill-down says "iSolved may compute blended OT higher."
 - **Training Pay** (U) is real labor cost too (Charles, Oct 28; the earlier "Training pay is labor cost" setting is gone): training hours × the person's own flat training rate, its own line outside the greater-of (§3.3). It's in each person's and each shop's Labor Cost, the Locations view, every total and the reconciliation gate. Periods locked before this keep their figures, with training pay left out of their Labor Cost.
 - **Labor Cost** (V) = N + T + U, plus the regular-rate OT premium commission adds (§3.4). The Locations view's Employee Cost is Labor Cost, and its Gross Profit is Service − Labor Cost.
+- **Training Cost** is the part of Labor Cost that training adds (Q11): Training Pay plus training's share of O.T. Pay (§3.3). It's already inside V, so it's shown beside it and never added again.
 
 The per-employee drill-down shows each piece as a formula with the person's own numbers (for example, "O.T. Pay = 1.5 × $14.50 base rate × 6.40 OT hours = $139.20").
 
@@ -116,7 +118,7 @@ On screen, hours read decimal like the workbook (`78.25`) or as hours and minute
 Ray'z Inc. is one legal company with one FEIN, and each shop is a pay group of it, so overtime is worked out across **all** shops by default.
 
 1. **Workweek:** Sunday 00:00 to Saturday 24:00, America/Chicago.
-2. **Basis:** for each person and legal entity (FEIN), add up their worked hours at every shop of that entity in the workweek. Training on top of clocked hours counts too (C2, a setting, on by default, §3.3). PTO never counts.
+2. **Basis:** for each person and legal entity (FEIN), add up their worked (production) hours at every shop of that entity in the workweek, plus their training hours: Charles says training is on top of clocked production hours (Q11, §3.3). Ray'z Inc. is one FEIN, so that's every shop. PTO never counts.
 3. **OT hours** = basis − 40 (the threshold is a setting), or 0.
 4. **Split by share of hours.** The week is cut into slices, one per shop and per pay period that shop's calendar puts those days in. Within one pay period, each slice gets that period's OT in proportion to its share of the period's basis (when the whole week is in one period, that's its share of the week's). Shares are rounded to hundredths by largest remainder (ties go to the earlier slice), so the slices add up to the week's OT exactly, and no slice gets more OT than its own hours.
 5. **Weeks that span two pay periods**, or two pay calendars (Dubuque's periods start on different Sundays from the other shops', or a workweek start that isn't the period's): the whole week is still one week, and OT is computed once for it. **The OT goes to the period that holds the hours past the 40th**, in date order: day by day through the week, a day's OT is the part of it beyond 40, shared by hours among that day's slices. Within one period, its OT is shared among its shops by hours as in 4. So 24 h before a period boundary and 20 h after it put all 4.00 OT hours in the later period (PY-OT-03). Hours belong to the period of the day worked.
@@ -130,17 +132,21 @@ Example (tested): 25 h at shop A and 20 h at shop B in one week makes 45 h, so 5
 
 The per-shop export columns don't change; only the hour values do. The Payroll Report shows each person's weekly breakdown (every shop, every week, OT per slice) in the drill-down.
 
-### 3.3 Training and the C2 flag (Q11)
+### 3.3 Training and the C2 flag (Q11, answered)
 
-C2 is the "training counts toward overtime" setting. It's **on** by default: FLSA counts training as hours worked, so training on top of clocked hours adds to the weekly basis in §3.2 and carries its share of the OT. It stays a setting until Charles answers Q11.
+**Charles (Q11, Oct 28, via claude bot): training hours are on top of clocked production hours.** So production hours + training hours over 40 in a Chicago Sun–Sat workweek, summed across every shop, are overtime (§3.2). Each shop's share of the OT is in proportion to its hours with its training counted. C2, "training counts toward overtime", is on, and migration `core_0146` turns it on for a brand that saved it off while off was the default. It stays a setting because it rests on training being hours worked under the FLSA, which the CPA still needs to confirm; turn it off only on the CPA's advice.
 
-Training is never counted twice. Where a training entry falls inside the same person's clocked worked time (at any shop), that part is already in their worked hours, so it's left out of the basis and the line gets a "training_in_hours" anomaly: it's exported as both regular and training hours, so it's paid twice unless the entry is fixed. With the setting off, every line with training gets the anomaly instead.
+Training is never counted twice. Where a training entry falls inside the same person's clocked worked time (at any shop), that part is already in their worked hours, so it's left out of the basis and the line gets a "training_in_hours" anomaly. Since training is on top of clocked hours, that's most likely the same time entered twice: it's exported as both regular and training hours, so it's paid twice unless the entry is fixed. With the setting off, every line with training gets the anomaly instead.
 
 **Training pay (Charles, Oct 28).** Training is paid at its own flat hourly training rate and never enters commission or the greater-of: Training Pay (U) = training hours (S) × the training rate, its own line, in Labor Cost. The rate is per employee and effective-dated (`staff_training_rates`, the **Training rate** card on their Staff page). Each day's training is paid at the rate in effect that day; when that changes inside the period the line's rate is hours-weighted and shows "mixed". Without a Staff page rate, Payroll setup's training rate applies, then their hourly wage, flagged `no_training_rate`. Squire-data shops and hours typed on the report use the rate on the period's last day. A rate is history: it starts after the last locked pay period, isn't edited, and only one that hasn't started, and no locked period used, can be deleted (a database trigger enforces it).
 
-**Overtime from training.** With C2 on, a shop's share of the week's OT can be more than the hours clocked at that shop (for example, a Saturday of training at another shop after 40 clocked hours). The OT past the clocked hours comes off that shop's training hours, so regular hours are never negative, and the line gets a `training_overtime` anomaly. Otherwise OT comes out of regular hours as always, so when training pushes a week past 40 the hourly side of the greater-of drops by those hours; taking it from training first is the alternative, pending Q11.
+**Overtime and training pay (Q11).** The week's OT comes out of the regular (production) hours, and every training hour is still paid at the flat training rate, outside the greater-of. 38 production hours + 4 training hours is 42 toward the 40, so 2 OT hours: the file has 36 in `E_Regular_Hours`, 2 in `E_Overtime 1.5_Hours` and 4 in `E_Training_Hours`, the format unchanged, and iSolved applies the rate. The one exception: a shop's share of the OT can be more than the hours clocked there (training at a second shop, for example 38 hours at Coralville and a 4-hour class at Moline: Moline's share of the 2 OT hours is 0.19, with nothing clocked there). The OT past the clocked hours then comes off that shop's training hours (Moline exports 0.19 OT and 3.81 training), so regular hours are never negative, and the line gets a `training_overtime` anomaly.
 
-Still open (Q11, Charles and the CPA): whether training counts toward the 40, and whether training hours are on top of clocked hours. C2 stays a setting, on by default, since under the FLSA training is generally hours worked.
+**Training cost.** Training Pay and training's share of O.T. Pay are the line's Training Cost, inside Labor Cost (§2.1) and checked by the gate (§7). Training's share of a line's OT hours is, for each workweek slice, its OT × the training on top of clocked hours ÷ all the hours counted toward the 40 there (never less than the OT taken from training); its cost is that × the OT multiplier × the base rate. Hours typed on the report or from Squire have no workweeks, so the period's figures give it: OT × training ÷ (worked + training). In the 38 + 4 week, that's 4/42 of the 2 OT hours. With the setting off, training has no share of the OT and its cost is its pay.
+
+**The regular rate (C1).** Training on top of clocked hours is hours worked too, so commission's half-time premium (§3.4) is spread over production plus training hours.
+
+**Earlier periods.** The workbook left training out of the 40 (discrepancies §16). Correcting past periods is Charles's call with his CPA; the platform doesn't build retro corrections automatically.
 
 ### 3.4 Regular rate for overtime (C1)
 
@@ -221,11 +227,11 @@ There are two screens over the same figures.
 - **Period chips** for recent and upcoming periods, with each pay group's period number and check date.
 - **When hours are due**: the period number, iSolved's submit-by date and the check date under the title, with a red notice once the submit-by date has passed and the period isn't locked (amber on the day). Each shop block shows its iSolved pay group code.
 - **Reconciliation gate** (§7) at the top: either the list of mismatches or a green "every total is the sum of its rows".
-- **Locations view:** per shop, Service Sales, Total Wages, O.T. Pay, Training Pay, Employee Cost (= Labor Cost), Gross Profit and Cost %, plus a total row.
+- **Locations view:** per shop, Service Sales, Total Wages, O.T. Pay, Training Pay, Employee Cost (= Labor Cost), Training Cost (inside it), Gross Profit and Cost %, plus a total row.
 - **Anomalies** (§8).
-- **Per-shop blocks:** columns B to S, then O.T. Pay, Training Pay and Labor Cost highlighted as platform additions.
+- **Per-shop blocks:** columns B to S, then O.T. Pay, Training Pay and Labor Cost highlighted as platform additions, and Training Cost (in Labor Cost) where a shop has any.
 - **PPH review columns** (Productivity Per Hour, Charles, Oct 28), on both screens and in the Locations view: Service PPH (the default PPH) = Service$ (E) ÷ worked hours, Clients per hour = completed service tickets ÷ the same hours, Product PPH = Product$ (J) ÷ the same hours, Total PPH = both ÷ the same hours. Worked hours are Hours (B) + O.T. HRS, less overtime that came from training; training and PTO aren't working time. A completed service ticket is a paid or partly refunded ticket with a service on it that wasn't refunded, credited to the ticket's barber (Squire imports count; fully refunded and voided tickets don't). A lock keeps each shop's ticket counts in its snapshot, outside the approval and lock hashes, so a locked period's clients per hour never changes. No worked hours shows N/A. A total row is its lines' sales over their hours, never an average. Gross /Hr (F) is unchanged: Service$ over regular hours only, as in the workbook. They're for review: never in the iSolved file (§6), the workbook-format download or the gate. The PPH report over a pay period matches them, except for Squire-era tickets (counted there, left out of payroll's sales) a commission base with the card fee or loyalty added (I10), and figures typed over here. Clients per hour counts the same tickets in both.
-- **Per-employee drill-down:** the labor cost formula, O.T. Pay with "iSolved may compute blended OT higher.", Training Pay, FT/PT status, the cross-shop weekly breakdown, and the adjustment form (a value and a required reason).
+- **Per-employee drill-down:** the labor cost formula, O.T. Pay with "iSolved may compute blended OT higher.", Training Pay, Training Cost with training's share of the OT hours, FT/PT status, the cross-shop weekly breakdown, and the adjustment form (a value and a required reason).
 - **Export preview** per shop: the exact values that will go in the file.
 
 ### 5.1 OT cost layout
@@ -289,10 +295,10 @@ Approve-and-lock is blocked while there's any mismatch, compared to the cent (mo
 
 | Check | What's compared |
 | --- | --- |
-| Rows | Each shop's total for every summed column (hours, money, O.T. Pay, Training Pay, Labor Cost) against the sum of its lines, and each line's Labor Cost against Total Wages + O.T. Pay + Training Pay + top-up + OT premium owed |
+| Rows | Each shop's total for every summed column (hours, money, O.T. Pay, Training Pay, Training Cost, Labor Cost) against the sum of its lines; each line's Labor Cost against Total Wages + O.T. Pay + Training Pay + top-up + OT premium owed; each shop's Training Cost against Training Pay + training's share of O.T. Pay, and no line's training share over its OT |
 | Training | Each shop's Training Pay against its exported `E_Training_Hours` × each line's training rate |
 | Export | Each export column's sum against the report total it comes from (for example, Comm Sales against NetComm), and the export's row count against the report's |
-| Locations | Each Locations total against the sum of the shops |
+| Locations | Each Locations total (Training Cost included) against the sum of the shops |
 
 Totals are always computed from line items, so a mismatch means a bug; the gate is the guard that keeps a wrong file from being locked. Locked periods rerun the gate on the snapshot when they're shown.
 
@@ -307,7 +313,7 @@ Anomalies never block the lock. They list what a person should look at before ap
 | `netcomm_gap` | NetComm typed over the formula, so the report's Total Wages and the export's Comm Sales disagree. Q17. |
 | `override` | Any hand-entered value, with its reason |
 | `missing_key` | No iSolved Employee Number yet |
-| `training_in_hours` | Training inside the person's clocked hours, so it's paid twice unless fixed; or, with C2 off, any training (§3.3) |
+| `training_in_hours` | Training inside the person's clocked hours: training is on top of clocked hours (Q11), so it's most likely entered twice and paid twice unless fixed; or, with C2 turned off, any training (§3.3) |
 | `training_overtime` | Overtime past the hours clocked at a shop, taken from that shop's training hours (C2, §3.3) |
 | `no_training_rate` | Training paid at the hourly rate, because the person has no training rate on their Staff page or in Payroll setup (§3.3) |
 | `below_punches` | An hours or OT adjustment below what the punches show; the report pays the punches (§3.5) |
@@ -366,7 +372,7 @@ Payroll → Setup (`payroll.run`).
 | --- | --- | --- |
 | OT threshold | 40 h per workweek | |
 | OT multiplier (for O.T. Pay on the report only) | 1.5 | |
-| Training counts toward OT (C2) | On (only training on top of clocked hours) | Pending Q11 (Charles and the CPA) |
+| Training counts toward OT (C2) | On (only training on top of clocked hours) | Charles answered Q11: on. The CPA to confirm training is hours worked under the FLSA |
 | Commission base: card surcharge | Left out (the shop's) | |
 | Commission base: loyalty rewards | Come off the sale | Pending Charles (Q15) |
 | OT regular rate (C1) | `base`: the premium owed is flagged, not in the file | Needs Charles: `adjust` adds the premium column |
@@ -393,7 +399,8 @@ Charles's golden data (33 employee rows, the seven iSolved tabs) holds real name
 
 `tests/payroll-golden.test.ts` runs against both (the private one only when present):
 
-- every row's Hourly Total, Gross /Hr, Commission$, Service Total, Product Total, NetComm, Total Wages and Total % of Gross;
+- every row's Hourly Total, Gross /Hr, Commission$, Service Total, Product Total, NetComm, Total Wages and Total % of Gross, and the platform's O.T. Pay, Training Pay, training's share of O.T. Pay, Training Cost and Labor Cost (`scripts/payroll-golden-labor-cost.py`);
+- the OT the workbook misses by leaving training out of the 40, as an estimate from an even weekly split (discrepancies §16);
 - every typed workbook cell as an adjustment with a reason;
 - the workbook's cached totals as known bugs, and the corrected all-rows totals. Each total's formula is checked first (`totalsFormulaProblems`): a range that includes its own cell (circular), runs outside the shop's block or skips rows is flagged, and a circular total's cached value is never compared, because Excel's value for it is stale (I12);
 - the summary;
@@ -407,7 +414,7 @@ Charles's golden data (33 employee rows, the seven iSolved tabs) holds real name
 | C1 regular-rate OT | **Needs Charles.** The premium owed on commission is computed, in Labor Cost and flagged for hand entry (§3.4). The file column is a switch, off. |
 | C3 card tips off Cash Tips Recd | **Needs Charles and his CPA.** `cardTipsHeader` gives card tips their own column; it's set to Cash Tips Recd, so the file is unchanged (§11). |
 | Training pay | Resolved (Charles, Oct 28): training hours × the employee's own effective-dated training rate, its own line outside the greater-of, in Labor Cost (§3.3). |
-| Q11 training toward OT, and on top of clocked hours | Open for Charles and the CPA. C2 on by default; training inside a clocked shift isn't counted twice and is flagged (§3.3). |
+| Q11 training toward OT, and on top of clocked hours | Resolved (Charles, Oct 28): training is on top of clocked production hours and counts toward the weekly 40 across every shop; OT in `E_Overtime 1.5_Hours`; training cost and its share of OT cost in Labor Cost (§3.3). The CPA to confirm the FLSA assumption; past periods are Charles's call with his CPA. |
 | Q15 loyalty in the commission base | Open. Rewards come off the sale, as today; a setting (§2.2). |
 | Q16 Dubuque export | Resolved: Dubuque has its own pay calendar and its own file in the same format. |
 | Q17 owner row and the Coralville NetComm gap | Open. Flagged, not fixed. |

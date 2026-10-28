@@ -47,7 +47,7 @@ The sandbox is the PR's branch alias (see the PR's Sandbox section). Every demo 
 | PY-OT-05, PY-OT-06 | Ready | Explicit tests added Oct 28 |
 | PY-LC-01 | Fixed (Oct 28) | OT pay is in labor cost, and the golden files carry it: the brand Employee Cost on the Payroll Report reconciles to the plan's figure on the private golden data (tested there, not committed), and to the anonymized copy's own figure in CI (G-16) |
 | PY-LC-02 | Ready | OT goes out as hours only; still exactly 8 columns |
-| PY-LC-03 | Setting | Training pay is out of labor cost until Q11 is answered, and the report says so |
+| PY-LC-03 | Fixed (Oct 28) | Q11 answered: training is on top of clocked hours and counts toward each workweek's 40 across shops. Labor cost includes Training Cost (training pay plus its share of OT pay), and the gate checks it. 38 production + 4 training = 2 OT, also with the training at a second shop (`payroll-training-ot`, `db/training-overtime`). The FLSA basis is for the CPA to confirm |
 | PY-RG-01 to PY-RG-03 | Ready | |
 | PY-FX-01 to PY-FX-03 | Ready | Per-tab copy of the workbook: number formats, fills, fonts (Roboto on the tabs that use it), the Key cell types (G-14) |
 | PY-EX-01, PY-EX-02 | Ready | Download only; no iSolved API |
@@ -77,7 +77,7 @@ The sandbox is the PR's branch alias (see the PR's Sandbox section). Every demo 
 | G-13 | Exactly the 8 workbook columns, no separate tip codes | Fixed: tips owed through payroll are in `E_Cash Tips Recd_Dollars` too, and flagged (`tips_in_payroll_memo`); see Open questions |
 | G-14 | An exact per-tab copy of the workbook, Roboto included | Ready |
 | G-15 | OT per Sun–Sat workweek; hours belong to the period of the day worked; OT to the period with the hours past 40 | Fixed |
-| G-16 | Golden files regenerated with OT pay in labor cost; training pay configurable, pending Q11 | Fixed |
+| G-16 | Golden files regenerated with OT pay in labor cost, and (Q11) training cost too | Fixed (`core_0146`) |
 | G-17 | FT/PT: a rolling 4 weeks of worked hours, a brand setting, pending Charles | Ready |
 | G-23 | Zone label where times cross DST | Fixed for the repeated fall-back hour; a skipped spring-forward time can't be typed |
 | G-25 | Test the Nov 1 fall-back pay period explicitly | Fixed (PY-OT-04) |
