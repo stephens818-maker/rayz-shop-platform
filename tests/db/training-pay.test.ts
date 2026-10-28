@@ -153,7 +153,7 @@ describe("on the Payroll Report: its own line outside the greater-of, in Labor C
     const v = await view();
     const b = v.blocks.find((x) => x.shopId === shop.coralville)!;
     expect(b.exportHeaders).toHaveLength(6);
-    expect(b.exportHeaders[5]).toBe("E_Training_Hours");
+    expect(b.exportHeaders?.[5]).toBe("E_Training_Hours");
     const row = b.exportRows.find((r) => r.staffId === ids.makenna)!;
     expect(row.values[5]).toBe(lineAt(v, shop.coralville).trainingHours);
     expect(row.values).not.toContain(lineAt(v, shop.coralville).trainingPay);
