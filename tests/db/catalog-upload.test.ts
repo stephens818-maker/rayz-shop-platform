@@ -169,3 +169,80 @@ describe("bulk upload", () => {
     await expect(upload(form(csv("x.csv", ["sku", "A"]), { dryRun: true }))).rejects.toMatchObject({ digest: expect.stringContaining("/login") });
   });
 });
+
+describe("undoing an upload (test plan BA-52)", () => {
+  const snapshot = async (sku: string) => {
+    const p = (await productBySku(sku))!;
+    const at = await m.db.db.select().from(m.schema.shopProducts).where(eq(m.schema.shopProducts.productId, p.id));
+    return {
+      brand: { priceCents: p.priceCents, costCents: p.costCents, barcode: p.barcode, active: p.active },
+      shops: Object.fromEntries(at.map((x) => [x.shopId, { priceCents: x.priceCents, stock: x.stock, active: x.active }])),
+    };
+  };
+  const undo = async (login: string, runId: string) => {
+    await signInAs(ids[login]);
+    return (await import("@/app/admin/catalog/actions")).rollbackCatalogUploadAction(runId);
+  };
+
+  it("puts back every field at every shop it reached, turns off what it added, and compensates stock", async () => {
+    await send("admin", csv("base.csv", [HEADER, "product,TEST-UNDO-1,Undo Paste,Styling,Layrite,8.00,20.00,,product,850099000035,yes,4,19.00,10,6"]), { dryRun: false, shops: [shopId.coralville, shopId.moline] });
+    const before = await snapshot("TEST-UNDO-1");
+    const services = (await m.db.db.select().from(m.schema.services)).length;
+
+    const plan = await send(
+      "admin",
+      csv("change.csv", [HEADER, "product,TEST-UNDO-1,,,,9.00,24.00,,,850099000042,,,21.00,14,9", "service,TEST-UNDO-SVC,Undo Fade,Haircuts,,,40.00,45,,,,,42.00,,"]),
+      { dryRun: false, shops: [shopId.coralville, shopId.moline] },
+    );
+    expect(plan.saved).toBe(true);
+    const after = await snapshot("TEST-UNDO-1");
+    expect(after.brand).toMatchObject({ priceCents: 2400, costCents: 900, barcode: "850099000042" });
+    expect(after.shops[shopId.coralville]).toMatchObject({ priceCents: 2100, stock: 14 });
+    const svc = (await m.db.db.query.services.findFirst({ where: eq(m.schema.services.sku, "TEST-UNDO-SVC") }))!;
+    expect(svc.active).toBe(true);
+
+    // A sale between the upload and the undo still counts.
+    const { postMovements } = await import("@/server/inventory/ledger");
+    const p = (await productBySku("TEST-UNDO-1"))!;
+    await m.db.db.transaction((tx) => postMovements(tx, [{ shopId: shopId.coralville, productId: p.id, delta: -1, kind: "adjust", reason: "other" }], { actor: { staffId: null, label: "test" } }));
+
+    const r = await undo("admin", plan.runId!);
+    expect(r).toMatchObject({ ok: true });
+    const back = await snapshot("TEST-UNDO-1");
+    expect(back.brand).toEqual(before.brand);
+    expect(back.shops[shopId.moline]).toEqual(before.shops[shopId.moline]);
+    expect(back.shops[shopId.coralville]).toEqual({ ...before.shops[shopId.coralville], stock: before.shops[shopId.coralville].stock - 1 });
+    expect((await m.db.db.query.services.findFirst({ where: eq(m.schema.services.id, svc.id) }))!.active).toBe(false);
+    expect(await m.db.db.select().from(m.schema.shopServices).where(eq(m.schema.shopServices.serviceId, svc.id))).toEqual([]);
+    expect((await m.db.db.select().from(m.schema.services)).length).toBe(services + 1);
+    const menu = await m.catalog.shopCatalog(shopId.coralville);
+    expect(menu.find((s) => s.id === svc.id)).toBeUndefined();
+
+    const run = (await m.db.db.query.importRuns.findFirst({ where: eq(m.schema.importRuns.id, plan.runId!) }))!;
+    expect(run.rolledBackAt).not.toBeNull();
+    const sync = (await m.db.db.query.brandSyncBatches.findFirst({ where: eq(m.schema.brandSyncBatches.id, run.syncBatchId!) }))!;
+    expect(sync.status).toBe("rolled_back");
+    const log = await m.db.db.select().from(m.schema.auditLog).where(m.drizzle.and(eq(m.schema.auditLog.action, "catalog.upload_rollback"), eq(m.schema.auditLog.entityId, run.id)));
+    expect(log).toHaveLength(1);
+    const ledger = await m.db.db.select().from(m.schema.inventoryLedger).where(m.drizzle.and(eq(m.schema.inventoryLedger.productId, p.id), eq(m.schema.inventoryLedger.shopId, shopId.coralville)));
+    expect(ledger.some((l) => l.delta === -4 && (l.note ?? "").startsWith("Undo:"))).toBe(true);
+
+    expect(await undo("admin", plan.runId!)).toMatchObject({ ok: false, error: expect.stringMatching(/already undone/) });
+  });
+
+  it("is refused, changing nothing, when something it set has changed since", async () => {
+    const plan = await send("admin", csv("price.csv", ["sku,price_coralville", "TEST-UNDO-1,23.00"]), { dryRun: false, shops: [shopId.coralville] });
+    const p = (await productBySku("TEST-UNDO-1"))!;
+    await m.db.db.update(m.schema.shopProducts).set({ priceCents: 2500 }).where(m.drizzle.and(eq(m.schema.shopProducts.shopId, shopId.coralville), eq(m.schema.shopProducts.productId, p.id)));
+    const before = await snapshot("TEST-UNDO-1");
+    expect(await undo("admin", plan.runId!)).toMatchObject({ ok: false, error: expect.stringMatching(/Can't undo: Coralville: .*changed since/) });
+    expect(await snapshot("TEST-UNDO-1")).toEqual(before);
+  });
+
+  it("needs catalog access, and a stock-only login can't undo a catalog upload", async () => {
+    const plan = await send("admin", csv("price2.csv", ["sku,price_coralville", "TEST-UNDO-1,26.00"]), { dryRun: false, shops: [shopId.coralville] });
+    expect(await undo("makenna", plan.runId!)).toMatchObject({ ok: false });
+    expect(await undo("michelle", plan.runId!)).toMatchObject({ ok: false });
+    expect(await undo("admin", plan.runId!)).toMatchObject({ ok: true });
+  });
+});

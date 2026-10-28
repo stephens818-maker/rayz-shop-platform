@@ -1,9 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { safe } from "@/server/action";
 import { authorize, can } from "@/server/auth/staff";
-import { uploadCatalog } from "@/server/catalog-import";
+import { rollbackCatalogUpload, uploadCatalog } from "@/server/catalog-import";
 import { AppError, forbidden } from "@/server/errors";
 
 /**
@@ -43,5 +44,18 @@ export async function uploadCatalogAction(form: FormData) {
       revalidatePath("/admin/services");
     }
     return result;
+  });
+}
+
+/** Undo one saved upload: everything it changed goes back, at every shop it reached. */
+export async function rollbackCatalogUploadAction(runId: string) {
+  return safe(async () => {
+    const ctx = await authorize(["catalog.manage", "inventory.manage"]);
+    const r = await rollbackCatalogUpload({ runId: z.uuid().parse(runId), actor: ctx.actor, allowedShopIds: ctx.shopIds, mode: can(ctx, "catalog.manage") ? "catalog" : "stock" });
+    revalidatePath("/admin/catalog");
+    revalidatePath("/admin/inventory");
+    revalidatePath("/admin/services");
+    revalidatePath("/admin/sync-status");
+    return r;
   });
 }

@@ -441,11 +441,12 @@ export async function bulkSync(who: Who, action: BulkAction, cells: CellRef[], n
 
 /**
  * Puts the brand and every shop back as they were before one sync, as one batch. Refused, with
- * what changed, if the brand value or any shop's value it touched has changed since.
+ * what changed, if the brand value or any shop's value it touched has changed since. `within`: as a
+ * savepoint in the caller's transaction (undoing a catalog upload).
  */
-export async function rollbackSync(who: Who, batchId: string, now = new Date()) {
+export async function rollbackSync(who: Who, batchId: string, now = new Date(), within?: DBorTx) {
   let done: ChangeRow[] = [];
-  const result = await db.transaction(async (tx) => {
+  const result = await (within ?? db).transaction(async (tx) => {
     await lockSync(tx);
     const [b] = await tx.select().from(brandSyncBatches).where(eq(brandSyncBatches.id, batchId)).for("update");
     if (!b) throw notFound("Sync");

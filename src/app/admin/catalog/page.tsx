@@ -6,6 +6,7 @@ import { importRuns, staff } from "@/db/schema";
 import { Card, CardHeader, PageHeader, Table, Td, Th, buttonClass } from "@/components/ui";
 import { formatDateTime } from "@/lib/time";
 import { can, guardPage, openShops } from "@/server/auth/staff";
+import { UndoUploadButton } from "./undo-button";
 import { CatalogUploader } from "./uploader";
 
 export const metadata: Metadata = { title: "Bulk upload" };
@@ -77,11 +78,20 @@ export default async function CatalogPage() {
                   <Td right>{r.updated}</Td>
                   <Td right>{r.skipped}</Td>
                   <Td right>
-                    {r.skipped > 0 && (
-                      <Link className="text-xs underline" href={`/admin/import/${r.id}/errors`} prefetch={false}>
-                        Skipped rows CSV
-                      </Link>
-                    )}
+                    <div className="flex flex-wrap items-center justify-end gap-3">
+                      {r.skipped > 0 && (
+                        <Link className="text-xs underline" href={`/admin/import/${r.id}/errors`} prefetch={false}>
+                          Skipped rows CSV
+                        </Link>
+                      )}
+                      {r.rolledBackAt ? (
+                        <span className="text-xs text-zinc-500">
+                          Undone by {r.rolledBackBy} {formatDateTime(r.rolledBackAt)}
+                        </span>
+                      ) : (
+                        !r.dryRun && r.undo && (r.undo.length > 0 || r.syncBatchId) && (mode === "catalog" || r.kind === "catalog_stock") && <UndoUploadButton runId={r.id} filename={r.filename ?? "this upload"} />
+                      )}
+                    </div>
                   </Td>
                 </tr>
               ))}

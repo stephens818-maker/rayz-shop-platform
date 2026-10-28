@@ -3272,6 +3272,12 @@ export const importRuns = pgTable("import_runs", {
   staffId: uuid("staff_id"),
   /** Set for a cutover delta import, which only takes that shop's bookings and tickets. */
   shopId: uuid("shop_id").references(() => shops.id, { onDelete: "set null" }),
+  /** A saved catalog upload: what it changed, so it can be undone (CatalogUndoStep in src/server/catalog-import.ts). */
+  undo: jsonb("undo").$type<unknown[]>(),
+  /** The brand sync batch a catalog upload pushed its brand prices, lengths and levels in. */
+  syncBatchId: uuid("sync_batch_id"),
+  rolledBackAt: ts("rolled_back_at"),
+  rolledBackBy: text("rolled_back_by"),
   createdAt: createdAt(),
 });
 

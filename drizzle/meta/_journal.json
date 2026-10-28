@@ -981,6 +981,13 @@
       "when": 1796624640000,
       "tag": "core_0139_brand_only_tips_apprentice",
       "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "7",
+      "when": 1796626440000,
+      "tag": "core_0140_catalog_upload_undo",
+      "breakpoints": true
     }
   ]
 }
