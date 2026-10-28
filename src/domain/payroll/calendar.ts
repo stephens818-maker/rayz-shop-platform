@@ -131,7 +131,7 @@ export function periodStarting(c: PayCalendar, start: LocalDate): CalendarPeriod
  * the calendar resets yearly), or null when that year has no such period.
  */
 export function periodByNumber(c: PayCalendar, year: number, number: number): CalendarPeriod | null {
-  if (!Number.isInteger(year) || !Number.isInteger(number) || number < 1 || number > 60) return null;
+  if (!Number.isInteger(year) || !Number.isInteger(number) || number < 1) return null;
   if (!c.numberResetsYearly) {
     const p = periodByIndex(c, number - c.anchorNumber);
     return p.number === number ? p : null;

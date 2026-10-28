@@ -31,7 +31,7 @@ export const RANGE_TIME_ZONE_LABEL = "Central time (America/Chicago)";
 export const PAY_PERIOD_NUMBER_PRESET = "ppn:";
 export const payPeriodNumberPreset = (payGroupId: string, year: number, number: number) => `${PAY_PERIOD_NUMBER_PRESET}${payGroupId}:${year}:${number}`;
 export function parsePayPeriodNumber(id: string | null | undefined): { payGroupId: string; year: number; number: number } | null {
-  const m = id?.match(/^ppn:([0-9a-f-]{36}):(\d{4}):(\d{1,2})$/i);
+  const m = id?.match(/^ppn:([0-9a-f-]{36}):(\d{4}):(\d{1,4})$/i);
   return m ? { payGroupId: m[1], year: Number(m[2]), number: Number(m[3]) } : null;
 }
 
