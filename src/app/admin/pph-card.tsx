@@ -1,8 +1,9 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { Card, CardHeader, Table, cx } from "@/components/ui";
 import { Sparkline } from "@/components/sparkline";
-import { BOARD_ROWS, CARD_PERIODS, CARD_PERIOD_LABEL, type BoardEntry, type CardPeriod } from "@/domain/pph-card";
-import { CLIENTS_LABEL, PPH_LABEL, type Pph, type Ranked, clientsText, pphText } from "@/domain/pph";
+import { BOARD_ROWS, CARD_PERIODS, CARD_PERIOD_LABEL, type CardPeriod, type PerClient, type PerClientCardData } from "@/domain/pph-card";
+import { CLIENTS_LABEL, PER_CLIENT_LABEL, PPH_LABEL, type Pph, type Ranked, clientsText, pphText } from "@/domain/pph";
 import { formatCents } from "@/lib/money";
 import { type LocalDate, formatDate } from "@/lib/time";
 import { type StaffContext, reportShopIds } from "@/server/auth/staff";
@@ -14,12 +15,14 @@ const TH = "whitespace-nowrap border-b border-zinc-200 bg-zinc-50 px-2 py-1.5 te
 const TD = "whitespace-nowrap border-b border-zinc-100 px-2 py-1.5";
 const hoursText = (h: number) => h.toLocaleString("en-US", { maximumFractionDigits: 2 });
 const money = (v: number | null) => pphText(v, formatCents);
+const countText = (n: number) => n.toLocaleString("en-US");
 
 /**
- * The card for a dashboard: the brand's (every shop they have, when none is picked) or one shop's,
- * only the shops where they may see the PPH report. Nothing when there are none.
+ * The cards for a dashboard: the brand's (every shop they have, when none is picked) or one shop's,
+ * only the shops where they may see the PPH report. Productivity Per Hour, then product sales per
+ * client beside it when they may see dollar amounts. Nothing when there are no such shops.
  */
-export async function DashboardPph({ ctx, rankBy, today, now }: { ctx: StaffContext; rankBy: CardPeriod; today: LocalDate; now: Date }) {
+export async function DashboardPph({ ctx, rankBy, perClientBy, today, now }: { ctx: StaffContext; rankBy: CardPeriod; perClientBy: CardPeriod; today: LocalDate; now: Date }) {
   const ids = reportShopIds(ctx);
   const d = await pphDashboard({
     access: ctx.access,
@@ -28,10 +31,18 @@ export async function DashboardPph({ ctx, rankBy, today, now }: { ctx: StaffCont
     today,
     now,
     rankBy,
+    perClientBy,
   });
   if (!d) return null;
   const shop = d.scope === "brand" ? "all" : d.shopIds.join(",");
-  return <PphCard d={d} rankHref={(p) => `/admin?pph=${p}`} reportHref={`/admin/reports/pph?preset=pp:current&shop=${shop}`} />;
+  const href = (pph: CardPeriod, ppc: CardPeriod) => `/admin?pph=${pph}&ppc=${ppc}`;
+  const report = `/admin/reports/pph?preset=pp:current&shop=${shop}`;
+  return (
+    <>
+      <PphCard d={d} rankHref={(p) => href(p, perClientBy)} reportHref={report} />
+      {d.perClient && <PerClientCard d={d} c={d.perClient} rankHref={(p) => href(rankBy, p)} reportHref={`${report}&rank=perClient`} />}
+    </>
+  );
 }
 
 export function PphCardSkeleton() {
@@ -47,17 +58,20 @@ export function PphCardSkeleton() {
   );
 }
 
+const periodSubs = (d: PphDashboard): Record<CardPeriod, string> => ({
+  today: `${formatDate(d.dates.today, "EEE MMM d")}, so far`,
+  yesterday: formatDate(d.dates.yesterday, "EEE MMM d"),
+  period: d.period ? `${d.period.label} pay period` : "Each location's pay period",
+});
+
 /** The dashboard's Productivity Per Hour card: today, yesterday and the period to date, the leaderboards and a 14-day sparkline. */
 export function PphCard({ d, rankHref, reportHref }: { d: PphDashboard; rankHref: (p: CardPeriod) => string; reportHref: string }) {
   const head = (p: Pph) => (d.money ? money(p.servicePph) : clientsText(p.clientsPerHour));
-  const shown = (v: number) => (d.money ? formatCents(v) : v.toFixed(2));
-  const periodSub = d.period ? `${d.period.label} pay period` : "Each location's pay period";
-  const sub: Record<CardPeriod, string> = {
-    today: `${formatDate(d.dates.today, "EEE MMM d")}, so far`,
-    yesterday: formatDate(d.dates.yesterday, "EEE MMM d"),
-    period: periodSub,
-  };
-  const first = d.spark[0]?.date;
+  const sub = periodSubs(d);
+  const cells = (p: Pph) => (d.money ? [money(p.servicePph), clientsText(p.clientsPerHour), money(p.totalPph), hoursText(p.hours)] : [clientsText(p.clientsPerHour), hoursText(p.hours)]);
+  const heads = d.money ? ["Service PPH", "Clients/hr", "Total PPH", "Hours"] : ["Clients/hr", "Hours"];
+  const rowsOf = (rs: Ranked<{ id: string; name: string; detail: string | null; p: Pph }>[]): BoardRow[] => rs.map((r) => ({ rank: r.rank, id: r.item.id, name: r.item.name, detail: r.item.detail, cells: cells(r.item.p) }));
+  const what = d.money ? PPH_LABEL.service : CLIENTS_LABEL;
   return (
     <Card data-testid="pph-card">
       <CardHeader
@@ -73,95 +87,154 @@ export function PphCard({ d, rankHref, reportHref }: { d: PphDashboard; rankHref
         {CARD_PERIODS.map((k) => {
           const p = d.total[k];
           return (
-            <div key={k} className="rounded-lg bg-zinc-50 p-3" data-testid={`pph-${k}`}>
-              <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">{CARD_PERIOD_LABEL[k]}</div>
-              <div className="tabular mt-1 text-3xl font-semibold text-zinc-900">{head(p)}</div>
-              <div className="text-xs text-zinc-500">{d.money ? PPH_LABEL.service : CLIENTS_LABEL}</div>
-              <dl className="mt-2 space-y-0.5 text-xs tabular">
-                {d.money && (
-                  <>
-                    <div className="flex justify-between gap-2">
-                      <dt className="text-zinc-500">Clients per hour</dt>
-                      <dd>{clientsText(p.clientsPerHour)}</dd>
-                    </div>
-                    <div className="flex justify-between gap-2">
-                      <dt className="text-zinc-500">Total PPH</dt>
-                      <dd>{money(p.totalPph)}</dd>
-                    </div>
-                  </>
-                )}
-                <div className="flex justify-between gap-2">
-                  <dt className="text-zinc-500">Worked hours</dt>
-                  <dd>{hoursText(p.hours)}</dd>
-                </div>
-              </dl>
-              <div className="mt-1 text-[11px] text-zinc-400">{sub[k]}</div>
-            </div>
+            <Tile key={k} id={`pph-${k}`} period={k} head={head(p)} unit={what} sub={sub[k]}>
+              {d.money && (
+                <>
+                  <Fact label="Clients per hour" value={clientsText(p.clientsPerHour)} />
+                  <Fact label="Total PPH" value={money(p.totalPph)} />
+                </>
+              )}
+              <Fact label="Worked hours" value={hoursText(p.hours)} />
+            </Tile>
           );
         })}
-        <div className="rounded-lg bg-zinc-50 p-3 sm:col-span-3 lg:col-span-1" data-testid="pph-trend">
-          <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">Last {d.spark.length} days</div>
-          <Sparkline
-            values={d.spark.map((s) => s.value)}
-            labels={d.spark.map((s) => formatDate(s.date, "EEE MMM d"))}
-            shown={shown}
-            label={`${d.money ? PPH_LABEL.service : CLIENTS_LABEL} by day, last ${d.spark.length} days`}
-          />
-          <div className="mt-1 flex justify-between text-[11px] text-zinc-400">
-            <span>{first ? formatDate(first, "MMM d") : ""}</span>
-            <span>Today</span>
-          </div>
-          <p className="mt-1 text-[11px] text-zinc-500">Each day on its own. A gap is a day nobody worked.</p>
-        </div>
+        <Trend id="pph-trend" spark={d.spark} shown={(v) => (d.money ? formatCents(v) : v.toFixed(2))} label={what} gap="A gap is a day nobody worked." />
       </div>
       {d.scope !== "own" && (
-        <div className="border-t border-zinc-100 px-4 pb-4 pt-3">
-          <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-zinc-500">Leaderboards:</span>
-            {CARD_PERIODS.map((k) => (
-              <Link
-                key={k}
-                scroll={false}
-                href={rankHref(k)}
-                aria-current={k === d.rankBy ? "true" : undefined}
-                className={cx("rounded-full px-2.5 py-1 ring-1", k === d.rankBy ? "bg-zinc-900 text-white ring-zinc-900" : "text-zinc-700 ring-zinc-300 hover:bg-zinc-50")}
-              >
-                {CARD_PERIOD_LABEL[k]}
-              </Link>
-            ))}
-          </div>
-          <div className={cx("grid gap-4", d.shops.length > 0 && "lg:grid-cols-2")}>
-            <Board id="pph-barbers" title="Barbers" d={d} rows={d.barbers} detail={d.shops.length > 0} reportHref={reportHref} />
-            {d.shops.length > 0 && <Board id="pph-locations" title="Locations" d={d} rows={d.shops} detail={false} reportHref={reportHref} />}
-          </div>
-        </div>
+        <Boards rankBy={d.rankBy} rankHref={rankHref} two={d.shops.length > 0}>
+          <Board id="pph-barbers" title="Barbers" rankBy={d.rankBy} heads={heads} rows={rowsOf(d.barbers)} total={cells(d.total[d.rankBy])} totalLabel={d.totalLabel} detail={d.shops.length > 0} reportHref={reportHref} label={what} />
+          {d.shops.length > 0 && <Board id="pph-locations" title="Locations" rankBy={d.rankBy} heads={heads} rows={rowsOf(d.shops)} total={cells(d.total[d.rankBy])} totalLabel={d.totalLabel} detail={false} reportHref={reportHref} label={what} />}
+        </Boards>
       )}
     </Card>
   );
 }
 
-function Board({ id, title, d, rows, detail, reportHref }: { id: string; title: string; d: PphDashboard; rows: Ranked<BoardEntry>[]; detail: boolean; reportHref: string }) {
-  const total = d.total[d.rankBy];
-  const shownRows = rows.slice(0, BOARD_ROWS);
-  const cells = (p: Pph) =>
-    d.money
-      ? [money(p.servicePph), clientsText(p.clientsPerHour), money(p.totalPph), hoursText(p.hours)]
-      : [clientsText(p.clientsPerHour), hoursText(p.hours)];
-  const heads = d.money ? ["Service PPH", "Clients/hr", "Total PPH", "Hours"] : ["Clients/hr", "Hours"];
+/** Product sales per client beside PPH: the same shops, people and periods, ranked and charted by it. */
+export function PerClientCard({ d, c, rankHref, reportHref }: { d: PphDashboard; c: PerClientCardData; rankHref: (p: CardPeriod) => string; reportHref: string }) {
+  const sub = periodSubs(d);
+  const cells = (f: PerClient) => [money(f.perClient), formatCents(f.productCents), countText(f.clients)];
+  const heads = ["Per client", "Product sales", "Clients"];
+  const rowsOf = (rs: PerClientCardData["barbers"]): BoardRow[] => rs.map((r) => ({ rank: r.rank, id: r.item.id, name: r.item.name, detail: r.item.detail, cells: cells(r.item.f) }));
+  const many = c.shops.length > 0;
   return (
-    <div data-testid={id}>
+    <Card data-testid="per-client-card">
+      <CardHeader
+        title={PER_CLIENT_LABEL}
+        subtitle={`${d.scope === "own" ? "Your own numbers" : d.totalLabel} · product sales before tax over unique clients served; a walk-in counts once per ticket`}
+        action={
+          <Link className="text-xs underline" href={reportHref}>
+            PPH report
+          </Link>
+        }
+      />
+      <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3 lg:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.2fr)]">
+        {CARD_PERIODS.map((k) => {
+          const f = c.total[k];
+          return (
+            <Tile key={k} id={`per-client-${k}`} period={k} head={money(f.perClient)} unit={PER_CLIENT_LABEL} sub={sub[k]}>
+              <Fact label="Product sales" value={formatCents(f.productCents)} />
+              <Fact label="Unique clients" value={countText(f.clients)} />
+            </Tile>
+          );
+        })}
+        <Trend id="per-client-trend" spark={c.spark} shown={formatCents} label={PER_CLIENT_LABEL} gap="A gap is a day with no clients." />
+      </div>
+      {d.scope !== "own" && (
+        <Boards rankBy={c.rankBy} rankHref={rankHref} two={many}>
+          <Board id="per-client-barbers" title="Barbers" rankBy={c.rankBy} heads={heads} rows={rowsOf(c.barbers)} total={cells(c.total[c.rankBy])} totalLabel={d.totalLabel} detail={many} reportHref={reportHref} label={PER_CLIENT_LABEL} empty="No clients" />
+          {many && <Board id="per-client-locations" title="Locations" rankBy={c.rankBy} heads={heads} rows={rowsOf(c.shops)} total={cells(c.total[c.rankBy])} totalLabel={d.totalLabel} detail={false} reportHref={reportHref} label={PER_CLIENT_LABEL} empty="No clients" />}
+        </Boards>
+      )}
+    </Card>
+  );
+}
+
+function Tile({ id, period, head, unit, sub, children }: { id: string; period: CardPeriod; head: string; unit: string; sub: string; children: ReactNode }) {
+  return (
+    <div className="rounded-lg bg-zinc-50 p-3" data-testid={id}>
+      <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">{CARD_PERIOD_LABEL[period]}</div>
+      <div className="tabular mt-1 text-3xl font-semibold text-zinc-900">{head}</div>
+      <div className="text-xs text-zinc-500">{unit}</div>
+      <dl className="mt-2 space-y-0.5 text-xs tabular">{children}</dl>
+      <div className="mt-1 text-[11px] text-zinc-400">{sub}</div>
+    </div>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between gap-2">
+      <dt className="text-zinc-500">{label}</dt>
+      <dd>{value}</dd>
+    </div>
+  );
+}
+
+function Trend({ id, spark, shown, label, gap }: { id: string; spark: { date: LocalDate; value: number | null }[]; shown: (v: number) => string; label: string; gap: string }) {
+  const first = spark[0]?.date;
+  return (
+    <div className="rounded-lg bg-zinc-50 p-3 sm:col-span-3 lg:col-span-1" data-testid={id}>
+      <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">Last {spark.length} days</div>
+      <Sparkline values={spark.map((s) => s.value)} labels={spark.map((s) => formatDate(s.date, "EEE MMM d"))} shown={shown} label={`${label} by day, last ${spark.length} days`} />
+      <div className="mt-1 flex justify-between text-[11px] text-zinc-400">
+        <span>{first ? formatDate(first, "MMM d") : ""}</span>
+        <span>Today</span>
+      </div>
+      <p className="mt-1 text-[11px] text-zinc-500">Each day on its own. {gap}</p>
+    </div>
+  );
+}
+
+function Boards({ rankBy, rankHref, two, children }: { rankBy: CardPeriod; rankHref: (p: CardPeriod) => string; two: boolean; children: ReactNode }) {
+  return (
+    <div className="border-t border-zinc-100 px-4 pb-4 pt-3">
+      <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-zinc-500">Leaderboards:</span>
+        {CARD_PERIODS.map((k) => (
+          <Link
+            key={k}
+            scroll={false}
+            href={rankHref(k)}
+            aria-current={k === rankBy ? "true" : undefined}
+            className={cx("rounded-full px-2.5 py-1 ring-1", k === rankBy ? "bg-zinc-900 text-white ring-zinc-900" : "text-zinc-700 ring-zinc-300 hover:bg-zinc-50")}
+          >
+            {CARD_PERIOD_LABEL[k]}
+          </Link>
+        ))}
+      </div>
+      <div className={cx("grid gap-4", two && "lg:grid-cols-2")}>{children}</div>
+    </div>
+  );
+}
+
+interface BoardRow {
+  rank: number | null;
+  id: string;
+  name: string;
+  detail: string | null;
+  cells: string[];
+}
+
+function Board(p: { id: string; title: string; rankBy: CardPeriod; heads: string[]; rows: BoardRow[]; total: string[]; totalLabel: string; detail: boolean; reportHref: string; label: string; empty?: string }) {
+  const shown = p.rows.slice(0, BOARD_ROWS);
+  const when = p.rankBy === "period" ? "this pay period" : p.rankBy;
+  return (
+    <div data-testid={p.id}>
       <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">
-        {title}: {CARD_PERIOD_LABEL[d.rankBy].toLowerCase()}
+        {p.title}: {CARD_PERIOD_LABEL[p.rankBy].toLowerCase()}
       </h3>
-      {rows.length === 0 ? (
-        <p className="rounded-lg bg-zinc-50 px-3 py-4 text-center text-sm text-zinc-500">No hours or sales {d.rankBy === "period" ? "this pay period" : d.rankBy} yet.</p>
+      {p.rows.length === 0 ? (
+        <p className="rounded-lg bg-zinc-50 px-3 py-4 text-center text-sm text-zinc-500">
+          {p.empty ?? "No hours or sales"} {when} yet.
+        </p>
       ) : (
-        <Table label={`${title} by ${d.money ? PPH_LABEL.service : CLIENTS_LABEL}`}>
+        <Table label={`${p.title} by ${p.label}`}>
           <thead>
             <tr>
               <th className={cx(TH, "text-right")}>#</th>
-              <th className={cx(TH, "text-left")}>{title === "Barbers" ? "Barber" : "Location"}</th>
-              {heads.map((h, i) => (
+              <th className={cx(TH, "text-left")}>{p.title === "Barbers" ? "Barber" : "Location"}</th>
+              {p.heads.map((h, i) => (
                 <th key={h} className={cx(TH, "text-right")} aria-sort={i === 0 ? "descending" : undefined}>
                   {h}
                 </th>
@@ -169,14 +242,14 @@ function Board({ id, title, d, rows, detail, reportHref }: { id: string; title: 
             </tr>
           </thead>
           <tbody>
-            {shownRows.map((r) => (
-              <tr key={r.item.id}>
+            {shown.map((r) => (
+              <tr key={r.id}>
                 <td className={cx(TD, "tabular w-6 text-right text-zinc-500")}>{r.rank ?? "–"}</td>
                 <td className={TD}>
-                  <span className="font-medium">{r.item.name}</span>
-                  {detail && r.item.detail && <div className="text-xs text-zinc-500">{r.item.detail}</div>}
+                  <span className="font-medium">{r.name}</span>
+                  {p.detail && r.detail && <div className="text-xs text-zinc-500">{r.detail}</div>}
                 </td>
-                {cells(r.item.p).map((c, i) => (
+                {r.cells.map((c, i) => (
                   <td key={i} className={cx(TD, "tabular text-right", i === 0 && "font-semibold")}>
                     {c}
                   </td>
@@ -185,8 +258,8 @@ function Board({ id, title, d, rows, detail, reportHref }: { id: string; title: 
             ))}
             <tr className="bg-zinc-50 font-semibold">
               <td className={TD} />
-              <td className={TD}>{d.totalLabel}</td>
-              {cells(total).map((c, i) => (
+              <td className={TD}>{p.totalLabel}</td>
+              {p.total.map((c, i) => (
                 <td key={i} className={cx(TD, "tabular text-right")}>
                   {c}
                 </td>
@@ -195,9 +268,9 @@ function Board({ id, title, d, rows, detail, reportHref }: { id: string; title: 
           </tbody>
         </Table>
       )}
-      {rows.length > BOARD_ROWS && (
-        <Link className="mt-1 inline-block text-xs underline" href={reportHref}>
-          {rows.length - BOARD_ROWS} more in the PPH report
+      {p.rows.length > BOARD_ROWS && (
+        <Link className="mt-1 inline-block text-xs underline" href={p.reportHref}>
+          {p.rows.length - BOARD_ROWS} more in the PPH report
         </Link>
       )}
     </div>

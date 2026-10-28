@@ -20,9 +20,10 @@ const STATUS: Record<string, string> = { booked: "Booked", confirmed: "Confirmed
 
 /**
  * A shop login's home: big buttons for the front desk, today's clients to check in and out, and the
- * checkout queue, then the shop's PPH card when the login's role has the PPH report (it doesn't by default).
+ * checkout queue, then the shop's PPH and product sales per client cards when the login's role has the
+ * PPH report (it doesn't by default).
  */
-export async function FrontDeskHome({ ctx, denied, pphBy }: { ctx: StaffContext; denied: boolean; pphBy: CardPeriod }) {
+export async function FrontDeskHome({ ctx, denied, pphBy, ppcBy }: { ctx: StaffContext; denied: boolean; pphBy: CardPeriod; ppcBy: CardPeriod }) {
   const today = todayLocal();
   const shopIds = reportShopIds(ctx);
   const now = new Date();
@@ -146,7 +147,7 @@ export async function FrontDeskHome({ ctx, denied, pphBy }: { ctx: StaffContext;
         )}
       </div>
       <Suspense fallback={null}>
-        <DashboardPph ctx={ctx} rankBy={pphBy} today={today} now={now} />
+        <DashboardPph ctx={ctx} rankBy={pphBy} perClientBy={ppcBy} today={today} now={now} />
       </Suspense>
     </div>
   );

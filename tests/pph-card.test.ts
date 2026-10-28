@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { type CardRow, CARD_PERIODS, SPARK_DAYS, cardTotal, parseCardPeriod, pphCard, sparkPoints } from "@/domain/pph-card";
+import { type CardRow, CARD_PERIODS, SPARK_DAYS, cardTotal, parseCardPeriod, perClientCard, perClientTotal, pphCard, sparkPoints } from "@/domain/pph-card";
 
-const row = (staffId: string, shopId: string, centi: number, serviceCents: number, productCents = 0, clients = 0): CardRow => ({ staffId, shopId, centi, serviceCents, productCents, clients });
+const row = (staffId: string, shopId: string, centi: number, serviceCents: number, productCents = 0, clients = 0, served: string[] = []): CardRow => ({ staffId, shopId, centi, serviceCents, productCents, clients, served: new Set(served) });
 const shops = [
   { id: "cv", name: "Coralville" },
   { id: "ml", name: "Moline" },
@@ -103,5 +103,57 @@ describe("the dashboard's PPH card", () => {
     ]);
     expect(sparkPoints([7], 100, 20, 0)).toEqual([{ i: 0, x: 50, y: 0 }]);
     expect(sparkPoints([null, 0], 100, 20, 2)).toEqual([{ i: 1, x: 98, y: 18 }]);
+  });
+});
+
+describe("the dashboard's product sales per client card", () => {
+  // A client with a profile is c:<id>; a walk-in is t:<ticket>, so each walk-in ticket is its own client.
+  const pc = (staffId: string, shopId: string, productCents: number, served: string[]) => row(staffId, shopId, 0, 0, productCents, 0, served);
+  const pcPeriod = [pc("a", "cv", 5_000, ["c:1", "c:2", "t:1"]), pc("a", "ml", 0, ["c:1", "t:2"]), pc("b", "cv", 3_000, ["c:1", "c:3"]), pc("c", "cv", 2_000, [])];
+  const pcToday = [pc("a", "cv", 1_000, ["c:1"]), pc("b", "cv", 1_000, ["c:1", "t:9"])];
+  const pcInput = (o: Partial<Parameters<typeof perClientCard>[0]> = {}) => ({
+    rows: { today: pcToday, yesterday: [], period: pcPeriod },
+    days: [
+      { date: "2029-08-13", rows: [] },
+      { date: "2029-08-14", rows: pcToday },
+    ],
+    shops,
+    names,
+    rankBy: "period" as const,
+    ...o,
+  });
+
+  it("is product sales over the unique clients across the rows: a client two barbers saw is one, N/A with none", () => {
+    const c = perClientCard(pcInput());
+    expect(c.total.period).toEqual({ productCents: 10_000, clients: 5, perClient: 2_000 });
+    expect(c.total.today).toEqual({ productCents: 2_000, clients: 2, perClient: 1_000 });
+    expect(c.total.yesterday).toEqual({ productCents: 0, clients: 0, perClient: null });
+    expect(perClientTotal([pc("a", "cv", 1_000, ["t:1"]), pc("a", "cv", 0, ["t:2"])]).clients).toBe(2);
+  });
+
+  it("ranks barbers across their shops and locations, no clients (N/A) last", () => {
+    const c = perClientCard(pcInput());
+    expect(c.barbers.map((x) => [x.rank, x.item.name, x.item.detail, x.item.f.perClient, x.item.f.clients])).toEqual([
+      [1, "Blake", "Coralville", 1_500, 2],
+      [2, "Avery", "Coralville, Moline", 1_250, 4],
+      [null, "Casey", "Coralville", null, 0],
+    ]);
+    expect(c.shops.map((x) => [x.rank, x.item.name, x.item.f.perClient])).toEqual([
+      [1, "Coralville", 2_500],
+      [2, "Moline", 0],
+    ]);
+    expect(perClientCard(pcInput({ shops: [shops[0]] })).shops).toEqual([]);
+  });
+
+  it("ranks the period picked and charts each day on its own", () => {
+    const c = perClientCard(pcInput({ rankBy: "today" }));
+    expect(c.barbers.map((x) => [x.rank, x.item.name, x.item.f.perClient])).toEqual([
+      [1, "Avery", 1_000],
+      [2, "Blake", 500],
+    ]);
+    expect(c.spark).toEqual([
+      { date: "2029-08-13", value: null },
+      { date: "2029-08-14", value: 1_000 },
+    ]);
   });
 });

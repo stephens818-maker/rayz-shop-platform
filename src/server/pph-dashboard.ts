@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { staff } from "@/db/schema";
 import { periodOf } from "@/domain/payroll/calendar";
 import { reportView, type Permission } from "@/domain/permissions";
-import { type CardPeriod, type CardRow, type PphCardData, SPARK_DAYS, pphCard } from "@/domain/pph-card";
+import { type CardPeriod, type CardRow, type PerClientCardData, type PphCardData, SPARK_DAYS, perClientCard, pphCard } from "@/domain/pph-card";
 import { type LocalDate, addDays } from "@/lib/time";
 import type { StaffAccess } from "./auth/access";
 import { brandCalendar, ensurePayGroups } from "./payroll/groups";
@@ -16,7 +16,8 @@ import { openShiftWork } from "./time-clock";
  * The dashboard's Productivity Per Hour card (src/domain/pph-card.ts) from the live data, worked out
  * as the PPH report works it out (src/server/pph-report.ts). Today counts shifts still on the clock
  * up to now, so a barber at work all day isn't N/A until they clock out. The period to date is each
- * shop's own pay period, from its first day to today.
+ * shop's own pay period, from its first day to today. Product sales per client comes from the same
+ * rows, so the two cards always cover the same shops, people and days.
  */
 
 export interface PphDashboard extends PphCardData {
@@ -28,6 +29,8 @@ export interface PphDashboard extends PphCardData {
   dates: { today: LocalDate; yesterday: LocalDate };
   /** The pay period the period to date is in; null where the shops' calendars differ (each shop's own). */
   period: { start: LocalDate; end: LocalDate; label: string } | null;
+  /** Product sales per client over the same shops and periods; null without money (it's a dollar figure). */
+  perClient: PerClientCardData | null;
 }
 
 const canAt = (a: StaffAccess, shopId: string, p: Permission) => a.byShop.get(shopId)?.permissions.has(p) ?? false;
@@ -55,6 +58,8 @@ export interface PphDashboardInput {
   today: LocalDate;
   now: Date;
   rankBy: CardPeriod;
+  /** The period the product sales per client leaderboards rank; the PPH one's by default. */
+  perClientBy?: CardPeriod;
 }
 
 /**
@@ -87,14 +92,14 @@ export async function pphDashboard(o: PphDashboardInput): Promise<PphDashboard |
 
   const people = [...new Set([...daily.flat(), ...period].map((r) => r.staffId))];
   const names = new Map((people.length ? await db.select({ id: staff.id, label: staff.displayLabel }).from(staff).where(inArray(staff.id, people)) : []).map((s) => [s.id, s.label]));
-  const card = pphCard({
+  const input = {
     rows: { today: daily[SPARK_DAYS - 1], yesterday: daily[SPARK_DAYS - 2], period },
     days: days.map((date, i) => ({ date, rows: daily[i] })),
     shops: ownOnly ? [] : shops,
     names,
-    rankBy: o.rankBy,
-    money,
-  });
+  };
+  const card = pphCard({ ...input, rankBy: o.rankBy, money });
+  const pc = money ? perClientCard({ ...input, rankBy: o.perClientBy ?? o.rankBy }) : null;
   const scope = ownOnly ? "own" : shops.length === 1 ? "shop" : o.brand && shops.length === o.shops.length ? "brand" : "shops";
   return {
     ...card,
@@ -105,5 +110,6 @@ export async function pphDashboard(o: PphDashboardInput): Promise<PphDashboard |
     shopIds,
     dates: { today: o.today, yesterday: addDays(o.today, -1) },
     period: periods.length === 1 ? { start: periods[0].start, end: periods[0].end, label: periodLabel(periods[0]) } : null,
+    perClient: pc && { ...pc, barbers: ownOnly ? [] : pc.barbers },
   };
 }

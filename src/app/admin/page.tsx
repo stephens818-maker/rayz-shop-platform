@@ -73,12 +73,13 @@ export const metadata: Metadata = { title: "Today" };
 export default async function Dashboard({
   searchParams,
 }: {
-  searchParams: Promise<{ denied?: string; pph?: string }>;
+  searchParams: Promise<{ denied?: string; pph?: string; ppc?: string }>;
 }) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin");
   const pphBy = parseCardPeriod(sp.pph);
-  if (ctx.staff.kind === "shop") return <FrontDeskHome ctx={ctx} denied={!!sp.denied} pphBy={pphBy} />;
+  const ppcBy = parseCardPeriod(sp.ppc);
+  if (ctx.staff.kind === "shop") return <FrontDeskHome ctx={ctx} denied={!!sp.denied} pphBy={pphBy} ppcBy={ppcBy} />;
   const today = todayLocal();
   const shopIds = reportShopIds(ctx);
   const ownBook = !can(ctx, "calendar.manage");
@@ -439,7 +440,7 @@ export default async function Dashboard({
       </div>
 
       <Suspense fallback={<PphCardSkeleton />}>
-        <DashboardPph ctx={ctx} rankBy={pphBy} today={today} now={now} />
+        <DashboardPph ctx={ctx} rankBy={pphBy} perClientBy={ppcBy} today={today} now={now} />
       </Suspense>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">

@@ -3,10 +3,11 @@
  * far, yesterday and the pay period to date, with clients per hour and total PPH beside it, a barber
  * leaderboard, a location leaderboard on a dashboard with more than one shop, and a daily sparkline.
  * The total is the dashboard's shops: the brand on the brand dashboard, one shop on a shop's.
- * Without money it ranks and charts clients per hour instead. Pure: no database, no clock.
+ * Without money it ranks and charts clients per hour instead. Beside it, product sales per client
+ * the same way (only with money: it's a dollar figure). Pure: no database, no clock.
  */
 import type { LocalDate } from "@/lib/time";
-import { type Pph, type PphRank, type Ranked, pphCents, pphOf, rankPph } from "./pph";
+import { type Pph, type PphRank, type Ranked, perClientCents, pphCents, pphOf, rankPph, uniqueClients } from "./pph";
 
 export const CARD_PERIODS = ["today", "yesterday", "period"] as const;
 export type CardPeriod = (typeof CARD_PERIODS)[number];
@@ -19,7 +20,7 @@ export const SPARK_DAYS = 14;
 /** Rows on each leaderboard before it points to the PPH report. */
 export const BOARD_ROWS = 10;
 
-/** One person at one shop: worked centi-hours, sales in cents and completed service tickets (the PPH report's rows). */
+/** One person at one shop: worked centi-hours, sales in cents, completed service tickets and the unique clients served (the PPH report's rows). */
 export interface CardRow {
   staffId: string;
   shopId: string;
@@ -27,6 +28,7 @@ export interface CardRow {
   serviceCents: number;
   productCents: number;
   clients: number;
+  served: ReadonlySet<string>;
 }
 
 export interface CardInput {
@@ -93,6 +95,64 @@ export function pphCard(x: CardInput): PphCardData {
     barbers: rankPph(barbers, value, name),
     shops: rankPph(shops, value, name),
     spark: x.days.map((d) => ({ date: d.date, value: pphOf(cardTotal(d.rows), rank) })),
+  };
+}
+
+// ───────────────────────────── Product sales per client ─────────────────────────────
+
+/** Product sales in cents over the unique clients served (src/domain/pph.ts); perClient is null with none. */
+export interface PerClient {
+  productCents: number;
+  clients: number;
+  perClient: number | null;
+}
+
+export interface PerClientEntry {
+  id: string;
+  name: string;
+  detail: string | null;
+  f: PerClient;
+}
+
+/** The card beside PPH: the same periods, leaderboards and sparkline, for product sales per client. */
+export interface PerClientCardData {
+  total: Record<CardPeriod, PerClient>;
+  rankBy: CardPeriod;
+  /** Barbers with clients or product sales in the ranked period, best first, N/A (no clients) last. */
+  barbers: Ranked<PerClientEntry>[];
+  /** Every location, best first; empty on a one-shop dashboard. */
+  shops: Ranked<PerClientEntry>[];
+  spark: { date: LocalDate; value: number | null }[];
+}
+
+/** Product sales added up over the distinct clients across the rows: a client two barbers saw is one. */
+export function perClientTotal(rs: readonly CardRow[]): PerClient {
+  const productCents = rs.reduce((a, r) => a + r.productCents, 0);
+  const clients = uniqueClients(rs.map((r) => r.served));
+  return { productCents, clients, perClient: perClientCents(productCents, clients) };
+}
+
+export function perClientCard(x: Omit<CardInput, "money">): PerClientCardData {
+  const ranked = x.rows[x.rankBy];
+  const multi = x.shops.length > 1;
+  const shopName = new Map(x.shops.map((s) => [s.id, s.name]));
+  const byStaff = new Map<string, CardRow[]>();
+  for (const r of ranked) if (r.served.size > 0 || r.productCents !== 0) byStaff.set(r.staffId, [...(byStaff.get(r.staffId) ?? []), r]);
+  const barbers = [...byStaff].map(([id, rs]) => ({
+    id,
+    name: x.names.get(id) ?? "Unknown",
+    detail: multi ? [...new Set(rs.map((r) => shopName.get(r.shopId) ?? ""))].sort().join(", ") : null,
+    f: perClientTotal(rs),
+  }));
+  const shops = multi ? x.shops.map((s) => ({ id: s.id, name: s.name, detail: null, f: perClientTotal(ranked.filter((r) => r.shopId === s.id)) })) : [];
+  const value = (e: PerClientEntry) => e.f.perClient;
+  const name = (e: PerClientEntry) => e.name;
+  return {
+    total: { today: perClientTotal(x.rows.today), yesterday: perClientTotal(x.rows.yesterday), period: perClientTotal(x.rows.period) },
+    rankBy: x.rankBy,
+    barbers: rankPph(barbers, value, name),
+    shops: rankPph(shops, value, name),
+    spark: x.days.map((d) => ({ date: d.date, value: perClientTotal(d.rows).perClient })),
   };
 }
 
