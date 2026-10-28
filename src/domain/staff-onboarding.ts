@@ -1,5 +1,5 @@
 /**
- * Staff payout onboarding. Every employee sets up a new Stripe Express account under Ray'z (no
+ * Staff payout onboarding. Every employee sets up a new Stripe recipient account under Ray'z (no
  * Squire account carries over), so the brand tracks who's been invited, who started, who's done and
  * who Stripe is holding up, and reminds the rest. Pure: tests/staff-onboarding.test.ts.
  */

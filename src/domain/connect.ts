@@ -5,7 +5,7 @@
  *    2026-10-28): the card is charged on the platform, the merchant of record, then the shop's
  *    portion (service, product, tax and the surcharge, less the shop's processing fee) is
  *    transferred to the shop's account; behind FEATURE_TIP_TO_BARBER each card tip goes to its
- *    barber's Express account, and otherwise it's in the shop's transfer. Refunds and disputes come
+ *    barber's recipient account (no Stripe Dashboard), and otherwise it's in the shop's transfer. Refunds and disputes come
  *    back out of the shop's transfer only. For a shop run by its own LLC.
  *  - entity: the shop's owner entity's connected account (entity_payment_accounts), shared by every
  *    shop that owner has in this mode. The same transfers; payouts go to the owner's bank.

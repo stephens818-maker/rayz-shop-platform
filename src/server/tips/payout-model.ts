@@ -1,6 +1,6 @@
 /**
  * Which tip payout rails this deployment runs (ST-C7). Payroll (the iSolved export) and cash from
- * the drawer always work; direct Stripe payouts to each employee's own Express account are on
+ * the drawer always work; direct Stripe payouts to each employee's own recipient account are on
  * unless FEATURE_STAFF_STRIPE_PAYOUTS=false. Every reader of the tip policy goes through `railed`,
  * so with the rail off no screen offers Stripe, no batch pays by it, and nothing onboards an
  * employee to it; the stored policy keeps its Stripe choice so switching back on picks up where the

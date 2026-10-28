@@ -119,8 +119,9 @@ export function PolicyForm({
               {METHOD_LABEL[m]}
               {m === "stripe" && (
                 <span className="block text-xs text-zinc-500">
-                  Each employee sets up their own Stripe Express account on
-                  Stripe&rsquo;s page; the app never sees their bank details.
+                  Each employee sets up their own Stripe payout account (no
+                  Stripe login) in the app; the app never sees their bank
+                  details.
                 </span>
               )}
               {m === "payroll" && (

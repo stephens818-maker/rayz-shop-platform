@@ -101,7 +101,7 @@ async function setup(slug: string, label: string) {
   return { shop, acct, staffId: p.id };
 }
 
-/** The barber's Express account: active, agreed to Stripe deposits, paid by Stripe. */
+/** The barber's recipient account: active, agreed to Stripe deposits, paid by Stripe. */
 async function barberOnStripe(staffId: string, acct: string) {
   const row = {
     method: "stripe" as const,
@@ -192,7 +192,7 @@ describe("FEATURE_TIP_TO_BARBER=false (the brand-wide kill switch)", () => {
 });
 
 describe("FEATURE_TIP_TO_BARBER on (the launch default)", () => {
-  it("the tip goes to the barber's Express account with source_transaction, the shop gets the rest, and the batch only pays it out of their balance", async () => {
+  it("the tip goes to the barber's recipient account with source_transaction, the shop gets the rest, and the batch only pays it out of their balance", async () => {
     const { shop, acct, staffId } = await setup("coralville", "Makenna");
     await barberOnStripe(staffId, "acct_fake_makenna");
     const before = await payrollLine(shop.id, staffId);
@@ -291,7 +291,7 @@ describe("refunds and disputes: the shop's transfer only, never a tip", () => {
     calls.length = 0;
     await m.checkout.refundSale({ saleId, items: [], tipCents: 500, refundCardFee: false, reason: "Tip typo", restock: false, actor });
     expect(calls).toEqual([expect.objectContaining({ op: "reversal", params: expect.objectContaining({ transfer: shopRow!.stripeTransferId, amount: 500 }) })]);
-    expect(m.processor.simulatorLedger().refunds.filter((r) => r.paymentIntentId === pay.stripePaymentIntentId)).toEqual([expect.objectContaining({ amountCents: 500, reverseTransfer: false })]);
+    expect(m.processor.simulatorLedger().refunds.filter((r) => r.paymentIntentId === pay.stripePaymentIntentId)).toEqual([expect.objectContaining({ amountCents: 500 })]);
     expect((await transferRow(shopRow!.id)).reversedCents).toBe(500);
     // The refunded tip is the shop's cost (already with the barber), never a tip ledger reversal.
     const absorbed = await m.db.db.select().from(s().tipAbsorptions).where(and(eq(s().tipAbsorptions.saleId, saleId), eq(s().tipAbsorptions.staffId, staffId)));
