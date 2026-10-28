@@ -838,6 +838,7 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 - **`/me/earnings`:** `workweeks[]` already count training in `basisHours` and `otHours`; nothing changes there. New on `training` (top level and per shop): `overtimeShareHours` and `overtimeShareCents`, training's share of their OT. `otNote` has new wording. Additive.
 - **Web:** Training Cost (Training Pay + training's share of O.T. Pay, inside Labor Cost) on the Payroll Report, checked by the gate. Commission's regular-rate half-time (C1) is now spread over production plus training hours.
 - **Migration `core_0146_training_toward_ot`:** turns the setting on where a brand had saved it off (data only). The next free number is `core_0147`. An approved but unlocked period shows as changed after deploy; approve it again.
+- **Fix, `productPerClient` on a locked period:** `uniqueClients` now comes from what the lock kept, like everything else on a locked period; before, a sale after the lock could change it. Periods locked before this still count today's clients. Same shape.
 
 ### 2026-10-28: core, product sales per client (Charles), for the Rayz App builder and the mobile agent
 
