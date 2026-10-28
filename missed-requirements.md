@@ -101,7 +101,7 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 
 - [x] One platform account, and a connected (Express) account per shop.
 - [x] Separate charges and transfers (Charles approved, 2026-10-28): each sale is charged on the platform with its `transfer_group`, and the shop's portion (services, products, tax and the card surcharge, less the processing fee) is transferred to the shop where the service happened, with `source_transaction`. `chargeCard` and `settlement.ts` are the only charge and transfer path (`tests/charge-path-guard.test.ts`).
-- [x] Each card tip is transferred to the barber's Express account the same way. `FEATURE_TIP_TO_BARBER` is on at launch (Charles's CPA approved direct Stripe tip payouts, 2026-10-28) and is the brand-wide kill switch (`false`); each shop has its own, the Brand Owner's, on Tip payout settings (`core_0136`). Off, the tip is in the shop's transfer and goes on the paycheck. Every tip goes to iSolved either way, as `E_Cash Tips Recd_Dollars` (taxed, not paid again in the check).
+- [x] Each card tip is transferred to the barber's recipient account the same way (section 49). `FEATURE_TIP_TO_BARBER` is on at launch (Charles's CPA approved direct Stripe tip payouts, 2026-10-28) and is the brand-wide kill switch (`false`); each shop has its own, the Brand Owner's, on Tip payout settings (`core_0136`). Off, the tip is in the shop's transfer and goes on the paycheck. Every tip goes to iSolved either way, as `E_Cash Tips Recd_Dollars` (taxed, not paid again in the check).
 - [x] Refunds and disputes reverse the shop's transfer only, never a tip; a won dispute is transferred back. What the shop's transfer can't cover stays with the platform. Payments from before keep their destination-charge refunds. `tests/db/separate-charges.test.ts`.
 - [x] Shops that aren't onboarded can't take cards. Shops can also use the brand account or take cash only (see section 13).
 - [x] The location setup wizard creates each shop's account and runs Stripe-hosted onboarding, with a simulator stand-in when there are no keys.
@@ -306,7 +306,7 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 - [x] Payout schedule per shop, within the brand's allowed methods: end of night at drawer close, daily on a delay of N days, weekly, with payroll only, or manual.
 - [x] Methods:
   - [x] Cash from the drawer at close: a cash payout record, deducted from the drawer's expected cash, acknowledged by the employee with their clock PIN or name on the device. The drawer can't close while one is waiting.
-  - [x] Stripe Connect Express accounts for staff, through Stripe-hosted onboarding (no bank details in the app; see My banking below). Transfers come from the shop's Stripe balance (or the brand's), with instant payout where eligible and its fee shown.
+  - [x] Stripe Connect recipient accounts for staff with no Stripe Dashboard, through Stripe's embedded onboarding (the hosted page as the fallback; no bank details in the app; see My banking below and section 49). Transfers come from the shop's Stripe balance (or the brand's), with instant payout where eligible and its fee shown.
   - [x] Payroll export only.
   - [x] Each employee chooses, if the brand allows it.
 - [x] Managers review and approve every batch, with each employee's breakdown by ticket. Hold, adjust, take out and cancel need a reason and go in the audit log; nobody adjusts their own.
@@ -314,7 +314,7 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 - [x] Reconciled against Stripe (`payout.paid`, `payout.failed`, `payout.canceled`, `transfer.reversed`, `account.updated`) and against the cash drawer. A failed payout reverses the money and puts its tips in the next batch.
 - [x] Permissions: `tips.own`, `tips.approve` and `tips.settings`.
 - [x] **My banking** (`/admin/my-banking`):
-  - [x] Employees add or change their bank account or debit card on Stripe's hosted Express pages (onboarding through an Account Link, changes in their Express dashboard). Stripe collects identity, tax and bank details. The app keeps only the Stripe account id, its status, and the type, bank or card name and last 4 that Stripe returns.
+  - [x] Employees add or change their bank account or debit card with Stripe's embedded components in the staff app (onboarding and account management through an Account Session; the hosted Account Link is the fallback). Barbers have no Stripe Dashboard. Stripe collects identity, tax and bank details. The app keeps only the Stripe account id, its status, and the type, bank or card name and last 4 that Stripe returns.
   - [x] Status: not set up, pending verification, ready or action needed, with what Stripe needs in plain words and its deadline.
   - [x] The employee is told when Stripe needs more information, once per new request.
   - [x] A change of payout destination or method sends a security notice (email and text) and goes in the audit log.
@@ -332,7 +332,7 @@ The owner reversed the earlier "no clock-in" decision: everyone is paid hourly.
 
 ## 16. Processor-hosted data (the business never holds financial or identity data)
 
-- [x] Bank accounts, debit cards, SSNs and TINs, EINs, dates of birth for identity checks, ID documents and card numbers, for employees, shops and clients, are collected only on Stripe's surfaces: Connect onboarding and the Express dashboards, the Payment Element and Terminal. No page has a field for them, which a test checks.
+- [x] Bank accounts, debit cards, SSNs and TINs, EINs, dates of birth for identity checks, ID documents and card numbers, for employees, shops and clients, are collected only on Stripe's surfaces: Connect onboarding, the embedded components and the shops' Express dashboards, the Payment Element and Terminal. No page has a field for them, which a test checks.
 - [x] The database, logs, audit log and backups keep only Stripe IDs, statuses, last 4 and bank or brand names:
   - [x] No column or JSON property for those values; a test greps the schema, every migration and the live database.
   - [x] Every `console` call in the server and the worker is scrubbed (`src/instrumentation.ts`), as are audit details.
@@ -826,11 +826,11 @@ Charles's scope: a staff namespace at `/api/staff/v1`, apart from the customer `
 
 ## 35. Staff app Stripe tip payouts (matches Squire Commander)
 
-Charles's scope: each employee gets their own Stripe Connect Express account, separate from the shops' accounts, set up on Stripe's hosted onboarding from the staff app. Stripe test mode only. README "Tip payouts" and "Staff app API", and NOTES-SYNC "Tip payouts", have the details.
+Charles's scope: each employee gets their own Stripe Connect account, separate from the shops' accounts, set up from the staff app (a recipient account with no Stripe Dashboard and embedded onboarding since section 49). Stripe test mode only. README "Tip payouts" and "Staff app API", and NOTES-SYNC "Tip payouts", have the details.
 
 **On (2026-10-27), with section 36:** Charles decided card tips go straight to employees' banks through Stripe, so `FEATURE_STAFF_STRIPE_PAYOUTS` defaults on (`false` switches it off). The W-2 safeguards are section 38.
 
-- [x] Staff API: start or resume onboarding (`POST /banking/onboarding-link`, with the step: start, resume, update or done), account status and requirements (`GET /banking`), the external accounts with last 4 only (`GET /banking/external-accounts`), and the Express dashboard link (`POST /banking/dashboard-link`).
+- [x] Staff API: start or resume onboarding (`POST /banking/onboarding-link`, with the step: start, resume, update or done), account status and requirements (`GET /banking`), the external accounts with last 4 only (`GET /banking/external-accounts`), and `POST /banking/dashboard-link`, now 409 outside the simulator (no Stripe Dashboard, section 49).
 - [x] Onboarding covers identity, the bank account and a debit card for instant payouts, all on Stripe's pages.
 - [x] Manager-approved payouts move from the shop's connected account (or the brand's, for brand-account shops) to the employee's account with separate charges and transfers, then pay out on the shop's schedule.
 - [x] Standard payouts to the default bank or card, and optional instant payouts to the debit card. Without an instant-capable card it falls back to standard and says so in the audit log.
@@ -848,7 +848,7 @@ Charles's scope: each employee gets their own Stripe Connect Express account, se
 
 ## 36. Staff payout onboarding (everyone re-registers)
 
-Charles decided that all staff re-register: no Squire staff Stripe account is migrated, and every employee does fresh Stripe Express onboarding under Ray'z. README "Tip payouts" and "Cutover plan", and NOTES-SYNC "Tip payouts", have the details.
+Charles decided that all staff re-register: no Squire staff Stripe account is migrated, and every employee does fresh Stripe onboarding under Ray'z. README "Tip payouts" and "Cutover plan", and NOTES-SYNC "Tip payouts", have the details.
 
 - [x] Onboarding tracker in the brand and shop admin (**Payroll → Payout onboarding**, `tips.approve`, one shop or every shop they can see): not invited, invited, started, blocked on Stripe's requirements (with what Stripe needs), verifying, or done, plus invites and reminders sent and tips waiting. Only whether there's an email or mobile number is shown, not the details.
 - [x] Bulk invites by text, email or both (falling back to whichever they have), up to 500 at once, each audited. Someone already done, verifying, invited in the last 10 minutes or with no contact details is skipped with the reason.
@@ -878,7 +878,7 @@ From the builder's `staff-api-gaps.md` and `staff-app-plan.md`. Every route goes
 - [x] ST-I1 to I8 and I10: time off requests and decisions (I1), milestones (I2), walk-ins (I3), checkout with the shop's card fee (I4, Tap to Pay behind its flag), calls and texts through the shop line (I5), the front-desk kiosk (I6), the manager board (I7), `/config` with the version and switches (I8), and the staff privacy, terms and support pages (I10).
 - [x] OpenAPI for every path, with its permission and the 426 response. Migrations `core_0102_staff_app_gaps`, `core_0103_staff_app_invite_jobs` and `core_0104_staff_payout_confirm_scrub`. Tests: `tests/db/staff-app-api.test.ts`, `tests/db/staff-api.test.ts`, and the staff app section of `tests/db/tenant.test.ts` (outsiders, Coralville ids and canaries).
 
-- [x] ST-I9 per-employee Stripe Express accounts with Stripe-hosted onboarding from the staff app (Charles's decision, 2026-10-27), with the rest of sections 35 and 36: standard and instant payouts, payout webhooks, the onboarding tracker, bulk invites with reminders, and tips held until onboarding is done. On by default.
+- [x] ST-I9 per-employee Stripe accounts with onboarding from the staff app (Charles's decision, 2026-10-27; since section 49, recipient accounts with no dashboard and embedded onboarding), with the rest of sections 35 and 36: standard and instant payouts, payout webhooks, the onboarding tracker, bulk invites with reminders, and tips held until onboarding is done. On by default.
 
 **Still open:**
 - [x] L37: shop goals (ST-I2). The brand sets them under Setup → Staff milestones (counts only, week or month, every shop or some); `GET /me/milestones` returns `shopGoals` and the web Milestones page shows them. Shop totals only, never money.
@@ -896,7 +896,7 @@ Charles's requirement with the Stripe decision: the tips stay W-2 wages, so payr
 - [x] Pay through payroll stays as each shop's setting. Tests: `tests/db/tip-w2.test.ts`, `tests/db/tip-stripe.test.ts`, `tests/db/tips.test.ts`.
 
 **Needs Stripe or the CPA to confirm:**
-- [ ] Stripe: that W-2 employees' tip payouts to Express accounts are an approved use, and that platform-paid fees mean no 1099-K for them.
+- [ ] Stripe: that W-2 employees' tip payouts to recipient accounts are an approved use, and that platform-paid fees mean no 1099-K for them.
 - [ ] Stripe: the 1099 filing-requirement override (NOT_REQUIRED) for these accounts and turning off 1099 e-delivery to them.
 - [ ] CPA: tips reported in the pay period they were earned, including ones still held for Stripe setup, which are taxed before they're received.
 - [ ] CPA: card fee netting and the instant payout fee against gross tips as W-2 wages (the file reports gross).
@@ -989,7 +989,7 @@ README "Staff app API → Staff delta for Squire" has the details. Migrations `c
 
 **Held or not done yet:**
 - [ ] ST-C5's exact punches, cross-shop weekly overtime and buddy-punch rules: held until iSolved Time is decided.
-- [x] ST-C11 / I10: the CPA's sign-off for tips to barbers' Express accounts (Charles, 2026-10-28). `FEATURE_TIP_TO_BARBER` is on by default, in the sandbox and at launch.
+- [x] ST-C11 / I10: the CPA's sign-off for tips to barbers' Stripe accounts (Charles, 2026-10-28). `FEATURE_TIP_TO_BARBER` is on by default, in the sandbox and at launch.
 - [ ] Live money: `MONEY_MOVEMENT_LIVE=true` once live keys have been tested end to end, and Stripe's confirmation of no 1099-K for the barbers' accounts.
 - [ ] Legal review of the privacy notice and the agency details. The release gate fails until it's done (DEPLOY step 44).
 - [ ] The CPA's confirmation of the new iSolved columns, the 45B start and the state rates.
@@ -1089,9 +1089,23 @@ Charles approved the plan: (1) all scope, the apps included, complete and tested
 - [ ] The whole runbook rehearsed for the pilot on a staging copy, including one mixed pay period imported, approved and locked (C14).
 - [ ] The pilot's first clean pay period signed off; then the second wave.
 
+## 49. Tip payout details (Charles and the Claude bot's review, Oct 28)
+
+These supersede any earlier wording that conflicts.
+
+- [x] **A. Barber accounts:** Connect recipient accounts with `controller.stripe_dashboard.type = "none"` (ST-I9) and embedded onboarding (Account Sessions), not Express. Barbers get no Stripe dashboard login (the dashboard link answers `409 no_stripe_dashboard`), and 1099 tax reporting stays off. The tip payout settings can't pick Express, a full dashboard or hosted onboarding; an old stored value is read as the fixed one. Shops' accounts are unchanged. Recorded in NOTES-SYNC.md.
+- [x] **B1. No tip clawbacks:** a refund or a lost dispute after a tip transfer books a `platform_losses` row (`core_0137_platform_losses`) for what the shop's transfer can't cover. The shop's reversal covers only the shop portion (the sale amount); a tip transfer is never reversed (a database trigger refuses a tip transfer as a recovery).
+- [x] **B2. `source_transaction`:** every sale transfer (shop and tip) is created with the charge as its `source_transaction`, so it waits for the funds; one without it is refused. No negative platform balances. (The money returned after a won dispute is the one shop-only exception, since its charge was already paid out.)
+- [x] **B3. Refund order:** a refund comes out of the sale portion first. Past the sale portion the platform absorbs the tip portion and logs it. This is the brand setting **Refunds past the sale amount** (`tipRefundOverflow`): the platform absorbs it (default), or it's recovered from the shop's next transfers.
+- [x] **B4. Keys:** one `transfer_group` per ticket; idempotency keys `{saleId}:shop` and `{saleId}:tip`, stored per transfer (a split ticket or several barbers add the payment or barber to the key). Older transfers keep their old keys.
+- [x] **B5. Payroll:** tips export to iSolved as `E_Cash Tips Recd_Dollars`. A tip refunded after its period was exported or approved is flagged on the Payroll Report (`tip_refunded_after_export`) and never netted negative.
+- [x] **B6. The flag:** `FEATURE_TIP_TO_BARBER` is on in the sandbox and by default (CPA approved) and is a per-shop kill switch. Barber payout onboarding (setup, invites, reminders, the staff app's banking) is available wherever the flag is on and hidden where it's off; a barber who already finished setup can still update it.
+- [x] Tests: `tests/staff-payouts.test.ts`, `tests/charge-split.test.ts`, `tests/money-movement.test.ts`, `tests/db/separate-charges.test.ts`, `tests/db/tip-stripe.test.ts`, `tests/db/staff-onboarding.test.ts`, `tests/db/staff-api.test.ts`, `tests/db/payroll-review.test.ts`.
+- [ ] **Confirm with Charles:** `tipRefundOverflow`. When a refund is bigger than the sale amount, does the platform absorb the tip portion (the default), or is it recovered from the shop's next transfers?
+
 ## Deferred by decision
 
-- I10 is decided: separate charges and transfers (section 5), with tips to barbers' Express accounts on (`FEATURE_TIP_TO_BARBER`, the CPA approved it on 2026-10-28) and a per-shop kill switch. Live tip transfers also need `MONEY_MOVEMENT_LIVE`.
+- I10 is decided: separate charges and transfers (section 5), with tips to barbers' recipient accounts on (`FEATURE_TIP_TO_BARBER`, the CPA approved it on 2026-10-28) and a per-shop kill switch. Live tip transfers also need `MONEY_MOVEMENT_LIVE`.
 - The Q11/C2 training setting stays a setting until Charles answers Q11 (on by default since section 46).
 - PR #8 isn't merged.
 - `DEMO_MODE` isn't turned on in production, because it would break the Vercel demo.
