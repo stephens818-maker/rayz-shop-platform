@@ -342,11 +342,18 @@ describe("milestones on the day", () => {
     const tc = await import("@/server/time-clock");
     const s = await tc.clockState(ids.jamie);
     expect(s.next).toContain("in");
+    const desk = await tc.registerDevice(shop.moline, "Milestone iPad", actor);
+    const { issueKioskQr } = await import("@/server/clock-security");
+    const atDesk = () => ({
+      proof: { qr: issueKioskQr({ id: desk.id, shopId: shop.moline }).code },
+      nonce: { id: crypto.randomUUID(), at: Date.now() },
+    });
     let r = await clock.punchAction({
       shopId: shop.moline,
       type: "in",
       gps: null,
       photo: null,
+      ...atDesk(),
     });
     if (r.ok && r.data.kind === "confirm")
       r = await clock.punchAction({
@@ -355,6 +362,7 @@ describe("milestones on the day", () => {
         gps: null,
         photo: null,
         confirmTimeOff: true,
+        ...atDesk(),
       });
     expect(r.ok && r.data.kind === "done" && r.data.welcome).toMatchObject({
       firstName: "Jamie",
@@ -374,6 +382,7 @@ describe("milestones on the day", () => {
       type: "out",
       gps: null,
       photo: null,
+      ...atDesk(),
     });
     expect(out.ok && out.data.kind === "done" && out.data.welcome).toBeFalsy();
 

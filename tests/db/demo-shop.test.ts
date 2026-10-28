@@ -104,9 +104,16 @@ describe("the Demo Shop for app review (ST-I19)", () => {
     const demoIds = (await m.db.db.select({ id: S().customers.id }).from(S().customers).where(eq(S().customers.source, demo.DEMO_CLIENT_SOURCE))).map((c) => c.id);
     expect(theirs.json.clients.some((c: { id: string }) => demoIds.includes(c.id))).toBe(false);
 
-    const inn = await api.call("POST", "clock/in", { token: t, body: { shopId, confirmTimeOff: true } });
+    const alone = await api.call("POST", "clock/in", { token: t, body: { shopId, confirmTimeOff: true } });
+    expect(alone.status, alone.text).toBe(403);
+    const tc = await import("@/server/time-clock");
+    const { issueKioskQr } = await import("@/server/clock-security");
+    const desk = await tc.registerDevice(shopId, "Demo front desk", actor);
+    onTestFinished(() => tc.revokeDevice(desk.id, [shopId], actor));
+    const qr = () => ({ qr: issueKioskQr({ id: desk.id, shopId }).code });
+    const inn = await api.call("POST", "clock/in", { token: t, body: { shopId, proof: qr(), confirmTimeOff: true } });
     expect(inn.status, inn.text).toBe(200);
-    expect((await api.call("POST", "clock/out", { token: t, body: { shopId } })).status).toBe(200);
+    expect((await api.call("POST", "clock/out", { token: t, body: { shopId, proof: qr() } })).status).toBe(200);
 
     for (const [method, path, body] of [
       ["POST", "sales", { shopId, items: [] }],
