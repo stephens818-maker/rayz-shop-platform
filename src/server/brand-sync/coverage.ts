@@ -79,6 +79,7 @@ export const TABLES: Record<string, Coverage> = {
   clock_block_releases: REC,
   clock_devices: is("shop", "The devices a shop clocks in on"),
   clock_pairings: is("shop", "A manager's one-time codes for pairing a front-desk clock"),
+  clock_nonces: LOG,
   consent_events: LOG,
   contact_opt_outs: REC,
   coupon_codes: is("picker", "Single-use codes a campaign issued, under a promo code that picks its shop"),

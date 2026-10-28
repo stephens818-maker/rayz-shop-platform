@@ -54,7 +54,7 @@ async function call(method: keyof RouteMod, path: string, o: { token?: string; b
   const params = Object.fromEntries(key.split("/").flatMap((s, i) => (s.startsWith("[") ? [[s.slice(1, -1), parts[i]]] : [])));
   const handler = routes[key][method];
   if (!handler) throw new Error(`no ${method} on ${key}`);
-  const nonce = method === "POST" && !o.noNonce ? { "x-clock-nonce": crypto.randomUUID(), "x-clock-timestamp": String(Date.now()) } : {};
+  const nonce: Record<string, string> = method === "POST" && !o.noNonce ? { "x-clock-nonce": crypto.randomUUID(), "x-clock-timestamp": String(Date.now()) } : {};
   const headers: Record<string, string> = { "content-type": "application/json", ...(o.token ? { authorization: `Bearer ${o.token}` } : {}), ...nonce, ...(o.headers ?? {}) };
   const res = await handler(new Request(`${BASE}/${bare}${search ? `?${search}` : ""}`, { method, headers, body: o.body === undefined ? undefined : JSON.stringify(o.body) }), { params: Promise.resolve(params) });
   const text = await res.text();

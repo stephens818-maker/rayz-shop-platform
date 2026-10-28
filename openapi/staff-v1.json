@@ -1184,7 +1184,7 @@
         "tags": [
           "Time clock"
         ],
-        "summary": "Where they stand, what they can punch next, each shop's rule (QR, NFC, Wi-Fi, location), today's punches, break reasons and whether their PIN is set.",
+        "summary": "Where they stand, what they can punch next, each shop's rule (the front-desk clock or its QR code), today's punches, break reasons and whether their PIN is set.",
         "description": "Permission: timeclock.punch.",
         "parameters": [
           {
@@ -1228,7 +1228,7 @@
         "tags": [
           "Time clock"
         ],
-        "summary": "Clock in or out from their phone with the shop's proof. { kind: confirm } asks first during time off; clocking in returns welcome (milestones).",
+        "summary": "Clock in or out from their phone with the front-desk clock's QR code as proof.qr. { kind: confirm } asks first during time off (send again with a new nonce); clocking in returns welcome (milestones). A phone punches only with the code a paired front-desk clock shows (GET /kiosk/qr or /clock/kiosk/qr): signed, good for a minute, and used up by one scan (409 details.reason qr_used; scan the next one). Location, Wi-Fi, the NFC sticker or nothing are 403 details.reason kiosk_required. Without the server's CLOCK_HMAC_SECRET every clock route is 500 details.reason clock_secret_missing.",
         "description": "Permission: timeclock.punch.",
         "parameters": [
           {
@@ -1236,6 +1236,26 @@
             "in": "header",
             "required": false,
             "description": "A shop id to work in, or \"all\" for all their shops (where their role allows it). Their first shop when left out.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Clock-Nonce",
+            "in": "header",
+            "required": true,
+            "description": "A new random id for every send of a punch, retries included (16 to 128 letters, digits, - or _; a UUID works). Used once: a repeat is 409 details.reason nonce_replayed. Missing is 400 details.reason nonce_required.",
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "X-Clock-Timestamp",
+            "in": "header",
+            "required": true,
+            "description": "When this send was made, epoch milliseconds or an ISO time. More than 60 seconds from the server's clock is 400 details.reason stale_request (the phone's clock is off). For a punch queued offline this is when it's sent, not queuedAt.",
             "schema": {
               "type": "string"
             }
@@ -1261,12 +1281,12 @@
                     ]
                   },
                   "proof": {
-                    "description": "The qr or tag from the front-desk QR code's or the NFC sticker's link (/admin/clock?shop=…&qr=… or &tag=…)",
+                    "description": "The qr from the front-desk clock's QR code link (/admin/clock?shop=…&qr=…): signed, single-use, good for a minute. Without it (or a paired front-desk clock) a phone can't punch; an NFC sticker's tag no longer punches on its own",
                     "type": "object",
                     "properties": {
                       "qr": {
                         "type": "string",
-                        "maxLength": 64
+                        "maxLength": 200
                       },
                       "tag": {
                         "type": "string",
@@ -1403,7 +1423,7 @@
         "tags": [
           "Breaks"
         ],
-        "summary": "Start a break, with a reason and planned length; the calendar blocks it.",
+        "summary": "Start a break, with a reason and planned length; the calendar blocks it. A phone punches only with the code a paired front-desk clock shows (GET /kiosk/qr or /clock/kiosk/qr): signed, good for a minute, and used up by one scan (409 details.reason qr_used; scan the next one). Location, Wi-Fi, the NFC sticker or nothing are 403 details.reason kiosk_required. Without the server's CLOCK_HMAC_SECRET every clock route is 500 details.reason clock_secret_missing.",
         "description": "Permission: timeclock.punch.",
         "parameters": [
           {
@@ -1411,6 +1431,26 @@
             "in": "header",
             "required": false,
             "description": "A shop id to work in, or \"all\" for all their shops (where their role allows it). Their first shop when left out.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Clock-Nonce",
+            "in": "header",
+            "required": true,
+            "description": "A new random id for every send of a punch, retries included (16 to 128 letters, digits, - or _; a UUID works). Used once: a repeat is 409 details.reason nonce_replayed. Missing is 400 details.reason nonce_required.",
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "X-Clock-Timestamp",
+            "in": "header",
+            "required": true,
+            "description": "When this send was made, epoch milliseconds or an ISO time. More than 60 seconds from the server's clock is 400 details.reason stale_request (the phone's clock is off). For a punch queued offline this is when it's sent, not queuedAt.",
             "schema": {
               "type": "string"
             }
@@ -1456,12 +1496,12 @@
                     ]
                   },
                   "proof": {
-                    "description": "The qr or tag from the front-desk QR code's or the NFC sticker's link (/admin/clock?shop=…&qr=… or &tag=…)",
+                    "description": "The qr from the front-desk clock's QR code link (/admin/clock?shop=…&qr=…): signed, single-use, good for a minute. Without it (or a paired front-desk clock) a phone can't punch; an NFC sticker's tag no longer punches on its own",
                     "type": "object",
                     "properties": {
                       "qr": {
                         "type": "string",
-                        "maxLength": 64
+                        "maxLength": 200
                       },
                       "tag": {
                         "type": "string",
@@ -1569,7 +1609,7 @@
         "tags": [
           "Breaks"
         ],
-        "summary": "End the break.",
+        "summary": "End the break. A phone punches only with the code a paired front-desk clock shows (GET /kiosk/qr or /clock/kiosk/qr): signed, good for a minute, and used up by one scan (409 details.reason qr_used; scan the next one). Location, Wi-Fi, the NFC sticker or nothing are 403 details.reason kiosk_required. Without the server's CLOCK_HMAC_SECRET every clock route is 500 details.reason clock_secret_missing.",
         "description": "Permission: timeclock.punch.",
         "parameters": [
           {
@@ -1577,6 +1617,26 @@
             "in": "header",
             "required": false,
             "description": "A shop id to work in, or \"all\" for all their shops (where their role allows it). Their first shop when left out.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Clock-Nonce",
+            "in": "header",
+            "required": true,
+            "description": "A new random id for every send of a punch, retries included (16 to 128 letters, digits, - or _; a UUID works). Used once: a repeat is 409 details.reason nonce_replayed. Missing is 400 details.reason nonce_required.",
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "X-Clock-Timestamp",
+            "in": "header",
+            "required": true,
+            "description": "When this send was made, epoch milliseconds or an ISO time. More than 60 seconds from the server's clock is 400 details.reason stale_request (the phone's clock is off). For a punch queued offline this is when it's sent, not queuedAt.",
             "schema": {
               "type": "string"
             }
@@ -1595,12 +1655,12 @@
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                   },
                   "proof": {
-                    "description": "The qr or tag from the front-desk QR code's or the NFC sticker's link (/admin/clock?shop=…&qr=… or &tag=…)",
+                    "description": "The qr from the front-desk clock's QR code link (/admin/clock?shop=…&qr=…): signed, single-use, good for a minute. Without it (or a paired front-desk clock) a phone can't punch; an NFC sticker's tag no longer punches on its own",
                     "type": "object",
                     "properties": {
                       "qr": {
                         "type": "string",
-                        "maxLength": 64
+                        "maxLength": 200
                       },
                       "tag": {
                         "type": "string",
@@ -1772,7 +1832,7 @@
         "tags": [
           "Front-desk clock"
         ],
-        "summary": "Pair this install as a shop's front-desk clock with a manager's one-time code (ST-C0c), no staff sign-in: scan the manager's QR code (a link ending ?code=…) or type the code. 201 { token, device }; send the token as X-Clock-Device and the same deviceId as X-Device-Id on every kiosk call, with no Bearer token. Codes last 10 minutes and work once; 20 tries per address per 15 minutes.",
+        "summary": "Pair this install as a shop's front-desk clock with a manager's one-time code (ST-C0c), no staff sign-in: scan the manager's QR code (a link ending ?code=…) or type the code. 201 { token, device }; send the token as X-Clock-Device and the same deviceId as X-Device-Id on every kiosk call, with no Bearer token. Codes last 10 minutes and work once; 20 tries per address per 15 minutes. Sent with a staff Bearer token, it's 403 unless that's a manager's (settings.shop). Audited.",
         "description": "Permission: A manager's pairing code (made in Time clock setup by someone with settings.shop).",
         "security": [],
         "requestBody": {
@@ -1971,7 +2031,7 @@
         "tags": [
           "Front-desk clock"
         ],
-        "summary": "The link to draw as the QR code phones scan. It changes every 30 seconds.",
+        "summary": "The link to draw as the QR code phones scan: signed, single-use, good for a minute; draw a new one by expiresAt (15 seconds).",
         "description": "Permission: A paired clock (X-Device-Id), or timeclock.kiosk on a registered one.",
         "security": [
           {},
@@ -2039,7 +2099,7 @@
         "tags": [
           "Front-desk clock"
         ],
-        "summary": "Their PIN, then what they can punch next. Five wrong PINs lock theirs for five minutes.",
+        "summary": "Their tile, then their PIN, then what they can punch next. Five wrong PINs lock theirs until a manager unlocks it; wrong PINs are limited per device (429). Every try is audit-logged.",
         "description": "Permission: A paired clock (X-Device-Id), or timeclock.kiosk on a registered one.",
         "security": [
           {},
@@ -2132,7 +2192,7 @@
         "tags": [
           "Front-desk clock"
         ],
-        "summary": "Punch (in, out, break start or end) as the person whose PIN was typed.",
+        "summary": "Punch (in, out, break start or end) as the person whose PIN was typed. A phone punches only with the code a paired front-desk clock shows (GET /kiosk/qr or /clock/kiosk/qr): signed, good for a minute, and used up by one scan (409 details.reason qr_used; scan the next one). Location, Wi-Fi, the NFC sticker or nothing are 403 details.reason kiosk_required. Without the server's CLOCK_HMAC_SECRET every clock route is 500 details.reason clock_secret_missing.",
         "description": "Permission: A paired clock (X-Device-Id), or timeclock.kiosk on a registered one.",
         "security": [
           {},
@@ -2164,6 +2224,26 @@
             "in": "header",
             "required": false,
             "description": "A paired clock's install id, the deviceId it sent to POST /clock/kiosk/pair. With it a paired clock needs no Bearer token; its token works from no other install.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Clock-Nonce",
+            "in": "header",
+            "required": true,
+            "description": "A new random id for every send of a punch, retries included (16 to 128 letters, digits, - or _; a UUID works). Used once: a repeat is 409 details.reason nonce_replayed. Missing is 400 details.reason nonce_required.",
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "X-Clock-Timestamp",
+            "in": "header",
+            "required": true,
+            "description": "When this send was made, epoch milliseconds or an ISO time. More than 60 seconds from the server's clock is 400 details.reason stale_request (the phone's clock is off). For a punch queued offline this is when it's sent, not queuedAt.",
             "schema": {
               "type": "string"
             }
@@ -5045,7 +5125,7 @@
         "tags": [
           "Time clock"
         ],
-        "summary": "POST /clock/punch with type in. Send token (what the phone scanned: the front-desk QR code from GET /kiosk/qr, or the NFC sticker's link) instead of shopId and proof. Returns punch { id, staffId, shopId, inAt, outAt, cashTipCents, attestation } too. A biometric field is 400: nothing biometric is taken. 409 with details.feature = clock while the app clock is switched off (STAFF_APP_CLOCK_OFF).",
+        "summary": "POST /clock/punch with type in. Send token (what the phone scanned: the front-desk QR code from GET /kiosk/qr) instead of shopId and proof. Returns punch { id, staffId, shopId, inAt, outAt, cashTipCents, attestation } too. A biometric field is 400: nothing biometric is taken. 409 with details.feature = clock while the app clock is switched off (STAFF_APP_CLOCK_OFF). A phone punches only with the code a paired front-desk clock shows (GET /kiosk/qr or /clock/kiosk/qr): signed, good for a minute, and used up by one scan (409 details.reason qr_used; scan the next one). Location, Wi-Fi, the NFC sticker or nothing are 403 details.reason kiosk_required. Without the server's CLOCK_HMAC_SECRET every clock route is 500 details.reason clock_secret_missing.",
         "description": "Permission: timeclock.punch.",
         "parameters": [
           {
@@ -5053,6 +5133,26 @@
             "in": "header",
             "required": false,
             "description": "A shop id to work in, or \"all\" for all their shops (where their role allows it). Their first shop when left out.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Clock-Nonce",
+            "in": "header",
+            "required": true,
+            "description": "A new random id for every send of a punch, retries included (16 to 128 letters, digits, - or _; a UUID works). Used once: a repeat is 409 details.reason nonce_replayed. Missing is 400 details.reason nonce_required.",
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "X-Clock-Timestamp",
+            "in": "header",
+            "required": true,
+            "description": "When this send was made, epoch milliseconds or an ISO time. More than 60 seconds from the server's clock is 400 details.reason stale_request (the phone's clock is off). For a punch queued offline this is when it's sent, not queuedAt.",
             "schema": {
               "type": "string"
             }
@@ -5072,12 +5172,12 @@
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                   },
                   "proof": {
-                    "description": "The qr or tag from the front-desk QR code's or the NFC sticker's link (/admin/clock?shop=…&qr=… or &tag=…)",
+                    "description": "The qr from the front-desk clock's QR code link (/admin/clock?shop=…&qr=…): signed, single-use, good for a minute. Without it (or a paired front-desk clock) a phone can't punch; an NFC sticker's tag no longer punches on its own",
                     "type": "object",
                     "properties": {
                       "qr": {
                         "type": "string",
-                        "maxLength": 64
+                        "maxLength": 200
                       },
                       "tag": {
                         "type": "string",
@@ -5225,7 +5325,7 @@
         "tags": [
           "Time clock"
         ],
-        "summary": "POST /clock/punch with type out. With cashTips (where GET /clock has cashTips), declares today's cash tips too (or cashTipCents with attestation true; cashTipCents without it is 400); the reply's cashTips has the declaration or why it couldn't be taken, and the punch stands either way. token and punch as on /clock/in.",
+        "summary": "POST /clock/punch with type out. With cashTips (where GET /clock has cashTips), declares today's cash tips too (or cashTipCents with attestation true; cashTipCents without it is 400); the reply's cashTips has the declaration or why it couldn't be taken, and the punch stands either way. token and punch as on /clock/in. A phone punches only with the code a paired front-desk clock shows (GET /kiosk/qr or /clock/kiosk/qr): signed, good for a minute, and used up by one scan (409 details.reason qr_used; scan the next one). Location, Wi-Fi, the NFC sticker or nothing are 403 details.reason kiosk_required. Without the server's CLOCK_HMAC_SECRET every clock route is 500 details.reason clock_secret_missing.",
         "description": "Permission: timeclock.punch.",
         "parameters": [
           {
@@ -5233,6 +5333,26 @@
             "in": "header",
             "required": false,
             "description": "A shop id to work in, or \"all\" for all their shops (where their role allows it). Their first shop when left out.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Clock-Nonce",
+            "in": "header",
+            "required": true,
+            "description": "A new random id for every send of a punch, retries included (16 to 128 letters, digits, - or _; a UUID works). Used once: a repeat is 409 details.reason nonce_replayed. Missing is 400 details.reason nonce_required.",
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "X-Clock-Timestamp",
+            "in": "header",
+            "required": true,
+            "description": "When this send was made, epoch milliseconds or an ISO time. More than 60 seconds from the server's clock is 400 details.reason stale_request (the phone's clock is off). For a punch queued offline this is when it's sent, not queuedAt.",
             "schema": {
               "type": "string"
             }
@@ -5252,12 +5372,12 @@
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                   },
                   "proof": {
-                    "description": "The qr or tag from the front-desk QR code's or the NFC sticker's link (/admin/clock?shop=…&qr=… or &tag=…)",
+                    "description": "The qr from the front-desk clock's QR code link (/admin/clock?shop=…&qr=…): signed, single-use, good for a minute. Without it (or a paired front-desk clock) a phone can't punch; an NFC sticker's tag no longer punches on its own",
                     "type": "object",
                     "properties": {
                       "qr": {
                         "type": "string",
-                        "maxLength": 64
+                        "maxLength": 200
                       },
                       "tag": {
                         "type": "string",
@@ -9487,7 +9607,7 @@
         "tags": [
           "Front-desk clock"
         ],
-        "summary": "The code to draw for phones to scan: { token (a link; send it as token to POST /clock/in), url, expiresAt, shopId, kioskId, rotatesSeconds: 30 }. It's the shop's code for those 30 seconds, taken for about a minute, by anyone on the team who scans it there.",
+        "summary": "The code to draw for phones to scan: { token (a link; send it as token to POST /clock/in), url, expiresAt (draw a new one by then), validUntil, shopId, kioskId, rotatesSeconds: 15 }. Signed for this kiosk, good for a minute, and one scan uses it up: fetch a new one every 15 seconds and after each punch.",
         "description": "Permission: The kiosk credential from POST /kiosk/pair/{id}/approve as the Bearer token (or X-Clock-Device); a staff sign-in token is 403.",
         "parameters": [
           {
@@ -9534,8 +9654,30 @@
         "tags": [
           "Front-desk clock"
         ],
-        "summary": "Punch as the person whose PIN was typed (direction in or out; in when left out); returns punch too. A wrong PIN is 400; five lock theirs for five minutes (409) until then or a manager's POST /kiosk/pin/unlock. Cash tips are declared on their phone, not here.",
+        "summary": "Punch as the person whose tile was tapped, with their PIN (direction in or out; in when left out); returns punch too. A wrong PIN is 400; five in a row lock theirs (409 details.reason pin_locked) until a manager's POST /kiosk/pin/unlock, and setting a new PIN doesn't lift it. Ten wrong PINs on one kiosk in 15 minutes, or 30 tries for one person, are 429. Every try is audit-logged. Cash tips are declared on their phone, not here. A phone punches only with the code a paired front-desk clock shows (GET /kiosk/qr or /clock/kiosk/qr): signed, good for a minute, and used up by one scan (409 details.reason qr_used; scan the next one). Location, Wi-Fi, the NFC sticker or nothing are 403 details.reason kiosk_required. Without the server's CLOCK_HMAC_SECRET every clock route is 500 details.reason clock_secret_missing.",
         "description": "Permission: The kiosk credential from POST /kiosk/pair/{id}/approve as the Bearer token (or X-Clock-Device); a staff sign-in token is 403.",
+        "parameters": [
+          {
+            "name": "X-Clock-Nonce",
+            "in": "header",
+            "required": true,
+            "description": "A new random id for every send of a punch, retries included (16 to 128 letters, digits, - or _; a UUID works). Used once: a repeat is 409 details.reason nonce_replayed. Missing is 400 details.reason nonce_required.",
+            "schema": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "X-Clock-Timestamp",
+            "in": "header",
+            "required": true,
+            "description": "When this send was made, epoch milliseconds or an ISO time. More than 60 seconds from the server's clock is 400 details.reason stale_request (the phone's clock is off). For a punch queued offline this is when it's sent, not queuedAt.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -9609,7 +9751,7 @@
         "tags": [
           "Front-desk clock"
         ],
-        "summary": "Clear a locked PIN for someone on the team at that kiosk's shop (never their own). The PIN stays. Audited.",
+        "summary": "Unlock a PIN locked after five wrong tries, for someone on the team at that kiosk's shop (never their own). The PIN stays. The only way a lock lifts. Audited.",
         "description": "Permission: timesheet.edit.",
         "parameters": [
           {
@@ -9679,7 +9821,7 @@
         "tags": [
           "Front-desk clock"
         ],
-        "summary": "Front-desk clock entries at their shops, newest first: pairings, approvals, unpairings and PIN unlocks.",
+        "summary": "Front-desk clock entries at their shops, newest first: pairings, approvals, unpairings, PIN locks and unlocks.",
         "description": "Permission: settings.shop.",
         "parameters": [
           {

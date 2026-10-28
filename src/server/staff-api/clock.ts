@@ -69,7 +69,7 @@ export async function clockOverview(ctx: StaffAppContext, now = new Date()) {
   return {
     ...stateView(state),
     defaultShopId: team.find((s) => open.includes(s)) ?? null,
-    shops: clocks.map((c) => ({ id: c.id, name: c.name, methods: c.settings.methods, photo: c.settings.photo, rule: clockRuleText(c.settings) })),
+    shops: clocks.map((c) => ({ id: c.id, name: c.name, methods: c.settings.methods, photo: c.settings.photo, rule: clockRuleText() })),
     breakReasons: reasons,
     hasPin: !!mine?.pin,
     today: today.map((p) => ({ id: p.id, type: p.type, at: p.at.toISOString(), shopId: p.shopId, shop: p.shop, method: p.method, flags: p.flags })),

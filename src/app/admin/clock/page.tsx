@@ -41,7 +41,7 @@ export default async function ClockPage({ searchParams }: { searchParams: Promis
   ]);
   const earlyShops = clocks.filter((c) => c.settings.openEarly && team.includes(c.id)).map((c) => c.name);
   const primary = team.find((s) => open.includes(s)) ?? null;
-  const list: ClockShop[] = clocks.map((c) => ({ id: c.id, name: c.name, gps: c.settings.methods.includes("gps"), photo: c.settings.photo, rule: clockRuleText(c.settings) }));
+  const list: ClockShop[] = clocks.map((c) => ({ id: c.id, name: c.name, gps: c.settings.methods.includes("gps"), photo: c.settings.photo, rule: clockRuleText() }));
   return (
     <div className="mx-auto max-w-xl space-y-4">
       <PageHeader

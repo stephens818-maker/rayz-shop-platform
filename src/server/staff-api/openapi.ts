@@ -23,6 +23,27 @@ const installHeader = {
   schema: { type: "string" },
 };
 
+/** Every punch request (claude bot, Oct 28): a nonce used once, and when it was sent. */
+const nonceHeaders = [
+  {
+    name: "X-Clock-Nonce",
+    in: "header",
+    required: true,
+    description: "A new random id for every send of a punch, retries included (16 to 128 letters, digits, - or _; a UUID works). Used once: a repeat is 409 details.reason nonce_replayed. Missing is 400 details.reason nonce_required.",
+    schema: { type: "string", minLength: 16, maxLength: 128 },
+  },
+  {
+    name: "X-Clock-Timestamp",
+    in: "header",
+    required: true,
+    description: "When this send was made, epoch milliseconds or an ISO time. More than 60 seconds from the server's clock is 400 details.reason stale_request (the phone's clock is off). For a punch queued offline this is when it's sent, not queuedAt.",
+    schema: { type: "string" },
+  },
+];
+const NONCE_PATHS = new Set(["/clock/punch", "/clock/in", "/clock/out", "/clock/breaks/start", "/clock/breaks/end", "/clock/kiosk/punch", "/kiosk/pin"]);
+const CLOCK_RULE =
+  " A phone punches only with the code a paired front-desk clock shows (GET /kiosk/qr or /clock/kiosk/qr): signed, good for a minute, and used up by one scan (409 details.reason qr_used; scan the next one). Location, Wi-Fi, the NFC sticker or nothing are 403 details.reason kiosk_required. Without the server's CLOCK_HMAC_SECRET every clock route is 500 details.reason clock_secret_missing.";
+
 interface Op {
   method: "get" | "post" | "put" | "patch" | "delete";
   path: string;
@@ -101,7 +122,7 @@ const MORE: Op[] = [
   { method: "post", path: "/clients/{id}/reveal", tag: "Clients", summary: "One masked detail in full, with a reason; logged. Phone, email and address are never revealed in the app.", permission: "clients.reveal", body: S.RevealBody, params: true },
   { method: "post", path: "/clients/{id}/contact", tag: "Clients", summary: "A call bridged through the shop line, or a text from the shop's number (consent and STOP checked). The number never comes back.", permission: "clients.message", body: S.ContactBody, params: true },
   // ST-C5
-  { method: "post", path: "/clock/in", tag: "Time clock", summary: "POST /clock/punch with type in. Send token (what the phone scanned: the front-desk QR code from GET /kiosk/qr, or the NFC sticker's link) instead of shopId and proof. Returns punch { id, staffId, shopId, inAt, outAt, cashTipCents, attestation } too. A biometric field is 400: nothing biometric is taken. 409 with details.feature = clock while the app clock is switched off (STAFF_APP_CLOCK_OFF).", permission: "timeclock.punch", body: S.ClockInOutBody },
+  { method: "post", path: "/clock/in", tag: "Time clock", summary: "POST /clock/punch with type in. Send token (what the phone scanned: the front-desk QR code from GET /kiosk/qr) instead of shopId and proof. Returns punch { id, staffId, shopId, inAt, outAt, cashTipCents, attestation } too. A biometric field is 400: nothing biometric is taken. 409 with details.feature = clock while the app clock is switched off (STAFF_APP_CLOCK_OFF).", permission: "timeclock.punch", body: S.ClockInOutBody },
   {
     method: "post",
     path: "/clock/out",
@@ -296,7 +317,7 @@ const APP: Op[] = [
     method: "get",
     path: "/kiosk/qr",
     tag: "Front-desk clock",
-    summary: "The code to draw for phones to scan: { token (a link; send it as token to POST /clock/in), url, expiresAt, shopId, kioskId, rotatesSeconds: 30 }. It's the shop's code for those 30 seconds, taken for about a minute, by anyone on the team who scans it there.",
+    summary: "The code to draw for phones to scan: { token (a link; send it as token to POST /clock/in), url, expiresAt (draw a new one by then), validUntil, shopId, kioskId, rotatesSeconds: 15 }. Signed for this kiosk, good for a minute, and one scan uses it up: fetch a new one every 15 seconds and after each punch.",
     permission: KIOSK_CREDENTIAL,
     query: S.KioskQrQuery,
     kioskBearer: true,
@@ -305,13 +326,13 @@ const APP: Op[] = [
     method: "post",
     path: "/kiosk/pin",
     tag: "Front-desk clock",
-    summary: "Punch as the person whose PIN was typed (direction in or out; in when left out); returns punch too. A wrong PIN is 400; five lock theirs for five minutes (409) until then or a manager's POST /kiosk/pin/unlock. Cash tips are declared on their phone, not here.",
+    summary: "Punch as the person whose tile was tapped, with their PIN (direction in or out; in when left out); returns punch too. A wrong PIN is 400; five in a row lock theirs (409 details.reason pin_locked) until a manager's POST /kiosk/pin/unlock, and setting a new PIN doesn't lift it. Ten wrong PINs on one kiosk in 15 minutes, or 30 tries for one person, are 429. Every try is audit-logged. Cash tips are declared on their phone, not here.",
     permission: KIOSK_CREDENTIAL,
     body: S.KioskPinBody,
     kioskBearer: true,
   },
-  { method: "post", path: "/kiosk/pin/unlock", tag: "Front-desk clock", summary: "Clear a locked PIN for someone on the team at that kiosk's shop (never their own). The PIN stays. Audited.", permission: "timesheet.edit", body: S.KioskUnlockBody },
-  { method: "get", path: "/audit", tag: "Front-desk clock", summary: "Front-desk clock entries at their shops, newest first: pairings, approvals, unpairings and PIN unlocks.", permission: "settings.shop", query: S.AuditQuery },
+  { method: "post", path: "/kiosk/pin/unlock", tag: "Front-desk clock", summary: "Unlock a PIN locked after five wrong tries, for someone on the team at that kiosk's shop (never their own). The PIN stays. The only way a lock lifts. Audited.", permission: "timesheet.edit", body: S.KioskUnlockBody },
+  { method: "get", path: "/audit", tag: "Front-desk clock", summary: "Front-desk clock entries at their shops, newest first: pairings, approvals, unpairings, PIN locks and unlocks.", permission: "settings.shop", query: S.AuditQuery },
 ];
 
 const RAIL_OFF = " 403 with details.feature = staff_stripe_payouts where FEATURE_STAFF_STRIPE_PAYOUTS=false switches direct Stripe payouts off; tips are paid through payroll (iSolved) there. See GET /me/payout-setup.";
@@ -332,8 +353,8 @@ const OPS: Op[] = [
   { method: "get", path: "/appointments/{id}", tag: "Schedule", summary: "One appointment: theirs, or anyone's at their shops with calendar.view_all or calendar.manage. Otherwise 404.", permission: "Signed in; calendar.view_all for others'", params: true },
   { method: "get", path: "/appointments/{id}/notes", tag: "Client notes", summary: "The client's notes as Client notes' permissions show them (private manager notes need notes.private). Logged as a client view.", permission: "notes.view", params: true },
   { method: "post", path: "/appointments/{id}/notes", tag: "Client notes", summary: "Add a note for the appointment's client; a cut note (kind visit) is tied to this visit. Body as POST /staff/clients/{id}/notes.", permission: "notes.view, plus the note kind's write permission", params: true },
-  { method: "get", path: "/clock", tag: "Time clock", summary: "Where they stand, what they can punch next, each shop's rule (QR, NFC, Wi-Fi, location), today's punches, break reasons and whether their PIN is set.", permission: "timeclock.punch" },
-  { method: "post", path: "/clock/punch", tag: "Time clock", summary: "Clock in or out from their phone with the shop's proof. { kind: confirm } asks first during time off; clocking in returns welcome (milestones).", permission: "timeclock.punch", body: S.PunchBody },
+  { method: "get", path: "/clock", tag: "Time clock", summary: "Where they stand, what they can punch next, each shop's rule (the front-desk clock or its QR code), today's punches, break reasons and whether their PIN is set.", permission: "timeclock.punch" },
+  { method: "post", path: "/clock/punch", tag: "Time clock", summary: "Clock in or out from their phone with the front-desk clock's QR code as proof.qr. { kind: confirm } asks first during time off (send again with a new nonce); clocking in returns welcome (milestones).", permission: "timeclock.punch", body: S.PunchBody },
   { method: "post", path: "/clock/breaks/start", tag: "Breaks", summary: "Start a break, with a reason and planned length; the calendar blocks it.", permission: "timeclock.punch", body: S.BreakStartBody },
   { method: "post", path: "/clock/breaks/end", tag: "Breaks", summary: "End the break.", permission: "timeclock.punch", body: S.BreakEndBody },
   { method: "put", path: "/clock/pin", tag: "Time clock", summary: "Set their own PIN for the front-desk clock.", permission: "timeclock.punch", body: S.PinBody },
@@ -342,15 +363,15 @@ const OPS: Op[] = [
     path: "/clock/kiosk/pair",
     tag: "Front-desk clock",
     summary:
-      "Pair this install as a shop's front-desk clock with a manager's one-time code (ST-C0c), no staff sign-in: scan the manager's QR code (a link ending ?code=…) or type the code. 201 { token, device }; send the token as X-Clock-Device and the same deviceId as X-Device-Id on every kiosk call, with no Bearer token. Codes last 10 minutes and work once; 20 tries per address per 15 minutes.",
+      "Pair this install as a shop's front-desk clock with a manager's one-time code (ST-C0c), no staff sign-in: scan the manager's QR code (a link ending ?code=…) or type the code. 201 { token, device }; send the token as X-Clock-Device and the same deviceId as X-Device-Id on every kiosk call, with no Bearer token. Codes last 10 minutes and work once; 20 tries per address per 15 minutes. Sent with a staff Bearer token, it's 403 unless that's a manager's (settings.shop). Audited.",
     permission: "A manager's pairing code (made in Time clock setup by someone with settings.shop)",
     body: S.KioskPairBody,
     public: true,
   },
   { method: "post", path: "/clock/kiosk/register", tag: "Front-desk clock", summary: "Make this install one of a shop's front-desk clocks. The token is returned once; send it as X-Clock-Device.", permission: "settings.shop", body: S.KioskRegisterBody },
   { method: "get", path: "/clock/kiosk/team", tag: "Front-desk clock", summary: "Who can punch here.", permission: "A paired clock (X-Device-Id), or timeclock.kiosk on a registered one", kiosk: true },
-  { method: "get", path: "/clock/kiosk/qr", tag: "Front-desk clock", summary: "The link to draw as the QR code phones scan. It changes every 30 seconds.", permission: "A paired clock (X-Device-Id), or timeclock.kiosk on a registered one", kiosk: true },
-  { method: "post", path: "/clock/kiosk/status", tag: "Front-desk clock", summary: "Their PIN, then what they can punch next. Five wrong PINs lock theirs for five minutes.", permission: "A paired clock (X-Device-Id), or timeclock.kiosk on a registered one", body: S.KioskStatusBody, kiosk: true },
+  { method: "get", path: "/clock/kiosk/qr", tag: "Front-desk clock", summary: "The link to draw as the QR code phones scan: signed, single-use, good for a minute; draw a new one by expiresAt (15 seconds).", permission: "A paired clock (X-Device-Id), or timeclock.kiosk on a registered one", kiosk: true },
+  { method: "post", path: "/clock/kiosk/status", tag: "Front-desk clock", summary: "Their tile, then their PIN, then what they can punch next. Five wrong PINs lock theirs until a manager unlocks it; wrong PINs are limited per device (429). Every try is audit-logged.", permission: "A paired clock (X-Device-Id), or timeclock.kiosk on a registered one", body: S.KioskStatusBody, kiosk: true },
   { method: "post", path: "/clock/kiosk/punch", tag: "Front-desk clock", summary: "Punch (in, out, break start or end) as the person whose PIN was typed.", permission: "A paired clock (X-Device-Id), or timeclock.kiosk on a registered one", body: S.KioskPunchBody, kiosk: true },
   { method: "get", path: "/tips", tag: "Tips and pay", summary: "Their tips (S3): today, settling, ready, in a payout, paid out; how each shop pays them; history by ticket.", permission: "tips.own", query: S.TipsQuery },
   {
@@ -438,10 +459,11 @@ const OPS: Op[] = [
 export function staffOpenApiDocument(baseUrl: string) {
   const paths: Record<string, Record<string, unknown>> = {};
   for (const op of OPS) {
-    const parameters = [...(op.params ? [idParam] : []), ...(op.query ? queryParams(op.query) : []), ...(op.public || op.kioskBearer ? [] : [shopHeader]), ...(op.kiosk ? [deviceHeader, installHeader] : [])];
+    const nonce = NONCE_PATHS.has(op.path);
+    const parameters = [...(op.params ? [idParam] : []), ...(op.query ? queryParams(op.query) : []), ...(op.public || op.kioskBearer ? [] : [shopHeader]), ...(op.kiosk ? [deviceHeader, installHeader] : []), ...(nonce ? nonceHeaders : [])];
     (paths[op.path] ??= {})[op.method] = {
       tags: [op.tag],
-      summary: op.summary,
+      summary: nonce ? op.summary + CLOCK_RULE : op.summary,
       description: `Permission: ${op.permission}.${op.tag === "Banking" ? RAIL_OFF : ""}`,
       ...(op.public ? { security: [] } : op.kiosk ? { security: [{}, { bearer: [] }] } : {}),
       ...(parameters.length ? { parameters } : {}),

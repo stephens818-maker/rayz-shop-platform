@@ -609,7 +609,7 @@ export function verifyPunch(shopId: string, shop: { name: string; latitude: numb
 }
 
 /** What a phone punch at this shop needs, in a sentence for the clock page. */
-export function clockRuleText(_s?: ShopClockSettings): string {
+export function clockRuleText(): string {
   return "Punch on the shop's front-desk clock with your PIN, or scan the QR code it shows with your phone.";
 }
 
