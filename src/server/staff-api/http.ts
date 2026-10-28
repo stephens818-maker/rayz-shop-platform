@@ -42,16 +42,17 @@ export function assertShopHeader(req: Request, ctx: StaffAppContext) {
  * takes is checked again inside, against the same context.
  */
 export function staffRoute<P = Record<string, string>>(guard: Guard, fn: (req: Request, ctx: StaffAppContext, params: P) => Promise<Response>) {
-  return route<P>(async (req, params) => {
+  const handler = route<P>(async (req, params) => {
     assertSupportedStaffClient(req);
     const [ctx] = await Promise.all([guardedStaff(req, guard), loadDisplay()]);
-    return withCacheRule(req, await fn(req, ctx, params));
+    return fn(req, ctx, params);
   });
+  return async (req: Request, c: { params: Promise<P> }) => withCacheRule(req, await handler(req, c));
 }
 
-/** ST-I18: whether the app may keep this response on the phone (X-Staff-Cache), and never in an HTTP cache. */
+/** ST-I18: whether the app may keep this response on the phone (X-Staff-Cache), and never in an HTTP cache. Errors too: a 400 or 404 can still echo what was asked. */
 export function withCacheRule(req: Request, res: Response): Response {
-  res.headers.set(STAFF_CACHE_HEADER, cacheRuleFor(req.method, new URL(req.url).pathname));
+  res.headers.set(STAFF_CACHE_HEADER, res.ok ? cacheRuleFor(req.method, new URL(req.url).pathname) : "none");
   res.headers.set("Cache-Control", "private, no-store");
   return res;
 }

@@ -107,7 +107,7 @@ describe("every route is guarded", () => {
     // The front-desk clock: a paired install's own token, else the same guard as staffRoute.
     expect(src).toMatch(/const kioskRoute = [^]*?pairedKiosk\(req\);\s*if \(paired\) return fn\(req, paired\);\s*return fn\(req, await signedInKiosk\(await guardedStaff\(req, KIOSK\), req\)\)/);
     const http = readFileSync(join(process.cwd(), "src/server/staff-api/http.ts"), "utf8");
-    expect(http).toMatch(/assertSupportedStaffClient\(req\);\s*const \[ctx\] = await Promise\.all\(\[guardedStaff\(req, guard\), loadDisplay\(\)\]\);\s*return withCacheRule\(req, await fn\(req, ctx, params\)\)/);
+    expect(http).toMatch(/assertSupportedStaffClient\(req\);\s*const \[ctx\] = await Promise\.all\(\[guardedStaff\(req, guard\), loadDisplay\(\)\]\);\s*return fn\(req, ctx, params\);\s*\}\);\s*return async \(req: Request, c: \{ params: Promise<P> \}\) => withCacheRule\(req, await handler\(req, c\)\)/);
     expect(http).toMatch(/const ctx = await requireStaffApp\(req\);\s*assertShopHeader\(req, ctx\);\s*authorizeContext\(ctx/);
   });
 
@@ -261,6 +261,20 @@ describe("data on the phone (ST-I18)", () => {
     }
     for (const p of ["me/earnings", "me/earnings/days", "me/earnings/tickets", "me/payouts", "me/pay-periods", "tips", "payouts", "clients?q=Od", "me/sessions", "me/notifications"]) {
       const r = await call("GET", p, { token: t.accessToken });
+      expect(r.headers.get("x-staff-cache"), `${p} ${r.status}`).toBe("none");
+      expect(r.headers.get("cache-control"), `${p} ${r.status}`).toBe("private, no-store");
+    }
+    // Errors too: a 400, 404 or 401 from My Earnings is never cached anywhere.
+    for (const [p, token] of [
+      ["me/earnings?staffId=x", t.accessToken],
+      ["me/earnings/tickets?periodId=current", t.accessToken],
+      ["me/payouts?periodId=2020-01-02", t.accessToken],
+      ["me/earnings/days", undefined],
+      ["me", undefined],
+    ] as const) {
+      const r = await call("GET", p, { token });
+      expect(r.status, p).toBeGreaterThanOrEqual(400);
+      expect(r.headers.get("cache-control"), `${p} ${r.status}`).toBe("private, no-store");
       expect(r.headers.get("x-staff-cache"), `${p} ${r.status}`).toBe("none");
     }
     expect((await call("PUT", "me/notifications", { token: t.accessToken, body: {} })).headers.get("x-staff-cache")).not.toBe("offline-24h");
@@ -712,7 +726,7 @@ describe("privacy across a barber's whole app", () => {
       "me/pay-periods",
       "me/earnings",
       "me/earnings/days",
-      "me/earnings/tickets",
+      `me/earnings/tickets?periodId=current&date=${today}`,
       "me/earnings/ytd",
       "me/payouts",
       "me/payout-setup",
