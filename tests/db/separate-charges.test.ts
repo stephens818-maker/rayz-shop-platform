@@ -26,6 +26,7 @@ const calls: Call[] = [];
 let n = 0;
 let failTransfers = 0;
 const fake = {
+  customers: { create: async () => ({ id: `cus_fake_${++n}` }) },
   transfers: {
     create: async (params: Record<string, unknown>, opts?: Record<string, unknown>) => {
       if (failTransfers > 0) {
@@ -496,5 +497,72 @@ describe("retries and the database's own guard", () => {
     );
     expect(await refused(m.db.db.update(s().paymentTransfers).set({ amountCents: 1 }).where(eq(s().paymentTransfers.id, tipRows[0].id)))).toMatch(/can't be changed/);
     await expect(m.db.db.update(s().paymentTransfers).set({ reversedCents: 100 }).where(eq(s().paymentTransfers.id, tipRows[0].id))).rejects.toThrow();
+  });
+});
+
+describe("every way a card is taken: the counter's reader, the customer screen and paying in the app", () => {
+  const by = (staffId: string) => ({ actor: { staffId, label: "test" }, staffId, canDiscount: false, canOverridePrice: false, maxManualDiscountPct: 0 });
+  const draft = (refId: string) => ({ lines: [{ kind: "service" as const, refId, qty: 1 }], promoCode: null, manualDiscount: null, loyaltyRewardId: null, giftCard: null, rebookInWeeks: null, tipSplit: null });
+  const cut = async (shopId: string) => (await m.catalog.shopCatalog(shopId)).find((x) => x.slug === "rayz-cut-shampoo")!;
+
+  /** The sale's one platform charge, its planned transfers and what went to Stripe. */
+  async function settled(saleId: string, acct: string, barberAcct: string, tipCents: number) {
+    const pays = await m.db.db.select().from(s().payments).where(eq(s().payments.saleId, saleId));
+    expect(pays).toHaveLength(1);
+    const [pay] = pays;
+    expect(pay).toMatchObject({ method: "card", chargeType: "separate", settlement: "connected", stripeAccountId: acct, transferGroup: `sale_${saleId}` });
+    const proc = await import("@/server/payments/processor");
+    expect(proc.simulatedIntent(pay.stripePaymentIntentId!)).toMatchObject({ transferGroup: `sale_${saleId}` });
+    const rows = await m.db.db.select().from(s().paymentTransfers).where(eq(s().paymentTransfers.saleId, saleId));
+    const shopRow = rows.find((r) => r.kind === "shop")!;
+    expect(shopRow).toMatchObject({ status: "sent", destinationAccount: acct, amountCents: pay.amountCents - pay.applicationFeeCents - tipCents });
+    expect(rows.filter((r) => r.kind === "tip")).toEqual([expect.objectContaining({ destinationAccount: barberAcct, amountCents: tipCents, status: "sent" })]);
+    const moved = calls.filter((c) => c.op === "transfer" && c.params.transfer_group === `sale_${saleId}`);
+    expect(moved.map((c) => [c.params.destination, c.params.amount, c.params.source_transaction])).toEqual([
+      [acct, shopRow.amountCents, pay.stripeChargeId],
+      [barberAcct, tipCents, pay.stripeChargeId],
+    ]);
+    return pay;
+  }
+
+  it("a Terminal reader at the counter", async () => {
+    const { shop, acct, staffId } = await setup("coralville", "Makenna");
+    await barberOnStripe(staffId, "acct_fake_makenna");
+    const [reader] = await m.db.db.insert(s().terminalReaders).values({ shopId: shop.id, label: "I10 counter", stripeReaderId: "tmr_sim_i10", active: true }).returning();
+    onTestFinished(() => m.db.db.update(s().terminalReaders).set({ active: false }).where(eq(s().terminalReaders.id, reader.id)).then(() => {}));
+    const sale = await m.checkout.openBlankSale(shop.id, actor, staffId);
+    calls.length = 0;
+    const terminal = { method: "card" as const, paymentMethodId: "pm_card_visa_debit", entryMode: "terminal" as const, readerId: reader.id };
+    await m.checkout.finalizeSale({ saleId: sale.id, lines: [{ kind: "service", refId: (await cut(shop.id)).id, qty: 1 }], tipCents: 700, tender: terminal, actor });
+    expect(await settled(sale.id, acct, "acct_fake_makenna", 700)).toMatchObject({ entryMode: "terminal", terminalReaderId: reader.id });
+  });
+
+  it("the customer screen (handoff)", async () => {
+    const H = await import("@/server/handoff");
+    const { shop, acct, staffId } = await setup("coralville", "Makenna");
+    await barberOnStripe(staffId, "acct_fake_makenna");
+    await H.saveShopHandoff(shop.id, (await import("@/domain/handoff")).DEFAULT_SHOP_HANDOFF, actor);
+    const sale = await m.checkout.openBlankSale(shop.id, actor, staffId);
+    const h = await H.startHandoff(sale.id, draft((await cut(shop.id)).id), by(staffId));
+    await H.chooseTip(h.id, "p20", 1);
+    const v = await H.chooseReceipt(h.id, { channel: "none", onFile: false });
+    calls.length = 0;
+    await H.payHandoff(h.id, { method: "card", paymentMethodId: "pm_card_visa_debit", entryMode: "keyed" }, v.totalCents);
+    await settled(sale.id, acct, "acct_fake_makenna", v.tipCents);
+  });
+
+  it("paying in the app (/api/v1, a ticket sent to the client's phone)", async () => {
+    const P = await import("@/server/app-pay");
+    const { shop, acct, staffId } = await setup("coralville", "Makenna");
+    await barberOnStripe(staffId, "acct_fake_makenna");
+    const [c] = await m.db.db.insert(s().customers).values({ firstName: "Paige", lastName: "Payer", phone: `+1641557${String(1000 + Math.floor(Math.random() * 8999)).slice(-4)}` }).returning();
+    await m.auth.issueTokens(c.id, "phone");
+    const sale = await m.checkout.openBlankSale(shop.id, actor, staffId);
+    await m.db.db.update(s().sales).set({ customerId: c.id }).where(eq(s().sales.id, sale.id));
+    const t = await P.sendToApp(sale.id, draft((await cut(shop.id)).id), by(staffId));
+    const q = await P.quoteTicket(c.id, t.id, { tipChoice: "custom", tipCents: 600, paymentMethodId: "ctoken_sim_visa_debit" });
+    calls.length = 0;
+    await expect(P.payTicket(c.id, t.id, { tipChoice: "custom", tipCents: 600, paymentMethodId: "ctoken_sim_visa_debit", expectedTotalCents: q.totalCents })).resolves.toMatchObject({ status: "paid" });
+    expect(await settled(sale.id, acct, "acct_fake_makenna", 600)).toMatchObject({ payerCustomerId: c.id });
   });
 });
