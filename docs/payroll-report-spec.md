@@ -82,7 +82,7 @@ The platform adds three columns to the right. The export never contains them.
 The platform counts both as labor cost:
 
 - **O.T. Pay** (T) is real labor cost on the report: in each person's and each shop's Labor Cost, in the Locations view, in every total and in the reconciliation gate. It uses the base rate after the cross-shop split, so it follows the same share-of-hours rule as the OT hours. iSolved's "Overtime 1.5" earning is blended OT from its accumulators and includes commission in the regular rate, so the real figure can be higher. The drill-down says "iSolved may compute blended OT higher."
-- **Training Pay** (U) is a setting ("Training pay is labor cost on the Payroll Report"), **on** by default. Training is paid at the person's training rate, or at their hourly wage when none is set.
+- **Training Pay** (U) is a setting ("Training pay is labor cost on the Payroll Report"), **off** by default until Q11 is answered; the report says labor cost excludes training pay. Training is paid at the person's training rate, or at their hourly wage when none is set.
 - **Labor Cost** (V) = N + T + U, plus the regular-rate OT premium commission adds (§3.4). The Locations view's Employee Cost is Labor Cost, and its Gross Profit is Service − Labor Cost.
 
 The per-employee drill-down shows each piece as a formula with the person's own numbers (for example, "O.T. Pay = 1.5 × $14.50 base rate × 6.40 OT hours = $139.20").
@@ -118,11 +118,13 @@ Ray'z Inc. is one legal company with one FEIN, and each shop is a pay group of i
 1. **Workweek:** Sunday 00:00 to Saturday 24:00, America/Chicago.
 2. **Basis:** for each person and legal entity (FEIN), add up their worked hours at every shop of that entity in the workweek. Training on top of clocked hours counts too (C2, a setting, on by default, §3.3). PTO never counts.
 3. **OT hours** = basis − 40 (the threshold is a setting), or 0.
-4. **Split by share of hours.** The week is cut into slices, one per shop and per pay period that shop's calendar puts those days in. Each slice gets OT in proportion to its share of the week's basis. Shares are rounded to hundredths by largest remainder (ties go to the earlier slice), so the slices add up to the week's OT exactly, and no slice gets more OT than its own hours.
-5. **Weeks that span two pay periods**, or two pay calendars (Dubuque's periods start on different Sundays from the other shops'): the whole week is still one week. OT is computed once for the whole week and each period gets its slices' share.
-6. **Locked periods keep their OT.** If part of a workweek is in a period that's already approved and locked, those slices keep the OT they were locked with (`payroll_locked_ot`), and only the remainder is shared out among the open slices. A locked file never changes after the fact.
+4. **Split by share of hours.** The week is cut into slices, one per shop and per pay period that shop's calendar puts those days in. Within one pay period, each slice gets that period's OT in proportion to its share of the period's basis (when the whole week is in one period, that's its share of the week's). Shares are rounded to hundredths by largest remainder (ties go to the earlier slice), so the slices add up to the week's OT exactly, and no slice gets more OT than its own hours.
+5. **Weeks that span two pay periods**, or two pay calendars (Dubuque's periods start on different Sundays from the other shops', or a workweek start that isn't the period's): the whole week is still one week, and OT is computed once for it. **The OT goes to the period that holds the hours past the 40th**, in date order: day by day through the week, a day's OT is the part of it beyond 40, shared by hours among that day's slices. Within one period, its OT is shared among its shops by hours as in 4. So 24 h before a period boundary and 20 h after it put all 4.00 OT hours in the later period (PY-OT-03). Hours belong to the period of the day worked.
+6. **Locked periods keep their OT.** If part of a workweek is in a period that's already approved and locked, those slices keep the OT they were locked with (`payroll_locked_ot`), and the open period takes the difference as an adjustment, up to its own hours. A locked file never changes after the fact.
 7. **The legal entity** is a field on each pay group (default "Ray'z Inc.", which iSolved reports as one entity). Shops under a different FEIN get their own weekly 40.
 8. **From punches.** Worked hours are the closed shifts' paid time (unpaid breaks and any automatic meal taken out), by real elapsed time. Overtime is always worked out from them; nobody types it (§3.5).
+9. **Sunday hours.** A punch on a Sunday counts in the workweek that starts that Sunday. At a shop whose weekly hours have no Sunday it's still paid, and the report flags it (`sunday_punch`).
+10. **DST.** The fall-back week (Nov 1, 2026, also the first day of the Nov 1–14 period) has 169 real hours and the spring-forward week 167. A Saturday-night shift splits at local midnight by real elapsed time (PY-OT-04, PY-OT-05).
 
 Example (tested): 25 h at shop A and 20 h at shop B in one week makes 45 h, so 5 OT hours: 2.78 to A (25/45) and 2.22 to B (20/45). Shop A's file gets 22.22 regular + 2.78 OT; shop B's gets 17.78 + 2.22.
 
@@ -359,7 +361,7 @@ Payroll → Setup (`payroll.run`).
 | Commission base: loyalty rewards | Come off the sale | Pending Charles (Q15) |
 | OT regular rate (C1) | `base`: the premium owed is flagged, not in the file | Needs Charles: `adjust` adds the premium column |
 | OT premium column header | `E_OT Premium Adj_Dollars` | Used only with `adjust` |
-| Training pay is labor cost | On | |
+| Training pay is labor cost | Off | Pending Q11 |
 | Round export to 2 decimals, half-up | Off (unrounded, as today) | Pending Charles (Q4) |
 | iSolved file cell formats | 0.00 on every hours and dollars column (the reference file) | |
 | A shop's file name; the all-shops workbook's name | `{start}-{end} {shop}`; `Rayz Payroll {start}-{end}` | Pending Charles (Q9) |

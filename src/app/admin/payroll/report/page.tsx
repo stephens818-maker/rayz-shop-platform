@@ -416,7 +416,10 @@ function TipCheckNotice({ view }: { view: PayrollView }) {
 function Locations({ view }: { view: PayrollView }) {
   return (
     <Card>
-      <CardHeader title="Locations" subtitle="Employee Cost is labor cost: Total Wages plus O.T. Pay and Training Pay. Every number is a sum of the shop blocks below." />
+      <CardHeader
+        title="Locations"
+        subtitle={`Employee Cost is labor cost: Total Wages plus O.T. Pay${view.settings.trainingPayInCost ? " and Training Pay" : " (Training Pay left out until Q11 is answered)"}. Every number is a sum of the shop blocks below.`}
+      />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-zinc-50 text-left text-xs text-zinc-500">

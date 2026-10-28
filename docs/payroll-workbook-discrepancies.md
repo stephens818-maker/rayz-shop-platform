@@ -183,7 +183,7 @@ Total Wages (N) is `max(hourly total, service commission) + product commission`,
 The platform adds three columns to the right of the workbook's (the export doesn't change):
 
 - **T O.T. Pay** = 1.5 × base wage × OT hours, after the cross-shop split. iSolved computes blended OT itself, which may come out higher.
-- **U Training Pay** = training rate (or the hourly wage when there's no training rate) × training hours. This is a setting, **on** by default.
+- **U Training Pay** = training rate (or the hourly wage when there's no training rate) × training hours. This is a setting, **off** by default until Q11 is answered.
 - **V Labor Cost** = N + T + U, plus the regular-rate OT premium owed on commission (spec §3.4). This is the Payroll Report's Employee Cost. The table leaves the premium out: the three people with OT earn under their hourly pay in service commission, so only their product commission raises the regular rate, by about $0.19 of premium in all.
 
 | Location | Total Wages (rows) | OT hours | O.T. Pay | Training hours | Training Pay | Labor Cost | Gross Profit after labor |

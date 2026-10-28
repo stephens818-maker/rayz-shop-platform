@@ -90,7 +90,7 @@ export default async function PayrollPage({ searchParams }: { searchParams: Prom
       <LocationNotice locations={l} />
       <div className="mb-4">
         <Notice tone="blue">
-          Hours stay in the HR system, so there&apos;s no clock-in here. Sales and tips count at the shop where each ticket was rung up, so a barber who works at more than one shop
+          Hours come from the time clock (Time clock and Timesheets), not the HR system. Sales and tips count at the shop where each ticket was rung up, so a barber who works at more than one shop
           is paid out per shop.
         </Notice>
       </div>
