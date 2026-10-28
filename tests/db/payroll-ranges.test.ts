@@ -269,6 +269,15 @@ describe("rule 3: approve, lock and download on whole workweeks that don't overl
 
     const file = await get((await download()) as never, `/admin/payroll/download?group=${fx.molineGroup}&start=${fx.start}&end=${day(6)}&shop=${fx.moline}`);
     expect(file.status, file.text).toBe(200);
+    // The all-shops workbook and the tips-paid file are made per pay period, and say where the per-shop file is.
+    for (const [route, name] of [
+      [(await import("@/app/admin/reports/payroll/isolved/file/route")).GET, "the all-shops iSolved workbook"],
+      [(await import("@/app/admin/reports/payroll/tips-paid/file/route")).GET, "the tips-paid file"],
+    ] as const) {
+      const r = await get(route as never, `/x?start=${fx.start}&end=${day(6)}&shop=${fx.moline}`);
+      expect([r.status, r.text]).toEqual([409, run.payPeriodOnlyMessage(fx.start, day(6), name)]);
+      expect(r.text).toContain("download each shop's iSolved file from the Payroll Report");
+    }
 
     // 12-hour times on the locked run.
     const page = await open("/admin/payroll/report", {}, { from: fx.start, to: day(6), shop: fx.moline });

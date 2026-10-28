@@ -4,7 +4,7 @@ import { audit } from "@/server/audit";
 import { can, routeStaff } from "@/server/auth/staff";
 import { AppError } from "@/server/errors";
 import { isolvedWorkbook } from "@/server/payroll/reports";
-import { NOT_OFFICIAL, officialGroups } from "@/server/payroll/run";
+import { officialGroups, payPeriodOnlyMessage } from "@/server/payroll/run";
 import { reportContext } from "@/server/report-access";
 import { resolveLocations } from "../../../scope";
 
@@ -22,7 +22,7 @@ export async function GET(req: Request) {
   const start = url.searchParams.get("start") ?? "";
   const end = url.searchParams.get("end") ?? "";
   if (!isValidLocalDate(start) || !isValidLocalDate(end) || start > end) return new Response("Bad request", { status: 400 });
-  if (!(await officialGroups(start, end)).length) return new Response(NOT_OFFICIAL, { status: 409 });
+  if (!(await officialGroups(start, end)).length) return new Response(payPeriodOnlyMessage(start, end, "the all-shops iSolved workbook"), { status: 409 });
   let shopIds: string[];
   try {
     shopIds = (await resolveLocations(await reportContext(ctx, "payroll_isolved"), { shop: url.searchParams.getAll("shop") })).selection.shopIds;

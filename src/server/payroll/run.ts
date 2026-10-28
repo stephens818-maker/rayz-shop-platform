@@ -208,6 +208,13 @@ export function notWholeWeeksMessage(start: LocalDate, end: LocalDate): string {
     : NOT_OFFICIAL;
 }
 
+/** Why a file made only per pay period (the all-shops iSolved workbook, the tips-paid file) can't be made for these dates. */
+export function payPeriodOnlyMessage(start: LocalDate, end: LocalDate, file: string): string {
+  return wholeWorkweeks(start, end)
+    ? `Not an official pay period: ${file} is made per pay period. For whole workweeks (${rangeText(start, end)}), download each shop's iSolved file from the Payroll Report once they're approved and locked.`
+    : notWholeWeeksMessage(start, end);
+}
+
 /** Why these dates can't be approved, locked or exported: they overlap a run that's already locked. */
 export function overlapMessage(list: readonly LockOverlap[]): string {
   const by = new Map<string, string[]>();

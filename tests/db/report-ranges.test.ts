@@ -201,8 +201,8 @@ describe("the Payroll Report on any dates", () => {
     const tipsPaid = (await import("@/app/admin/reports/payroll/tips-paid/file/route")).GET;
     for (const [route, url, text] of [
       [download, `/admin/payroll/download?group=${fx.molineGroup}&start=${fx.from}&end=${fx.to}`, run.notWholeWeeksMessage(fx.from, fx.to)],
-      [isolved, `/admin/reports/payroll/isolved/file?start=${fx.from}&end=${fx.to}&shop=${fx.moline}`, run.NOT_OFFICIAL],
-      [tipsPaid, `/admin/reports/payroll/tips-paid/file?start=${fx.from}&end=${fx.to}&shop=${fx.moline}`, run.NOT_OFFICIAL],
+      [isolved, `/admin/reports/payroll/isolved/file?start=${fx.from}&end=${fx.to}&shop=${fx.moline}`, run.notWholeWeeksMessage(fx.from, fx.to)],
+      [tipsPaid, `/admin/reports/payroll/tips-paid/file?start=${fx.from}&end=${fx.to}&shop=${fx.moline}`, run.notWholeWeeksMessage(fx.from, fx.to)],
     ] as const) {
       const r = await get(route as never, url);
       expect([url, r.status, r.text]).toEqual([url, 409, text]);
