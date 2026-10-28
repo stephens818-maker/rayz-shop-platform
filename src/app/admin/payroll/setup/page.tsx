@@ -184,7 +184,9 @@ export default async function PayrollSetupPage() {
                 <th className="px-2 py-2">Hourly</th>
                 <th className="px-2 py-2">Service %</th>
                 <th className="px-2 py-2">Product %</th>
-                <th className="px-2 py-2">Training rate</th>
+                <th className="px-2 py-2" title="Used only until the employee has a training rate on their Staff page, which is effective-dated. Blank: their hourly rate (flagged on the report).">
+                  Training rate (fallback)
+                </th>
                 <th className="px-2 py-2" />
               </tr>
             </thead>

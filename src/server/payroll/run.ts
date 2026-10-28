@@ -51,6 +51,8 @@ import { payrollHoursCheck, type PayrollHoursCheck } from "@/server/time-clock";
 import { isolvedTimecardExporter, type PayrollExporter } from "./export";
 import { declarationPostingDate, tipPostingDate } from "./tip-posting";
 import { checkPayrollTips, type TipCheck, type TipCheckBlock } from "./tip-reconcile";
+import { trainingRatesFor } from "./training-rates";
+import { trainingRateFor } from "@/domain/payroll/training-rate";
 import { ensurePayGroups, hoursLockedOn, isLockedOn, loadSettings, type LegalEntity, type PayGroup } from "./groups";
 import { groupCalendar, resyncPeriodDates, savePeriodDates as savePeriodDatesFor } from "./period-dates";
 
@@ -341,6 +343,9 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
   const rateOf = (staffId: string, shopId: string) => rates.find((r) => r.staffId === staffId && r.shopId === shopId) ?? rates.find((r) => r.staffId === staffId && r.shopId === null);
   const comp = await loadCompensationSettings();
   const plans = comp.enabled && comp.payrollUsesPlans && staffIds.length ? await payrollPlans({ staffIds, start, end, days, fallbackOf: await setupRates(staffIds) }) : null;
+  const trainingRates = await trainingRatesFor(staffIds);
+  const trainingDays = new Map<string, { date: LocalDate; centi: number }[]>();
+  for (const d of days) if (d.training > 0 && d.date >= start && d.date <= end) trainingDays.set(`${d.staffId}|${d.shopId}`, [...(trainingDays.get(`${d.staffId}|${d.shopId}`) ?? []), { date: d.date, centi: d.training }]);
 
   const inputsByShop = new Map<string, LineInput[]>();
   const sourceFlags: Anomaly[] = [];
@@ -371,6 +376,15 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
     const late = s?.lateTipRefundsCents ?? 0;
     // A refund of tips already paid is always the shop's cost (ST-C15), and tips never go below zero (SB-C2).
     const tipsCents = Math.max(0, raw);
+    const hourlyRate = plan?.hourlyRate ?? r?.hourlyRate ?? 0;
+    const training = trainingRateFor({
+      days: squireShops.has(shopId) ? [] : (trainingDays.get(k) ?? []),
+      versions: trainingRates.get(staffId) ?? [],
+      setupRate: r?.trainingRate ?? null,
+      hourlyRate,
+      end,
+    });
+    const mixedRates = [...(plan?.mixed ?? []), ...(training.mixed ? (["trainingRate"] as const) : [])];
     const who = {
       staffId,
       name,
@@ -378,12 +392,13 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       employeeNumber: pr?.employeeNumber ?? null,
       keyIsText: pr?.keyIsText ?? false,
       isolvedName: pr?.isolvedName ?? [p?.last, p?.first].filter(Boolean).join(", ").toUpperCase(),
-      hourlyRate: plan?.hourlyRate ?? r?.hourlyRate ?? 0,
+      hourlyRate,
       servicePct: plan?.servicePct ?? r?.servicePct ?? 0,
       productPct: plan?.productPct ?? r?.productPct ?? 0,
-      trainingRate: r?.trainingRate ?? null,
+      trainingRate: training.rate,
+      trainingRateSource: training.source,
       zeroHourlyPay: pr?.zeroHourlyPay ?? false,
-      ...(plan?.mixed.length ? { mixedRates: plan.mixed } : {}),
+      ...(mixedRates.length ? { mixedRates } : {}),
       ...(lateOf.has(k) ? { lateCommissions: lateOf.get(k) } : {}),
       overrides: Object.keys(ov).length ? ov : undefined,
     };
@@ -1106,7 +1121,7 @@ function stateAnomalies(blocks: readonly BlockView[], end: LocalDate, missedMeal
     const min = minimumWageCents(b.workState, end);
     for (const l of b.lines) {
       if (l.laborCost === 0) continue;
-      const hoursPaid = l.hours + l.otHours + (l.trainingPay > 0 ? l.trainingHours : 0);
+      const hoursPaid = l.hours + l.otHours + (l.trainingRate !== undefined || l.trainingPay > 0 ? l.trainingHours : 0);
       const straight = toCents(l.totalWages + l.trainingPay + l.guaranteeTopUp + l.wage * l.otHours);
       const short = minimumWageShortfallCents(straight, hoursPaid, min);
       if (short > 0)

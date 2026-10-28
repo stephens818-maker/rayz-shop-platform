@@ -3693,11 +3693,27 @@ export const payrollRates = pgTable(
     hourlyRate: doublePrecision("hourly_rate").notNull().default(0),
     servicePct: doublePrecision("service_pct").notNull().default(0),
     productPct: doublePrecision("product_pct").notNull().default(0.15),
-    /** Null: training is paid at the hourly rate. */
+    /** The fallback for anyone without a training rate on their Staff page (staffTrainingRates). Null: training is paid at the hourly rate. */
     trainingRate: doublePrecision("training_rate"),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
   (t) => [unique("payroll_rates_uq").on(t.staffId, t.shopId).nullsNotDistinct()],
+);
+
+/** Each employee's flat hourly training rate, effective-dated (src/domain/payroll/training-rate.ts). Never edited (a trigger refuses): a change starts after the last locked pay period. */
+export const staffTrainingRates = pgTable(
+  "staff_training_rates",
+  {
+    id: id(),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+    effectiveFrom: date("effective_from", { mode: "string" }).notNull(),
+    rateCents: integer("rate_cents").notNull(),
+    createdBy: uuid("created_by").references(() => staff.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
+  },
+  (t) => [uniqueIndex("staff_training_rates_uq").on(t.staffId, t.effectiveFrom), check("staff_training_rates_rate", sql`${t.rateCents} between 0 and 50000`)],
 );
 
 /**

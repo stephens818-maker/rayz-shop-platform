@@ -8,11 +8,12 @@ import { Card, CardHeader, Notice, PageHeader } from "@/components/ui";
 import { TrophyCase } from "@/components/trophy-case";
 import { assignableRoles, staffEditDenied } from "@/domain/permissions";
 import { seesStaffContact, staffContact } from "@/domain/staff-contact";
-import { formatDateTime } from "@/lib/time";
+import { formatDateTime, todayLocal } from "@/lib/time";
 import { accessState, loadStaffAccess } from "@/server/auth/access";
 import { can, guardPage, reasonViewer, staffGrantor } from "@/server/auth/staff";
 import { pickerReasons, reasonShower } from "@/server/block-reasons";
-import { compensationAccess, loadCompensationSettings } from "@/server/compensation";
+import { compensationAccess, loadCompensationSettings, lockedThrough } from "@/server/compensation";
+import { trainingRatesFor } from "@/server/payroll/training-rates";
 import { OTHER_SHOP, hasShop, inTenant } from "@/server/tenant";
 import { barberIntervalRows } from "@/server/timing";
 import { StaffTimingCard } from "../../booking-times/editors";
@@ -22,7 +23,7 @@ import { futureBookings } from "@/server/offboarding";
 import { AffectedRow } from "../../time-off/client";
 import { OffboardCard, ProfileForm, ScheduleEditor, TimeOff } from "./editors";
 import { BookingOptionsCard, DaysOnCard, NotificationsCard } from "./settings";
-import { PayrollIsolvedCard } from "./payroll";
+import { PayrollIsolvedCard, TrainingRateCard } from "./payroll";
 import { dayHistory, loadBookingOptions, loadNotificationPrefs } from "@/server/staff-settings";
 import { loadBrandDefaults, shopDefaults } from "@/server/location-defaults";
 
@@ -72,6 +73,8 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
     : [null, null, []];
   const ownOrManager = isPerson && (person!.id === ctx.staff.id || (can(ctx, "staff.manage") && !editDenied));
   const isolved = isPerson && ctx.brandWide && can(ctx, "payroll.run") ? ((await db.select().from(payrollProfiles).where(eq(payrollProfiles.staffId, person!.id)))[0] ?? null) : undefined;
+  const training =
+    isolved !== undefined ? await Promise.all([trainingRatesFor([person!.id]).then((m) => m.get(person!.id) ?? []), lockedThrough()]).then(([versions, locked]) => ({ versions, locked })) : null;
 
   return (
     <div className="mx-auto max-w-5xl space-y-5">
@@ -168,6 +171,15 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
         <PayrollIsolvedCard
           staffId={person!.id}
           initial={{ employeeNumber: isolved?.employeeNumber ?? "", keyIsText: isolved?.keyIsText ?? false, isolvedName: isolved?.isolvedName ?? "", zeroHourlyPay: isolved?.zeroHourlyPay ?? false }}
+        />
+      )}
+      {training && (
+        <TrainingRateCard
+          staffId={person!.id}
+          today={todayLocal()}
+          lockedThrough={training.locked}
+          canEdit={person!.id !== ctx.staff.id}
+          versions={training.versions.map((v) => ({ id: v.id, effectiveFrom: v.effectiveFrom, rateCents: v.rateCents }))}
         />
       )}
       {prefs && ownOrManager && <NotificationsCard staffId={person!.id} prefs={prefs} canEdit={ownOrManager} self={person!.id === ctx.staff.id} />}

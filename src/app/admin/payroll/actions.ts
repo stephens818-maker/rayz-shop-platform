@@ -35,6 +35,7 @@ import {
 import { parseTimeCsv } from "@/domain/payroll/time-csv";
 import { removeEmployerState, saveEmployer, saveEmployerState } from "@/server/payroll/groups";
 import { approveFinalPay } from "@/server/payroll/final-pay";
+import { addTrainingRate, deleteTrainingRate } from "@/server/payroll/training-rates";
 
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -289,6 +290,36 @@ export async function saveIsolvedProfileAction(input: { staffId: string; employe
     const v = z.object({ staffId: z.string().uuid(), employeeNumber: z.string().max(32), keyIsText: z.boolean(), isolvedName: z.string().max(80), zeroHourlyPay: z.boolean() }).parse(input);
     const [cur] = await db.select({ exportPosition: payrollProfiles.exportPosition }).from(payrollProfiles).where(eq(payrollProfiles.staffId, v.staffId));
     fail(await saveProfile(v.staffId, { employeeNumber: v.employeeNumber, keyIsText: v.keyIsText, isolvedName: v.isolvedName, exportPosition: cur?.exportPosition ?? null, zeroHourlyPay: v.zeroHourlyPay }, ctx.actor));
+    refresh();
+    revalidatePath(`/admin/staff/${v.staffId}`);
+    return null;
+  });
+}
+
+/** Training rates are pay, brand-wide like payroll profiles, and nobody sets their own. */
+async function trainingRateEditor(staffId: string) {
+  const ctx = await authorize("payroll.run");
+  if (!ctx.brandWide) throw new AppError("forbidden", "Training rates are brand-wide, so they need access to all shops.");
+  if (staffId === ctx.staff.id) throw new AppError("forbidden", "Your own training rate is set by another payroll admin.");
+  return ctx;
+}
+
+export async function addTrainingRateAction(input: { staffId: string; effectiveFrom: string; rateCents: number }) {
+  return safe(async () => {
+    const v = z.object({ staffId: z.string().uuid(), effectiveFrom: date, rateCents: z.number().int() }).parse(input);
+    const ctx = await trainingRateEditor(v.staffId);
+    await addTrainingRate(v.staffId, { effectiveFrom: v.effectiveFrom, rateCents: v.rateCents }, ctx.actor);
+    refresh();
+    revalidatePath(`/admin/staff/${v.staffId}`);
+    return null;
+  });
+}
+
+export async function deleteTrainingRateAction(input: { staffId: string; versionId: string }) {
+  return safe(async () => {
+    const v = z.object({ staffId: z.string().uuid(), versionId: z.string().uuid() }).parse(input);
+    const ctx = await trainingRateEditor(v.staffId);
+    await deleteTrainingRate(v.staffId, v.versionId, ctx.actor);
     refresh();
     revalidatePath(`/admin/staff/${v.staffId}`);
     return null;

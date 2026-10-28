@@ -1002,6 +1002,13 @@
       "when": 1796630040000,
       "tag": "core_0142_staff_app_mfa",
       "breakpoints": true
+    },
+    {
+      "idx": 143,
+      "version": "7",
+      "when": 1796631840000,
+      "tag": "core_0143_staff_training_rates",
+      "breakpoints": true
     }
   ]
 }
