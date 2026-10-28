@@ -5,6 +5,7 @@ import { formatPayHours } from "@/lib/hours";
 import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, TRAINING_RATE_SOURCE, fmtHours, fmtMoney, type Line, type Totals } from "@/domain/payroll/calc";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { reportView } from "@/domain/permissions";
+import { PPH_LABEL, PPH_MEASURES, linePph, linesPph, pphOf, pphText, workedHoursOf } from "@/domain/pph";
 import { can, guardPage } from "@/server/auth/staff";
 import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, hoursOpenMessage, squireMissingMessage, payrollTrail, periodChoices, periodKey, preparersOf, RECORD_LABEL, SELF_APPROVAL, type ApprovalStatus, type PeriodChoice, type ApprovalView, type BlockView, type PayrollView } from "@/server/payroll/run";
 import { ApprovalControls } from "./approval";
@@ -21,7 +22,24 @@ const cell = (k: string, v: number) => (HOUR_COLUMNS.has(k) ? hrs(v) : fmtMoney(
 /** The iSolved file's own numbers: hours stay decimal there whatever the screen shows. */
 const fileCell = (k: string, v: number) => (HOUR_COLUMNS.has(k) ? formatPayHours(v, { style: "decimal" }) : fmtMoney(v));
 
-type Col = { key: keyof Line & string; label: string; fmt: (l: Line) => string; total?: (t: Totals) => string; extra?: boolean; onlyIf?: (b: BlockView) => boolean };
+const pphCell = (v: number | null) => pphText(v, fmtMoney);
+
+type Col = {
+  key: (keyof Line & string) | "servicePph" | "productPph" | "totalPph";
+  label: string;
+  fmt: (l: Line) => string;
+  total?: (t: Totals, b: BlockView) => string;
+  extra?: boolean;
+  onlyIf?: (b: BlockView) => boolean;
+};
+/** Review only: never in the workbook or the iSolved file. Totals are the block's sales over its worked hours. */
+const PPH_COLS: Col[] = PPH_MEASURES.map((m) => ({
+  key: `${m}Pph` as const,
+  label: PPH_LABEL[m],
+  fmt: (l: Line) => pphCell(pphOf(linePph(l), m)),
+  total: (_: Totals, b: BlockView) => pphCell(pphOf(linesPph(b.lines), m)),
+  extra: true,
+}));
 const COLS: Col[] = [
   { key: "hours", label: COLUMN_LABEL.hours, fmt: (l) => hrs(l.hours), total: (t) => hrs(t.hours) },
   { key: "wage", label: COLUMN_LABEL.wage, fmt: (l) => fmtMoney(l.wage) },
@@ -79,6 +97,7 @@ const COLS: Col[] = [
     extra: true,
     onlyIf: (b) => b.lines.some((l) => l.tipRefundsShopCost),
   },
+  ...PPH_COLS,
 ];
 const colsFor = (b: BlockView) => COLS.filter((c) => !c.onlyIf || c.onlyIf(b));
 
@@ -419,7 +438,7 @@ function Locations({ view }: { view: PayrollView }) {
     <Card>
       <CardHeader
         title="Locations"
-        subtitle="Employee Cost is labor cost: Total Wages plus O.T. Pay and Training Pay. Every number is a sum of the shop blocks below."
+        subtitle="Employee Cost is labor cost: Total Wages plus O.T. Pay and Training Pay. Every number is a sum of the shop blocks below. PPH (review only, never in the iSolved file) is sales over worked hours."
       />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -433,10 +452,18 @@ function Locations({ view }: { view: PayrollView }) {
               <th className="px-3 py-2 text-right">Employee Cost</th>
               <th className="px-3 py-2 text-right">Gross Profit</th>
               <th className="px-3 py-2 text-right">Cost % of Sales</th>
+              {PPH_MEASURES.map((m) => (
+                <th key={m} className="bg-sky-50 px-3 py-2 text-right text-sky-800">
+                  {PPH_LABEL[m]}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {[...view.blocks.map((b) => ({ name: b.shop, t: b.totals, locked: !!b.locked })), { name: "Total", t: view.grand, locked: false }].map((r) => (
+            {[
+              ...view.blocks.map((b) => ({ name: b.shop, t: b.totals, locked: !!b.locked, pph: linesPph(b.lines) })),
+              { name: "Total", t: view.grand, locked: false, pph: linesPph(view.blocks.flatMap((b) => b.lines)) },
+            ].map((r) => (
               <tr key={r.name} className={cx("border-t border-zinc-100", r.name === "Total" && "bg-zinc-50 font-semibold")}>
                 <td className="px-3 py-1.5">
                   {r.name} {r.locked && <Badge tone="green">locked</Badge>}
@@ -448,6 +475,11 @@ function Locations({ view }: { view: PayrollView }) {
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.t.laborCost)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.t.grossProfit)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{pct(r.t.service ? r.t.laborCost / r.t.service : null)}</td>
+                {PPH_MEASURES.map((m) => (
+                  <td key={m} className="bg-sky-50/40 px-3 py-1.5 text-right tabular-nums">
+                    {pphCell(pphOf(r.pph, m))}
+                  </td>
+                ))}
               </tr>
             ))}
           </tbody>
@@ -569,7 +601,7 @@ function ShopBlockCard({ b, view, canRun, downloadable, earlier }: { b: BlockVie
                   <td className="sticky left-0 bg-zinc-50 px-2 py-1.5">Total</td>
                   {colsFor(b).map((c) => (
                     <td key={c.key} className="px-2 py-1.5 text-right tabular-nums">
-                      {c.total?.(b.totals) ?? ""}
+                      {c.total?.(b.totals, b) ?? ""}
                     </td>
                   ))}
                 </tr>
@@ -624,6 +656,10 @@ function ShopBlockCard({ b, view, canRun, downloadable, earlier }: { b: BlockVie
                     <p className="text-xs text-zinc-500">
                       Worked {hrsH(l.input.workedHours)} at {b.shop} this period = {hrs(l.hours)} regular + {hrs(l.otHours)} OT. Gross service {fmtMoney(l.service)} (card + cash + gift card,
                       before tax and tips).
+                    </p>
+                    <p className="text-xs text-zinc-500">
+                      <span className="font-medium">PPH</span> (review only): {fmtMoney(l.service)} service ÷ {hrsH(workedHoursOf(l))} worked = {pphCell(linePph(l).servicePph)} an hour · product{" "}
+                      {pphCell(linePph(l).productPph)} · total {pphCell(linePph(l).totalPph)}.{workedHoursOf(l) > 0 ? "" : " N/A: no worked hours here this period."}
                     </p>
                   </div>
                   <div className="space-y-2">
