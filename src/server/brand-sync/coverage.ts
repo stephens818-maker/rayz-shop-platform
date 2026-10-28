@@ -290,6 +290,7 @@ export const COLUMNS: Record<string, Record<string, Coverage>> = {
     inventoryAlertEmail: is("shop", "Who at the shop gets low-stock emails"),
     staffTime: sync(["setting"], "staff_time: the shop's own rules, folded in by a sync"),
     paymentsMode: is("shop", "Whose Stripe account the shop's card money goes to"),
+    tipToBarber: is("shop", "The Brand Owner's kill switch for tips to barbers' Stripe accounts at this shop, never synced"),
     statementDescriptor: is("shop", "What the shop's charges say on a card statement"),
     receipt: sync(["receipt", "setting"], "The receipt type; the review timing in it is the reviews setting's shop layer"),
     stripeTerminalLocationId: is("shop", "The shop's Stripe Terminal location"),

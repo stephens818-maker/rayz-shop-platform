@@ -36,10 +36,8 @@ import { payoutChoices, shopTipConfigs, staffPayoutConfig, syncTipLedger } from 
 import { isLockedOn } from "@/server/payroll/groups";
 import { recordPayoutPeriods } from "./pay-periods";
 import { STRIPE_PAYOUTS_HELD, stripePayoutsOn } from "./payout-model";
-import { sendSaleTransfers, tipRoute, tipRoutes, tipTransfersFor } from "@/server/payments/settlement";
+import { sendSaleTransfers, tipRoute, tipRoutes, tipToBarberAt, tipToBarberShops, tipTransfersFor } from "@/server/payments/settlement";
 import type { TipRoute } from "@/domain/charge-split";
-import { flags } from "@/lib/flags";
-
 export type TipPayout = typeof tipPayouts.$inferSelect;
 export type TipBatch = typeof tipPayoutBatches.$inferSelect;
 
@@ -136,11 +134,13 @@ export async function buildBatch(o: { shopId: string; kind: Exclude<TipBatchKind
     const { instantFeeAck } = await staffPayoutConfig(tx);
     const methodOf = (staffId: string) => effectiveMethod(settings, policy, choices.get(staffId)?.method ?? null, planned.get(staffId)?.method);
     const left = await leftOf(staffIds, tx);
+    const shopOn = await tipToBarberAt(o.shopId, tx);
+    const direct = directPayoutsAvailable(shopOn);
     const routes = await tipRoutes(tx, entries.map((e) => e.id));
     const routeOf = (id: string): TipRoute => routes.get(id) ?? "platform";
     const withBarber = new Set(entries.filter((e) => routeOf(e.id) === "barber").map((e) => e.staffId));
     // Someone who left with Stripe tips they can't receive: tips of open periods go with their last paycheck; tips of locked periods were reported as paid outside payroll, so they're paid in cash.
-    const leftOwed = (staffId: string) => left.has(staffId) && owedStripe(methodOf(staffId), choices.get(staffId));
+    const leftOwed = (staffId: string) => left.has(staffId) && owedStripe(methodOf(staffId), choices.get(staffId), direct);
     const inLocked = (date: LocalDate) => locked !== null && date <= locked;
     const drafted = new Map(mine.filter((p) => p.status === "pending").map((p) => [p.staffId, p.method as TipMethod]));
     const payoutMethod = (staffId: string): TipMethod => {
@@ -162,8 +162,8 @@ export async function buildBatch(o: { shopId: string; kind: Exclude<TipBatchKind
         const acct = choices.get(d.staffId) ?? null;
         const method = payoutMethod(d.staffId);
         const prefundedOnly = d.entryIds.every((id) => routeOf(id) === "barber");
-        const holdKind: TipHoldKind | null = method !== "stripe" ? null : !canReceive(acct) ? "stripe_setup" : !directPayoutsAvailable() && !prefundedOnly ? "transfers_pending" : null;
-        const holdReason = holdKind === "stripe_setup" ? setupHoldReason(acct) : holdKind ? transfersPendingReason() : null;
+        const holdKind: TipHoldKind | null = method !== "stripe" ? null : !canReceive(acct) ? "stripe_setup" : !direct && !prefundedOnly ? "transfers_pending" : null;
+        const holdReason = holdKind === "stripe_setup" ? setupHoldReason(acct) : holdKind ? transfersPendingReason(shopOn) : null;
         const instant = method === "stripe" && instantOnFor(policy, acct, instantFeeAck);
         [p] = await tx
           .insert(tipPayouts)
@@ -289,8 +289,9 @@ export async function releasePayout(payoutId: string, actor: Actor, now = new Da
     if (p.status !== "held") throw new AppError("conflict", "That payout isn't held.");
     const b = await lockBatch(tx, p.batchId);
     if (p.method === "stripe" && !stripePayoutsOn()) throw new AppError("conflict", `${STRIPE_PAYOUTS_HELD} Take this payout out of the batch to pay it another way; its tips stay reserved until then.`);
-    if (p.method === "stripe" && (b.status === "approved" || p.holdKind === "transfers_pending") && !directPayoutsAvailable())
-      throw new AppError("conflict", `${transfersPendingReason()} Take this payout out of the batch to pay it in cash; otherwise its tips go through payroll at the cutoff.`);
+    const shopOn = p.method === "stripe" && (await tipToBarberAt(p.shopId, tx));
+    if (p.method === "stripe" && (b.status === "approved" || p.holdKind === "transfers_pending") && !directPayoutsAvailable(shopOn))
+      throw new AppError("conflict", `${transfersPendingReason(shopOn)} Take this payout out of the batch to pay it in cash; otherwise its tips go through payroll at the cutoff.`);
     if (p.method === "stripe" && (b.status === "approved" || p.holdKind === "stripe_setup")) {
       const a = await staffAccount(p.staffId, tx);
       if (!canReceive(a))
@@ -486,7 +487,7 @@ export async function sendStripePayout(payoutId: string, now = new Date()) {
     pre = await prefundedOf(db, p.id);
   }
   if (pre.pendingPayments.length) return markFailed(p.id, "A tip from a sale is still on its way to their Stripe account, so this payout waits for the next batch");
-  if (pre.cents < p.netCents && !flags.tipToBarber()) return holdForTransfers(p, now);
+  if (pre.cents < p.netCents && !(await tipToBarberAt(p.shopId))) return holdForTransfers(p, now, transfersPendingReason(false));
   const list = storedExternalAccounts(acct!.externalAccounts);
   const fast = p.instant ? instantDestination(list) : null;
   let sending = p;
@@ -644,9 +645,10 @@ export async function releaseSetupHolds(staffId: string, now = new Date()) {
     for (const p of held) {
       const b = await lockBatch(tx, p.batchId);
       if (b.status !== "draft" && b.status !== "approved") continue;
-      if (!directPayoutsAvailable()) {
-        await tx.update(tipPayouts).set({ holdKind: "transfers_pending", holdReason: transfersPendingReason(), updatedAt: now }).where(eq(tipPayouts.id, p.id));
-        await audit(STRIPE_ACTOR, "tips.hold", "tip_payout", p.id, { reason: transfersPendingReason(), kind: "transfers_pending", staffId: p.staffId, netCents: p.netCents, from: "held", why: "stripe_setup_done" }, p.shopId, tx);
+      const shopOn = await tipToBarberAt(p.shopId, tx);
+      if (!directPayoutsAvailable(shopOn)) {
+        await tx.update(tipPayouts).set({ holdKind: "transfers_pending", holdReason: transfersPendingReason(shopOn), updatedAt: now }).where(eq(tipPayouts.id, p.id));
+        await audit(STRIPE_ACTOR, "tips.hold", "tip_payout", p.id, { reason: transfersPendingReason(shopOn), kind: "transfers_pending", staffId: p.staffId, netCents: p.netCents, from: "held", why: "stripe_setup_done" }, p.shopId, tx);
         continue;
       }
       const { policyOf } = await shopTipConfigs([p.shopId], tx);
@@ -835,10 +837,10 @@ export const OWED_HOLDS: readonly TipHoldKind[] = ["stripe_setup", "transfers_pe
  * their last paycheck), and the employee can't be paid directly (their account isn't active, or
  * there's no transfer path yet).
  */
-function owedRule(owedVia: "payroll" | "hold", left: ReadonlySet<string> = new Set()) {
-  const direct = directPayoutsAvailable();
-  // FEATURE_TIP_TO_BARBER off: a card tip stays with the shop and is paid through payroll, whatever owedVia says.
-  const toPayroll = (staffId: string) => owedVia === "payroll" || left.has(staffId) || !flags.tipToBarber();
+function owedRule(owedVia: "payroll" | "hold", left: ReadonlySet<string>, shopOn: boolean) {
+  const direct = directPayoutsAvailable(shopOn);
+  // Tips to barbers off (FEATURE_TIP_TO_BARBER or the shop's switch): a card tip stays with the shop and is paid through payroll, whatever owedVia says.
+  const toPayroll = (staffId: string) => owedVia === "payroll" || left.has(staffId) || !shopOn;
   return {
     unclaimed: (method: TipMethod, acct: StaffPayoutAccount | null | undefined, staffId: string) => toPayroll(staffId) && owedStripe(method, acct, direct),
     held: (status: TipPayoutStatus | null, holdKind: TipHoldKind | null, staffId: string) => toPayroll(staffId) && status === "held" && !!holdKind && OWED_HOLDS.includes(holdKind),
@@ -880,8 +882,13 @@ export async function payrollTipSplit(shopIds: readonly string[], start: LocalDa
     .where(and(inArray(tipLedger.shopId, [...shopIds]), gte(tipLedger.businessDate, start), lte(tipLedger.businessDate, end)));
   const { policyOf, byShop } = await shopTipConfigs(shopIds, tx);
   const people = [...new Set(rows.map((r) => r.staffId))];
-  const [choices, planned, cfg, left] = await Promise.all([payoutChoices(people, tx), tipOverrides(people, tx), staffPayoutConfig(tx), leftOf(people, tx)]);
-  const owed = owedRule(cfg.owedVia, left);
+  const [choices, planned, cfg, left, on] = await Promise.all([payoutChoices(people, tx), tipOverrides(people, tx), staffPayoutConfig(tx), leftOf(people, tx), tipToBarberShops(shopIds, tx)]);
+  const rules = new Map<string, ReturnType<typeof owedRule>>();
+  const owedAt = (shopId: string) => {
+    let rule = rules.get(shopId);
+    if (!rule) rules.set(shopId, (rule = owedRule(cfg.owedVia, left, on.has(shopId))));
+    return rule;
+  };
   const out = new Map<string, PayrollTipSplit>();
   const empty = (): PayrollTipSplit => ({ adjustCents: 0, absorbedCents: 0, lateAbsorbedCents: 0, inPayrollCents: 0, owedInPayrollCents: 0, paidOutCents: 0, paidByStripeCents: 0 });
   const absorbed = await tx
@@ -903,6 +910,7 @@ export async function payrollTipSplit(shopIds: readonly string[], start: LocalDa
     const method = effectiveMethod(byShop.get(r.shopId)!, policyOf(r.shopId), choices.get(r.staffId)?.method ?? null, planned.get(r.staffId)?.method);
     // A tip already in the barber's Stripe balance is paid out from it, never through payroll; a card tip in the shop's own account can't go by Stripe, so it's payroll's.
     const withBarber = r.route === "barber";
+    const owed = owedAt(r.shopId);
     const owedHere =
       !withBarber &&
       (r.payoutId
@@ -961,7 +969,7 @@ export async function lockPayrollTips(
         .where(and(eq(tipPayouts.shopId, b.shopId), eq(tipPayouts.status, "held"), inArray(tipPayouts.holdKind, [...OWED_HOLDS])))
         .for("update")
     ).filter((p) => counts(p.staffId));
-    const owed = owedRule(owedVia, await leftOf([...new Set([...entries.map((e) => e.staffId), ...heldAll.map((p) => p.staffId)])], tx));
+    const owed = owedRule(owedVia, await leftOf([...new Set([...entries.map((e) => e.staffId), ...heldAll.map((p) => p.staffId)])], tx), await tipToBarberAt(b.shopId, tx));
     const held = heldAll.filter((p) => owed.held(p.status, p.holdKind, p.staffId));
     const heldRaw = held.length
       ? await tx

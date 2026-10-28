@@ -1,5 +1,9 @@
 import type { Metadata } from "next";
+import { inArray } from "drizzle-orm";
+import { db } from "@/db";
+import { shops as shopsTable } from "@/db/schema";
 import { LinkButton, PageHeader } from "@/components/ui";
+import { flags } from "@/lib/flags";
 import { openShops, guardPage } from "@/server/auth/staff";
 import type { BrandTipPolicy } from "@/domain/tips";
 import type { StaffPayoutSettings } from "@/domain/staff-payouts";
@@ -15,11 +19,13 @@ export const metadata: Metadata = { title: "Tip payout settings" };
 export default async function TipSettingsPage() {
   const ctx = await guardPage("/admin/tips/settings");
   const shops = openShops(ctx);
-  const [{ policyOf, byShop }, stored, staffPayouts] = await Promise.all([
+  const [{ policyOf, byShop }, stored, staffPayouts, switches] = await Promise.all([
     shopTipConfigs(shops.map((s) => s.id)),
     settingAt<BrandTipPolicy>("tip_payouts"),
     settingAt<StaffPayoutSettings>("staff_payouts"),
+    shops.length ? db.select({ id: shopsTable.id, on: shopsTable.tipToBarber }).from(shopsTable).where(inArray(shopsTable.id, shops.map((s) => s.id))) : [],
   ]);
+  const switchOf = (shopId: string) => ({ on: switches.find((x) => x.id === shopId)?.on ?? true, brandOn: flags.tipToBarber(), canChange: ctx.isOwner });
   return (
     <div className="mx-auto max-w-4xl space-y-4">
       <PageHeader
@@ -34,7 +40,7 @@ export default async function TipSettingsPage() {
       {ctx.brandWide && <PolicyForm policy={stored} stripeOn={stripePayoutsOn()} />}
       {ctx.brandWide && <StaffPayoutsForm settings={staffPayouts} directPayouts={directPayoutsAvailable()} />}
       {shops.map((s) => (
-        <ShopTipForm key={s.id} shopId={s.id} shopName={s.name} settings={byShop.get(s.id)!} policy={policyOf(s.id)} />
+        <ShopTipForm key={s.id} shopId={s.id} shopName={s.name} settings={byShop.get(s.id)!} policy={policyOf(s.id)} tipToBarber={switchOf(s.id)} />
       ))}
     </div>
   );

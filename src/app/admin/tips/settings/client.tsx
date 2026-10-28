@@ -24,7 +24,7 @@ import {
   TipMethod,
   TipSchedule,
 } from "@/domain/tips";
-import { saveShopTipSettingsAction } from "../actions";
+import { saveShopTipSettingsAction, setShopTipToBarberAction } from "../actions";
 import { useSettingSync } from "@/components/brand-sync";
 
 const WEEKDAYS = [
@@ -40,10 +40,12 @@ const WEEKDAYS = [
 function Check({
   checked,
   onChange,
+  disabled,
   children,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
+  disabled?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -52,6 +54,7 @@ function Check({
         type="checkbox"
         className="mt-0.5"
         checked={checked}
+        disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
       />
       <span>{children}</span>
@@ -226,16 +229,64 @@ export function PolicyForm({
   );
 }
 
+/** The shop's kill switch for tips to barbers' Stripe accounts (shops.tip_to_barber). Only the Brand Owner changes it. */
+function TipToBarberSwitch({
+  shopId,
+  shopName,
+  on,
+  brandOn,
+  canChange,
+}: {
+  shopId: string;
+  shopName: string;
+  on: boolean;
+  brandOn: boolean;
+  canChange: boolean;
+}) {
+  const { pending, msg, save } = useSave();
+  return (
+    <div className="md:col-span-2 space-y-1 rounded border border-zinc-200 p-3">
+      <Check
+        checked={on}
+        disabled={!canChange || pending}
+        onChange={(v) => save(() => setShopTipToBarberAction(shopId, v))}
+      >
+        <span className="font-medium">
+          Card tips go to each barber&rsquo;s Stripe account at the sale
+        </span>
+      </Check>
+      <p className="text-xs text-zinc-500">
+        {!brandOn
+          ? "Turned off for the whole brand (FEATURE_TIP_TO_BARBER=false), so this has no effect until it's back on. "
+          : ""}
+        Off, {shopName}&rsquo;s card tips stay with the shop and are paid with the
+        paycheck; tips already in a barber&rsquo;s Stripe account stay theirs.
+        Either way every tip goes to iSolved as Cash Tips Recd.
+        {canChange ? "" : " Only the Brand Owner can change this."}
+      </p>
+      {(pending || msg) && (
+        <span
+          className={`text-sm ${msg && !msg.ok ? "text-red-600" : "text-emerald-700"}`}
+        >
+          {pending ? "Saving…" : msg?.text}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function ShopTipForm({
   shopId,
   shopName,
   settings,
   policy,
+  tipToBarber,
 }: {
   shopId: string;
   shopName: string;
   settings: ShopTipSettings;
   policy: BrandTipPolicy;
+  tipToBarber: { on: boolean; brandOn: boolean; canChange: boolean };
 }) {
   const [s, setS] = useState(settings);
   const { pending, msg, save } = useSave();
@@ -335,6 +386,9 @@ export function ShopTipForm({
         <p className="md:col-span-2 text-xs text-zinc-500">
           Card processing fees are never taken out of tips; the shop pays them.
         </p>
+        {policy.methods.includes("stripe") && (
+          <TipToBarberSwitch shopId={shopId} shopName={shopName} {...tipToBarber} />
+        )}
         <div className="md:col-span-2 flex items-center gap-3">
           <Button
             disabled={pending}

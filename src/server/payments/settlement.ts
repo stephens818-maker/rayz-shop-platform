@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db, type DBorTx, type Tx } from "@/db";
-import { paymentTransferReversals, paymentTransfers, payments, refunds, tipLedger, type TransferReversalKind } from "@/db/schema";
+import { paymentTransferReversals, paymentTransfers, payments, refunds, shops, tipLedger, type TransferReversalKind } from "@/db/schema";
 import { saleTransferGroup, shopReversal, splitCharge, type TipRoute } from "@/domain/charge-split";
 import { flags } from "@/lib/flags";
 import { SYSTEM, audit } from "@/server/audit";
@@ -15,7 +15,8 @@ import { createSaleTransfer, directPayoutsAvailable, reverseShopTransfer } from 
  *
  * - planSaleTransfers, in checkout's transaction: one shop row (the charge less the processing fee
  *   and less the tips going to barbers) to the shop's connected account, and, with
- *   FEATURE_TIP_TO_BARBER on, one tip row per barber whose Stripe account can take it. Off, the tip
+ *   FEATURE_TIP_TO_BARBER and the shop's switch on (tipToBarberShops), one tip row per barber whose
+ *   Stripe account can take it. Off, the tip
  *   stays in the shop's transfer and is paid through payroll. A shop on the brand's account has no
  *   shop row: its money is already on the platform.
  * - planRefundReversals and the dispute handlers take a refund or dispute back from the shop's
@@ -28,9 +29,22 @@ import { createSaleTransfer, directPayoutsAvailable, reverseShopTransfer } from 
 
 const MAX_ATTEMPTS = 5;
 
+/**
+ * Of these shops, the ones where tips go to barbers' Stripe accounts: FEATURE_TIP_TO_BARBER is on and
+ * the Brand Owner hasn't turned the shop's switch off. A tip already transferred at the sale stays
+ * with the barber when either goes off; new card tips stay in the shop's transfer.
+ */
+export async function tipToBarberShops(shopIds: readonly string[], tx: DBorTx = db): Promise<Set<string>> {
+  if (!flags.tipToBarber() || !shopIds.length) return new Set();
+  const rows = await tx.select({ id: shops.id }).from(shops).where(and(inArray(shops.id, [...new Set(shopIds)]), eq(shops.tipToBarber, true)));
+  return new Set(rows.map((r) => r.id));
+}
+
+export const tipToBarberAt = async (shopId: string, tx: DBorTx = db) => (await tipToBarberShops([shopId], tx)).has(shopId);
+
 /** The barber's Stripe account when their tip can go to it at the sale, or null. */
-async function tipAccount(staffId: string, shopId: string, tx: DBorTx): Promise<string | null> {
-  if (!flags.tipToBarber() || !stripePayoutsOn() || !directPayoutsAvailable()) return null;
+async function tipAccount(staffId: string, shopId: string, shopOn: boolean, tx: DBorTx): Promise<string | null> {
+  if (!shopOn || !stripePayoutsOn() || !directPayoutsAvailable()) return null;
   const a = await staffAccount(staffId, tx);
   if (!a?.stripeAccountId || !canReceive(a) || issues1099K(a)) return null;
   if ((await methodFor(staffId, shopId, tx)) !== "stripe") return null;
@@ -50,15 +64,16 @@ export async function planSaleTransfers(tx: Tx, saleId: string) {
       .select({ staffId: tipLedger.staffId, cents: tipLedger.amountCents })
       .from(tipLedger)
       .where(and(eq(tipLedger.paymentId, p.id), eq(tipLedger.kind, "tip")));
+    const shopOn = await tipToBarberAt(p.shopId, tx);
     const shares = [];
-    for (const t of tips.filter((x) => x.cents > 0)) shares.push({ ...t, accountId: await tipAccount(t.staffId, p.shopId, tx) });
+    for (const t of tips.filter((x) => x.cents > 0)) shares.push({ ...t, accountId: await tipAccount(t.staffId, p.shopId, shopOn, tx) });
     const connected = p.settlement === "connected" && !!p.stripeAccountId;
     const split = splitCharge({
       amountCents: p.amountCents,
       feeCents: connected ? Math.min(p.applicationFeeCents, p.amountCents) : 0,
       settlement: connected ? "connected" : "platform",
       tips: shares,
-      tipToBarber: flags.tipToBarber(),
+      tipToBarber: shopOn,
     });
     const group = p.transferGroup ?? saleTransferGroup(saleId);
     const base = { paymentId: p.id, saleId, shopId: p.shopId, transferGroup: group };
@@ -78,7 +93,7 @@ export async function planSaleTransfers(tx: Tx, saleId: string) {
         tipsWithShopCents: split.tipsWithShopCents,
         tipsOnPlatformCents: split.tipsOnPlatformCents,
         ...(split.feeShortfallCents ? { feeShortfallCents: split.feeShortfallCents } : {}),
-        tipToBarber: flags.tipToBarber(),
+        tipToBarber: shopOn,
       },
       p.shopId,
       tx,

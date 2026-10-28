@@ -1,12 +1,14 @@
 /**
  * I10, separate charges and transfers (Charles, 2026-10-28), against a stand-in Stripe that records
  * every transfer: each card sale is charged on the platform with its transfer_group, then the shop's
- * portion goes to the shop's connected account and, with FEATURE_TIP_TO_BARBER on, each tip to its
- * barber's Express account, all with source_transaction. Off, the tip is in the shop's transfer and
- * goes on the paycheck. Either way every tip is in the iSolved figures. Refunds and disputes are taken
+ * portion goes to the shop's connected account and, with FEATURE_TIP_TO_BARBER on (the launch
+ * default, unset here), each tip to its barber's Express account, all with source_transaction. Off,
+ * brand-wide (FEATURE_TIP_TO_BARBER=false) or at one shop (its Tips to barbers switch), the tip is in
+ * the shop's transfer and goes on the paycheck. Either way every tip is in the iSolved figures, under
+ * E_Cash Tips Recd. Refunds and disputes are taken
  * back from the shop's transfer only; a tip is never clawed back; a won dispute goes back to the shop.
  */
-import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { TIP_DEPOSIT_CONSENT_VERSION } from "@/domain/tip-deposit-consent";
 import { Mods, actor, loadModules } from "./setup";
 
@@ -137,10 +139,12 @@ async function payrollLine(shopId: string, staffId: string) {
   const p = (await run.periodChoices()).find((c) => c.current)!;
   const view = (await run.buildPayroll(p.start, p.end, { clockChecks: false }))!;
   const line = view.blocks.find((b) => b.shopId === shopId)?.lines.find((l) => l.staffId === staffId);
-  return { tips: line?.input.tips ?? 0, tipsInPayroll: line?.input.tipsInPayroll ?? 0 };
+  return { tips: line?.input.tips ?? 0, tipsInPayroll: line?.input.tipsInPayroll ?? 0, tipsOutside: line?.tipsOutside ?? 0 };
 }
 
-describe("FEATURE_TIP_TO_BARBER off (launch)", () => {
+describe("FEATURE_TIP_TO_BARBER=false (the brand-wide kill switch)", () => {
+  beforeEach(() => void (process.env.FEATURE_TIP_TO_BARBER = "false"));
+
   it("one platform charge with the sale's transfer_group; the shop's transfer is the charge less the processing fee, tip included, waiting on the charge's funds", async () => {
     const { shop, acct, staffId } = await setup("moline", "Jen");
     await barberOnStripe(staffId, "acct_fake_jen");
@@ -182,9 +186,8 @@ describe("FEATURE_TIP_TO_BARBER off (launch)", () => {
   });
 });
 
-describe("FEATURE_TIP_TO_BARBER on", () => {
+describe("FEATURE_TIP_TO_BARBER on (the launch default)", () => {
   it("the tip goes to the barber's Express account with source_transaction, the shop gets the rest, and the batch only pays it out of their balance", async () => {
-    process.env.FEATURE_TIP_TO_BARBER = "true";
     const { shop, acct, staffId } = await setup("coralville", "Makenna");
     await barberOnStripe(staffId, "acct_fake_makenna");
     const before = await payrollLine(shop.id, staffId);
@@ -205,14 +208,14 @@ describe("FEATURE_TIP_TO_BARBER on", () => {
     const sent = (await m.db.db.query.tipPayouts.findFirst({ where: eq(s().tipPayouts.id, draft.id) }))!;
     expect(sent).toMatchObject({ status: "processing", stripeTransferId: null, stripePayoutId: calls[0].id });
 
-    // Paid outside payroll, so not on the paycheck; still in the iSolved figures as tips.
+    // Paid outside payroll, so not on the paycheck; in the iSolved file as E_Cash Tips Recd, tips they already have.
     const after = await payrollLine(shop.id, staffId);
     expect(after.tips - before.tips).toBeCloseTo(15);
     expect(after.tipsInPayroll - before.tipsInPayroll).toBeCloseTo(0);
+    expect(after.tipsOutside - before.tipsOutside).toBeCloseTo(15);
   });
 
   it("a barber who can't take Stripe yet: their tip stays in the shop's transfer and goes on the paycheck", async () => {
-    process.env.FEATURE_TIP_TO_BARBER = "true";
     const { shop, staffId } = await setup("kimberly", "Beth");
     await m.db.db.update(s().shops).set({ tipPayouts: { schedule: "manual", cardDelayDays: 0, defaultMethod: "stripe" } }).where(eq(s().shops.id, shop.id));
     onTestFinished(async () => void (await m.db.db.update(s().shops).set({ tipPayouts: { schedule: "manual", cardDelayDays: 0, defaultMethod: "cash" } }).where(eq(s().shops.id, shop.id))));
@@ -230,9 +233,46 @@ describe("FEATURE_TIP_TO_BARBER on", () => {
   });
 });
 
+describe("a shop's Tips to barbers switch (the per-shop kill switch)", () => {
+  it("off at one shop: new card tips stay in its transfer and go on the paycheck, other shops' still go to barbers, and a tip already transferred is paid out of the barber's balance", async () => {
+    const { shop, staffId } = await setup("utica", "Sarah");
+    const other = (await m.db.db.query.shops.findFirst({ where: eq(s().shops.slug, "coralville") }))!;
+    await barberOnStripe(staffId, "acct_fake_sarah");
+    await m.db.db.update(s().shops).set({ tipPayouts: { schedule: "manual", cardDelayDays: 0, defaultMethod: "stripe" } }).where(eq(s().shops.id, shop.id));
+    onTestFinished(async () => void (await m.db.db.update(s().shops).set({ tipToBarber: true, tipPayouts: { schedule: "manual", cardDelayDays: 0, defaultMethod: "cash" } }).where(eq(s().shops.id, shop.id))));
+    const first = await cardSale(shop.id, staffId, 900);
+    expect(first.tipRows).toEqual([expect.objectContaining({ staffId, destinationAccount: "acct_fake_sarah", amountCents: 900, status: "sent" })]);
+
+    expect(await tl.setShopTipToBarber(shop.id, false, actor)).toBe(false);
+    const logs = await m.db.db.select().from(s().auditLog).where(and(eq(s().auditLog.action, "tips.tip_to_barber"), eq(s().auditLog.entityId, shop.id)));
+    expect(logs.map((l) => l.details)).toEqual([{ before: true, after: false }]);
+    expect([...(await settlement.tipToBarberShops([shop.id, other.id]))]).toEqual([other.id]);
+
+    const before = await payrollLine(shop.id, staffId);
+    const second = await cardSale(shop.id, staffId, 600);
+    expect(second.tipRows).toEqual([]);
+    expect(second.shopRow!.amountCents).toBe(second.pay.amountCents - second.pay.applicationFeeCents);
+    const [entry] = await m.db.db.select().from(s().tipLedger).where(and(eq(s().tipLedger.saleId, second.saleId), eq(s().tipLedger.kind, "tip")));
+    expect((await settlement.tipRoutes(m.db.db, [entry.id])).get(entry.id)).toBe("shop");
+    const after = await payrollLine(shop.id, staffId);
+    expect([after.tips - before.tips, after.tipsInPayroll - before.tipsInPayroll, after.tipsOutside - before.tipsOutside].map((x) => Math.round(x * 100) / 100)).toEqual([6, 6, 0]);
+
+    const b = await tp.buildBatch({ shopId: shop.id, kind: "manual", cutoff: today, actor });
+    const mine = await m.db.db.select().from(s().tipPayouts).where(and(eq(s().tipPayouts.batchId, b.batchId), eq(s().tipPayouts.staffId, staffId)));
+    expect(mine).toEqual([expect.objectContaining({ method: "stripe", status: "pending", netCents: 900 })]);
+    calls.length = 0;
+    await tp.approveBatch(b.batchId, actor);
+    expect(calls.map((c) => [c.op, c.params.amount, c.opts?.stripeAccount])).toEqual([["payout", 900, "acct_fake_sarah"]]);
+
+    // Back on, the next card tip goes to her account again.
+    await tl.setShopTipToBarber(shop.id, true, actor);
+    const third = await cardSale(shop.id, staffId, 400);
+    expect(third.tipRows).toEqual([expect.objectContaining({ amountCents: 400, status: "sent" })]);
+  });
+});
+
 describe("refunds and disputes: the shop's transfer only, never a tip", () => {
   it("a refund reverses the shop's transfer; the barber keeps the tip, and what the shop's transfer can't cover is recorded as the platform's", async () => {
-    process.env.FEATURE_TIP_TO_BARBER = "true";
     const { shop, staffId } = await setup("le-claire", "Skylar");
     await barberOnStripe(staffId, "acct_fake_skylar");
     const { saleId, pay, shopRow, tipRows } = await cardSale(shop.id, staffId, 2000);
@@ -284,7 +324,6 @@ describe("refunds and disputes: the shop's transfer only, never a tip", () => {
   });
 
   it("a lost dispute leaves the reversal; a dispute on a tip-heavy charge takes only what the shop's transfer has", async () => {
-    process.env.FEATURE_TIP_TO_BARBER = "true";
     const { shop, staffId } = await setup("silvis", "Liv");
     await barberOnStripe(staffId, "acct_fake_liv");
     const { pay, shopRow, tipRows } = await cardSale(shop.id, staffId, 3000);
@@ -333,7 +372,6 @@ describe("retries and the database's own guard", () => {
   });
 
   it("refuses a reversal of a tip transfer, and a tip transfer can't be changed", async () => {
-    process.env.FEATURE_TIP_TO_BARBER = "true";
     const { shop, staffId } = await setup("kimberly", "Sammie");
     await barberOnStripe(staffId, "acct_fake_sammie");
     const { pay, tipRows } = await cardSale(shop.id, staffId, 900);

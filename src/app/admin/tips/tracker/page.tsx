@@ -10,6 +10,7 @@ import { formatCents } from "@/lib/money";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { can, guardPage, reportShopIds } from "@/server/auth/staff";
 import { directPayoutsAvailable } from "@/server/payments/money-movement";
+import { tipToBarberShops } from "@/server/payments/settlement";
 import { chainShopIds, payoutTracker, taxCheckView } from "@/server/tips/tracker";
 import { PAYOUT_STATUS_TONE } from "../labels";
 import { RecordTaxCheck, RefreshAccount } from "./client";
@@ -27,15 +28,17 @@ export default async function PayoutTrackerPage({ searchParams }: { searchParams
   const shopIds = sp.shop && sp.shop !== "all" ? (visible.includes(sp.shop) ? [sp.shop] : []) : chain ? visible : reportShopIds(ctx, sp.shop ?? (ctx.currentShopId ? ctx.currentShopId : "all"));
   if (!shopIds.length) return <Empty title="No shop selected" />;
   const brandLevel = chain || ctx.brandWide;
-  const [t, names, tax] = await Promise.all([
+  const [t, names, tax, on] = await Promise.all([
     payoutTracker(shopIds),
     db.select({ id: shops.id, name: shops.name }).from(shops).where(inArray(shops.id, visible)).orderBy(asc(shops.name)),
     brandLevel ? taxCheckView() : null,
+    tipToBarberShops(shopIds),
   ]);
   const state = ACCOUNT_STATES.find((s) => s === sp.state) ?? null;
   const people = state ? t.people.filter((p) => p.state === state) : t.people;
   const label = shopIds.length === 1 ? (names.find((n) => n.id === shopIds[0])?.name ?? "This shop") : shopIds.length === visible.length ? (chain ? "The whole chain" : "All my shops") : `${shopIds.length} shops`;
   const direct = directPayoutsAvailable();
+  const switchedOff = direct ? names.filter((n) => shopIds.includes(n.id) && !on.has(n.id)).map((n) => n.name) : [];
   const checked = tax?.checks.find((c) => c.taxYear === tax.taxYear) ?? null;
   return (
     <div className="mx-auto max-w-6xl space-y-4">
@@ -71,6 +74,11 @@ export default async function PayoutTrackerPage({ searchParams }: { searchParams
         <Notice tone="amber">
           Direct Stripe payouts aren&rsquo;t turned on yet, so approved Stripe payouts are held as owed. Where the brand sends owed tips to payroll (Tip payout settings), they&rsquo;re paid with the
           paycheck at the period&rsquo;s cutoff, never twice.
+        </Notice>
+      )}
+      {switchedOff.length > 0 && (
+        <Notice tone="amber">
+          Tips to barbers&rsquo; Stripe accounts are turned off at {switchedOff.join(", ")} (Tip payout settings). Card tips there stay with the shop and are paid with the paycheck.
         </Notice>
       )}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">

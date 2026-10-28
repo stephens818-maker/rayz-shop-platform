@@ -181,6 +181,20 @@ export async function saveShopTipSettings(shopId: string, raw: ShopTipSettings, 
   return clean;
 }
 
+/**
+ * The Brand Owner's per-shop kill switch for tips to barbers' Stripe accounts (I10). Off, the shop's
+ * card tips from then on stay in its transfer and are paid through payroll; tips already transferred
+ * stay with the barbers. Both ways every tip still goes to iSolved under E_Cash Tips Recd.
+ */
+export async function setShopTipToBarber(shopId: string, on: boolean, actor: Actor) {
+  const [before] = await db.select({ on: shops.tipToBarber }).from(shops).where(eq(shops.id, shopId));
+  if (!before) throw notFound("Shop");
+  if (before.on === on) return on;
+  await db.update(shops).set({ tipToBarber: on }).where(eq(shops.id, shopId));
+  await audit(actor, "tips.tip_to_barber", "shop", shopId, { before: before.on, after: on }, shopId);
+  return on;
+}
+
 /** Each employee's own choice of method, where they've made one. */
 export async function payoutChoices(staffIds: readonly string[], tx: DBorTx = db) {
   const rows = staffIds.length ? await tx.select().from(staffPayoutAccounts).where(inArray(staffPayoutAccounts.staffId, [...staffIds])) : [];
