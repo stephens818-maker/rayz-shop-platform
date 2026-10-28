@@ -142,7 +142,8 @@ export const optionValues = (options: readonly ReportOption[] | undefined): Reco
  * The date chips a report shows: the standard ranges every report has, then the report's own. Pay
  * period chips are left to the pay period picker.
  */
-export function presetChips(own: readonly { id: string; label: string }[] | undefined): { id: string; label: string }[] {
+export function presetChips(own: readonly { id: string; label: string }[] | undefined, standard = true): { id: string; label: string }[] {
+  if (!standard) return [...(own ?? [])];
   const extra = (own ?? []).filter((p) => !p.id.startsWith("pp:") && !STANDARD_PRESETS.some((s) => s.id === p.id));
   return [...STANDARD_PRESETS.map((s) => own?.find((p) => p.id === s.id) ?? s), ...extra];
 }
@@ -201,6 +202,7 @@ export function ReportFilters({
   presets,
   payPeriods = [],
   views = true,
+  standard = true,
 }: {
   base: string;
   preset: string | null;
@@ -216,11 +218,13 @@ export function ReportFilters({
   payPeriods?: readonly PayPeriodPickerGroup[];
   /** False on pages without the combined / by location / by barber views. */
   views?: boolean;
+  /** False: only `presets` (the Payroll Report has its own list). */
+  standard?: boolean;
 }) {
   const opts = optionValues(options);
   const qs = (extra: Record<string, string | null>) => `${base}?${reportQuery(scope, { ...opts, ...extra })}`;
   const range: Record<string, string> = preset ? { preset } : { from, to };
-  const chips = presetChips(presets);
+  const chips = presetChips(presets, standard);
   return (
     <div className="no-print mb-5 space-y-3">
       <ChipStrip className="items-center gap-1.5" label="Date range">

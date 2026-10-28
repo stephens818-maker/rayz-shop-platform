@@ -2,10 +2,10 @@ import "server-only";
 import { barberLabel } from "@/domain/barbers";
 import { LocationGroup, LocationSelection, locationLabel } from "@/domain/locations";
 import { PAYROLL_REPORTS, type ReportKey } from "@/domain/permissions";
-import { PAY_PERIOD_PRESET, calendarForShops, payPeriodByNumber, payPeriodRange } from "@/server/payroll/periods";
-import { PAY_PERIOD_NUMBER_PRESET, PRESETS, presetRange } from "@/domain/report-range";
+import { PAY_PERIOD_PRESET, calendarForShops, payGroupPeriod, payPeriodByNumber, payPeriodRange } from "@/server/payroll/periods";
+import { PAY_GROUP_PERIOD_PRESET, PAY_PERIOD_NUMBER_PRESET, PRESETS, presetRange } from "@/domain/report-range";
 import { payPeriodFor } from "@/domain/payroll";
-import { type LocalDate, isValidLocalDate, todayLocal } from "@/lib/time";
+import { type LocalDate, addDays, isValidLocalDate, todayLocal } from "@/lib/time";
 import { lastRange, rememberRange } from "@/server/report-range-memory";
 import { ReportView, ViewCtx, parseReportView, parseView, totalLabel } from "@/domain/report-views";
 import type { StaffContext } from "@/server/auth/staff";
@@ -232,16 +232,21 @@ async function rangeOf(q: Pick<ReportParams, "preset" | "from" | "to">, o: Range
     if (n) return { from: n.from, to: n.to, preset: n.id, rangeLabel: n.label, payGroupId: n.payGroupId };
     return rangeOf({}, { ...o, defaultPreset: o.defaultPreset.startsWith(PAY_PERIOD_NUMBER_PRESET) ? "lastpayperiod" : o.defaultPreset }, today, false);
   }
+  if (preset.startsWith(PAY_GROUP_PERIOD_PRESET)) {
+    const g = await payGroupPeriod(preset, today);
+    if (g) return { from: g.from, to: g.to, preset: g.id, rangeLabel: g.label, payGroupId: g.payGroupId };
+    return rangeOf({}, { ...o, defaultPreset: o.defaultPreset.startsWith(PAY_GROUP_PERIOD_PRESET) ? "lastpayperiod" : o.defaultPreset }, today, false);
+  }
   if (preset.startsWith(PAY_PERIOD_PRESET)) {
     const period = (await payPeriodRange(preset, today)) ?? (await payPeriodRange("pp:last", today))!;
     const label = preset === "pp:current" ? "This pay period" : preset === "pp:last" ? "Last pay period" : (o.presets?.find((x) => x.id === period.id)?.label ?? "Pay period");
     return { from: period.from, to: period.to, preset: period.id, rangeLabel: label, payGroupId: null };
   }
-  const known = PRESETS.find((x) => x.id === preset) ?? o.presets?.find((x) => x.id === preset);
+  const known = o.presets?.find((x) => x.id === preset && PRESETS.some((p) => p.id === x.id)) ?? PRESETS.find((x) => x.id === preset) ?? o.presets?.find((x) => x.id === preset);
   const id = known ? preset : "7d";
   const cal = id === "payperiod" || id === "lastpayperiod" ? await calendarForShops(o.shopIds) : await brandCalendar();
   const r = presetRange(id, today, cal);
-  const to = id === "payperiod" && o.wholePayPeriod ? payPeriodFor(today, cal).end : r.to;
+  const to = !o.wholePayPeriod ? r.to : id === "payperiod" ? payPeriodFor(today, cal).end : id === "week" ? addDays(r.from, 6) : r.to;
   return { from: r.from, to, preset: id, rangeLabel: (known ?? PRESETS.find((x) => x.id === "7d"))!.label, payGroupId: null };
 }
 

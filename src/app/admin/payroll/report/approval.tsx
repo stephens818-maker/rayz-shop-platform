@@ -11,7 +11,24 @@ import { approvePayrollAction, lockPayrollAction, revokeApprovalAction } from ".
  * needs approving again before the lock. `approveBlocked` stops only the approval: someone who
  * changed the figures can still lock what another person approved.
  */
-export function ApprovalControls({ start, end, label, status, blocked, approveBlocked = null }: { start: string; end: string; label: string; status: ApprovalStatus; blocked: string | null; approveBlocked?: string | null }) {
+export function ApprovalControls({
+  start,
+  end,
+  label,
+  status,
+  blocked,
+  approveBlocked = null,
+  shops = null,
+}: {
+  start: string;
+  end: string;
+  label: string;
+  status: ApprovalStatus;
+  blocked: string | null;
+  approveBlocked?: string | null;
+  /** A run of whole workweeks: the shops it covers. Null: a pay period. */
+  shops?: string[] | null;
+}) {
   const { pending, error, run } = useAction();
   const [step, setStep] = useState<"approve" | "lock" | "revoke" | null>(null);
   const [note, setNote] = useState("");
@@ -28,7 +45,7 @@ export function ApprovalControls({ start, end, label, status, blocked, approveBl
         <div className="flex flex-wrap items-center justify-end gap-2">
           <span className="text-sm text-zinc-600">Approve the figures for {label}?</span>
           <Input aria-label="Approval note" placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} className="h-8 w-56 text-xs" />
-          <Button size="sm" disabled={pending} onClick={() => run(() => approvePayrollAction(start, end, note), close)}>
+          <Button size="sm" disabled={pending} onClick={() => run(() => approvePayrollAction(start, end, note, shops), close)}>
             {pending ? "Approving…" : "Yes, approve"}
           </Button>
           <Button size="sm" variant="secondary" onClick={close}>
@@ -38,7 +55,7 @@ export function ApprovalControls({ start, end, label, status, blocked, approveBl
       ) : step === "lock" ? (
         <div className="flex flex-wrap items-center justify-end gap-2">
           <span className="text-sm text-zinc-600">Lock {label}? Hours, sales and adjustments in it can&apos;t change afterwards.</span>
-          <Button size="sm" disabled={pending} onClick={() => run(() => lockPayrollAction(start, end), close)}>
+          <Button size="sm" disabled={pending} onClick={() => run(() => lockPayrollAction(start, end, shops), close)}>
             {pending ? "Locking…" : "Yes, lock"}
           </Button>
           <Button size="sm" variant="secondary" onClick={close}>
@@ -48,7 +65,7 @@ export function ApprovalControls({ start, end, label, status, blocked, approveBl
       ) : step === "revoke" ? (
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Input aria-label="Why the approval is taken back" placeholder="Reason (required)" value={reason} onChange={(e) => setReason(e.target.value)} className="h-8 w-64 text-xs" />
-          <Button size="sm" variant="secondary" disabled={pending || !reason.trim()} onClick={() => run(() => revokeApprovalAction(start, end, reason), close)}>
+          <Button size="sm" variant="secondary" disabled={pending || !reason.trim()} onClick={() => run(() => revokeApprovalAction(start, end, reason, shops), close)}>
             {pending ? "Taking back…" : "Take back approval"}
           </Button>
           <Button size="sm" variant="secondary" onClick={close}>

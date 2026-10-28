@@ -9,7 +9,7 @@ import { type ClientCounts, type Pph, type PphRank, PPH_RANKS, RANK_LABEL, clien
 import { can, guardPage } from "@/server/auth/staff";
 import { approvalBlocked, approvalOf, approvalStatus, hoursOpenMessage, squireMissingMessage, payrollTrail, periodChoices, periodKey, preparersOf, RECORD_LABEL, SELF_APPROVAL, type ApprovalStatus, type PeriodChoice, type ApprovalView, type BlockView, type PayrollView } from "@/server/payroll/run";
 import { ReportFilters, locationProps } from "../../reports/filters";
-import { type PayrollRangeParams, payrollRange, payrollRangeQuery } from "./range";
+import { type PayrollRangeParams, payrollRange, payrollRangeQuery, runFileQuery } from "./range";
 import { RangeNotices } from "./range-notices";
 import { ApprovalControls } from "./approval";
 import { LateCommissionForm, OverrideForm } from "./client";
@@ -117,15 +117,15 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
   const sp = await searchParams;
   const ctx = await guardPage("/admin/payroll/report");
   const r = await payrollRange(ctx, sp, "payroll_run");
-  const { view, full, official } = r;
-  const choices = official ? await periodChoices() : [];
+  const { view, full, official, kind } = r;
+  const choices = kind === "pay_period" ? await periodChoices() : [];
   const [approval, trail, preparers] = official && full ? await Promise.all([approvalOf(full), payrollTrail(full.start, full.end), preparersOf(full.start, full.end)]) : [null, [], []];
   const tickets = clientCountsOf(view?.blocks ?? []);
   const selfPrepared = !ctx.isOwner && preparers.some((p) => p.staffId === ctx.actor.staffId);
   const status = full ? approvalStatus(full, approval) : "draft";
   const canRun = can(ctx, "payroll.run");
   const canApprove = can(ctx, "payroll.approve");
-  const isolved = official && view && can(ctx, reportView("payroll_isolved")) ? `/admin/reports/payroll/isolved?preset=pp:${view.start}_${view.end}` : null;
+  const isolved = kind === "pay_period" && view && can(ctx, reportView("payroll_isolved")) ? `/admin/reports/payroll/isolved?preset=pp:${view.start}_${view.end}` : null;
   const reportLink = view && can(ctx, reportView("payroll_report")) ? `/admin/reports/payroll/report?${payrollRangeQuery(r)}` : null;
 
   return (
@@ -135,7 +135,11 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
         subtitle={
           <>
             <span data-testid="payroll-range">{r.heading}</span>
-            {official && view ? ` · ${periodNumbers(view.blocks)} · bi-weekly, Sunday to Saturday` : " · review only"}
+            {kind === "pay_period" && view
+              ? ` · ${periodNumbers(view.blocks)} · bi-weekly, Sunday to Saturday`
+              : kind === "weeks" && view
+                ? ` · whole workweeks, not a pay period · check ${formatDate(view.blocks[0]?.period.checkDate ?? view.end, "EEE MMM d")}`
+                : " · review only"}
           </>
         }
         actions={
@@ -147,11 +151,23 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
               status={status}
               blocked={approvalBlocked(full)}
               approveBlocked={selfPrepared ? SELF_APPROVAL : null}
+              shops={full.scopeShopIds}
             />
           ) : undefined
         }
       />
-      <ReportFilters base="/admin/payroll/report" preset={r.range.preset} from={r.range.from} to={r.range.to} scope={r.locations} location={ctx.shops.length > 1 ? locationProps(ctx, r.locations) : null} payPeriods={r.payPeriods} views={false} />
+      <ReportFilters
+        base="/admin/payroll/report"
+        preset={r.range.preset}
+        from={r.range.from}
+        to={r.range.to}
+        scope={r.locations}
+        location={ctx.shops.length > 1 ? locationProps(ctx, r.locations) : null}
+        payPeriods={r.payPeriods}
+        presets={r.presets}
+        standard={false}
+        views={false}
+      />
       <RangeNotices r={r} />
       <div className="no-print mb-4 flex flex-wrap justify-end gap-3">
         {reportLink && (
@@ -170,7 +186,7 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
       ) : (
         <Report
           view={view}
-          canRun={canRun && official}
+          canRun={canRun && kind === "pay_period"}
           canFiles={(canRun || can(ctx, "payroll.export")) && official}
           approval={approval}
           status={status}
@@ -569,7 +585,7 @@ function ShopBlockCard({
             {b.payGroupCode ? ` (iSolved ${b.payGroupCode})` : " (no iSolved code yet)"}
             {b.employer ? ` · ${b.employer.legalName}${b.employer.isolvedCompanyCode ? ` (iSolved ${b.employer.isolvedCompanyCode})` : ""}` : ""}
             {b.workState ? ` · ${b.workState}` : ""}
-            {view.review ? " · review of these dates, not a pay period" : ` · period ${String(b.period.number).padStart(2, "0")}, due ${formatDate(b.period.submitBy ?? b.period.checkDate, "EEE MMM d")}, check ${formatDate(b.period.checkDate, "EEE MMM d")}`}</span>
+            {view.review ? " · review of these dates, not a pay period" : view.kind === "weeks" ? ` · whole workweeks (no period number), check ${formatDate(b.period.checkDate, "EEE MMM d")}` : ` · period ${String(b.period.number).padStart(2, "0")}, due ${formatDate(b.period.submitBy ?? b.period.checkDate, "EEE MMM d")}, check ${formatDate(b.period.checkDate, "EEE MMM d")}`}</span>
           </>
         }
         subtitle={
@@ -587,7 +603,7 @@ function ShopBlockCard({
           view.review ? (
             <span className="text-xs text-zinc-500">No iSolved file: not an official pay period.</span>
           ) : downloadable ? (
-            <a className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700" href={`/admin/payroll/download?group=${b.payGroupId}&start=${view.start}&end=${view.end}`}>
+            <a className="rounded-lg bg-brand-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-brand-700" href={`/admin/payroll/download?${runFileQuery(view, b.payGroupId)}`}>
               Download iSolved file
             </a>
           ) : (
@@ -623,6 +639,11 @@ function ShopBlockCard({
                     {colsFor(b).map((c) => (
                       <td key={c.key} className={cx("px-2 py-1.5 text-right tabular-nums", c.extra && "bg-sky-50/40", l.overridden.includes(c.key as never) && "bg-amber-50")}>
                         {c.fmt(l, tickets)}
+                        {c.key === "otHours" && view.review?.otEstimates[`${l.staffId}|${b.shopId}`] ? (
+                          <span className="ml-1 text-amber-700" title={`${hrs(view.review.otEstimates[`${l.staffId}|${b.shopId}`])} of it is in workweeks only partly in these dates: an estimate`} data-testid="ot-estimate">
+                            est.
+                          </span>
+                        ) : null}
                       </td>
                     ))}
                   </tr>
@@ -716,10 +737,19 @@ function ShopBlockCard({
                           {view.weeks[l.staffId].flatMap((w) => [
                             ...w.slices.map((x, i) => (
                               <tr key={`${w.weekStart}-${i}`} className={cx(!x.inThisRun && "text-zinc-400")}>
-                                <td className="py-0.5">{i === 0 ? formatDate(w.weekStart, "MMM d") : ""}</td>
+                                <td className="py-0.5">
+                                  {i === 0 ? formatDate(w.weekStart, "MMM d") : ""}
+                                  {i === 0 && w.partial && (
+                                    <span title="Only partly in these dates: the OT on their days is an estimate" data-testid="partial-week">
+                                      <Badge tone="amber" className="ml-1">
+                                        partial
+                                      </Badge>
+                                    </span>
+                                  )}
+                                </td>
                                 <td className="py-0.5">
                                   {x.shop}
-                                  {view.review ? !x.inThisRun && " (outside these dates)" : x.periodStart !== view.start && ` (period from ${formatDate(x.periodStart, "MMM d")})`}
+                                  {view.kind !== "pay_period" ? !x.inThisRun && " (outside these dates)" : x.periodStart !== view.start && ` (period from ${formatDate(x.periodStart, "MMM d")})`}
                                   {x.locked && " · locked"}
                                 </td>
                                 <td className="py-0.5 text-right tabular-nums">{hrs(x.basis)}</td>

@@ -3,11 +3,11 @@ import { isValidLocalDate } from "@/lib/time";
 import { audit } from "@/server/audit";
 import { can, routeStaff } from "@/server/auth/staff";
 import { locationBlocks, locationsCsv, locationsFileName, locationsWorkbook } from "@/server/payroll/locations";
-import { buildPayroll } from "@/server/payroll/run";
+import { payrollRunView } from "@/server/payroll/run";
 
 const PERIOD = /^(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})$/;
 
-/** The Payroll Report for a pay period, as the workbook's Locations tab (.xlsx) or CSV. Every download is audited. */
+/** The Payroll Report for a pay period, or whole workweeks for the shops given (`shop`, repeated), as the workbook's Locations tab (.xlsx) or CSV. Every download is audited. */
 export async function GET(req: Request) {
   const ctx = await routeStaff(null);
   if (ctx instanceof Response) return ctx;
@@ -18,10 +18,10 @@ export async function GET(req: Request) {
   const format = url.searchParams.get("format") === "csv" ? "csv" : "xlsx";
   if (!m || !isValidLocalDate(m[1]) || !isValidLocalDate(m[2]) || m[1] > m[2]) return new Response("Bad request", { status: 400 });
   const [, start, end] = m;
-  const view = await buildPayroll(start, end, { clockChecks: false });
-  const shop = url.searchParams.get("shop");
-  const allowed = (view?.blocks ?? []).map((b) => b.shopId).filter((id) => ctx.shopIds.includes(id) && (!shop || id === shop));
-  if (!view || !allowed.length) return new Response("None of your shops has a pay period with those dates.", { status: 404 });
+  const shops = url.searchParams.getAll("shop").filter((id) => /^[0-9a-f-]{36}$/i.test(id));
+  const view = await payrollRunView(start, end, shops.length ? shops : null, { clockChecks: false });
+  const allowed = (view?.blocks ?? []).map((b) => b.shopId).filter((id) => ctx.shopIds.includes(id) && (!shops.length || shops.includes(id)));
+  if (!view || !allowed.length) return new Response("None of your shops has a pay period, or whole workweeks, with those dates.", { status: 404 });
   const blocks = locationBlocks(view, allowed);
   const fileName = locationsFileName(start, end, format);
   const body = format === "csv" ? Buffer.from(locationsCsv(blocks), "utf8") : await locationsWorkbook(view, blocks);

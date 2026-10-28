@@ -9,7 +9,7 @@ import { NO_VALUE, locationBlocks, locationsRow, locationsTotals, titleFill, typ
 import { approvalBlocked, approvalOf, approvalStatus, payrollTrail, periodKey, preparersOf, SELF_APPROVAL, type ApprovalStatus, type BlockView } from "@/server/payroll/run";
 import { reportContext } from "@/server/report-access";
 import { ApprovalControls } from "../../../payroll/report/approval";
-import { type PayrollRangeParams, payrollRange, payrollRangeQuery } from "../../../payroll/report/range";
+import { type PayrollRangeParams, payrollRange, payrollRangeQuery, runFileQuery } from "../../../payroll/report/range";
 import { RangeNotices } from "../../../payroll/report/range-notices";
 import { ReportFilters, locationProps } from "../../filters";
 import { ApprovalNotice, PayrollTrailCard } from "../../../payroll/report/flow";
@@ -65,7 +65,11 @@ export default async function Page({ searchParams }: { searchParams: Promise<Pay
   const drill = can(ctx, "payroll.run") || can(ctx, "payroll.approve");
   const filesReady = status === "approved" || status === "locked";
   const one = blocks.length === 1 && r.locations.selection.shopIds.length === 1 ? blocks[0].shopId : null;
-  const q = (extra: Record<string, string>) => new URLSearchParams({ ...(view ? { period: periodKey(view.start, view.end) } : {}), ...(one ? { shop: one } : {}), ...extra }).toString();
+  const q = (extra: Record<string, string>) => {
+    const out = new URLSearchParams({ ...(view ? { period: periodKey(view.start, view.end) } : {}), ...extra });
+    for (const id of full?.scopeShopIds ?? (one ? [one] : [])) out.append("shop", id);
+    return out.toString();
+  };
   const drillQuery = payrollRangeQuery(r);
   const names = new Map(view ? view.blocks.flatMap((b) => b.lines.map((l) => [l.staffId, l.name] as const)) : []);
   const label = view ? `${formatDate(view.start, "MMM d")} – ${formatDate(view.end, "MMM d, yyyy")}` : "";
@@ -82,11 +86,30 @@ export default async function Page({ searchParams }: { searchParams: Promise<Pay
         }
         actions={
           full && canApprove && rates ? (
-            <ApprovalControls start={full.start} end={full.end} label={`${label} for ${full.blocks.length} shop${full.blocks.length === 1 ? "" : "s"}`} status={status} blocked={approvalBlocked(full)} approveBlocked={selfPrepared ? SELF_APPROVAL : null} />
+            <ApprovalControls
+              start={full.start}
+              end={full.end}
+              label={`${label} for ${full.blocks.length} shop${full.blocks.length === 1 ? "" : "s"}`}
+              status={status}
+              blocked={approvalBlocked(full)}
+              approveBlocked={selfPrepared ? SELF_APPROVAL : null}
+              shops={full.scopeShopIds}
+            />
           ) : undefined
         }
       />
-      <ReportFilters base={HREF} preset={r.range.preset} from={r.range.from} to={r.range.to} scope={r.locations} location={ctx.shops.length > 1 ? locationProps(ctx, r.locations) : null} payPeriods={r.payPeriods} views={false} />
+      <ReportFilters
+        base={HREF}
+        preset={r.range.preset}
+        from={r.range.from}
+        to={r.range.to}
+        scope={r.locations}
+        location={ctx.shops.length > 1 ? locationProps(ctx, r.locations) : null}
+        payPeriods={r.payPeriods}
+        presets={r.presets}
+        standard={false}
+        views={false}
+      />
       <RangeNotices r={r} />
 
       {!view || !blocks.length ? (
@@ -135,14 +158,14 @@ export default async function Page({ searchParams }: { searchParams: Promise<Pay
                         <a
                           key={b.shopId}
                           className="rounded-lg px-3 py-1.5 font-medium ring-1 ring-zinc-300 hover:bg-zinc-50"
-                          href={`/admin/payroll/download?group=${b.payGroupId}&start=${view.start}&end=${view.end}`}
+                          href={`/admin/payroll/download?${runFileQuery(view, b.payGroupId)}`}
                           data-testid="isolved-shop-file"
                         >
                           {b.shop}
                           {b.payGroupCode && <span className="ml-1 font-normal text-zinc-500">({b.payGroupCode})</span>}
                         </a>
                       ))}
-                      {can(ctx, reportExport("payroll_isolved")) && can(ctx, "payroll.export") && (
+                      {r.kind === "pay_period" && can(ctx, reportExport("payroll_isolved")) && can(ctx, "payroll.export") && (
                         <a className="rounded-lg px-3 py-1.5 font-medium ring-1 ring-zinc-300 hover:bg-zinc-50" href={`/admin/reports/payroll/isolved/file?start=${view.start}&end=${view.end}`}>
                           All shops (one workbook)
                         </a>
@@ -155,7 +178,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Pay
             </Card>
           ) : (
             <p className="text-sm text-zinc-500" data-testid="no-downloads">
-              No downloads for a review: the Payroll Report file and the iSolved files are for a full pay period.
+              No downloads for a review: the Payroll Report file and the iSolved files are for a pay period, or whole Sunday–Saturday workweeks.
             </p>
           )}
 
@@ -213,7 +236,7 @@ function dueLine(blocks: readonly BlockView[]) {
   const by = new Map<string, string[]>();
   for (const b of blocks) {
     const p = b.period;
-    const k = `Period ${String(p.number).padStart(2, "0")} · due in iSolved ${formatDate(p.submitBy ?? p.checkDate, "EEE MMM d")} · check ${formatDate(p.checkDate, "EEE MMM d")}`;
+    const k = `${p.number ? `Period ${String(p.number).padStart(2, "0")}` : "Whole workweeks (no period number)"} · due in iSolved ${formatDate(p.submitBy ?? p.checkDate, "EEE MMM d")} · check ${formatDate(p.checkDate, "EEE MMM d")}`;
     by.set(k, [...(by.get(k) ?? []), b.payGroupCode ? `${b.shop} (${b.payGroupCode})` : b.shop]);
   }
   const parts = [...by.entries()];

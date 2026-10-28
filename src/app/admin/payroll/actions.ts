@@ -48,6 +48,14 @@ const fail = (msg: string | null) => {
   if (msg) throw new AppError("bad_request", msg);
 };
 
+/** The shops a run of whole workweeks covers (null: a pay period, every shop on it). Each one has to be the actor's. */
+function runShops(ctx: { shopIds: string[] }, shops: readonly string[] | null | undefined): string[] | null {
+  if (!shops?.length) return null;
+  const ids = z.array(z.string().uuid()).max(200).parse(shops);
+  if (ids.some((id) => !ctx.shopIds.includes(id))) throw new AppError("forbidden", "You don't have access to every shop picked.");
+  return ids;
+}
+
 const refusal = (r: { error: string; mismatches?: Mismatch[] }) => {
   const m = r.mismatches ?? [];
   return new AppError(
@@ -61,20 +69,20 @@ const refusal = (r: { error: string; mismatches?: Mismatch[] }) => {
   );
 };
 
-export async function approveAndLockAction(start: string, end: string) {
+export async function approveAndLockAction(start: string, end: string, shops: string[] | null = null) {
   return safe(async () => {
     const ctx = await authorize("payroll.approve");
-    const r = await approveAndLock(date.parse(start), date.parse(end), ctx.actor);
+    const r = await approveAndLock(date.parse(start), date.parse(end), ctx.actor, runShops(ctx, shops));
     if ("error" in r) throw refusal(r);
     refresh();
     return r.locked;
   });
 }
 
-export async function approvePayrollAction(start: string, end: string, note: string) {
+export async function approvePayrollAction(start: string, end: string, note: string, shops: string[] | null = null) {
   return safe(async () => {
     const ctx = await authorize("payroll.approve");
-    const r = await approvePayroll(date.parse(start), date.parse(end), ctx.actor, z.string().max(300).parse(note));
+    const r = await approvePayroll(date.parse(start), date.parse(end), ctx.actor, z.string().max(300).parse(note), runShops(ctx, shops));
     if ("error" in r) throw refusal(r);
     refresh();
     return r.approvalId;
@@ -94,19 +102,19 @@ export async function approveFinalPayAction(input: { staffId: string; lastDay: s
   });
 }
 
-export async function revokeApprovalAction(start: string, end: string, reason: string) {
+export async function revokeApprovalAction(start: string, end: string, reason: string, shops: string[] | null = null) {
   return safe(async () => {
     const ctx = await authorize("payroll.approve");
-    fail(await revokeApproval(date.parse(start), date.parse(end), z.string().max(300).parse(reason), ctx.actor));
+    fail(await revokeApproval(date.parse(start), date.parse(end), z.string().max(300).parse(reason), ctx.actor, runShops(ctx, shops)));
     refresh();
     return null;
   });
 }
 
-export async function lockPayrollAction(start: string, end: string) {
+export async function lockPayrollAction(start: string, end: string, shops: string[] | null = null) {
   return safe(async () => {
     const ctx = await authorize("payroll.approve");
-    const r = await lockPayroll(date.parse(start), date.parse(end), ctx.actor);
+    const r = await lockPayroll(date.parse(start), date.parse(end), ctx.actor, runShops(ctx, shops));
     if ("error" in r) throw refusal(r);
     refresh();
     return r.locked;
@@ -256,6 +264,7 @@ export async function saveProfileAction(input: {
   servicePct: number;
   productPct: number;
   trainingRate: number | null;
+  ratesFrom?: string | null;
 }) {
   return safe(async () => {
     const ctx = await authorize("payroll.run");
@@ -273,10 +282,11 @@ export async function saveProfileAction(input: {
         servicePct: z.number(),
         productPct: z.number(),
         trainingRate: z.number().nullable(),
+        ratesFrom: date.nullable().optional(),
       })
       .parse(input);
     fail(await saveProfile(v.staffId, { employeeNumber: v.employeeNumber, keyIsText: v.keyIsText, isolvedName: v.isolvedName, exportPosition: v.exportPosition, tippedOccupationCode: v.tippedOccupationCode, zeroHourlyPay: v.zeroHourlyPay }, ctx.actor));
-    fail(await saveRate(v.staffId, v.shopId, { hourlyRate: v.hourlyRate, servicePct: v.servicePct, productPct: v.productPct, trainingRate: v.trainingRate }, ctx.actor));
+    fail(await saveRate(v.staffId, v.shopId, { hourlyRate: v.hourlyRate, servicePct: v.servicePct, productPct: v.productPct, trainingRate: v.trainingRate, effectiveFrom: v.ratesFrom ?? null }, ctx.actor));
     refresh();
     return null;
   });
