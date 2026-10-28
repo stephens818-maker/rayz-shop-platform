@@ -113,17 +113,35 @@ describe("the consent record (C20)", () => {
     expect((await events(c.id)).filter((e) => e.channel === "sms_marketing").map((e) => e.action)).toEqual(["granted", "revoked"]);
   });
 
-  it("booking on the website records the appointment-text yes as web; staff edits are recorded as staff", async () => {
+  it("booking on the website records the appointment-text yes as web, with its time and exact wording; staff edits are recorded as staff", async () => {
     const p = phone();
     const shop = (await m.db.db.query.shops.findFirst({ where: eq(m.schema.shops.slug, "coralville") }))!;
+    const before = Date.now();
     const c = await m.db.db.transaction((tx) =>
       m.customers.findOrCreateCustomer({ firstName: "Elle", lastName: "Gray", phone: p, smsOptIn: true }, shop.id, tx, { consent: { source: "web", ip: "203.0.113.9" } }),
     );
-    expect((await events(c.id)).map((e) => [e.channel, e.action, e.source, e.ip, e.textVersion])).toEqual([
-      ["sms_transactional", "granted", "web", "203.0.113.9", texts.CONSENT_TEXTS.sms_transactional.version],
+    const [grant] = await events(c.id);
+    expect((await events(c.id)).map((e) => [e.channel, e.action, e.source, e.ip, e.textVersion, e.phone])).toEqual([
+      ["sms_transactional", "granted", "web", "203.0.113.9", texts.CONSENT_TEXTS.sms_transactional.version, p],
     ]);
+    const { SMS_CONSENT_TEXT } = await import("@/domain/booking-consent");
+    expect(grant.consentText).toBe(SMS_CONSENT_TEXT);
+    expect(grant.createdAt.getTime()).toBeGreaterThanOrEqual(before - 5_000);
+    expect(grant.createdAt.getTime()).toBeLessThanOrEqual(Date.now() + 5_000);
     await m.db.db.transaction((tx) => m.customers.findOrCreateCustomer({ firstName: "Elle", lastName: "Gray", phone: p, smsOptIn: false }, shop.id, tx));
-    expect((await events(c.id)).at(-1)).toMatchObject({ channel: "sms_transactional", action: "revoked", source: "pos", textVersion: "staff-edit" });
+    expect((await events(c.id)).at(-1)).toMatchObject({ channel: "sms_transactional", action: "revoked", source: "pos", textVersion: "staff-edit", consentText: null });
+  });
+
+  it("the web booking form's untouched text box records no yes and leaves texts off (TCPA express consent)", async () => {
+    const { consentFields, initialBookingForm } = await import("@/domain/booking-consent");
+    const form = { ...initialBookingForm(), firstName: "Iris", lastName: "Moss", phone: phone() };
+    expect(form.smsOptIn).toBe(false);
+    const shop = (await m.db.db.query.shops.findFirst({ where: eq(m.schema.shops.slug, "coralville") }))!;
+    const c = await m.db.db.transaction((tx) =>
+      m.customers.findOrCreateCustomer({ firstName: form.firstName, lastName: form.lastName, phone: form.phone, ...consentFields(form) }, shop.id, tx, { consent: { source: "web" } }),
+    );
+    expect(await row(c.id)).toMatchObject({ smsOptIn: false, emailOptIn: false });
+    expect(await events(c.id)).toEqual([]);
   });
 
   it("keeps the record: rows can't be edited or deleted", async () => {
@@ -177,7 +195,7 @@ describe("STOP, START and HELP (C20)", () => {
     expect((await events(b.id)).map((e) => [e.channel, e.action])).toEqual([["sms_marketing", "revoked"]]);
     await line.handleInboundSms({ from: p, to, body: "START" });
     expect((await row(a.id))?.smsOptIn).toBe(true);
-    expect((await events(b.id)).at(-1)).toMatchObject({ channel: "sms_marketing", action: "granted", textVersion: "START" });
+    expect((await events(b.id)).at(-1)).toMatchObject({ channel: "sms_marketing", action: "granted", textVersion: "START", consentText: null });
 
     const p2 = phone();
     const c = await m.customers.findOrCreateCustomer({ firstName: "Lu", lastName: "Moss", phone: p2, smsOptIn: true }, null);

@@ -34,18 +34,23 @@ type Who = { id: string; phone: string | null; email: string | null };
 export async function recordConsent(tx: DBorTx, who: Who, changes: readonly { channel: ConsentChannel; granted: boolean; textVersion?: string }[], ctx: ConsentContext) {
   if (!changes.length) return;
   await tx.insert(consentEvents).values(
-    changes.map((c) => ({
-      customerId: who.id,
-      phone: c.channel.startsWith("sms") ? who.phone : null,
-      email: c.channel.startsWith("email") ? who.email : null,
-      channel: c.channel,
-      action: c.granted ? ("granted" as const) : ("revoked" as const),
-      textVersion: c.textVersion ?? ctx.textVersion ?? CONSENT_TEXTS[c.channel].version,
-      source: ctx.source,
-      appVersion: ctx.appVersion ?? null,
-      ip: ctx.ip ?? null,
-      staffId: ctx.staffId ?? null,
-    })),
+    changes.map((c) => {
+      const textVersion = c.textVersion ?? ctx.textVersion ?? CONSENT_TEXTS[c.channel].version;
+      const current = CONSENT_TEXTS[c.channel];
+      return {
+        customerId: who.id,
+        phone: c.channel.startsWith("sms") ? who.phone : null,
+        email: c.channel.startsWith("email") ? who.email : null,
+        channel: c.channel,
+        action: c.granted ? ("granted" as const) : ("revoked" as const),
+        textVersion,
+        consentText: c.granted && textVersion === current.version ? current.text : null,
+        source: ctx.source,
+        appVersion: ctx.appVersion ?? null,
+        ip: ctx.ip ?? null,
+        staffId: ctx.staffId ?? null,
+      };
+    }),
   );
 }
 

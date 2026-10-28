@@ -1630,6 +1630,8 @@ export const consentEvents = pgTable(
     action: text("action").$type<"granted" | "revoked">().notNull(),
     /** CONSENT_TEXTS[channel].version for a grant; STOP, START, an import's or a staff edit's own marker otherwise. */
     textVersion: text("text_version").notNull(),
+    /** The exact wording the client agreed to, for a grant on the current text; null for a revoke, a marker (STOP, START, import, staff edit) and rows from before core_0151. */
+    consentText: text("consent_text"),
     source: text("source").$type<ConsentSource>().notNull(),
     appVersion: text("app_version"),
     ip: text("ip"),

@@ -423,6 +423,10 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
     - After the deploy, no refund sends `reverse_transfer`. A refund of an old destination charge reverses its shop transfer like any other, and disputes on old charges are handled too. Before turning on `MONEY_MOVEMENT_LIVE`, check one refund of an old card payment in the sandbox: the refund, then one transfer reversal for the refunded amount.
     - The tip reconciliation CSV gains the column "Card tips transferred to Stripe at the sale" and a list of tip transfers. The payroll detail CSV's "Card tips paid via Stripe" now counts them. The iSolved file is unchanged.
     - The next free migration is `core_0151`.
+62. TCPA express consent wording on the record (claude bot, Oct 28; migration `core_0151_consent_wording`). It's additive, and nobody's access changes.
+    - The migration adds `consent_events.consent_text`. From the deploy on, each yes on the current wording (the web booking form's text box, the app's consent screen) keeps the exact text the client agreed to, beside its version, source, IP and time. Earlier rows keep their version, which names the wording in `src/domain/consent-texts.ts`.
+    - The web booking form's text box starts unchecked (since `94d32e4`), and booking never depends on it.
+    - The next free migration is `core_0152`.
 
 ## Launch day: every surface at once, at the pilot shop
 

@@ -1058,6 +1058,13 @@
       "when": 1796642700000,
       "tag": "core_0150_shop_transfer_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 151,
+      "version": "7",
+      "when": 1796642760000,
+      "tag": "core_0151_consent_wording",
+      "breakpoints": true
     }
   ]
 }
