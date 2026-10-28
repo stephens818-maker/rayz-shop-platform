@@ -1138,6 +1138,16 @@ The plan's P0 cases must all pass in the sandbox before the pilot. Status by cas
 - [ ] **Ask Charles:** tips owed through payroll now sit in `E_Cash Tips Recd_Dollars`, a memo earning iSolved doesn't pay in the check. They're flagged, and approve-and-lock still marks them paid. Pay that fallback in cash at the desk, or allow one paid earning code?
 - [ ] **Ask Charles:** the export's 2-decimal rounding (Q4) is still off by default; the plan's PY-RD-01 assumes it's on.
 
+## 53. My Earnings on the staff app (Charles, Oct 28)
+
+- [x] Tips per ticket and per day, card and cash on tickets against cash declared, a split ticket's share (`/me/earnings/tips`).
+- [x] Pay-period totals that match their Payroll Report line and their row in the iSolved file to the cent (`reconciliation` on `/me/earnings`).
+- [x] Each card tip's Stripe transfer status and the payout that takes it to their bank (`/me/earnings/transfers`).
+- [x] Hours, commission and the greater-of per period (`pay` on `/me/earnings`).
+- [x] Their own only, on the server: no staff id taken, extra parameters refused, no shop login. Negative tests: `tests/db/my-earnings.test.ts`.
+- [ ] The My Earnings screen in the staff app (the Rayz App builder; request in NOTES-SYNC).
+- [ ] **Ask Charles:** should Barber and Apprentice have **See their own pay** (`compensation.own`) by default? Without it, `pay` is null.
+
 ## Deferred by decision
 
 - I10 is decided: separate charges and transfers (section 5), with tips to barbers' recipient accounts on (`FEATURE_TIP_TO_BARBER`, the CPA approved it on 2026-10-28), turned off per shop with the brand setting `tip_to_barber` (section 50). Live tip transfers also need `MONEY_MOVEMENT_LIVE`.
