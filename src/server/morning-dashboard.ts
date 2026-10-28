@@ -805,12 +805,13 @@ const figuresOf = (xs: readonly PphRow[]): PphFigures => ({
   centi: xs.reduce((a, r) => a + r.centi, 0),
   service: xs.reduce((a, r) => a + r.serviceCents, 0),
   product: xs.reduce((a, r) => a + r.productCents, 0),
+  clients: xs.reduce((a, r) => a + r.clients, 0),
 });
 
 /**
- * Production per hour (src/domain/pph.ts) on the day and week to date, as the PPH report works it
- * out: per location, against the whole brand, and per barber. Without "every barber's numbers" at a
- * shop, it's their own numbers, as in the report.
+ * Productivity Per Hour (src/domain/pph.ts) and clients per hour on the day and week to date, as the
+ * PPH report works them out: per location, against the whole brand, and per barber. Without "every
+ * barber's numbers" at a shop, it's their own numbers, as in the report.
  */
 async function pphBlock(c: Ctx): Promise<PphBlock | null> {
   const shops = c.allowed(reportView("pph"));
@@ -835,6 +836,7 @@ async function pphBlock(c: Ctx): Promise<PphBlock | null> {
     centi: cmpOf((p) => f(p).centi),
     service: cmpOf((p) => f(p).service),
     product: cmpOf((p) => f(p).product),
+    clients: cmpOf((p) => f(p).clients),
     byShop: shops.length > 1 ? shops.map((s) => ({ shop: s, day: figuresOf(t.day.filter((x) => x.shopId === s.id)), wtd: figuresOf(t.wtd.filter((x) => x.shopId === s.id)) })) : [],
     brand: brandDay && brandWtd ? { day: figuresOf(brandDay), wtd: figuresOf(brandWtd) } : null,
     byBarber: ranked,

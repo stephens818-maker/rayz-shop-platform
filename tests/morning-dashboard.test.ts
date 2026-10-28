@@ -339,22 +339,23 @@ describe("Morning Dashboard renderers", () => {
     expect(none.sections.find((s) => s.key === "rebook")!.blocks).toContainEqual({ kind: "note", text: "140 appointments on the books." });
   });
 
-  it("shows PPH after utilization: N/A without hours, locations, the brand, and barbers highest first", () => {
-    const f = (centi: number, service: number, product: number) => ({ centi, service, product });
+  it("shows PPH and clients per hour after utilization: N/A without hours, locations, the brand, and barbers highest first", () => {
+    const f = (centi: number, service: number, product: number, clients = 0) => ({ centi, service, product, clients });
     const d = dash({
       pph: {
         shops: [CORAL, ROCK],
         centi: cmp(1_600, 800, 4_000, 0),
         service: cmp(160_000, 64_000, 360_000, 0),
         product: cmp(16_000, 8_000, 40_000, 0),
+        clients: cmp(40, 16, 100, 0),
         byShop: [
-          { shop: CORAL, day: f(1_000, 100_000, 10_000), wtd: f(2_500, 225_000, 25_000) },
-          { shop: ROCK, day: f(0, 0, 0), wtd: f(1_500, 135_000, 15_000) },
+          { shop: CORAL, day: f(1_000, 100_000, 10_000, 25), wtd: f(2_500, 225_000, 25_000, 60) },
+          { shop: ROCK, day: f(0, 0, 0), wtd: f(1_500, 135_000, 15_000, 40) },
         ],
-        brand: { day: f(2_000, 180_000, 20_000), wtd: f(0, 5_000, 0) },
+        brand: { day: f(2_000, 180_000, 20_000, 50), wtd: f(0, 5_000, 0, 3) },
         byBarber: [
-          { staffId: "b0", label: "Makenna", day: f(800, 80_000, 8_000), wtd: f(2_000, 200_000, 20_000) },
-          { staffId: "b1", label: "Jamie", day: f(0, 0, 0), wtd: f(0, 4_000, 0) },
+          { staffId: "b0", label: "Makenna", day: f(800, 80_000, 8_000, 20), wtd: f(2_000, 200_000, 20_000, 50) },
+          { staffId: "b1", label: "Jamie", day: f(0, 0, 0), wtd: f(0, 4_000, 0, 1) },
         ],
         ownOnly: false,
       },
@@ -368,23 +369,36 @@ describe("Morning Dashboard renderers", () => {
       kind: "metrics",
       rows: [
         { label: "Service PPH", day: "$100.00", dayChange: "▲ 25%", dayTone: "good", wtd: "$90.00", wtdChange: "—", wtdTone: "neutral" },
+        { label: "Clients per hour", day: "2.50", dayChange: "▲ 25%", dayTone: "good", wtd: "2.50", wtdChange: "—" },
         { label: "Product PPH", day: "$10.00", wtd: "$10.00" },
         { label: "Total PPH", day: "$110.00", wtd: "$100.00" },
         { label: "Worked hours", day: "16h", wtd: "40h" },
       ],
     });
-    expect(s.blocks).toContainEqual({ kind: "note", text: "Brand service PPH: $90.00 on the day, N/A week to date." });
-    expect(s.blocks).toContainEqual(expect.objectContaining({ kind: "table", title: "By location", rows: [["Coralville", "$100.00", "$90.00", "$100.00"], [ROCK.name, "N/A", "$90.00", "$100.00"]] }));
+    expect(s.blocks).toContainEqual({ kind: "note", text: "Brand service PPH: $90.00 on the day, N/A week to date. Brand clients per hour: 2.50 on the day, N/A week to date." });
+    expect(s.blocks).toContainEqual(
+      expect.objectContaining({
+        kind: "table",
+        title: "By location",
+        columns: ["Location", "Service PPH Sat", "WTD service PPH", "WTD clients/hr", "WTD total PPH"],
+        rows: [
+          ["Coralville", "$100.00", "$90.00", "2.40", "$100.00"],
+          [ROCK.name, "N/A", "$90.00", "2.67", "$100.00"],
+        ],
+      }),
+    );
     expect(s.blocks).toContainEqual(
       expect.objectContaining({
         title: "By barber, highest week-to-date service PPH first",
         rows: [
-          ["Makenna", "$100.00", "$100.00", "$10.00", "$110.00", "20h"],
-          ["Jamie", "N/A", "N/A", "N/A", "N/A", "0h"],
+          ["Makenna", "$100.00", "$100.00", "2.50", "$10.00", "$110.00", "20h"],
+          ["Jamie", "N/A", "N/A", "N/A", "N/A", "N/A", "0h"],
         ],
       }),
     );
     expect(renderMorningText(d).body).toContain("Service PPH: $100.00 (+ 25%) · WTD $90.00 (—)");
+    expect(renderMorningText(d).body).toContain("Clients per hour: 2.50 (+ 25%) · WTD 2.50 (—)");
+    expect(s.title).toBe("Productivity Per Hour (PPH)");
     const own = morningDoc(dash({ pph: { ...d.pph!, brand: null, byShop: [], byBarber: d.pph!.byBarber.slice(0, 1), ownOnly: true } })).sections.find((x) => x.key === "pph")!;
     expect(own.blocks.some((b) => b.kind === "note" && b.text.startsWith("Brand"))).toBe(false);
     expect(own.blocks).toContainEqual(expect.objectContaining({ title: "Your PPH" }));
