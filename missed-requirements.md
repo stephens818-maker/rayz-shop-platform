@@ -1255,6 +1255,19 @@ Tests: `tests/isolved-pay-calendar.test.ts` (the file's validation) and `tests/d
 - [x] Periods past the end of the file: flagged on the Payroll Report, and extended by an admin on Payroll setup (at most 27 at a time, audited).
 - [ ] **Ask Charles:** LeClaire's and Dubuque's iSolved pay group codes (the file shows none).
 
+## 61. The tip is paid once (I10, from the review of mobile PR #6)
+
+Tests: `tests/db/tip-transfers.test.ts` (sandbox) and `tests/charge-path-guard.test.ts`.
+
+- [x] 1. `chargeCard` is a separate charge on the platform, with `transfer_group` = `sale_<saleId>`. Two transfers follow, each with `source_transaction` = the charge: the sale's portion to the shop (`{saleId}:shop`), and the tip to the barber's recipient account (`{saleId}:tip`), only where the shop's `tip_to_barber` is on. Off, the tip goes to the shop with the sale. The tip is transferred once.
+- [x] 2. `payment_transfers` (payment, kind shop or tip, Stripe transfer id, destination, amount, status, reversals in `payment_transfer_reversals`) replaces `payments.stripe_transfer_id`. `core_0150` backfills destination charges from before I10.
+- [x] 3. Refunds: a plain refund, then only the shop's transfer is reversed, for the refunded amount. No `reverse_transfer` on any charge, and a tip is never clawed back. Past the sale's portion, the platform absorbs the tip (the brand-setting default), booked as a platform loss.
+- [x] 4. Disputes, created and closed: the shop's portion is reversed, the platform absorbs the tip as a ledger entry, and the audit row is kept. A won dispute restores it. Destination charges too.
+- [x] 5. `shops.tip_to_barber` (default on) is core's, set by the brand-level tip payout switch (shops picked, admin-only permission, audited). Mobile PR #6's own migration for it is to be dropped (NOTES-SYNC).
+- [x] 6. Barbers get recipient Connect accounts (`stripe_dashboard: none`, embedded onboarding, hosted as the fallback), not Express.
+- [x] Tests: no double-paid tip; switch on and off; full, partial and over-sale refunds; dispute lost and won; idempotent retries; the legacy backfill.
+- [x] The payroll detail CSV, the tip reconciliation CSV, the iSolved file report and the tips-paid report read card tips from the tip transfers.
+
 ## Deferred by decision
 
 - I10 is decided: separate charges and transfers (section 5), with tips to barbers' recipient accounts on (`FEATURE_TIP_TO_BARBER`, the CPA approved it on 2026-10-28), turned off per shop with the brand setting `tip_to_barber` (section 50). Live tip transfers also need `MONEY_MOVEMENT_LIVE`.

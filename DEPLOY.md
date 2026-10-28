@@ -418,6 +418,11 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
     - The first time payroll opens after the deploy, every pay group takes the schedule. Its period dates get iSolved's numbers, run (due) dates and check dates, with the 12/13/2026 holiday shift (due Tue 12/29, check Thu 12/31, still 2026 period 27). Utica, Kimberly, Silvis and Coralville get codes D–G if they have none. Locked periods keep their dates. Check Payroll → Setup → **iSolved pay schedule** and **Pay period dates** against iSolved.
     - A period after a pay group's schedule ends is flagged on the Payroll Report, not blocked. Before Dubuque's period starting 10/3/2027, extend its schedule there (an admin with Run payroll), then move any holiday dates once iSolved posts them.
     - The next free migration is `core_0150`.
+61. The tip is paid once, and `payment_transfers` replaces `payments.stripe_transfer_id` (I10, from the review of mobile PR #6; migration `core_0150_shop_transfer_backfill`). It's additive, and nobody's access changes.
+    - The migration gives each card payment from before I10 (a destination charge) its shop row in `payment_transfers`, with the reversals Stripe already made on its refunds. It also widens one check constraint. Nothing is sent to Stripe.
+    - After the deploy, no refund sends `reverse_transfer`. A refund of an old destination charge reverses its shop transfer like any other, and disputes on old charges are handled too. Before turning on `MONEY_MOVEMENT_LIVE`, check one refund of an old card payment in the sandbox: the refund, then one transfer reversal for the refunded amount.
+    - The tip reconciliation CSV gains the column "Card tips transferred to Stripe at the sale" and a list of tip transfers. The payroll detail CSV's "Card tips paid via Stripe" now counts them. The iSolved file is unchanged.
+    - The next free migration is `core_0151`.
 
 ## Launch day: every surface at once, at the pilot shop
 
