@@ -170,18 +170,42 @@ describe("cross-shop overtime (C4)", () => {
     expect(slices.every((s) => s.ot === 0)).toBe(true);
   });
 
-  it("a workweek that spans two pay periods: OT is on the whole week, shared by each period's hours", () => {
+  describe("a workweek that spans two pay periods (PY-OT-03): OT on the whole Sun–Sat week, in the period that holds the hours past 40", () => {
     // A weekly calendar starting Wednesdays (refused since I2, but the engine still handles one) puts Sun–Tue and Wed–Sat of one workweek in different periods.
     const wed: PayCalendar = { anchorStart: "2026-10-21", anchorNumber: 1, periodDays: 7, checkOffsetDays: 2, submitOffsetDays: 2, numberResetsYearly: false };
-    const e = [...days("A", "2026-10-18", 3, 10), ...days("A", "2026-10-21", 2, 10)];
     const o = opts({ periodOf: (_s, d) => periodOf(wed, d).start });
-    const slices = overtimeSlices(dailyHours(e), o);
-    expect(otBy(slices)).toEqual({ "A@2026-10-14": 600, "A@2026-10-21": 400 });
 
-    // If the first period was locked with no OT before the rest of the week was in, the later period takes all of it.
-    const first = slices.find((s) => s.periodStart === "2026-10-14")!;
-    const locked = new Map([[sliceKey(first), 0]]);
-    expect(otBy(overtimeSlices(dailyHours(e), { ...o, locked }))).toEqual({ "A@2026-10-14": 0, "A@2026-10-21": 1000 });
+    it("24 h before the boundary and 20 h after: 4.00 OT, all in the later period, none per period", () => {
+      const e = [...days("A", "2026-10-18", 3, 8), ...days("A", "2026-10-21", 2, 10)];
+      const slices = overtimeSlices(dailyHours(e), o);
+      expect(otBy(slices)).toEqual({ "A@2026-10-14": 0, "A@2026-10-21": 400 });
+      expect(slices.map((x) => [x.periodStart, x.worked])).toEqual([
+        ["2026-10-14", 2400],
+        ["2026-10-21", 2000],
+      ]);
+    });
+
+    it("past 40 before the boundary: the earlier period gets the OT worked there, the later one the rest", () => {
+      const e = [...days("A", "2026-10-18", 3, 14), ...days("A", "2026-10-21", 2, 10)];
+      expect(otBy(overtimeSlices(dailyHours(e), o))).toEqual({ "A@2026-10-14": 200, "A@2026-10-21": 2000 });
+    });
+
+    it("an earlier period locked with a different OT than it now holds: the open period absorbs the difference, and the week still adds up", () => {
+      const e = [...days("A", "2026-10-18", 3, 14), ...days("A", "2026-10-21", 2, 10)];
+      const first = overtimeSlices(dailyHours(e), o).find((s) => s.periodStart === "2026-10-14")!;
+      const over = overtimeSlices(dailyHours(e), { ...o, locked: new Map([[sliceKey(first), 300]]) });
+      expect(otBy(over)).toEqual({ "A@2026-10-14": 300, "A@2026-10-21": 1900 });
+      // locked with none: the 2.00 h already paid as regular can't become OT in a period that only has 20 h
+      const under = overtimeSlices(dailyHours(e), { ...o, locked: new Map([[sliceKey(first), 0]]) });
+      expect(otBy(under)).toEqual({ "A@2026-10-14": 0, "A@2026-10-21": 2000 });
+    });
+
+    it("within one period, two shops still share its OT by hours (PY-OT-01: 25 h + 20 h is 5.00 OT, 2.78 and 2.22)", () => {
+      const e = [...days("M", "2026-10-18", 2, 12.5), ...days("C", "2026-10-21", 2, 10)];
+      const same = overtimeSlices(dailyHours(e), opts());
+      expect(otBy(same)).toEqual({ "M@2026-10-18": 278, "C@2026-10-18": 222 });
+      expect(same.map((x) => x.worked - x.ot)).toEqual([2222, 1778]);
+    });
   });
 
   it("Dubuque and another shop on different calendars still share one week's OT", () => {

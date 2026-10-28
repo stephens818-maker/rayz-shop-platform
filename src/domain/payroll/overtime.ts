@@ -6,12 +6,14 @@ import { SHOP_TZ } from "@/lib/time";
  * Squire and iSolved use, so every split adds back up exactly.
  *
  * The rule (spec §3.2): for each Sun–Sat workweek in America/Chicago, an employee's hours at every
- * shop of the same legal entity (one FEIN) are added up; everything over 40 is overtime. That OT is
- * shared out to each slice of the week, a slice being one shop and the pay period that shop's
- * calendar puts those days in, in proportion to the slice's share of the week's hours. Shares are
- * rounded to hundredths by largest remainder (ties to the earlier slice), so the slices always add up
- * to the week's OT. A slice in a pay period that's already locked keeps the OT it was locked with;
- * the rest of the week's OT goes to the open slices.
+ * shop of the same legal entity (one FEIN) are added up; everything over 40 is overtime. Hours belong
+ * to the pay period of the day they were worked. A week split across two pay periods still has its OT
+ * worked out on the whole week, and the OT goes to the period that holds the hours past the 40th, in
+ * the order they were worked (by day). Within a period, its OT is shared out to the shops (a slice is
+ * one shop in one period) in proportion to each slice's hours that week. Shares are rounded to
+ * hundredths by largest remainder (ties to the earlier slice), so the slices always add up to the
+ * week's OT. A slice in a pay period that's already locked keeps the OT it was locked with; any
+ * difference lands in the latest open period of the week, as an adjustment.
  */
 
 export type EntryKind = "worked" | "training" | "pto";
@@ -165,9 +167,12 @@ export function largestRemainder(total: number, weights: readonly number[]): num
 /** Every slice of every workweek touched by these days, with its share of that week's OT. */
 export function overtimeSlices(days: readonly DayHours[], o: OtOptions): Slice[] {
   const slices = new Map<string, Slice>();
+  const dated = new Map<string, { date: string; periodStart: string; basis: number }[]>();
   for (const d of days) {
     const weekStart = weekStartOf(d.date);
     const s0 = { staffId: d.staffId, shopId: d.shopId, periodStart: o.periodOf(d.shopId, d.date), weekStart };
+    const wk = `${d.staffId}|${o.entityOf(d.shopId)}|${weekStart}`;
+    dated.set(wk, [...(dated.get(wk) ?? []), { date: d.date, periodStart: s0.periodStart, basis: d.worked + trainingBasis(d, o) }]);
     const k = sliceKey(s0);
     const s = slices.get(k) ?? { ...s0, entity: o.entityOf(d.shopId), basis: 0, worked: 0, training: 0, trainingOverlap: 0, pto: 0, ot: 0, locked: false };
     s.worked += d.worked;
@@ -183,29 +188,51 @@ export function overtimeSlices(days: readonly DayHours[], o: OtOptions): Slice[]
     weeks.set(k, [...(weeks.get(k) ?? []), s]);
   }
   const daily = o.dailyThresholdCenti ? dailyOvertime(days, o, o.dailyThresholdCenti) : null;
-  for (const list of weeks.values()) {
+  for (const [wk, list] of weeks) {
     list.sort((a, b) => a.periodStart.localeCompare(b.periodStart) || a.shopId.localeCompare(b.shopId));
     if (daily) {
       shareWeekWithDaily(list, daily, o);
       continue;
     }
-    const basis = list.reduce((a, s) => a + s.basis, 0);
-    const ot = Math.max(0, basis - o.thresholdCenti);
-    let open = list;
-    let left = ot;
-    if (o.locked) {
-      for (const s of list) {
-        const l = o.locked.get(sliceKey(s));
-        if (l === undefined) continue;
-        s.ot = l;
-        s.locked = true;
-        left -= l;
-      }
-      open = list.filter((s) => !s.locked);
+    const target = otByPeriod(dated.get(wk) ?? [], o.thresholdCenti);
+    const periods = [...new Set(list.map((s) => s.periodStart))];
+    let carry = 0;
+    for (const s of list) {
+      const l = o.locked?.get(sliceKey(s));
+      if (l === undefined) continue;
+      s.ot = l;
+      s.locked = true;
     }
-    largestRemainder(Math.max(0, left), open.map((s) => s.basis)).forEach((x, i) => (open[i].ot = Math.min(x, open[i].basis)));
+    const lastOpen = [...periods].reverse().find((p) => list.some((s) => s.periodStart === p && !s.locked));
+    for (const p of periods) {
+      const inP = list.filter((s) => s.periodStart === p);
+      const open = inP.filter((s) => !s.locked);
+      const need = (target.get(p) ?? 0) - inP.filter((s) => s.locked).reduce((a, s) => a + s.ot, 0);
+      if (!open.length) carry += need;
+      else if (p !== lastOpen) largestRemainder(Math.max(0, need), open.map((s) => s.basis)).forEach((x, i) => (open[i].ot = Math.min(x, open[i].basis)));
+    }
+    if (lastOpen) {
+      const open = list.filter((s) => s.periodStart === lastOpen && !s.locked);
+      const need = (target.get(lastOpen) ?? 0) - list.filter((s) => s.periodStart === lastOpen && s.locked).reduce((a, s) => a + s.ot, 0) + carry;
+      largestRemainder(Math.max(0, need), open.map((s) => s.basis)).forEach((x, i) => (open[i].ot = Math.min(x, open[i].basis)));
+    }
   }
   return [...slices.values()];
+}
+
+/** A week's OT by pay period: the hours past the threshold, day by day in the order worked; a day in two periods (shops on different calendars) shares its part by hours. */
+function otByPeriod(units: readonly { date: string; periodStart: string; basis: number }[], threshold: number): Map<string, number> {
+  const out = new Map<string, number>();
+  const byDate = new Map<string, { periodStart: string; basis: number }[]>();
+  for (const u of [...units].sort((a, b) => a.date.localeCompare(b.date) || a.periodStart.localeCompare(b.periodStart))) byDate.set(u.date, [...(byDate.get(u.date) ?? []), u]);
+  let before = 0;
+  for (const list of byDate.values()) {
+    const day = list.reduce((a, u) => a + u.basis, 0);
+    const ot = Math.min(day, Math.max(0, before + day - threshold));
+    before += day;
+    if (ot) largestRemainder(ot, list.map((u) => u.basis)).forEach((x, i) => out.set(list[i].periodStart, (out.get(list[i].periodStart) ?? 0) + x));
+  }
+  return out;
 }
 
 /** Each slice's daily OT: per person, entity and local day, the hours over the threshold, shared out to that day's shops. */
