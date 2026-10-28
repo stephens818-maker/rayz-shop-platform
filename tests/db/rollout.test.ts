@@ -157,6 +157,17 @@ describe("rollout: per-shop go-live flags", () => {
     expect(a).toMatchObject({ hours: 38, otHours: 2, ptoHours: 8 });
   });
 
+  it("the staff app's earnings say which shops' figures come from Squire data", async () => {
+    const { staffContextOf } = await import("@/server/auth/staff");
+    const { myPeriodEarnings } = await import("@/server/staff-api/pay");
+    const earnings = async (staffId: string, shopId: string) => {
+      const ctx = (await staffContextOf(staffId, undefined, { ip: null, deviceShopIds: [], shopPref: "all" }))!;
+      return (await myPeriodEarnings({ ...ctx, sessionId: "test" }, fx.start, fx.end)).shops.find((s) => s.shopId === shopId);
+    };
+    expect(await earnings(fx.jamie, shop.Moline)).toMatchObject({ source: "platform", squireImported: false });
+    expect(await earnings(fx.coralA, shop.Coralville)).toMatchObject({ source: "squire", squireImported: true, hours: { regular: 38, overtime: 2, pto: 8 } });
+  });
+
   it("approves, locks and exports the mixed period; each shop keeps where its figures came from", async () => {
     const r = await run.approveAndLock(fx.start, fx.end, actor);
     expect(r).toMatchObject({ locked: expect.any(Number) });

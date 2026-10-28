@@ -99,10 +99,11 @@ export async function myPeriodEarnings(ctx: StaffAppContext, period: string | un
     const view = runs.get(`${p.start}_${p.end}`);
     const block = view?.blocks.find((b) => b.shopId === shop.id);
     const line = block?.lines.find((l) => l.staffId === me);
-    const [s] = see.tips ? await payrollSalesBetween({ shopIds: [shop.id], staffId: me }, p.start, p.end) : [];
+    const source = block?.source ?? "platform";
+    const [s] = see.tips && source === "platform" ? await payrollSalesBetween({ shopIds: [shop.id], staffId: me }, p.start, p.end) : [];
     const e = shopEarnings(see, line, { card: s?.cardTipsCents ?? 0, cash: s?.cashTipsCents ?? 0, giftCard: s?.giftCardTipsCents ?? 0, refunds: s?.tipRefundsCents ?? 0 });
     const paystub = block ? paystubLines(block, me).filter((l) => see[l.group]) : [];
-    out.push({ shopId: shop.id, shop: shop.name, period: periodView(p), locked: !!block?.locked, ...e, paystub });
+    out.push({ shopId: shop.id, shop: shop.name, period: periodView(p), locked: !!block?.locked, source, squireImported: source === "squire" && !!block?.squireImport, ...e, paystub });
   }
   return { sees: see, date: day, shops: out, totals: sumShops(see, out), payout: await payoutSetup(ctx) };
 }
