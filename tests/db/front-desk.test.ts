@@ -120,7 +120,7 @@ describe("shop login: the front desk's POS", () => {
     const desk = await open("/admin");
     expect(desk.kind).toBe("ok");
     const text = desk.kind === "ok" ? desk.text : "";
-    for (const s of ["Today's clients", "Ready to check out", "New sale", "Calendar", "Time clock", "Openings"]) expect(text, s).toContain(s);
+    for (const s of ["Today's clients", "Ready to check out", "New sale"]) expect(text, s).toContain(s);
     await as("owner@rayz.test");
     const owner = await open("/admin");
     expect(owner.kind === "ok" ? owner.text : "").not.toContain("Ready to check out");

@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { appointmentItems, appointments, customers, staff, waitlistEntries } from "@/db/schema";
 import { Notice } from "@/components/ui";
 import { LiveRefresh } from "@/components/live-refresh";
-import { deskStep, frontDeskTabs } from "@/domain/front-desk";
+import { deskStep } from "@/domain/front-desk";
 import { formatCents } from "@/lib/money";
 import { endOfLocalDay, formatDate, formatTime, startOfLocalDay, todayLocal } from "@/lib/time";
 import { StaffContext, can, reportShopIds } from "@/server/auth/staff";
@@ -55,7 +55,6 @@ export async function FrontDeskHome({ ctx, denied }: { ctx: StaffContext; denied
           .then((r) => r[0]?.n ?? 0)
       : Promise.resolve(0),
   ]);
-  const tiles = frontDeskTabs(ctx.permissions).filter((t) => t.href !== "/admin");
   const inChair = rows.filter((r) => r.status === "in_service").length;
   const waitingIn = rows.filter((r) => r.status === "checked_in").length;
   const ready = [...queue].sort((a, b) => Number(b.total > 0 && b.ready === b.total) - Number(a.total > 0 && a.ready === a.total) || b.ready - a.ready);
@@ -77,15 +76,6 @@ export async function FrontDeskHome({ ctx, denied }: { ctx: StaffContext; denied
             </button>
           </form>
         )}
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4" data-testid="front-desk-tiles">
-        {tiles.map((t) => (
-          <Link key={t.href} href={t.href} className="flex min-h-24 flex-col justify-center rounded-2xl bg-white px-4 py-3 shadow-xs ring-1 ring-zinc-200 hover:bg-zinc-50 active:bg-zinc-100">
-            <span className="text-lg font-semibold">{t.label}</span>
-            <span className="text-sm text-zinc-600">{t.hint}</span>
-          </Link>
-        ))}
       </div>
 
       <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
@@ -115,7 +105,7 @@ export async function FrontDeskHome({ ctx, denied }: { ctx: StaffContext; denied
         </section>
 
         {checkout && (
-          <section className="rounded-2xl bg-white shadow-xs ring-1 ring-zinc-200" aria-labelledby="desk-queue">
+          <section className="order-first self-start rounded-2xl bg-white shadow-xs ring-1 ring-zinc-200 lg:order-none" aria-labelledby="desk-queue">
             <h2 id="desk-queue" className="border-b border-zinc-100 px-4 py-3 text-lg font-semibold">
               Ready to check out
             </h2>

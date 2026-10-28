@@ -65,16 +65,16 @@ export default async function AdminLayout({
         </a>
         <BfcacheGuard />
         <header className="theme-fixed no-print sticky top-0 z-40 bg-ink-900 text-zinc-300">
-          <div className="flex items-center gap-3 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
             <Link href="/admin" className="hidden shrink-0 sm:block" aria-label="Front desk">
               <Logo dark />
             </Link>
-            <div className="shrink-0 leading-tight" data-testid="workspace">
+            <div className="mr-auto shrink-0 leading-tight xl:mr-0" data-testid="workspace">
               <div className="text-base font-semibold text-white">{here?.name ?? ctx.assignedShops[0]?.name ?? "Shop"}</div>
               <div className="text-xs text-zinc-400">{ctx.staff.displayLabel}</div>
             </div>
             <FrontDeskBar tabs={tabs} more={frontDeskMore(sections)} />
-            <form action={logout} className="shrink-0">
+            <form action={logout} className="shrink-0 xl:order-last">
               <button className="h-12 rounded-xl px-4 text-base text-zinc-300 ring-1 ring-white/15 hover:bg-white/10 hover:text-white">Sign out</button>
             </form>
           </div>

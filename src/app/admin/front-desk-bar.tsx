@@ -20,7 +20,7 @@ export function FrontDeskBar({ tabs, more }: { tabs: NavItem[]; more: NavItem[] 
   }, [path]);
   const inMore = more.some((i) => i.href === best);
   return (
-    <nav aria-label="Front desk" className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto" data-testid="front-desk-tabs">
+    <nav aria-label="Front desk" className="order-last flex w-full flex-wrap items-center gap-1.5 xl:order-none xl:w-auto xl:flex-1" data-testid="front-desk-tabs">
       {tabs.map((t) => (
         <Link
           key={t.href}

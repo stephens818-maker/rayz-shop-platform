@@ -7,15 +7,15 @@ import type { Permission } from "./permissions";
  * it can open is under More.
  */
 export const FRONT_DESK_TABS = [
-  { href: "/admin", label: "Front desk", hint: "Today's clients, check-in and checkout" },
-  { href: "/admin/calendar", label: "Calendar", hint: "Book, move and check in" },
-  { href: "/admin/sales", label: "Checkout", hint: "The checkout queue and today's tickets" },
-  { href: "/admin/customers", label: "Clients", hint: "Look up a client" },
-  { href: "/admin/walk-ins", label: "Walk-ins", hint: "The waitlist" },
-  { href: "/admin/clock/kiosk", label: "Time clock", hint: "Clock in and out" },
-  { href: "/admin/campaign-center/openings", label: "Openings", hint: "We have openings, per barber" },
-  { href: "/admin/reports", label: "Reports", hint: "This shop's reports" },
-] as const satisfies readonly { href: AdminPage; label: string; hint: string }[];
+  { href: "/admin", label: "Front desk" },
+  { href: "/admin/calendar", label: "Calendar" },
+  { href: "/admin/sales", label: "Checkout" },
+  { href: "/admin/customers", label: "Clients" },
+  { href: "/admin/walk-ins", label: "Walk-ins" },
+  { href: "/admin/clock/kiosk", label: "Time clock" },
+  { href: "/admin/campaign-center/openings", label: "Openings" },
+  { href: "/admin/reports", label: "Reports" },
+] as const satisfies readonly { href: AdminPage; label: string }[];
 
 export type FrontDeskTab = (typeof FRONT_DESK_TABS)[number];
 
