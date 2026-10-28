@@ -56,6 +56,16 @@ describe("I10: one charge path, separate charges and transfers", () => {
     expect(where(/\b(createSaleTransfer|reverseShopTransfer)\(/).sort()).toEqual(["server/payments/money-movement.ts", "server/payments/settlement.ts"]);
   });
 
+  it("shops' connected accounts are Express (a dashboard for the transfers they receive); barbers' are recipient accounts with no dashboard, never Express", () => {
+    const connect = files.find((f) => f.path === "server/payments/connect.ts")!.text;
+    expect(connect.match(/stripe_dashboard: \{ type: "(\w+)" \}/g)).toEqual(['stripe_dashboard: { type: "express" }', 'stripe_dashboard: { type: "express" }']);
+    const tips = files.find((f) => f.path === "server/tips/accounts.ts")!.text;
+    expect(tips.match(/stripe_dashboard: \{ type: "(\w+)" \}/g)).toEqual(['stripe_dashboard: { type: "none" }']);
+    expect(tips).toMatch(/tos_acceptance: \{ service_agreement: "recipient" \}/);
+    expect(where(/\baccounts\s*\.create\(/).sort()).toEqual(["server/payments/connect.ts", "server/tips/accounts.ts"]);
+    expect(where(/type: "express"/).sort()).toEqual(["server/payments/connect.ts"]);
+  });
+
   describe("FEATURE_TIP_TO_BARBER", () => {
     afterEach(() => vi.unstubAllEnvs());
 
