@@ -488,6 +488,9 @@ describe("scheduled emails and the Morning Dashboard", () => {
       expect(j.attachments).toBeNull();
       expect(j.body).toMatch(/\/admin\/reports\/custom\//);
       expect(j.body).toMatch(/Sum of Visits/);
+      expect(j.subject).toMatch(/^Owner daily · .+: /);
+      expect(j.body).toMatch(/· dates in America\/Chicago/);
+      expect(j.htmlBody).toMatch(/· dates in America\/Chicago/);
     }
     // Michelle may not export client lists, so her copy has no file; the owner's had one.
     expect(mine.find((j) => j.to === "michelle@rayz.test")!.body).toMatch(/No file is attached: client lists can only be downloaded by brand-level roles/);

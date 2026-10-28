@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type CardRow, CARD_PERIODS, SPARK_DAYS, cardTotal, parseCardPeriod, perClientCard, perClientTotal, pphCard, sparkPoints } from "@/domain/pph-card";
+import { type CardRow, CARD_PERIODS, CARD_PERIOD_LABEL, RANGE_SPARK_DAYS, SPARK_DAYS, cardPeriods, cardTotal, parseCardPeriod, perClientCard, perClientTotal, pphCard, sparkPoints } from "@/domain/pph-card";
 
 const row = (staffId: string, shopId: string, centi: number, serviceCents: number, productCents = 0, clients = 0, served: string[] = []): CardRow => ({ staffId, shopId, centi, serviceCents, productCents, clients, served: new Set(served) });
 const shops = [
@@ -154,6 +154,41 @@ describe("the dashboard's product sales per client card", () => {
     expect(c.spark).toEqual([
       { date: "2029-08-13", value: null },
       { date: "2029-08-14", value: 1_000 },
+    ]);
+  });
+});
+
+describe("the dashboard cards with a date range picked", () => {
+  it("adds a Selected range tile after the others, ranked by default; without one nothing changes", () => {
+    expect(cardPeriods(false)).toEqual([...CARD_PERIODS]);
+    expect(cardPeriods(true)).toEqual([...CARD_PERIODS, "range"]);
+    expect(CARD_PERIOD_LABEL.range).toBe("Selected range");
+    expect(parseCardPeriod(undefined, true)).toBe("range");
+    expect(parseCardPeriod("today", true)).toBe("today");
+    expect(parseCardPeriod("range")).toBe("period");
+    expect(parseCardPeriod("bogus", true)).toBe("range");
+    expect(RANGE_SPARK_DAYS).toBeGreaterThanOrEqual(31);
+  });
+
+  it("totals and ranks PPH over the range's rows", () => {
+    const c = pphCard(input({ rows: { today, yesterday: [], period: today, range: period }, rankBy: "range" }));
+    expect(c.total.range).toEqual(pphCard(input()).total.period);
+    expect(c.barbers.map((x) => [x.rank, x.item.name, x.item.p.servicePph])).toEqual([
+      [1, "Avery", 4_286],
+      [2, "Blake", 4_000],
+      [null, "Casey", null],
+    ]);
+    expect(pphCard(input()).total.range).toMatchObject({ hours: 0, servicePph: null });
+  });
+
+  it("totals and ranks product sales per client over the range's rows, a client counted once", () => {
+    const pc = (staffId: string, shopId: string, productCents: number, served: string[]) => row(staffId, shopId, 0, 0, productCents, 0, served);
+    const range = [pc("a", "cv", 4_000, ["c:1", "c:2"]), pc("b", "ml", 2_000, ["c:2"])];
+    const c = perClientCard({ rows: { today: [], yesterday: [], period: [], range }, days: [], shops, names, rankBy: "range" });
+    expect(c.total.range).toEqual({ productCents: 6_000, clients: 2, perClient: 3_000 });
+    expect(c.barbers.map((x) => [x.rank, x.item.name, x.item.f.perClient])).toEqual([
+      [1, "Avery", 2_000],
+      [1, "Blake", 2_000],
     ]);
   });
 });

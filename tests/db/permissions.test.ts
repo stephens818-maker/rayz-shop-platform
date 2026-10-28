@@ -9,6 +9,7 @@ import type { Permission } from "@/domain/permissions";
 import { brandAction } from "./brand";
 import { Mods, actor, loadModules } from "./setup";
 import { pageOutcome, signInAs } from "./session";
+import { csvBody } from "./csv";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", async () => (await import("./session")).headersMock);
@@ -40,7 +41,7 @@ async function get(handler: (req: Request, ctx?: unknown) => Promise<Response>, 
   const res = await handler(new Request(`http://localhost${url}`), params ? { params: Promise.resolve(params) } : undefined);
   return { status: res.status, text: res.status === 200 ? await res.text() : await res.text() };
 }
-const csvRows = (text: string) => text.trim().split("\n").slice(1).map((l) => l.split(","));
+const csvRows = (text: string) => csvBody(text).trim().split("\n").slice(1).map((l) => l.split(","));
 
 beforeAll(async () => {
   m = await loadModules();

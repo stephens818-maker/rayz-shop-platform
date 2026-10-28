@@ -9,6 +9,7 @@ import { NO_BARBER } from "@/domain/barbers";
 import { ReportTable, TOTAL, parseSegKey, segKey } from "@/domain/report-views";
 import { Mods, actor, loadModules } from "./setup";
 import { pageOutcome, signInAs } from "./session";
+import { csvBody, csvRange } from "./csv";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", async () => (await import("./session")).headersMock);
@@ -327,7 +328,7 @@ async function loadAs(report: Parameters<typeof S.resolveScope>[2], p: Record<st
 const table = (d: { tables: ReportTable[] }, id: string) => d.tables.find((t) => t.id === id)!;
 /** Splits CSV lines into cells, honouring quotes ("Total (2 barbers, 2 shops)"). */
 const lines = (text: string) =>
-  text
+  csvBody(text)
     .trim()
     .split("\n")
     .map((l) => [...l.matchAll(/("(?:[^"]|"")*"|[^,]*)(,|$)/g)].slice(0, -1).map((x) => (x[1].startsWith('"') ? x[1].slice(1, -1).replace(/""/g, '"') : x[1])));
@@ -444,7 +445,8 @@ describe("CSV matches the screen", () => {
         for (const t of d.tables) {
           const csv = await get({ ...q, table: t.id });
           expect(csv.status).toBe(200);
-          expect(csv.text, `${view} ${t.id}`).toBe(L.tableCsv(t));
+          expect(csvBody(csv.text), `${view} ${t.id}`).toBe(L.tableCsv(t));
+          expect(csvRange(csv.text), `${view} ${t.id}`).toMatchObject({ report: `Barber performance: ${t.title}`, range: expect.stringContaining(FROM.slice(0, 4)), timeZone: "America/Chicago" });
           const [head, ...rows] = lines(csv.text);
           if (t.rowKinds && t.totalColumn) continue;
           expect(head).toEqual(t.columns.map((c) => c.label));
@@ -545,7 +547,7 @@ describe("who sees which barbers", () => {
     expect(await page("barbers")).toBe("ok");
     const own = await get("type=sales_by_barber&view=barbers&preset=30d");
     expect(own.status).toBe(200);
-    expect(own.text.split("\n")[0].startsWith("Metric,")).toBe(true);
+    expect(csvBody(own.text).split("\n")[0].startsWith("Metric,")).toBe(true);
     const asAll = await get("type=sales_by_barber&view=barbers&preset=30d&staff=all");
     expect(asAll.text).toBe(own.text);
     const mine = await get(`type=sales_by_barber&view=barbers&preset=30d&staff=${ids.makenna}`);
@@ -563,7 +565,7 @@ describe("who sees which barbers", () => {
     const mineToday = await get("type=sales_by_barber&table=sales&preset=30d");
     await signInAs(ids.admin);
     const adminOnHer = await get(`type=sales_by_barber&table=sales&preset=30d&staff=${ids.makenna}&shop=${shop.coralville.id}`);
-    expect(mineToday.text.split("\n").slice(1).join("\n")).toBe(adminOnHer.text.split("\n").slice(1).join("\n"));
+    expect(csvBody(mineToday.text).split("\n").slice(1).join("\n")).toBe(csvBody(adminOnHer.text).split("\n").slice(1).join("\n"));
     await setOverrides(ids.makenna, {});
   });
 

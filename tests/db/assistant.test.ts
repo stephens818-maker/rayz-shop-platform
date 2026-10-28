@@ -78,7 +78,7 @@ describe("tools follow the person's permissions", () => {
     const set = await tools.toolsFor(makenna, (await assistant.loadAssistantSettings()));
     expect(set.map((t) => t.name).sort()).toEqual(["client_notes", "help", "run_report"]);
     const reportEnum = (set[0].spec.parameters as { properties: { report: { enum: string[] } } }).properties.report.enum;
-    expect(reportEnum.sort()).toEqual(["my_sales", "rebook_rate", "service_times"]);
+    expect(reportEnum.sort()).toEqual(["my_sales", "pph", "rebook_rate", "service_times"]);
   });
 
   it("offers a manager client lists and purchase orders but not blasts, and the brand admin everything", async () => {

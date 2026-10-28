@@ -9,6 +9,7 @@ import { brandAction } from "./brand";
 import { Mods, loadModules } from "./setup";
 import { open } from "./render";
 import { signInAs } from "./session";
+import { csvBody } from "./csv";
 
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", async () => (await import("./session")).headersMock);
@@ -89,8 +90,8 @@ describe("dollar amounts", () => {
     expect(page.text).not.toMatch(/\$\d/);
     const hidden = await csv({ type: "sales_summary", table: "daily" });
     expect(hidden.status).toBe(200);
-    const [head, ...rows] = hidden.text.trim().split("\n").map((l) => l.split(","));
-    const [shownHead, ...shownRows] = shownCsv.text.trim().split("\n").map((l) => l.split(","));
+    const [head, ...rows] = csvBody(hidden.text).trim().split("\n").map((l) => l.split(","));
+    const [shownHead, ...shownRows] = csvBody(shownCsv.text).trim().split("\n").map((l) => l.split(","));
     expect(head).toEqual(shownHead);
     const tickets = head.indexOf("Tickets");
     const gross = head.findIndex((h) => /Gross|Net sales/.test(h));

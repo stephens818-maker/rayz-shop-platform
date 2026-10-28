@@ -9,6 +9,7 @@ import type { ReportKey } from "@/domain/permissions";
 import type { ReportTable, ViewCtx } from "@/domain/report-views";
 import { Mods, actor, loadModules } from "./setup";
 import { signInAs } from "./session";
+import { csvBody } from "./csv";
 import { BARBER_REPORTS } from "@/app/admin/reports/scope";
 
 vi.mock("server-only", () => ({}));
@@ -375,7 +376,7 @@ describe("CSV follows the view", () => {
     return { status: res.status, text: await res.text(), name: res.headers.get("Content-Disposition") ?? "" };
   };
   const lines = (t: string) =>
-    t
+    csvBody(t)
       .trim()
       .split("\n")
       .map((l) => l.split(","));
@@ -433,7 +434,7 @@ describe("the shop filter stays inside each person's shops", () => {
   };
   const groupId = async (name: string) => (await m.db.db.query.locationGroups.findFirst({ where: eq(m.schema.locationGroups.name, name) }))!.id;
   const firstColumn = (t: string) =>
-    t
+    csvBody(t)
       .trim()
       .split("\n")
       .slice(1)

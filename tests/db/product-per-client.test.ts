@@ -170,6 +170,7 @@ describe("the dashboard card", () => {
       today: { productCents: 900, clients: 1, perClient: 900 },
       yesterday: { productCents: 1_200, clients: 1, perClient: 1_200 },
       period: { productCents: 10_200, clients: 5, perClient: 2_040 },
+      range: { productCents: 0, clients: 0, perClient: null },
     });
     expect(c.barbers.map((x) => [x.rank, x.item.id, x.item.f.perClient])).toEqual([
       [1, barberB, 2_100],

@@ -443,7 +443,9 @@ describe("the iSolved export", () => {
     expect(all.worksheets).toHaveLength(blocks.length);
     expect(new Set(all.worksheets.map((w) => w.name)).size).toBe(blocks.length);
 
-    expect((await download("2027-06-01", "2027-06-02")).status).toBe(404);
+    const partial = await download("2027-06-01", "2027-06-02");
+    expect(partial.status).toBe(409);
+    expect(await partial.text()).toMatch(/^Not an official pay period/);
     await signInAs(ids["manager.moline"]);
     expect((await download()).status).toBe(403);
     await signInAs(ids.owner);
