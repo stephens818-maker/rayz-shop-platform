@@ -1,0 +1,2 @@
+-- Training toward overtime (C2) on, now that Charles has answered Q11: training hours are on top of clocked production hours and count toward the weekly 40. A brand that saved the setting off while off was the default gets it on. Still a setting, in case the CPA says training isn't hours worked. No schema change.
+UPDATE "brand_settings" SET "payroll" = jsonb_set("payroll", '{trainingCountsTowardOt}', 'true') WHERE "payroll"->'trainingCountsTowardOt' = 'false'::jsonb;
