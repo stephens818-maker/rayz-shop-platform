@@ -5,7 +5,9 @@ import { REPORT_VIEWS, ReportView, viewOf } from "@/domain/report-views";
 import type { ReportOption } from "@/server/report-data";
 import { BarberPicker } from "./barber-picker";
 import { LocationPicker } from "./location-picker";
-import { PRESETS, ReportLocations, ReportViewState } from "./scope";
+import { RANGE_TIME_ZONE_LABEL, STANDARD_PRESETS, rangeText } from "@/domain/report-range";
+import type { PayPeriodPickerGroup } from "@/server/payroll/periods";
+import { ReportLocations, ReportViewState } from "./scope";
 
 export interface LocationProps {
   shops: { id: string; name: string }[];
@@ -136,6 +138,58 @@ export function BarberField({ l }: { l: QueryState }) {
 /** A report's own choices (visits to qualify, filing period) as URL values; empty is the default. */
 export const optionValues = (options: readonly ReportOption[] | undefined): Record<string, string | null> => Object.fromEntries((options ?? []).map((o) => [o.param, o.value || null]));
 
+/**
+ * The date chips a report shows: the standard ranges every report has, then the report's own. Pay
+ * period chips are left to the pay period picker.
+ */
+export function presetChips(own: readonly { id: string; label: string }[] | undefined): { id: string; label: string }[] {
+  const extra = (own ?? []).filter((p) => !p.id.startsWith("pp:") && !STANDARD_PRESETS.some((s) => s.id === p.id));
+  return [...STANDARD_PRESETS.map((s) => own?.find((p) => p.id === s.id) ?? s), ...extra];
+}
+
+/** Hidden inputs that keep the shops, barbers, view and a report's options when another range is picked. */
+function KeepInputs({ scope, opts, skip = [] }: { scope: QueryState; opts: Record<string, string | null>; skip?: string[] }) {
+  return (
+    <>
+      {[...reportQuery(scope, opts)].filter(([k]) => !skip.includes(k)).map(([k, v]) => (
+        <input key={`${k}=${v}`} type="hidden" name={k} value={v} />
+      ))}
+    </>
+  );
+}
+
+/** A specific pay period by its iSolved number, per pay calendar (Dubuque runs on its own). */
+export function PayPeriodPicker({ base, groups, preset, from, to, scope, opts }: { base: string; groups: readonly PayPeriodPickerGroup[]; preset: string | null; from: string; to: string; scope: QueryState | null; opts: Record<string, string | null> }) {
+  if (!groups.some((g) => g.periods.length)) return null;
+  const all = groups.flatMap((g) => g.periods);
+  const value = all.find((p) => p.id === preset)?.id ?? all.find((p) => p.start === from && p.end === to)?.id ?? "";
+  return (
+    <form key={`${preset}|${from}|${to}`} action={base} className="flex flex-wrap items-end gap-2 text-sm" data-testid="pay-period-picker">
+      <label>
+        <span className="block text-xs text-zinc-500">Pay period</span>
+        <select name="preset" defaultValue={value} className="h-9 max-w-72 rounded-lg bg-white px-2 ring-1 ring-zinc-300">
+          <option value="" disabled>
+            Pick a pay period by number
+          </option>
+          {groups.map((g) => (
+            <optgroup key={g.payGroupId} label={groups.length > 1 ? `${g.label} pay calendar` : "Pay periods"}>
+              {g.periods.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {`Period ${String(p.number).padStart(2, "0")} · ${rangeText(p.start, p.end)}${p.current ? " (current)" : ""}`}
+                </option>
+              ))}
+            </optgroup>
+          ))}
+        </select>
+      </label>
+      {scope ? <KeepInputs scope={scope} opts={opts} /> : null}
+      <Button type="submit" variant="secondary" size="sm" className="h-9">
+        Show
+      </Button>
+    </form>
+  );
+}
+
 export function ReportFilters({
   base,
   preset,
@@ -144,7 +198,9 @@ export function ReportFilters({
   scope,
   location,
   options,
-  presets = PRESETS,
+  presets,
+  payPeriods = [],
+  views = true,
 }: {
   base: string;
   preset: string | null;
@@ -154,15 +210,21 @@ export function ReportFilters({
   /** Null when the viewer has one shop. */
   location: LocationProps | null;
   options?: readonly ReportOption[];
+  /** The report's own presets, shown after the standard ones. */
   presets?: readonly { id: string; label: string }[];
+  /** The pay periods to pick by number, per pay calendar of the shops shown. */
+  payPeriods?: readonly PayPeriodPickerGroup[];
+  /** False on pages without the combined / by location / by barber views. */
+  views?: boolean;
 }) {
   const opts = optionValues(options);
   const qs = (extra: Record<string, string | null>) => `${base}?${reportQuery(scope, { ...opts, ...extra })}`;
   const range: Record<string, string> = preset ? { preset } : { from, to };
+  const chips = presetChips(presets);
   return (
     <div className="no-print mb-5 space-y-3">
       <ChipStrip className="items-center gap-1.5" label="Date range">
-        {presets.map((p) => (
+        {chips.map((p) => (
           <Link
             key={p.id}
             href={qs({ preset: p.id })}
@@ -172,6 +234,11 @@ export function ReportFilters({
             {p.label}
           </Link>
         ))}
+        {!preset && (
+          <span aria-current="true" className="rounded-full bg-ink-900 px-3 py-1 text-sm text-white ring-1 ring-ink-900">
+            Custom range
+          </span>
+        )}
       </ChipStrip>
       {options?.filter((o) => !o.select).map((o) => (
         <div key={o.param} role="group" aria-label={o.label} className="flex flex-wrap items-center gap-1.5 text-sm">
@@ -188,6 +255,7 @@ export function ReportFilters({
           ))}
         </div>
       ))}
+      <PayPeriodPicker base={base} groups={payPeriods} preset={preset} from={from} to={to} scope={scope} opts={opts} />
       {/* Keyed so the uncontrolled inputs reset when a preset link changes the range client-side. */}
       <form key={`${from}|${to}|${scope.shopParam}|${scope.staffParam}`} className="flex flex-wrap items-end gap-2 text-sm" action={base}>
         <label>
@@ -214,14 +282,15 @@ export function ReportFilters({
               </select>
             </label>
           ))}
-        <ViewInput l={scope} />
+        {views && <ViewInput l={scope} />}
         {Object.entries(opts).map(([k, v]) => (v && !options?.some((o) => o.select && o.param === k) ? <input key={k} type="hidden" name={k} value={v} /> : null))}
         <Button type="submit" variant="dark" size="sm" className="h-9">
           Apply
         </Button>
         <div className="ml-auto min-w-0 max-w-full self-center">
-          <ViewToggle l={scope} href={(v) => `${base}?${reportQuery(withView(scope, v), { ...opts, ...range })}`} />
+          {views && <ViewToggle l={scope} href={(v) => `${base}?${reportQuery(withView(scope, v), { ...opts, ...range })}`} />}
         </div>
+        <p className="basis-full text-[11px] text-zinc-400">Custom dates are whole days in {RANGE_TIME_ZONE_LABEL}.</p>
       </form>
     </div>
   );

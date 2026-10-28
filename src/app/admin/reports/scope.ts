@@ -1,10 +1,12 @@
 import "server-only";
-import { isValidLocalDate } from "@/lib/time";
 import { barberLabel } from "@/domain/barbers";
 import { LocationGroup, LocationSelection, locationLabel } from "@/domain/locations";
 import { PAYROLL_REPORTS, type ReportKey } from "@/domain/permissions";
-import { PAY_PERIOD_PRESET, payPeriodRange } from "@/server/payroll/periods";
-import { PRESETS, presetRange } from "@/domain/report-range";
+import { PAY_PERIOD_PRESET, calendarForShops, payPeriodByNumber, payPeriodRange } from "@/server/payroll/periods";
+import { PAY_PERIOD_NUMBER_PRESET, PRESETS, presetRange } from "@/domain/report-range";
+import { payPeriodFor } from "@/domain/payroll";
+import { type LocalDate, isValidLocalDate, todayLocal } from "@/lib/time";
+import { lastRange, rememberRange } from "@/server/report-range-memory";
 import { ReportView, ViewCtx, parseReportView, parseView, totalLabel } from "@/domain/report-views";
 import type { StaffContext } from "@/server/auth/staff";
 import { ReportBarbers, reportBarbers, staffLabels } from "@/server/barbers";
@@ -110,9 +112,9 @@ const DEFAULT_PRESET: Partial<Record<ReportKey, string>> = {
   leaderboard: "month",
   phone_operator: "30d",
   acquisition: "30d",
-  pph: "pp:last",
-  ...Object.fromEntries(PAYROLL_REPORTS.map((k) => [k, "pp:last"])),
-  payroll_overtime: "pp:current",
+  pph: "lastpayperiod",
+  ...Object.fromEntries(PAYROLL_REPORTS.map((k) => [k, "lastpayperiod"])),
+  payroll_overtime: "payperiod",
   payroll_w2_codes: "ytd",
 };
 
@@ -178,19 +180,86 @@ export async function resolveBarberView(
   };
 }
 
-export type ResolvedScope = ReportScope & ReportLocations & ReportViewState & { preset: string | null };
+export interface ResolvedRange {
+  from: LocalDate;
+  to: LocalDate;
+  /** The preset picked, or null for custom dates. */
+  preset: string | null;
+  /** "Last pay period", "Pay period 22 (Dubuque)", "Month to date"; null for custom dates. */
+  rangeLabel: string | null;
+  /** The pay group a specific pay period was picked on. */
+  payGroupId: string | null;
+}
+
+export interface RangeOptions {
+  /** The shops the range is for: "This pay period" and "Last pay period" follow their pay calendar. */
+  shopIds: readonly string[];
+  defaultPreset: string;
+  /** Remembers the person's last range under this key, and opens on it when the link has none. */
+  memory?: { staffId: string; key: string } | null;
+  /** "This pay period" runs to the period's last day, not today (the Payroll Report reviews whole periods). */
+  wholePayPeriod?: boolean;
+  /** A report's own presets, for their labels. */
+  presets?: readonly { id: string; label: string }[];
+  today?: LocalDate;
+}
+
+/**
+ * The dates a report covers: custom from/to (calendar days in America/Chicago), a preset, a pay
+ * period chip or a specific pay period by number. Without dates in the link it opens on the range
+ * the person last picked there, then on the report's default.
+ */
+export async function resolveRange(p: Pick<ReportParams, "preset" | "from" | "to">, o: RangeOptions): Promise<ResolvedRange> {
+  const today = o.today ?? todayLocal();
+  const isCustom = (x: Pick<ReportParams, "from" | "to">) => !!(x.from && x.to && isValidLocalDate(x.from) && isValidLocalDate(x.to));
+  const explicit = isCustom(p) || !!p.preset;
+  const remembered = !explicit && o.memory ? await lastRange(o.memory.staffId, o.memory.key) : null;
+  const q: Pick<ReportParams, "preset" | "from" | "to"> = explicit ? p : remembered ? remembered : {};
+  const out = await rangeOf(q, o, today, isCustom(q));
+  const relative = p.preset === "pp:last" || p.preset === "pp:current";
+  if (explicit && o.memory) await rememberRange(o.memory.staffId, o.memory.key, out.preset ? { preset: relative && !isCustom(p) ? p.preset! : out.preset } : { from: out.from, to: out.to });
+  return out;
+}
+
+async function rangeOf(q: Pick<ReportParams, "preset" | "from" | "to">, o: RangeOptions, today: LocalDate, custom: boolean): Promise<ResolvedRange> {
+  if (custom) {
+    const [from, to] = q.from! <= q.to! ? [q.from!, q.to!] : [q.to!, q.from!];
+    return { from, to, preset: null, rangeLabel: null, payGroupId: null };
+  }
+  const preset = q.preset ?? o.defaultPreset;
+  if (preset.startsWith(PAY_PERIOD_NUMBER_PRESET)) {
+    const n = await payPeriodByNumber(preset);
+    if (n) return { from: n.from, to: n.to, preset: n.id, rangeLabel: n.label, payGroupId: n.payGroupId };
+    return rangeOf({}, { ...o, defaultPreset: o.defaultPreset.startsWith(PAY_PERIOD_NUMBER_PRESET) ? "lastpayperiod" : o.defaultPreset }, today, false);
+  }
+  if (preset.startsWith(PAY_PERIOD_PRESET)) {
+    const period = (await payPeriodRange(preset, today)) ?? (await payPeriodRange("pp:last", today))!;
+    const label = preset === "pp:current" ? "This pay period" : preset === "pp:last" ? "Last pay period" : (o.presets?.find((x) => x.id === period.id)?.label ?? "Pay period");
+    return { from: period.from, to: period.to, preset: period.id, rangeLabel: label, payGroupId: null };
+  }
+  const known = PRESETS.find((x) => x.id === preset) ?? o.presets?.find((x) => x.id === preset);
+  const id = known ? preset : "7d";
+  const cal = id === "payperiod" || id === "lastpayperiod" ? await calendarForShops(o.shopIds) : await brandCalendar();
+  const r = presetRange(id, today, cal);
+  const to = id === "payperiod" && o.wholePayPeriod ? payPeriodFor(today, cal).end : r.to;
+  return { from: r.from, to, preset: id, rangeLabel: (known ?? PRESETS.find((x) => x.id === "7d"))!.label, payGroupId: null };
+}
+
+export type ResolvedScope = ReportScope & ReportLocations & ReportViewState & Omit<ResolvedRange, "from" | "to">;
 
 /**
  * Dates, shops and barbers for a report. Shops and barbers are always limited to the viewer's
- * access; people who may only see their own numbers, and "My sales", always get their own.
+ * access; people who may only see their own numbers, and "My sales", always get their own. With
+ * `remember` (a report page, not an export or the assistant), the range is kept as the person's
+ * last one on this report, and a link without dates opens on it.
  */
-export async function resolveScope(ctx: StaffContext, p: ReportParams, report: ReportKey): Promise<ResolvedScope> {
-  const custom = p.from && p.to && isValidLocalDate(p.from) && isValidLocalDate(p.to);
-  let preset = custom ? null : (p.preset ?? DEFAULT_PRESET[report] ?? "7d");
-  const period = preset?.startsWith(PAY_PERIOD_PRESET) ? ((await payPeriodRange(preset)) ?? (await payPeriodRange("pp:last"))) : null;
-  if (period) preset = period.id;
-  let { from, to } = custom ? { from: p.from!, to: p.to! } : (period ?? presetRange(preset!, undefined, await brandCalendar()));
-  if (from > to) [from, to] = [to, from];
+export async function resolveScope(ctx: StaffContext, p: ReportParams, report: ReportKey, o: { remember?: boolean; presets?: readonly { id: string; label: string }[] } = {}): Promise<ResolvedScope> {
   const v = await resolveBarberView(ctx, p, report, await resolveLocations(ctx, p));
-  return { shopIds: v.selection.shopIds, from, to, preset, ...v };
+  const r = await resolveRange(p, {
+    shopIds: v.selection.shopIds,
+    defaultPreset: DEFAULT_PRESET[report] ?? "7d",
+    memory: o.remember ? { staffId: ctx.staff.id, key: report } : null,
+    presets: o.presets,
+  });
+  return { shopIds: v.selection.shopIds, ...r, ...v };
 }

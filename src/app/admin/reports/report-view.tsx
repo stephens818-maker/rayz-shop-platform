@@ -11,7 +11,9 @@ import { MONEY_HIDDEN_NOTE } from "@/domain/report-money";
 import { formatCell, numericKind } from "@/domain/report-format";
 import { REPORT_GROUP, groupReports } from "@/domain/report-groups";
 import { REPORT_VIEWS, viewOf } from "@/domain/report-views";
-import { WEEKDAYS, formatDate } from "@/lib/time";
+import { WEEKDAYS } from "@/lib/time";
+import { rangeHeading } from "@/domain/report-range";
+import { payPeriodPicker } from "@/server/payroll/periods";
 import { StaffContext, can, guardPage, reasonViewer } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
 import { ReportData, ReportTable, loadReport } from "@/server/report-data";
@@ -200,13 +202,14 @@ export async function ReportPage({
   const meta = reportFor(report);
   const ctx = await guardPage(meta.href);
   const rctx = await reportContext(ctx, report);
-  const scope = await resolveScope(rctx, searchParams, report);
+  const scope = await resolveScope(rctx, searchParams, report, { remember: true });
   const canExport = can(ctx, reportExport(report));
   const t0 = performance.now();
   const params = Object.fromEntries(Object.entries(searchParams).map(([k, v]) => [k, Array.isArray(v) ? v.join(",") : v]));
-  const [data, views] = await Promise.all([
+  const [data, views, payPeriods] = await Promise.all([
     loadReport(report, { scope, loc: scope.loc, viewer: rctx, client: await clientPolicy(ctx), reasons: reasonViewer(ctx), params }),
     listReportViews(ctx.staff.id, report),
+    payPeriodPicker(scope.shopIds),
   ]);
   const query = cleanViewQuery(new URLSearchParams(Object.entries(params).filter((e): e is [string, string] => !!e[1])).toString());
   const ms = Math.round(performance.now() - t0);
@@ -226,8 +229,7 @@ export async function ReportPage({
         title={meta.label}
         subtitle={
           <>
-            {scope.label} · {formatDate(scope.from, "MMM d, yyyy")}
-            {scope.to !== scope.from && ` – ${formatDate(scope.to, "MMM d, yyyy")}`}
+            {scope.label} · <span data-testid="report-range">{rangeHeading({ from: scope.from, to: scope.to, label: scope.rangeLabel })}</span>
             {barberLabel && ` · ${barberLabel}`}
             {view !== "combined" && ` · ${REPORT_VIEWS[view].toLowerCase()}`}
             <span className="ml-2 whitespace-nowrap rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-zinc-500">loaded in {ms} ms</span>
@@ -260,6 +262,7 @@ export async function ReportPage({
         location={rctx.shops.length > 1 ? locationProps(rctx, scope) : null}
         options={data.options}
         presets={data.presets}
+        payPeriods={payPeriods}
       />
       <SavedViews report={report} base={meta.href} query={query} views={views} canShare={can(ctx, "report_builder.build")} />
       <LocationNotice locations={scope} />
