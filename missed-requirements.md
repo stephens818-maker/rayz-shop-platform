@@ -1140,13 +1140,15 @@ The plan's P0 cases must all pass in the sandbox before the pilot. Status by cas
 
 ## 53. My Earnings on the staff app (Charles, Oct 28)
 
-- [x] Tips per ticket and per day, card and cash on tickets against cash declared, a split ticket's share (`/me/earnings/tips`).
-- [x] Pay-period totals that match their Payroll Report line and their row in the iSolved file to the cent (`reconciliation` on `/me/earnings`).
-- [x] Each card tip's Stripe transfer status and the payout that takes it to their bank (`/me/earnings/transfers`).
-- [x] Hours, commission and the greater-of per period (`pay` on `/me/earnings`).
+- [x] The Rayz App builder's contract (it replaces the first sketch): `/me/pay-periods`, `/me/earnings?period=current|<id>`, `/me/earnings/days`, `/me/earnings/tickets?date=` and `/me/payouts`, in integer cents.
+- [x] Tips per ticket and per day, card and cash on tickets against cash declared, a split ticket's share (`/me/earnings/days` and `/me/earnings/tickets`).
+- [x] Hours, hourly pay, commission and the greater-of (which rule applied and why), worked out on the server from their Payroll Report line (`employeePay`), so the app does no pay math.
+- [x] Pay-period totals equal to their Payroll Report row and their row in the iSolved file, to the cent (tested).
+- [x] Each card tip's Stripe transfer and the Stripe payout to their bank: Stripe's status (pending, in transit, paid, failed, canceled) and arrival date (`/me/payouts`). "Reversed" appears only when Stripe itself reversed a transfer; a bank return fails the payout.
 - [x] Their own only, on the server: no staff id taken, extra parameters refused, no shop login. Negative tests: `tests/db/my-earnings.test.ts`.
 - [ ] The My Earnings screen in the staff app (the Rayz App builder; request in NOTES-SYNC).
-- [ ] **Ask Charles:** should Barber and Apprentice have **See their own pay** (`compensation.own`) by default? Without it, `pay` is null.
+- [ ] **Ask Charles:** should Barber and Apprentice have **See their own pay** (`compensation.own`) by default? Without it, every pay field is null.
+- [ ] **Ask Charles:** paid time off shows at their wage (iSolved pays it at its own rate), and a sale's card tip Stripe itself reverses isn't paid to them again on its own. Both OK?
 
 ## Deferred by decision
 
