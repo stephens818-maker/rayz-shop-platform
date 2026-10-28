@@ -3207,6 +3207,8 @@ samples/squire/      example Squire CSV exports for the importer
 
 ## Cutover plan
 
+**Charles approved the rollout (Oct 28):** every surface live at once, one pilot shop first with Squire as its backup, and the other shops after the pilot's first clean pay period. [docs/rollout-runbook.md](docs/rollout-runbook.md) is the per-shop runbook, including payroll for a period where some shops are on Ray'z and others on Squire data. Where the plan below differs, the runbook wins. Floaters who work at the pilot and a Squire shop are flagged on the Payroll Report for their overtime.
+
 **Before the parallel run**
 
 - Confirm tax rates per shop with the accountant.
