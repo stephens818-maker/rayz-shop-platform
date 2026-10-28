@@ -2240,6 +2240,8 @@ export const paymentTransfers = pgTable(
     lastError: text("last_error"),
     createdAt: createdAt(),
     sentAt: ts("sent_at"),
+    /** Tip rows (core_0141): Stripe reversed the transfer itself (transfer.reversed). The platform never reverses a tip; this is only ever Stripe's doing. */
+    stripeReversedAt: ts("stripe_reversed_at"),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
   (t) => [
@@ -2733,6 +2735,8 @@ export type TipBatchKind = "end_of_night" | "daily_delay" | "weekly" | "manual" 
 export type TipBatchStatus = "draft" | "approved" | "completed" | "cancelled";
 export type TipPayoutMethod = "cash" | "stripe" | "payroll" | "prior";
 export type TipPayoutStatus = "pending" | "held" | "approved" | "processing" | "paid" | "failed" | "cancelled";
+/** Stripe's Payout.status. */
+export type StripePayoutStatus = "pending" | "in_transit" | "paid" | "failed" | "canceled";
 export type TipHoldKind = "manager" | "stripe_setup" | "transfers_pending";
 export type TipLedgerKind = "tip" | "refund" | "adjust";
 
@@ -2795,6 +2799,12 @@ export const tipPayouts = pgTable(
     stripeDebitId: text("stripe_debit_id"),
     stripeTransferId: text("stripe_transfer_id"),
     stripePayoutId: text("stripe_payout_id"),
+    /** Stripe's own status for the payout (core_0141), from its create call and the payout.* events: pending, in_transit, paid, failed or canceled. */
+    stripeStatus: text("stripe_status").$type<StripePayoutStatus>(),
+    /** When Stripe expects it in their bank or on their card, as Stripe reports it. */
+    arrivalDate: date("arrival_date", { mode: "string" }),
+    /** A payout Stripe had marked paid that the bank then sent back (payout.failed after payout.paid). */
+    returnedAt: ts("returned_at"),
     failureMessage: text("failure_message"),
     /** Cash: the business date of the drawer it came out of. */
     drawerDate: date("drawer_date"),

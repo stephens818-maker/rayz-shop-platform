@@ -27,6 +27,8 @@ export async function handleStaffConnectEvent(event: Stripe.Event, account: stri
     case "account.external_account.deleted":
       await applyStaffExternalAccount(account, event.type, event.data.object as Stripe.BankAccount | Stripe.Card);
       break;
+    case "payout.created":
+    case "payout.updated":
     case "payout.paid":
     case "payout.failed":
     case "payout.canceled":

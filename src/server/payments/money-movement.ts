@@ -1,5 +1,7 @@
 import type Stripe from "stripe";
+import type { StripePayoutStatus } from "@/db/schema";
 import { flags } from "@/lib/flags";
+import type { LocalDate } from "@/lib/time";
 import { AppError } from "@/server/errors";
 import { stripe } from "./processor";
 
@@ -48,7 +50,15 @@ export interface MovedIds {
   debitId: string | null;
   transferId: string | null;
   payoutId: string | null;
+  /** Stripe's status for the payout and the date it expects it to arrive, from the create call, when it said. */
+  payout?: { status: StripePayoutStatus | null; arrivalDate: LocalDate | null };
 }
+
+/** Stripe's arrival_date (midnight UTC of the day, in seconds) as a date. */
+export const arrivalDateOf = (s: number | null | undefined): LocalDate | null => (typeof s === "number" && s > 0 ? new Date(s * 1000).toISOString().slice(0, 10) : null);
+
+const STRIPE_PAYOUT_STATUSES: readonly string[] = ["pending", "in_transit", "paid", "failed", "canceled"];
+export const stripePayoutStatusOf = (s: unknown): StripePayoutStatus | null => (typeof s === "string" && STRIPE_PAYOUT_STATUSES.includes(s) ? (s as StripePayoutStatus) : null);
 
 /** A move that stopped partway, with what had already gone through so it can be unwound. */
 export class MovementError extends Error {
@@ -130,6 +140,7 @@ export const platformTipTransfers: MoneyMovement = {
         { stripeAccount: t.to, idempotencyKey: `${t.key}-payout` },
       );
       ids.payoutId = po.id;
+      ids.payout = { status: stripePayoutStatusOf(po.status), arrivalDate: arrivalDateOf(po.arrival_date) };
       await save(ids);
       return ids;
     } catch (e) {

@@ -1,7 +1,7 @@
 import type Stripe from "stripe";
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte, ne, notInArray, sql } from "drizzle-orm";
 import { db, DBorTx, Tx } from "@/db";
-import { cashDrawers, payGroups, payrollRuns, sales, shops, staff, tipAbsorptions, tipLedger, tipPayoutBatches, tipPayouts, type TipBatchKind, type TipHoldKind, type TipPayoutStatus } from "@/db/schema";
+import { cashDrawers, payGroups, paymentTransfers, payrollRuns, sales, shops, staff, tipAbsorptions, tipLedger, tipPayoutBatches, tipPayouts, type TipBatchKind, type TipHoldKind, type TipPayoutStatus } from "@/db/schema";
 import { instantDestination, storedExternalAccounts } from "@/domain/banking";
 import {
   BrandTipPolicy,
@@ -28,7 +28,7 @@ import { appBaseUrl } from "@/lib/deployment";
 import { Actor, SYSTEM, audit } from "@/server/audit";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { enqueueRaw, enqueueShopEmail } from "@/server/notifications/queue";
-import { LIVE_SWITCH_REASON, MovementError, type MovedIds, directPayoutsAvailable, moneyClient, moneyMovement, moneyMovementReady, transfersPendingReason } from "@/server/payments/money-movement";
+import { LIVE_SWITCH_REASON, MovementError, type MovedIds, arrivalDateOf, directPayoutsAvailable, moneyClient, moneyMovement, moneyMovementReady, stripePayoutStatusOf, transfersPendingReason } from "@/server/payments/money-movement";
 import { tipOverrides } from "@/server/compensation";
 import { checkPin } from "@/server/time-clock";
 import { TAX_FORMS_HOLD_REASON, canReceive, currentInstantFeeTerms, instantRate, issues1099K, setupHoldReason, staffAccount, stripeReady, type StaffPayoutAccount } from "./accounts";
@@ -512,7 +512,7 @@ export async function sendStripePayout(payoutId: string, now = new Date()) {
     const sim = (x: string) => `sim_${x}_${p.id.slice(0, 8)}${now.getTime().toString(36)}`;
     const [row] = await db
       .update(tipPayouts)
-      .set({ stripeAccountId: acct!.stripeAccountId, stripeTransferId: amount > pre.cents ? sim("tr") : null, stripePayoutId: sim("po"), ...where, sentAt: now, paidAt: now, status: "paid", updatedAt: now })
+      .set({ stripeAccountId: acct!.stripeAccountId, stripeTransferId: amount > pre.cents ? sim("tr") : null, stripePayoutId: sim("po"), stripeStatus: "paid", arrivalDate: todayLocal(now), ...where, sentAt: now, paidAt: now, status: "paid", updatedAt: now })
       .where(eq(tipPayouts.id, p.id))
       .returning();
     await audit(SYSTEM, "tips.stripe_sent", "tip_payout", p.id, { staffId: p.staffId, amountCents: amount, prefundedCents: pre.cents, instant: sending.instant, instantFeePaidBy: sending.instantFeePaidBy, simulated: true }, p.shopId);
@@ -538,7 +538,18 @@ export async function sendStripePayout(payoutId: string, now = new Date()) {
         payout: { method: sending.instant ? "instant" : "standard", destination: fast?.id ?? null, statementDescriptor: "RAYZ TIPS" },
       },
       async (x) => {
-        await db.update(tipPayouts).set({ stripeAccountId: acct!.stripeAccountId, stripeDebitId: x.debitId, stripeTransferId: x.transferId, stripePayoutId: x.payoutId, ...where, updatedAt: new Date() }).where(eq(tipPayouts.id, p.id));
+        await db
+          .update(tipPayouts)
+          .set({
+            stripeAccountId: acct!.stripeAccountId,
+            stripeDebitId: x.debitId,
+            stripeTransferId: x.transferId,
+            stripePayoutId: x.payoutId,
+            ...(x.payout ? { stripeStatus: x.payout.status, arrivalDate: x.payout.arrivalDate } : {}),
+            ...where,
+            updatedAt: new Date(),
+          })
+          .where(eq(tipPayouts.id, p.id));
       },
     );
   } catch (e) {
@@ -689,7 +700,12 @@ export async function markFailed(payoutId: string, message: string, o: { transfe
   const r = await db.transaction(async (tx) => {
     const p = await lockPayout(tx, payoutId);
     if (p.status === "failed" || p.status === "cancelled") return null;
-    const [row] = await tx.update(tipPayouts).set({ status: "failed", failureMessage: message, updatedAt: new Date() }).where(eq(tipPayouts.id, payoutId)).returning();
+    const now = new Date();
+    const [row] = await tx
+      .update(tipPayouts)
+      .set({ status: "failed", failureMessage: message, ...(p.status === "paid" ? { returnedAt: now } : {}), updatedAt: now })
+      .where(eq(tipPayouts.id, payoutId))
+      .returning();
     const n = await release(tx, payoutId);
     await recordPayoutPeriods(tx, [payoutId]);
     await audit(STRIPE_ACTOR, "tips.payout_failed", "tip_payout", payoutId, { staffId: p.staffId, netCents: p.netCents, message, entriesReleased: n, wasStatus: p.status }, p.shopId, tx);
@@ -717,11 +733,26 @@ async function payoutForStripe(accountId: string | null, po: { id: string; metad
   return (await db.query.tipPayouts.findFirst({ where: eq(tipPayouts.stripePayoutId, po.id) })) ?? null;
 }
 
-/** payout.* on an employee's account, from the Connect webhook: paid, or failed and reversed. */
-export async function applyStaffPayoutEvent(accountId: string, po: Pick<Stripe.Payout, "id" | "status" | "failure_message" | "metadata">) {
+const STRIPE_DONE: readonly (string | null)[] = ["paid", "failed", "canceled"];
+
+/**
+ * payout.* on an employee's account, from the Connect webhook: Stripe's status and expected arrival
+ * date are kept as it reports them (created, updated, in transit), then paid, or failed and reversed.
+ * Events can come out of order: a late pending or in_transit never overwrites paid, failed or
+ * canceled, but failed after paid does (the bank sent it back).
+ */
+export async function applyStaffPayoutEvent(accountId: string, po: Pick<Stripe.Payout, "id" | "status" | "failure_message" | "metadata"> & { arrival_date?: number | null }) {
   const p = await payoutForStripe(accountId, po);
   if (!p) return null;
   if (!p.stripePayoutId) await db.update(tipPayouts).set({ stripePayoutId: po.id }).where(and(eq(tipPayouts.id, p.id), isNull(tipPayouts.stripePayoutId)));
+  const status = stripePayoutStatusOf(po.status);
+  const keep = STRIPE_DONE.includes(p.stripeStatus) && !STRIPE_DONE.includes(status);
+  const arrival = arrivalDateOf(po.arrival_date);
+  if ((status && !keep && status !== p.stripeStatus) || (arrival && arrival !== p.arrivalDate))
+    await db
+      .update(tipPayouts)
+      .set({ ...(status && !keep ? { stripeStatus: status } : {}), ...(arrival ? { arrivalDate: arrival } : {}) })
+      .where(eq(tipPayouts.id, p.id));
   if (po.status === "paid") {
     const [row] = await db
       .update(tipPayouts)
@@ -738,11 +769,23 @@ export async function applyStaffPayoutEvent(accountId: string, po: Pick<Stripe.P
   return p;
 }
 
-/** transfer.reversed on the platform: a tip payout transfer pulled back (by us, or in the dashboard). */
+/**
+ * transfer.reversed on the platform: a tip payout transfer pulled back (by us, or in the dashboard),
+ * or a tip transferred at the sale that Stripe reversed. The platform never reverses a sale's tip
+ * (payment_transfers_tips_kept), so that one is Stripe's doing: kept on the transfer for My Earnings
+ * and audited for a manager to follow up.
+ */
 export async function applyTransferReversed(tr: Pick<Stripe.Transfer, "id" | "metadata">) {
   const p = (await db.query.tipPayouts.findFirst({ where: eq(tipPayouts.stripeTransferId, tr.id) })) ?? null;
-  if (!p) return null;
-  return markFailed(p.id, "The transfer to their Stripe account was reversed", { transferReversed: true });
+  if (p) return markFailed(p.id, "The transfer to their Stripe account was reversed", { transferReversed: true });
+  const now = new Date();
+  const [t] = await db
+    .update(paymentTransfers)
+    .set({ stripeReversedAt: now, updatedAt: now })
+    .where(and(eq(paymentTransfers.stripeTransferId, tr.id), eq(paymentTransfers.kind, "tip"), isNull(paymentTransfers.stripeReversedAt)))
+    .returning();
+  if (t) await audit(STRIPE_ACTOR, "tips.transfer_reversed_by_stripe", "payment_transfer", t.id, { staffId: t.staffId, saleId: t.saleId, amountCents: t.amountCents, stripeTransferId: tr.id }, t.shopId);
+  return null;
 }
 
 // ───────────────────────────── Notifications ─────────────────────────────
