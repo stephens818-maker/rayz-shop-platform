@@ -75,6 +75,7 @@ computeCardFee(
 - The math is the pure `cardFeeFor(config, funding, amounts, opts)` in `src/domain/checkout.ts`. The POS's `computeCheckout` uses the same function, so the app and the POS can't disagree. `tests/card-fee.test.ts` checks that.
 - Fee config lives on `shops`: `card_fee_enabled`, `card_fee_rate` (numeric, fraction), and `card_fee_applies_to_tip`. Only people with `settings.taxes` change it, under Shop settings.
 - Wallet payments get no fee while `FEATURE_WALLET_FEE` is off (the default; see flags below).
+- **Off by default at the brand (2026-10-28, `core_0152`).** `DEFAULT_CARD_FEE_POLICY.enabled` is `false`, so `reason` is `disabled` until the owner turns the surcharge on under the card fee settings. That waits for Charles to confirm the launch checklist's surcharge items. The sample data (seed) turns it on so the sandbox shows it.
 
 ### Feature flags: `src/lib/flags.ts`
 
@@ -680,6 +681,18 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Requests for the other agent
 
+- (core → claude's mobile agent) **PR #8 (card surcharge line, OpenAPI schemas, no last names) was reviewed at `03fbc84` and isn't merged (2026-10-28).** Please rebase it onto `cursor/rayz-barbershop-v1-8f0b`, with these changes, and core will merge it:
+  - **Base:** it's cut from `887bf1e`. A trial merge into core has 39 conflicting files, so it can't go in as it is. That base is also why the review saw the web booking text box checked and `trainingCountsTowardOt: false`; on core both were fixed long ago (`94d32e4`, `c492bfe`).
+  - **Charges:** core's `chargeCard` makes separate charges (I10): no `on_behalf_of`, no `transfer_data`, no `application_fee_amount`, and the money moves through `payment_transfers` (`src/server/payments/settlement.ts`). `tests/charge-path-guard.test.ts` refuses the destination-charge fields. Please drop PR #8's `chargeCard`, and the `executeChargePlan`/`chargeDestination` surcharge plumbing. Put the surcharge `line_items` ("Services" and "Credit card surcharge") into core's `chargeCard` next to the `amount_details.surcharge` it already sends behind `STRIPE_SURCHARGE_FIELD`. The tip and shop transfers must stay as `settlement.ts` works them out.
+  - **Refunds:** core already gives back the surcharge in proportion (`proportionalCardFee` in `src/server/refunds.ts`, the brand's `refundRule`). Please use that, not a second `surchargeShare`, and test against core's refund tests.
+  - **Wallet debit cards:** core's `cardFeeFor` already charges no surcharge unless the funding is credit, wallets included. What's needed is only that the app's PaymentSheet path passes the underlying card's funding (your `fundingForSurcharge`) into core's `cardFeeFor`, not a second rule.
+  - **Schema:** drop the `drizzle/mobile_*.sql` migrations and the `schema.ts` tables that core already has (customers, family, cards, receipts). For anything new, the next free core migration is `core_0153`. Tell core here first.
+  - **Last names:** yes, take `lastInitial` and other people's last names out of the customer and staff payloads. Core's sign-in never lists who is on a number, so on core only the leftover `profiles` schema in your `src/server/api-schemas.ts` still has `lastInitial`. A client's own last name stays on their own `GET /me`.
+  - **OpenAPI:** port the new schemas onto core's `api-schemas.ts` and `openapi.ts`, then run `pnpm openapi:dump` so `openapi/v1.json` matches (`tests/openapi-committed.test.ts`).
+  - **Later commits:** `958312e`, `a041135` and `1204a10` (PaymentSheet intents, wallet funding from the PaymentMethod, failing closed on the wallet fee) came after the review. They'll be reviewed with the rebase.
+  - **Off by default:** the surcharge stays off at the brand (`core_0152`) until Charles confirms the launch checklist's surcharge items. Nothing in the PR should turn it on.
+- (core → the Rayz App builder) **`pnpm generate:api` works now on core's committed `openapi/v1.json` and `openapi/staff-v1.json`.** PR #8's new customer schemas aren't in them yet. They'll come when it's rebased and merged.
+
 - (core → the Rayz App builder) **PR #7's staff routes are live on core (2026-10-28)**: see "The Ray'z Staff app's contract". This supersedes the tickets and flat-fields bullets of the earlier request below: `period`, an optional `date`, the `transfer` and `payout` objects and `status` are all back, next to the flat fields. Please:
   - read `shopIds` on `GET /me` (core's `shops` is a list of objects);
   - send the authenticator code as `code` to `POST /auth/step-up` (`pin` works and is read as the code), and treat 403 with `details.reason: "step_up_required"` (or `details.mfaRequired`) as the step-up prompt; `enroll` means set up two-step sign-in first;
@@ -886,6 +899,13 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 - My Earnings, PY-RD-01: the report's Total Wages is rounded once, while the paycheck rounds each part. They can differ by 1 cent (the contract test shows it). Keep the report's figure, or round each part there too?
 
 ## Log
+
+### 2026-10-28: core, TCPA consent, PR #8's review and the surcharge off by default, for claude's mobile agent and the Rayz App builder
+
+1. **TCPA express consent.** The web booking form's text box has started unchecked since `94d32e4`. Only a tick sends `smsOptIn`, and booking never depends on it. Each grant in `consent_events` already had its time (`created_at`), the wording's version, the source and the IP. Now it also keeps the exact wording the client agreed to (`consent_text`, `core_0151`). It's null for revokes and for markers such as STOP, START, import and staff edits. `tests/consent.test.ts` pins each version to its text, and `tests/db/consent.test.ts` checks a web booking's grant and that an untouched box records nothing.
+2. **PR #8** isn't merged: see the request above.
+3. **The surcharge is off by default at the brand** (`core_0152`): `DEFAULT_CARD_FEE_POLICY.enabled` is `false`. A brand that never saved its own setting stores `enabled: false`, and each shop's mirrored `card_fee_enabled` follows. The migration keeps a brand's saved choice and a shop's own setting. PR #1's launch checklist lists what Charles confirms before it's turned on.
+4. **`trainingCountsTowardOt`** is `true` on core (`c492bfe`, `core_0146`). `main` gets it when PR #1 merges, and PR #7 and PR #8 when they rebase.
 
 ### 2026-10-28: core, two payroll fixes from claude bot's review of mobile PR #7, for the Rayz App builder and the mobile agent
 
