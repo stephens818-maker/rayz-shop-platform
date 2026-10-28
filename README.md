@@ -729,8 +729,8 @@ Replaces Charles's payroll workbook. The full rules are in [docs/payroll-report-
 
 - **Payroll → Report** computes every row exactly as the workbook's Locations sheet does: checked on 33 real rows and 293 cells, 0 differences. Every total is the sum of its rows, so the workbook's short, circular and missing totals don't carry over. To the right of the workbook's columns it adds:
   - **O.T. Pay**: 1.5 × base rate × OT hours.
-  - **Training Pay**: at the training rate. This is a setting.
-  - **Labor Cost**.
+  - **Training Pay**: training hours × the employee's own flat training rate (Charles, Oct 28). It's its own line: never commission, Total Wages or the greater-of. The rate is per employee and effective-dated on their Staff page (**Training rate** card, brand-wide payroll admins, never their own), and each day's training is paid at the rate in effect that day. Without one, Payroll setup's training rate applies, then their hourly rate (flagged). A rate starts after the last locked pay period, and only one that hasn't started, and no locked period used, can be deleted.
+  - **Labor Cost**: Total Wages + O.T. Pay + Training Pay (+ any guarantee top-up and OT premium owed on commission). The iSolved file is unchanged: training hours go in `E_Training_Hours`, and the gate checks Training Pay against them.
 
   The Locations view shows Employee Cost as Labor Cost. A drill-down per person shows each formula with their numbers, their FT/PT status and their week-by-week hours at every shop.
 - **Cross-shop overtime:** hours over 40 in a Sun–Sat workweek, across every shop of the same FEIN (default Ray'z Inc.), split between shops by share of hours. It works across pay periods, across Dubuque's separate calendar and through DST weeks.
@@ -784,7 +784,7 @@ From the Claude bot review of the Payroll Report spec ([docs/payroll-report-spec
 
 - **Overtime from punches (C6).** An hours or OT adjustment can't go below what the punches show: it's refused, and an older one is paid at the punches' value and flagged. Adjustments are brand-only (`payroll.run`) and audited; managers fix punches on the timesheet.
 - **Cross-shop OT (C4)** adds hours at every shop of one legal entity (Ray'z Inc. by default, a field per pay group) before the 40.
-- **Training toward OT (C2)**, on by default: training on top of clocked hours counts toward the 40, and training inside a clocked shift is never counted twice (it's flagged instead).
+- **Training toward OT (C2)**, on by default and a setting until Charles and the CPA answer Q11 (under the FLSA, training is generally hours worked): training on top of clocked hours counts toward the 40, and training inside a clocked shift is never counted twice (it's flagged instead). Overtime past the hours clocked at a shop comes off that shop's training hours, never negative regular hours (flagged `training_overtime`).
 - **Squire-era sales (C5)** stay out of sales, refunds and tips.
 - **Pay periods** start on a Sunday, so they're whole workweeks.
 - **Late commission (I2):** commission for a locked period is paid in the next open one from the drill-down (migration `core_0130_payroll_commission_adjustments`), with the retro half-time it adds to that period's OT.

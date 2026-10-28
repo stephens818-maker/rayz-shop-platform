@@ -72,8 +72,8 @@ The platform adds three columns to the right. The export never contains them.
 | Col | Name | Formula |
 | --- | --- | --- |
 | T | O.T. Pay | 1.5 × C × Q (base rate) |
-| U | Training Pay | (training rate, or C when there's none) × S, when "Training pay is labor cost" is on; else 0 |
-| V | Labor Cost | N + T + U + the regular-rate OT premium owed (§3.4) |
+| U | Training Pay | training rate × S (§3.3): their Staff page's rate in effect each day, else Payroll setup's, else C (flagged) |
+| V | Labor Cost | N + T + U + any guarantee top-up + the regular-rate OT premium owed (§3.4) |
 
 ### 2.1 What Total Wages leaves out
 
@@ -82,7 +82,7 @@ The platform adds three columns to the right. The export never contains them.
 The platform counts both as labor cost:
 
 - **O.T. Pay** (T) is real labor cost on the report: in each person's and each shop's Labor Cost, in the Locations view, in every total and in the reconciliation gate. It uses the base rate after the cross-shop split, so it follows the same share-of-hours rule as the OT hours. iSolved's "Overtime 1.5" earning is blended OT from its accumulators and includes commission in the regular rate, so the real figure can be higher. The drill-down says "iSolved may compute blended OT higher."
-- **Training Pay** (U) is a setting ("Training pay is labor cost on the Payroll Report"), **off** by default until Q11 is answered; the report says labor cost excludes training pay. Training is paid at the person's training rate, or at their hourly wage when none is set.
+- **Training Pay** (U) is real labor cost too (Charles, Oct 28; the earlier "Training pay is labor cost" setting is gone): training hours × the person's own flat training rate, its own line outside the greater-of (§3.3). It's in each person's and each shop's Labor Cost, the Locations view, every total and the reconciliation gate. Periods locked before this keep their figures, with training pay left out of their Labor Cost.
 - **Labor Cost** (V) = N + T + U, plus the regular-rate OT premium commission adds (§3.4). The Locations view's Employee Cost is Labor Cost, and its Gross Profit is Service − Labor Cost.
 
 The per-employee drill-down shows each piece as a formula with the person's own numbers (for example, "O.T. Pay = 1.5 × $14.50 base rate × 6.40 OT hours = $139.20").
@@ -135,6 +135,12 @@ The per-shop export columns don't change; only the hour values do. The Payroll R
 C2 is the "training counts toward overtime" setting. It's **on** by default: FLSA counts training as hours worked, so training on top of clocked hours adds to the weekly basis in §3.2 and carries its share of the OT. It stays a setting until Charles answers Q11.
 
 Training is never counted twice. Where a training entry falls inside the same person's clocked worked time (at any shop), that part is already in their worked hours, so it's left out of the basis and the line gets a "training_in_hours" anomaly: it's exported as both regular and training hours, so it's paid twice unless the entry is fixed. With the setting off, every line with training gets the anomaly instead.
+
+**Training pay (Charles, Oct 28).** Training is paid at its own flat hourly training rate and never enters commission or the greater-of: Training Pay (U) = training hours (S) × the training rate, its own line, in Labor Cost. The rate is per employee and effective-dated (`staff_training_rates`, the **Training rate** card on their Staff page). Each day's training is paid at the rate in effect that day; when that changes inside the period the line's rate is hours-weighted and shows "mixed". Without a Staff page rate, Payroll setup's training rate applies, then their hourly wage, flagged `no_training_rate`. Squire-data shops and hours typed on the report use the rate on the period's last day. A rate is history: it starts after the last locked pay period, isn't edited, and only one that hasn't started, and no locked period used, can be deleted (a database trigger enforces it).
+
+**Overtime from training.** With C2 on, a shop's share of the week's OT can be more than the hours clocked at that shop (for example, a Saturday of training at another shop after 40 clocked hours). The OT past the clocked hours comes off that shop's training hours, so regular hours are never negative, and the line gets a `training_overtime` anomaly. Otherwise OT comes out of regular hours as always, so when training pushes a week past 40 the hourly side of the greater-of drops by those hours; taking it from training first is the alternative, pending Q11.
+
+Still open (Q11, Charles and the CPA): whether training counts toward the 40, and whether training hours are on top of clocked hours. C2 stays a setting, on by default, since under the FLSA training is generally hours worked.
 
 ### 3.4 Regular rate for overtime (C1)
 
@@ -282,7 +288,8 @@ Approve-and-lock is blocked while there's any mismatch, compared to the cent (mo
 
 | Check | What's compared |
 | --- | --- |
-| Rows | Each shop's total for every summed column (hours, money, O.T. Pay, Training Pay, Labor Cost) against the sum of its lines |
+| Rows | Each shop's total for every summed column (hours, money, O.T. Pay, Training Pay, Labor Cost) against the sum of its lines, and each line's Labor Cost against Total Wages + O.T. Pay + Training Pay + top-up + OT premium owed |
+| Training | Each shop's Training Pay against its exported `E_Training_Hours` × each line's training rate |
 | Export | Each export column's sum against the report total it comes from (for example, Comm Sales against NetComm), and the export's row count against the report's |
 | Locations | Each Locations total against the sum of the shops |
 
@@ -300,6 +307,8 @@ Anomalies never block the lock. They list what a person should look at before ap
 | `override` | Any hand-entered value, with its reason |
 | `missing_key` | No iSolved Employee Number yet |
 | `training_in_hours` | Training inside the person's clocked hours, so it's paid twice unless fixed; or, with C2 off, any training (§3.3) |
+| `training_overtime` | Overtime past the hours clocked at a shop, taken from that shop's training hours (C2, §3.3) |
+| `no_training_rate` | Training paid at the hourly rate, because the person has no training rate on their Staff page or in Payroll setup (§3.3) |
 | `below_punches` | An hours or OT adjustment below what the punches show; the report pays the punches (§3.5) |
 | `ot_regular_rate` | Half-time owed on commission for the period's OT, which the file doesn't carry (§3.4) |
 | `late_commission` | Commission for a locked period paid in this one, with its retro OT (§2.3) |
@@ -356,12 +365,11 @@ Payroll → Setup (`payroll.run`).
 | --- | --- | --- |
 | OT threshold | 40 h per workweek | |
 | OT multiplier (for O.T. Pay on the report only) | 1.5 | |
-| Training counts toward OT (C2) | On (only training on top of clocked hours) | Pending Q11 |
+| Training counts toward OT (C2) | On (only training on top of clocked hours) | Pending Q11 (Charles and the CPA) |
 | Commission base: card surcharge | Left out (the shop's) | |
 | Commission base: loyalty rewards | Come off the sale | Pending Charles (Q15) |
 | OT regular rate (C1) | `base`: the premium owed is flagged, not in the file | Needs Charles: `adjust` adds the premium column |
 | OT premium column header | `E_OT Premium Adj_Dollars` | Used only with `adjust` |
-| Training pay is labor cost | Off | Pending Q11 |
 | Round export to 2 decimals, half-up | Off (unrounded, as today) | Pending Charles (Q4) |
 | iSolved file cell formats | 0.00 on every hours and dollars column (the reference file) | |
 | A shop's file name; the all-shops workbook's name | `{start}-{end} {shop}`; `Rayz Payroll {start}-{end}` | Pending Charles (Q9) |
@@ -373,7 +381,7 @@ Payroll → Setup (`payroll.run`).
 
 Per pay group: label, legal entity, iSolved pay group code, export tab and calendar, including the submit-by offset (§4). Per period: its check and submit-by dates (§4). Per person (Payroll setup, and the Staff page's Payroll (iSolved) card): iSolved employee number (the Key), Key as text, iSolved name (`LAST, FIRST`), export position, "$0 hourly pay" (the owner's row: hours go to iSolved, Hourly Total is $0), and rates per shop.
 
-**Effective-dated rates.** With compensation plans on and Payroll using them (Staff → Compensation, both off by default), each employee's wage, service % and product % come from their plan's versions. Each sale is paid at the rate in effect on its checkout date (a refund at the original sale's date), and each day's hours at that day's wage. Where a rate changed inside the period, the report shows "mixed" and flags it (`mixed_rates`). With plans off, the rates are Payroll setup's, one per employee per shop.
+**Effective-dated rates.** With compensation plans on and Payroll using them (Staff → Compensation, both off by default), each employee's wage, service % and product % come from their plan's versions. Each sale is paid at the rate in effect on its checkout date (a refund at the original sale's date), and each day's hours at that day's wage. Where a rate changed inside the period, the report shows "mixed" and flags it (`mixed_rates`). With plans off, the rates are Payroll setup's, one per employee per shop. The training rate is effective-dated either way, on the Staff page, with Payroll setup's as the fallback (§3.3).
 
 ## 12. Golden files
 
@@ -397,7 +405,8 @@ Charles's golden data (33 employee rows, the seven iSolved tabs) holds real name
 | --- | --- |
 | C1 regular-rate OT | **Needs Charles.** The premium owed on commission is computed, in Labor Cost and flagged for hand entry (§3.4). The file column is a switch, off. |
 | C3 card tips off Cash Tips Recd | **Needs Charles and his CPA.** `cardTipsHeader` gives card tips their own column; it's set to Cash Tips Recd, so the file is unchanged (§11). |
-| Q11 training inside clocked hours | Open. C2 on, training inside a clocked shift isn't counted twice and is flagged. |
+| Training pay | Resolved (Charles, Oct 28): training hours × the employee's own effective-dated training rate, its own line outside the greater-of, in Labor Cost (§3.3). |
+| Q11 training toward OT, and on top of clocked hours | Open for Charles and the CPA. C2 on by default; training inside a clocked shift isn't counted twice and is flagged (§3.3). |
 | Q15 loyalty in the commission base | Open. Rewards come off the sale, as today; a setting (§2.2). |
 | Q16 Dubuque export | Resolved: Dubuque has its own pay calendar and its own file in the same format. |
 | Q17 owner row and the Coralville NetComm gap | Open. Flagged, not fixed. |

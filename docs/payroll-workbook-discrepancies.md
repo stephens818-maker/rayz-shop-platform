@@ -183,7 +183,7 @@ Total Wages (N) is `max(hourly total, service commission) + product commission`,
 The platform adds three columns to the right of the workbook's (the export doesn't change):
 
 - **T O.T. Pay** = 1.5 × base wage × OT hours, after the cross-shop split. iSolved computes blended OT itself, which may come out higher.
-- **U Training Pay** = training rate (or the hourly wage when there's no training rate) × training hours. This is a setting, **off** by default until Q11 is answered.
+- **U Training Pay** = training hours × the employee's own flat training rate (Charles, Oct 28), its own line outside the greater-of. The rate is per employee and effective-dated on their Staff page, with Payroll setup's, then the hourly wage (flagged), as fallbacks. It's always in Labor Cost.
 - **V Labor Cost** = N + T + U, plus the regular-rate OT premium owed on commission (spec §3.4). This is the Payroll Report's Employee Cost. The table leaves the premium out: the three people with OT earn under their hourly pay in service commission, so only their product commission raises the regular rate, by about $0.19 of premium in all.
 
 | Location | Total Wages (rows) | OT hours | O.T. Pay | Training hours | Training Pay | Labor Cost | Gross Profit after labor |
@@ -197,7 +197,7 @@ The platform adds three columns to the right of the workbook's (the export doesn
 | LeClaire | 1,921.65 | 0 | 0.00 | 7 | 138.00 | 2,059.65 | 1,347.42 |
 | **Total** | **34,359.78** | **2.84** | **71.25** | **39.5** | **689.12** | **35,120.15** | **30,070.05** |
 
-Training is paid at the hourly wage here because the workbook has no training rate. On the platform, a training rate can be set per person.
+Training is paid at the hourly wage here because the workbook has no training rate. On the platform each person's training rate is set on their Staff page, and the report flags training paid at the hourly wage (`no_training_rate`) until it is.
 
 ## 7. Typed cells (flagged, not fixed)
 
@@ -304,6 +304,8 @@ On the platform, hours come from time entries and sales from the POS, so these w
 ## 16. Training hours and overtime (C2, Q11)
 
 If the Training column is time **on top of** the clocked hours and counts as hours worked, some people's combined hours go over 80 in the period, so more OT could be owed. In the anonymized copy, the Rock Island barber on row 34 goes over by 2.43 hours. These hours are already paid once at the base rate (as regular or training), so the extra cost is the 0.5× premium on them. If training is already inside the clocked hours, it's 0. Moving hours into OT would change the upload values (not the format), and Charles has said not to change the iSolved upload, so this is for the conversation with the CPA and iSolved only. The platform's "count training toward the 40" setting (**on** by default) handles it from the time entries, never counting a training block twice (section 9).
+
+Charles settled how training is paid (Oct 28): training hours × the person's own training rate, outside the greater-of, in Labor Cost, with training hours in `E_Training_Hours` as before. Still open for Charles and the CPA: whether training counts toward the 40 and whether it's on top of the clocked hours. Until then the setting stays on, since under the FLSA training is generally hours worked. When training on top of clocked hours goes past the 40 at a shop where the person clocked fewer hours than that shop's share of the OT, the rest of the OT comes off the training hours there, so regular hours are never negative (`training_overtime`).
 
 ## 17. The fix list and the tests
 

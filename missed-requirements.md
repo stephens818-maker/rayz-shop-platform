@@ -1163,9 +1163,23 @@ The plan's P0 cases must all pass in the sandbox before the pilot. Status by cas
 - [ ] **Ask Charles:** should Barber and Apprentice have **See their own pay** (`compensation.own`) by default? Without it, every pay field is null.
 - [ ] **Ask Charles:** paid time off shows at their wage (iSolved pays it at its own rate), and a sale's card tip Stripe itself reverses isn't paid to them again on its own. Both OK?
 
+## 54. Training pay (Charles, Oct 28)
+
+- [x] Training pay = training hours × the training rate, its own line outside the greater-of: never commission, Total Wages or NetComm (engine tests, and the golden rows' greater-of columns unchanged).
+- [x] The training rate is per employee and effective-dated, on their Staff page (`core_0143`): each day's training at the rate in effect that day, a change mid-period flagged as mixed. A rate starts after the last locked period and only one that hasn't started, and no locked period used, can be deleted (`core_0144`). Brand-wide payroll admins set it, never their own.
+- [x] Fallbacks: Payroll setup's training rate, then the hourly rate, flagged `no_training_rate`.
+- [x] In Labor Cost and the totals on the Payroll Report (the old "Training pay is labor cost" setting is gone), and in the approve-and-lock gate: Training Pay against `E_Training_Hours` at each rate, and each line's Labor Cost.
+- [x] Exported in `E_Training_Hours`, the format unchanged (golden export test, cell for cell).
+- [x] Its own line in `/me/earnings`, top level and per shop, to the cent with the report (`tests/db/training-pay.test.ts`, `tests/my-earnings-contract.test.ts`).
+- [x] C2 stays a setting, on by default. Overtime past the hours clocked at a shop comes off that shop's training, never negative regular hours (`training_overtime`).
+- [x] Locked periods keep their figures.
+- [ ] **Ask Charles and the CPA (Q11):** does training count toward the weekly 40, and are training hours on top of clocked hours? Until then, training counts (FLSA: training is generally hours worked).
+- [ ] **Ask Charles and the CPA:** when training on top of clocked hours takes a week past 40, the overtime comes out of regular hours as any overtime does, so the hourly side of the greater-of drops by those hours. Keep that, or take the overtime from training first?
+- [ ] **Ask Charles:** My Earnings shows only the shops someone works at. Should it also show another shop where they have hours in the period, such as a day of training there? It's on the Payroll Report and in the iSolved file either way.
+
 ## Deferred by decision
 
 - I10 is decided: separate charges and transfers (section 5), with tips to barbers' recipient accounts on (`FEATURE_TIP_TO_BARBER`, the CPA approved it on 2026-10-28), turned off per shop with the brand setting `tip_to_barber` (section 50). Live tip transfers also need `MONEY_MOVEMENT_LIVE`.
-- The Q11/C2 training setting stays a setting until Charles answers Q11 (on by default since section 46).
+- The Q11/C2 training setting stays a setting until Charles and the CPA answer Q11 (on by default since section 46; training pay itself is settled, section 54).
 - PR #8 isn't merged.
 - `DEMO_MODE` isn't turned on in production, because it would break the Vercel demo.
