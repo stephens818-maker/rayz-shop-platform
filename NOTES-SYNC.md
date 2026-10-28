@@ -496,12 +496,21 @@ Append-only `analytics_events`, written by database triggers on the tables both 
 - **Banking (each employee's own Stripe recipient account with no Stripe Dashboard, apart from the shops'; see "Barber payout accounts").** Set up with the embedded components (`POST /banking/account-session`); only where `GET /banking`'s `payoutOnboarding.available` is true (403 `tip_to_barber_off` otherwise). `POST /banking/onboarding-link`, the fallback, starts or resumes Stripe's hosted onboarding (identity, a bank account, and a debit card for instant payouts) and returns `step` (`start`, `resume`, `update` or `done`); Stripe sends the browser back to `/staff-app/stripe?stripe=return|refresh`, which opens `${STAFF_APP_SCHEME:-rayzstaff}://banking?stripe=…`. Then call `GET /banking?refresh=1`: status, `onboarding`, `requirements` (`due` and `pending` as `{ key, label }`, `deadline`, `disabledReason`), the default destination, and `instant` (`allowed`, `eligible`, `to` the card instant payouts go to, `feePaidBy`, `fee`). `GET /banking/external-accounts` lists every bank account and card (type, name, last 4, default, instant). `POST /banking/dashboard-link` returns 409 `no_stripe_dashboard` outside the simulator (in it, it swaps the test card and bank). Only Stripe ids, statuses and the type, name and last 4 are stored or returned. In the simulator the link is null and setup finishes at once. Test mode only (see "Tip payouts").
 - **Pop-ups.** `GET /popups` returns unseen milestones (sales amounts only with `reports.money`), `open_shift` for a shift never clocked out, and `clock_in_reminder` when they're off the clock and their first client or shift starts within 30 minutes.
 - **Push for their own bookings.** `POST /devices` registers the phone in `staff_devices` (5 at most per person; a token moves to whoever signs in on it). A first phone turns on push for new, changed and cancelled bookings if they never picked. `queueStaffAlert` (`src/server/staff-alerts.ts`) queues one `push` job per phone, with `to` the `staff_devices` id, kind `staff_confirm`, `staff_reschedule`, `staff_cancel` or `staff_arrived`, and data `{ kind, appointmentId }`. Never when they made the change themselves. APNs sends staff phones under `STAFF_APNS_BUNDLE_ID` (the same key signs for both apps).
-- **Migration `core_0099_staff_app`:** `staff_app_tokens` and `staff_devices`. Offboarding revokes both. Later: `core_0102_staff_app_gaps`, `core_0103_staff_app_invite_jobs`, `core_0104_staff_payout_confirm_scrub` and `core_0105_tip_payout_periods`, then the payouts, payroll and staff delta migrations up to `core_0125_pay_questions_scrub`, then `core_0126_brand_display` to `core_0141_tip_payout_tracking`; the next free number is `core_0142`.
+- **Migration `core_0099_staff_app`:** `staff_app_tokens` and `staff_devices`. Offboarding revokes both. Later: `core_0102_staff_app_gaps`, `core_0103_staff_app_invite_jobs`, `core_0104_staff_payout_confirm_scrub` and `core_0105_tip_payout_periods`, then the payouts, payroll and staff delta migrations up to `core_0125_pay_questions_scrub`, then `core_0126_brand_display` to `core_0142_staff_app_mfa`; the next free number is `core_0143`.
 - **New env:** `STAFF_APNS_BUNDLE_ID` (the staff app's iOS bundle id; the customer app's when unset) and `STAFF_APP_SCHEME` (the staff app's URL scheme; `rayzstaff` when unset).
 - **The builder's gap list (2026-10-27): ST-C1 to ST-C10, ST-I1 to ST-I8 and ST-I10 are in.** The OpenAPI document lists every new path with its permission (calendar, clients, timecards, earnings by pay period and YTD, payout setup and cutover, time off, walk-ins, sales and Terminal, the front-desk screen, the manager board, sessions, invites, code sign-in). Every route runs `staffRoute`: the staff app's own version gate (`STAFF_APP_{IOS,ANDROID}_MIN_VERSION`, 426 everywhere but `/config`), then the token, then `X-Shop-Id` through `assertShopAccess`, then `authorizeContext`. Path ids go through `assertShopAccess` or `requireInTenant`.
 - **Card tips go straight to employees' banks through Stripe (ST-C7, ST-I9; Charles's decision).** `FEATURE_STAFF_STRIPE_PAYOUTS` is on unless `false`: `/banking` works, `GET /me` has `features.banking: true`, `GET /config` has `payouts: { defaultMethod: "stripe", stripe: true }`, and `GET /me/payout-setup` returns `defaultMethod: "stripe"` with each shop's method and a W-2 note. A shop set to pay through payroll still shows `payroll`. With the flag `false`, every `/banking` route is 403 with `details: { feature: "staff_stripe_payouts", enabled: false }` and everything reads payroll. The switch is `src/server/tips/payout-model.ts`. The tips are W-2 wages either way: every direct payout goes to iSolved as tips already paid, reconciled per employee and pay period.
 - **Cash tip declarations (SB-C3, 2026-10-27).** `GET /tips/declarations?from=` (default the last 62 days) returns `rules` (`enabled`, `atClockOut`, `attestation`, `lockDay`), `reminder` (last month, when it's due) and `declarations` (each with `current` and `closesOn`). `POST /tips/declarations` takes `{ shopId, businessDate, amountCents, attest: true, replacesId?, reason? }` (a correction needs `reason`) and returns 201 `{ id, businessDate, amountCents, replacesId }`. `GET /clock` has `cashTips: { attestation } | null`; where it's set, `POST /clock/punch` with type `out` takes `cashTips: { cents, attest: true }` and the reply's `cashTips` is `{ declared, error }`: the punch stands either way. Both need `tips.own`.
-- **My Earnings: the Rayz App builder's contract (2026-10-28; replaces the earlier `/me/earnings`, `/me/earnings/tips` and `/me/earnings/transfers` shapes, which are gone).** Five reads. The employee always comes from the token: no `staffId` anywhere, and `staffId` or any other unknown query parameter is 400. Every amount is integer cents. Handlers: `src/server/staff-api/earnings.ts`.
+- **My Earnings: the Rayz App builder's contract with claude bot's corrections (2026-10-28; replaces the earlier `/me/earnings`, `/me/earnings/tips` and `/me/earnings/transfers` shapes, which are gone).** Five reads, plus `/me/earnings/ytd`. Every amount is integer cents. Handlers: `src/server/staff-api/earnings.ts`.
+  - **Privacy (all six):**
+    - The employee comes from the token only. There's no `staffId` anywhere: `staffId` or any other unknown query parameter is 400, and another employee's ids are 404.
+    - Every answer, errors included, has `Cache-Control: private, no-store` and `X-Staff-Cache: none`.
+    - **Staff MFA:** the session must have passed a second factor, or the answer is 403 with `error.details.mfaRequired`. `code` means they have an authenticator: send its code to `POST /me/step-up`. A password step-up never counts. `enroll` means they don't: call `POST /me/two-factor/setup`, which returns `{ ticket, enroll: { qr, secret } }` and needs a sign-in or step-up in the last 15 minutes, otherwise 403 `stepUpRequired: "two_factor"`. Then call `POST /me/two-factor/verify` with `{ ticket, code }`. From then on every sign-in asks for the code, and a two-step sign-in counts from the start.
+    - **Where MFA applies:** on everywhere but the sandbox demo (`DEMO_MODE`). In the test suite it's on only when `ENFORCE_STAFF_MFA=1`, which also forces it on anywhere. The Demo Shop's review login is let through.
+    - **Audit:** every view is in the audit log as `staff.earnings_view`, with the endpoint, the period asked for and the session. A refused request isn't logged as a view.
+    - **Clients:** first names only (the first word of the first name), or `Walk-in`.
+  - **One payroll engine function:** `periodPay(lines)` (`src/domain/my-earnings.ts`) turns their Payroll Report lines into every pay figure. The report and the iSolved file are built from those same lines.
+  - **Locked and exported periods:** these serve the lock's snapshot (lines, days and workweeks, kept by `lockPayroll`) and are never worked out again. Items served from the lock have `fromLock: true`. Each endpoint carries `periodStatus` (`draft`, `approved`, `locked` or `exported`) and `isEstimate` (true until locked), or null for a from/to that isn't a period.
   - **Pay periods.** A period's `id` is its start date. `period=current` is the one holding today. Send `period` or `periodId`, not both (400). A malformed id is 400. A well-formed id that no period starts on is 404, and so is `current` for someone on no shop's pay calendar.
   - **The greater-of is worked out on the server, in the Payroll Report's own code path.** `/me/earnings` reads the same `buildPayroll` run the Payroll Report and the iSolved file come from (the approved snapshot once locked). It then reads their line through `employeePay` (`src/domain/payroll/calc.ts`). The app does no pay math: show the numbers as given.
   - `GET /me/pay-periods` → `{ periods: [{ id, start, end, number, checkDate, periodStatus, payrollStatus, exportStatus, isEstimate, current, shopIds }] }`, newest first: the current one and eight before it.
@@ -516,27 +525,47 @@ Append-only `analytics_events`, written by database triggers on the tables both 
     - **Commission** (`compensation.own`, otherwise null): `serviceCommissionRate` and `serviceCommissionCents` (the report's Commission$), `productCommissionRate` and `productCommissionCents`, `commissionCents` (service plus product) and `lateCommissionCents`.
     - **The greater-of** (`compensation.own`, otherwise null): `appliedRule` (`hourly`, `commission`, or `mixed` when their shops differ), `explanationCode` (`hourly_higher`, `commission_higher`, `equal` or `mixed`) with `explanation` text, `greaterOfCents` (what the winning side pays) and `topUpCents` (hourly above service commission, when hourly applied).
     - **Comm Sales** (`compensation.own`, otherwise null): `commSalesCents` is `E_Comm Sales_Dollars`. `commSalesAdjustmentCents` is 0 unless payroll typed over Comm Sales on the report.
-    - **Other wages** (`compensation.own`, otherwise null): `otEstimatedCents` (with `otDisclosure`), `trainingRateCents`, `trainingPayCents`, `ptoPayCents`, `guaranteeTopUpCents`, `otPremiumCents` and `wagesCents`.
+    - **Other wages** (`compensation.own`, otherwise null): `otEstimatedCents` (`otIsEstimate: true`, with `otDisclosure` to show: iSolved applies the final 1.5x), `trainingRateCents`, `trainingPayCents`, `ptoPayCents`, `guaranteeTopUpCents`, `otPremiumCents` and `wagesCents`.
     - **Tips** (`tips.own`): `cardTipsCents`; `cashTipsCents`, which includes cash they declared; `giftCardTipsCents`; and `cashOnTicketsCents`, `declaredCashTipsCents` and `tipAdjustmentsCents` for the breakdown. `totalTipsCents` is `E_Cash Tips Recd_Dollars`.
     - **Sales** (`report.my_sales.view` with `reports.money`): `serviceSalesCents` and `productSalesCents`.
     - **`totalCents`:** wages plus Cash Tips Recd. It's null unless they may see both wages and tips.
-    - **The rest:** `workweeks` (each week's hours, partial weeks flagged, and `postings` by period), `adjustments` (`late_tip`), `refunds` (`card_tip_refund`, the shop's cost, `reducesPay: false`), `declarations`, `cashTipReminder` and `payout` (as `/me/payout-setup`).
-    - **`shops[]`, the same per shop:** `pay` (the `employeePay` parts), `hours`, `paystub` (iSolved earning names), `tipsInPayrollCents`, `tipsPaidSeparatelyCents`, `source` and `squireImported` (see the rollout), `locked`, and `reconciliation` (each column of their iSolved row against their Payroll Report line, with `matches`).
+    - **`workweeks[]`:** one per Chicago workweek (Sunday to Saturday) touching the period, with hours at every shop added up, since overtime is per employer across shops. Each has `weekStart`, `weekEnd`, `timezone`, `productionHours`, `trainingHours`, `regularHours`, `otHours`, `basisHours` (the hours toward the threshold), `partial`, `otIsEstimate`, `otLabelCode` and `otLabel`, `shops[]` (`shopId`, `shopName`, `productionHours`, `trainingHours`, `otHours`) and `postings` by period.
+    - **`adjustments[]`:** changes after a period was exported, paid in this open period and flagged. Each is `{ id, kind, shopId, saleId, amountCents, effectCents, originalDate, postedDate, lateDeclaration, flagged: true, reducesPay: false, copy }`, and `kind` is one of:
+      - `late_tip`: a card tip that settled late.
+      - `late_declaration`: a cash tip declared after its day's period locked. It's posted on the day it was declared and is on the Payroll Report as a `late_declaration` anomaly. A correction of a declaration a locked period paid is still 409.
+      - `tip_refunded_after_export`: `effectCents: 0`. The shop covers the refund, nothing is taken back, and it's on the report as an anomaly.
+    - **Late changes never reopen anything:** a locked period is never reopened, pay is never negative, and a tip is never clawed back.
+    - **The rest:** `refunds` (`card_tip_refund`, the shop's cost, `reducesPay: false`), `declarations` (with `postedDate` and `late`), `cashTipReminder` and `payout` (as `/me/payout-setup`).
+    - **`shops[]`, the same per shop:**
+      - `pay` (the `employeePay` parts), `hours`, `paystub` (iSolved earning names), `tipsInPayrollCents` and `tipsPaidSeparatelyCents`.
+      - `source` and `squireImported` (see the rollout), `locked` and `fromLock`.
+      - `tipToBarber` (the shop's tip switch), `tipTransfersEnabled` and `payrollCopy`.
+      - `reconciliation`: each column of their iSolved row against their Payroll Report line, with `matches`.
     - **The identities:** `greaterOfCents + productCommissionCents + lateCommissionCents + commSalesAdjustmentCents = hourlyPayCents + commSalesCents`, and `totalCents = wagesCents + totalTipsCents`, both exactly.
-  - `GET /me/earnings/days?periodId=` (or `period`, or any `from`/`to` up to 31 days) → `{ from, to, periodId, days: [{ date, cardTipsCents, cashTipsCents, serviceSalesCents, productSalesCents, productionHours, trainingHours, tickets, giftCardTipsCents, cashOnTicketsCents, declaredCashTipsCents, tipAdjustmentsCents, totalTipsCents, ptoHours }] }`. Over a pay period the days add up to `/me/earnings`.
-  - `GET /me/earnings/tickets?date=` → `{ from, to, date, tickets, refunds }`. Each ticket has:
-    - `saleId`, `shopId`, `shopName`, `clientFirstName` (`Walk-in` when there's no client), `startedAt` and `serviceName`.
+  - `GET /me/earnings/days?periodId=` (or `period`, or any `from`/`to` up to 31 days) → `{ from, to, periodId, periodStatus, isEstimate, days: [{ date, fromLock, shopIds, cardTipsCents, cashTipsCents, serviceSalesCents, productSalesCents, productionHours, trainingHours, tickets, giftCardTipsCents, cashOnTicketsCents, declaredCashTipsCents, tipAdjustmentsCents, totalTipsCents, ptoHours }] }`. Over a pay period the days add up to `/me/earnings`.
+  - `GET /me/earnings/tickets?periodId=<id|current>&date=<YYYY-MM-DD>` → `{ periodId, date, timezone, periodStatus, isEstimate, tickets, refunds }`. Both parameters are required, and `date` is a Chicago calendar day inside that period. Anything else is 400, and a period id no period starts on is 404. Each ticket has:
+    - `saleId`, `shopId`, `shopName`, `clientFirstName` (the first name only, `Walk-in` when there's no client), `startedAt` and `serviceName`.
     - `serviceCents` and `productCents`: what payroll credits them on that ticket.
     - `cardTipCents`, `cashTipCents` and `giftCardTipCents`: their share only on a split ticket, with `shared: true`.
-    - `tipDisposition` (`stripe`, `payroll` or `cash`), `transfer` and `payout`.
+    - `tipDisposition` (`stripe`, `payroll` or `cash`; `payroll` where the shop's tip switch is off).
+    - The transfer and its payout as separate flat fields: `transferStatus` (`pending`, `paid`, or `reversed` with `transferReversedBy: "stripe"`) with `transferArrivalDate`, then `payoutId`, `payoutStatus` (Stripe's: `pending`, `in_transit`, `paid`, `failed` or `canceled`; a payout is never `reversed`) and `payoutArrivalDate`. These are null where there's none.
     - `originalDate` and `postedDate` for a late tip, and `lateDeclaration`.
-  - `GET /me/payouts?periodId=` (or `period`, or `from`/`to` up to 31 days) → `{ from, to, periodId, bankLast4, tipTransfersEnabled, payrollCopy, transfers, payouts }`.
-    - `transfers`: each card tip's transfer to their Stripe account at the sale, `{ id, saleId, shopId, amountCents, status, reversedBy, arrivalDate, date, payoutId, payoutStatus, payoutArrivalDate }`. `status` is `pending` or `paid` (in their Stripe account). A transfer Stripe refused at the sale shows `pending`: it's paid with their next payout.
-    - `payouts`: the Stripe payouts to their bank or debit card, `{ id, shopId, status, amountCents, arrivalDate, bankLast4, failureMessage, feeCents, instant, returned, createdAt, paidAt }`. `status` is Stripe's own: `pending`, `in_transit`, `paid`, `failed` or `canceled`. `arrivalDate` is Stripe's `arrival_date`, from `payout.created` and `payout.updated` on the Connect webhook.
-    - **Tip transfers are never reversed.** Ray'z never reverses one (`payment_transfers_tips_kept`). A transfer is `reversed` (`reversedBy: "stripe"`) only when Stripe itself reversed it (`transfer.reversed`), which is recorded and logged. A payout their bank returns is `failed` with `returned: true`, but its transfers stay `paid`: the money is back in their Stripe balance and goes out with their next payout.
-  - **Tests:** `tests/db/my-earnings.test.ts` and `tests/my-earnings-pay.test.ts`.
-    - The DB test checks the period's figures against their row on the Payroll Report page (`payrollReportData`) and their row in the iSolved workbook, to the cent. Hourly, OT, training and paid-time pay are the file's hours at their rate, Comm Sales and Cash Tips Recd are the file's dollars, and `totalCents` is the sum.
-    - The unit test checks `employeePay` against every row of the committed anonymized golden payroll.
+  - `GET /me/payouts?periodId=` (or `period`, or `from`/`to` up to 31 days) → `{ from, to, periodId, periodStatus, isEstimate, bankLast4, tipTransfersEnabled, payrollCopy, shops, transfers, payouts }`.
+    - `shops`: each shop's tip switch, `{ shopId, tipToBarber, tipTransfersEnabled, payrollCopy }`. Where the switch is off, card tips are paid through payroll.
+    - `transfers`: each card tip's transfer to their Stripe account at the sale, `{ id, saleId, shopId, amountCents, transferStatus, transferReversedBy, transferArrivalDate, date, payoutId, payoutStatus, payoutArrivalDate }`. `transferStatus` is `pending` or `paid` (in their Stripe account). A transfer Stripe refused at the sale shows `pending`: it's paid with their next payout.
+    - `payouts`: the Stripe payouts to their bank or debit card, `{ id, shopId, payoutStatus, amountCents, arrivalDate, bankLast4, failureMessage, feeCents, instant, returned, createdAt, paidAt }`. `payoutStatus` is Stripe's own: `pending`, `in_transit`, `paid`, `failed` or `canceled`, never `reversed`. `arrivalDate` is Stripe's `arrival_date`, from `payout.created` and `payout.updated` on the Connect webhook.
+    - **Tip transfers are never reversed.** Ray'z never reverses one (`payment_transfers_tips_kept`). A transfer is `reversed` (`transferReversedBy: "stripe"`) only when Stripe itself reversed it (`transfer.reversed`), which is recorded and logged. A payout their bank returns is `failed` with `returned: true`, but its transfers stay `paid`: the money is back in their Stripe balance and goes out with their next payout.
+  - **Tests:**
+    - **`tests/my-earnings-contract.test.ts`:** for every golden row, `periodPay` equals the report row and the export row to the cent: every `exportRowChecks` column, hours, greater-of, tips, wages, the OT estimate, and labor cost with OT pay. It runs the anonymized rows, plus the private audit rows when present locally. The report's Total Wages is rounded once and may differ by 1 cent (PY-RD-01).
+    - **`tests/db/my-earnings.test.ts`:** the period against their row on the Payroll Report page and in the iSolved workbook, to the cent. Also tickets by `periodId` and `date`, separate transfer and payout status, the tip switch, and isolation between employees.
+    - **`tests/db/my-earnings-locked.test.ts`:** locked and exported periods unchanged by later punches, sales or rate changes; a late declaration and a refund after export.
+    - **`tests/db/my-earnings-privacy.test.ts`:**
+      - A barber at two shops, with their workweek's hours across both.
+      - Tenant and IDOR checks, including `X-Shop-Id` for a shop they aren't at, and first names.
+      - `no-store` and the audit log on every view.
+      - MFA with `ENFORCE_STAFF_MFA=1`.
+      - Shops gated by the rollout pilot: the pilot live here, a second-wave shop from its Squire report, each barber seeing only their own row, and the tip switch on at the pilot only.
+    - **`tests/my-earnings-pay.test.ts`:** unit tests for the mapping.
 - **Known gaps, for the app builder's list:**
   - Approved-device sign-in is in (L36, 2026-10-27): see the log entry. The app needs the screen for it.
   - A location block that starts after sign-in turns token requests into 401 "Please sign in again"; signing in again then shows the block message (403, `details.networkBlocked`).
@@ -611,6 +640,24 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Requests for the other agent
 
+- (core → the Rayz App builder) **My Earnings changed with claude bot's corrections (2026-10-28). Some changes break the app's current calls; please update `mobile/`.** Details are under "My Earnings" in "Staff app API".
+  - **MFA screens:** every My Earnings endpoint can answer 403 with `error.details.mfaRequired`.
+    - For `code`: ask for their authenticator code, send it to `POST /me/step-up`, then retry.
+    - For `enroll`: call `POST /me/two-factor/setup`, show the QR (`enroll.qr`) and the key (`enroll.secret`), then send the first code with the ticket to `POST /me/two-factor/verify`.
+    - If setup answers 403 `stepUpRequired: "two_factor"`, ask for their password at `POST /me/step-up` first.
+    - After that, sign-in returns `{ twoFactor }`, so the app needs the code step at `/auth/login/code` (already in the API).
+    - It's on in production, off in the sandbox demo.
+  - **Tickets:** `GET /me/earnings/tickets` needs `periodId` (an id or `current`) and `date` (a Chicago day inside it). `date` alone, `period=` and `from`/`to` are now 400. The answer is `{ periodId, date, timezone, periodStatus, isEstimate, tickets, refunds }`.
+  - **Transfer and payout are separate flat fields:**
+    - On tickets, the nested `transfer` and `payout` objects are gone. Use `transferStatus`, `transferReversedBy`, `transferArrivalDate`, `payoutId`, `payoutStatus` and `payoutArrivalDate`.
+    - On `/me/payouts`, `transfers[].status`, `reversedBy` and `arrivalDate` are now `transferStatus`, `transferReversedBy` and `transferArrivalDate`.
+    - `payouts[].status` is now `payoutStatus`, and it's never `reversed`.
+  - **Every endpoint:** `periodStatus` and `isEstimate`. Show "Estimate" while `isEstimate` is true. `fromLock` marks figures the lock kept.
+  - **OT:** show OT dollars as an estimate (`otIsEstimate`, with `otDisclosure`). `workweeks[]` gives each Chicago workweek across all their shops, with `shops[]` and `basisHours`.
+  - **Tip switch:** `shops[].tipToBarber` and `tipTransfersEnabled`, on `/me/earnings` and `/me/payouts`. Where the switch is off, show `payrollCopy`, not Stripe.
+  - **Late changes:** these come as `adjustments[]` with `flagged: true` and `reducesPay: false`. The kinds are `late_tip`, `late_declaration` and `tip_refunded_after_export`; show `copy`. `POST /tips/declarations` for a locked day now succeeds, with `late: true` and `postedDate`. Only a correction of a locked declaration is 409.
+  - **Clients:** first names only. Don't cache any My Earnings answer, errors included (`no-store`).
+
 - (core → the Rayz App builder) **My Earnings is live on your contract (2026-10-28): `/me/pay-periods`, `/me/earnings`, `/me/earnings/days`, `/me/earnings/tickets` and `/me/payouts`.** See "My Earnings" under "Staff app API". Please switch `mobile/` from the mock to these. Where core's answer differs from your sketch:
   - **`/me/earnings` is per pay period only.** Send `period=current` or `periodId=<id>`. A `from`/`to` that isn't exactly one pay period is 400, so the `this_week` and `month_to_date` presets need `/me/earnings/days` (any range up to 31 days) instead.
   - **New values:**
@@ -620,11 +667,11 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
     - Adjustments use `late_tip` (`lateDeclaration` stays false).
     - `card_tip_refund` comes from refunds the shop covered.
     - `tipDisposition` can be `cash`.
-    - `reversedBy` is `stripe` or null.
-  - **Transfer status:** our `failed` (Stripe refused the transfer at the sale) shows as `pending`, because it's paid with their next payout. `in_transit` belongs to the payout, so a transfer carries `payoutStatus` and `payoutArrivalDate` for the payout it's in.
+    - `transferReversedBy` is `stripe` or null.
+  - **Transfer status:** our `failed` (Stripe refused the transfer at the sale) shows as `pending`, because it's paid with their next payout. `in_transit` belongs to the payout, so a transfer carries `transferStatus`, and separately `payoutStatus` and `payoutArrivalDate` for the payout it's in.
   - **Cash and totals:** `cashTipsCents` includes declared cash, so `totalTipsCents` is their `E_Cash Tips Recd`. `totalCents` is wages plus that.
   - **Extra fields:** `commSalesCents`, `commSalesAdjustmentCents`, `ptoPayCents`, `ptoHours`, `declaredCashTipsCents`, `cashOnTicketsCents`, `tipAdjustmentsCents`, `wagesCents`, `exportStatus`, `previousPeriodId`/`nextPeriodId`, and `shops[]` with per-shop pay, paystub names and the reconciliation.
-  - **Other details:** `snapshotId` joins the locked runs' ids with `+`. No step-up header is needed. A period id that doesn't exist is 404.
+  - **Other details:** `snapshotId` joins the locked runs' ids with `+`. No step-up header is needed, but the session needs MFA (above). A period id that doesn't exist is 404.
   - **Not built:** `/me/earnings/report` (CSV or PDF in your mock client). Say if the screen needs it.
   - **Show, don't compute:** if `reconciliation.matches` is ever false for a shop, show "Being checked by payroll" for that shop rather than either figure, and post it here.
 
@@ -638,7 +685,7 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 - (core → mobile) **Launch rule (Charles, 2026-10-27).** No shop goes live until the whole scope is built and tested in the sandbox, mobile included. Only the direct iSolved integration waits (download-only at launch); direct Stripe tip payouts are built and tested, and on at launch (`FEATURE_TIP_TO_BARBER`, approved by the CPA on Oct 28). PR #1's description has the one launch-readiness list, and mobile owns these items:
   - **L31, ST-C11 charge side:** done by core with I10 (2026-10-28, see "I10 separate charges and transfers"). Nothing for mobile beyond calling the one path.
-  - **L43:** rebase PRs #2–#8 onto `cursor/rayz-barbershop-v1-8f0b` and drop what core already has (see "PR #2 against core's branch" below). Core is at `core_0141`; the next free migration is `core_0142`.
+  - **L43:** rebase PRs #2–#8 onto `cursor/rayz-barbershop-v1-8f0b` and drop what core already has (see "PR #2 against core's branch" below). Core is at `core_0142`; the next free migration is `core_0143`.
   - **L44:** Web Push for the booking site.
   - **L45:** App Attest and Play Integrity (C2).
   - Please test against the sandbox URL in the log (the Vercel branch alias; ask Charles for the share link, which is never written in this public repo) and post each item's status here, so core can mark it on PR #1.
@@ -776,8 +823,27 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 - My Earnings, for Charles:
   - Paid time off shows at their wage (`ptoPayCents`). iSolved pays it at the rate it holds, so it's an estimate.
   - A sale's card tip that Stripe itself reverses shows as `reversed` and is logged, but isn't paid to them again on its own: payroll decides.
+- My Earnings MFA, for Charles: staff MFA is on in production for My Earnings, so every barber sets up an authenticator app the first time they open it. It's off in the sandbox demo (`DEMO_MODE`), where the app builder tests. Should it also be on in the sandbox (`ENFORCE_STAFF_MFA=1`) once the app has the screens? And should the web's own tips page (`/admin/my-tips`) ask for it too? Today it asks for the usual sign-in only.
+- My Earnings, PY-RD-01: the report's Total Wages is rounded once, while the paycheck rounds each part. They can differ by 1 cent (the contract test shows it). Keep the report's figure, or round each part there too?
 
 ## Log
+
+### 2026-10-28: core, claude bot's corrections to My Earnings, for the Rayz App builder and the mobile agent
+
+- **Changed (breaking, see the top of "Requests"):**
+  - Tickets take `periodId` plus a Chicago `date`.
+  - `transferStatus` and `payoutStatus` are separate fields, and payouts are never `reversed`.
+  - Every My Earnings endpoint needs staff MFA on the session.
+- **New:**
+  - **Locked figures:** `periodStatus` and `isEstimate` on every endpoint. Locked and exported periods are served from the lock's snapshot (`lockPayroll` now keeps days and workweeks).
+  - **OT:** `workweeks[]` per Chicago workweek across shops, and OT dollars labelled an estimate. The brand Payroll Report still counts OT pay in labor cost (Charles).
+  - **Late changes:** flagged `adjustments` in the next open period (`late_declaration`, `tip_refunded_after_export`). A refund on a locked ticket is always the shop's cost.
+  - **Tip switch:** `shops[].tipToBarber` on `/me/earnings` and `/me/payouts`.
+  - **Two-factor setup in the app:** `POST /me/two-factor/setup` and `/verify`.
+  - **Audit and caching:** a `staff.earnings_view` audit entry for every view. `Cache-Control: private, no-store` is now on staff API errors too.
+- **Tests:** the contract test (`periodPay` equals the report and the export to the cent, for every golden row), the locked and late-change tests, and the privacy tests. These cover a barber at two shops, tenant and IDOR checks, shops gated by the rollout pilot, and MFA with `ENFORCE_STAFF_MFA=1`.
+- **Migration `core_0142_staff_app_mfa`** (additive): `staff_app_tokens.mfa_at`. The next free number is `core_0143`.
+- Nothing under `/api/v1`, the customer openapi, `connect.ts`, `processor.ts` or `push.ts` changed.
 
 ### 2026-10-28: core, My Earnings on the Rayz App builder's contract, for the Rayz App builder and the mobile agent
 

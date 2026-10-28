@@ -1146,7 +1146,20 @@ The plan's P0 cases must all pass in the sandbox before the pilot. Status by cas
 - [x] Pay-period totals equal to their Payroll Report row and their row in the iSolved file, to the cent (tested).
 - [x] Each card tip's Stripe transfer and the Stripe payout to their bank: Stripe's status (pending, in transit, paid, failed, canceled) and arrival date (`/me/payouts`). "Reversed" appears only when Stripe itself reversed a transfer; a bank return fails the payout.
 - [x] Their own only, on the server: no staff id taken, extra parameters refused, no shop login. Negative tests: `tests/db/my-earnings.test.ts`.
-- [ ] The My Earnings screen in the staff app (the Rayz App builder; request in NOTES-SYNC).
+- [x] claude bot's corrections:
+  - [x] **One engine:** earnings come from the payroll engine's `periodPay`. Locked and exported periods serve the lock's snapshot and are never recomputed. `periodStatus` and `isEstimate` are on every endpoint. A contract test checks earnings equal the report and the export to the cent for every golden row.
+  - [x] **OT:** `workweeks[]` per Chicago workweek, with hours counted across shops. OT dollars are labelled an estimate; the brand Payroll Report still counts OT pay in labor cost.
+  - [x] **Late changes:** a cash tip declared, or a card tip refunded, after export becomes a flagged adjustment in the next open period. A locked period is never reopened, pay is never negative, and no tip is clawed back.
+  - [x] **Privacy:**
+    - The employee comes from the token only: a staff id is 400 and other employees' ids are 404.
+    - `Cache-Control: private, no-store` on every answer.
+    - Staff MFA on the session, set up in the app if needed (`core_0142`).
+    - Every view audit-logged.
+    - Client first names only.
+    - Tenant and IDOR tests, including a barber at two shops and shops gated by the rollout pilot (`tests/db/my-earnings-privacy.test.ts`).
+  - [x] **Contract:** tickets take `periodId` plus a Chicago date. Transfer status and payout status are separate fields, and a payout is never "reversed". Tips follow each shop's tip switch.
+- [ ] The My Earnings screen in the staff app (the Rayz App builder; request in NOTES-SYNC), now with the MFA screens.
+- [ ] **Ask Charles:** My Earnings MFA is on in production and off in the sandbox demo. Turn it on in the sandbox once the app has the screens, and ask for it on the web's own tips page too?
 - [ ] **Ask Charles:** should Barber and Apprentice have **See their own pay** (`compensation.own`) by default? Without it, every pay field is null.
 - [ ] **Ask Charles:** paid time off shows at their wage (iSolved pays it at its own rate), and a sale's card tip Stripe itself reverses isn't paid to them again on its own. Both OK?
 
