@@ -101,7 +101,14 @@ const zoned = (instant: Date | number | string | DateTime) => (DateTime.isDateTi
  * DateTime reads in its own zone. Without a format, the brand's `time_format`.
  */
 export function formatTime(instant: Date | number | string | DateTime, format: TimeFormat = currentTimeFormat()): string {
-  return zoned(instant).toFormat(timePattern(format));
+  const z = zoned(instant);
+  return `${z.toFormat(timePattern(format))}${repeatedHourZone(z)}`;
+}
+
+/** In the hour that happens twice when clocks fall back, which one it is ("1:30 AM CDT", "1:30 AM CST"); elsewhere nothing. */
+function repeatedHourZone(z: DateTime): string {
+  const twice = [z.minus({ hours: 1 }), z.plus({ hours: 1 })].some((x) => x.offset !== z.offset && x.hour === z.hour && x.minute === z.minute);
+  return twice ? ` ${z.setLocale("en-US").toFormat("ZZZZ")}` : "";
 }
 
 /** A local date ("2026-10-21") as that day; an instant (Date, or a timestamp string) as its day in the shop's zone. */

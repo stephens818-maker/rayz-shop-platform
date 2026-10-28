@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DateTime, Settings } from "luxon";
 import { payPeriodByIndex, payPeriodFor, payPeriodsBetween } from "@/domain/payroll";
 import { DEFAULT_BRAND_CALENDAR, periodByIndex, periodDatesProblem, periodOf, periodStarting, calendarProblem, workweeksOf, type PayCalendar } from "@/domain/payroll/calendar";
-import { weekdayOf } from "@/lib/time";
+import { existingWallTime, formatTime, weekdayOf } from "@/lib/time";
 import { dailyHours, largestRemainder, overtimeSlices, sliceKey, splitByLocalDay, weekStartOf, type OtOptions, type TimeEntry } from "@/domain/payroll/overtime";
 import {
   DEFAULT_PAYROLL_SETTINGS,
@@ -266,6 +266,50 @@ describe("cross-shop overtime (C4)", () => {
       const e = [...days("A", "2026-03-02", 4, 9.5), night, ...days("A", "2026-03-09", 5, 8)];
       const weeks = Object.fromEntries(overtimeSlices(dailyHours(e), opts()).map((s) => [s.weekStart, [s.worked, s.ot]]));
       expect(weeks).toEqual({ "2026-03-01": [4000, 0], "2026-03-08": [4200, 200] });
+    });
+
+    it("PY-OT-04: the Nov 1–14 pay period starts on the fall-back Sunday; 9 PM CDT Sat to 3 AM CST Sun is 7 real hours, 3 in the old week and 4 in the new, and 36 more make 40.00 with no OT", () => {
+      expect(periodOf(MAIN, "2026-11-01")).toMatchObject({ start: "2026-11-01", end: "2026-11-14" });
+      expect(periodOf(MAIN, "2026-10-31")).toMatchObject({ start: "2026-10-18", end: "2026-10-31" });
+      const night = entry("A", "2026-10-31T21:00", "2026-11-01T03:00");
+      expect(hoursBetween(night.startsAt, night.endsAt)).toBe(7);
+      expect(splitByLocalDay(night)).toEqual([
+        { date: "2026-10-31", minutes: 180 },
+        { date: "2026-11-01", minutes: 240 },
+      ]);
+      const slices = overtimeSlices(dailyHours([night, ...days("A", "2026-11-02", 4, 9)]), opts());
+      expect(slices.map((s) => [s.periodStart, s.weekStart, s.worked, s.ot])).toEqual([
+        ["2026-10-18", "2026-10-25", 300, 0],
+        ["2026-11-01", "2026-11-01", 4000, 0],
+      ]);
+      // the repeated hour reads distinctly on a timesheet
+      expect(formatTime(new Date("2026-11-01T06:30:00Z"), "12h")).toBe("1:30 AM CDT");
+      expect(formatTime(new Date("2026-11-01T07:30:00Z"), "12h")).toBe("1:30 AM CST");
+      expect(formatTime(at("2026-11-01T03:00"), "12h")).toBe("3:00 AM");
+    });
+
+    it("PY-OT-05: 10 PM CST Sat Mar 13 to 4 AM CDT Sun Mar 14, 2027 is 5 real hours, 2 and 3; with 36 more the week is 39.00; 2:30 AM doesn't exist", () => {
+      expect(periodOf(MAIN, "2027-03-14")).toMatchObject({ start: "2027-03-07", end: "2027-03-20" });
+      const night = entry("A", "2027-03-13T22:00", "2027-03-14T04:00");
+      expect(hoursBetween(night.startsAt, night.endsAt)).toBe(5);
+      expect(splitByLocalDay(night)).toEqual([
+        { date: "2027-03-13", minutes: 120 },
+        { date: "2027-03-14", minutes: 180 },
+      ]);
+      const weeks = overtimeSlices(dailyHours([night, ...days("A", "2027-03-15", 4, 9)]), opts()).map((s) => [s.weekStart, s.worked, s.ot]);
+      expect(weeks).toEqual([
+        ["2027-03-07", 200, 0],
+        ["2027-03-14", 3900, 0],
+      ]);
+      expect(existingWallTime("2027-03-14", 2 * 60 + 30)).toBeNull();
+    });
+
+    it("PY-OT-06: Saturday 11:59 PM and Sunday 12:00 AM are in different workweeks", () => {
+      const e = [entry("A", "2026-10-24T23:00", "2026-10-24T23:59"), entry("A", "2026-10-25T00:00", "2026-10-25T01:00")];
+      expect(overtimeSlices(dailyHours(e), opts()).map((s) => [s.weekStart, s.worked])).toEqual([
+        ["2026-10-18", 98],
+        ["2026-10-25", 100],
+      ]);
     });
 
     it("the 25-hour and 23-hour days count every real hour toward the weekly 40", () => {
