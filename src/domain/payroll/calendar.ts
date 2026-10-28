@@ -126,6 +126,25 @@ export function periodStarting(c: PayCalendar, start: LocalDate): CalendarPeriod
   return p.start === start ? p : null;
 }
 
+/**
+ * The period iSolved numbers `number` in check-date year `year` (numbers restart each January when
+ * the calendar resets yearly), or null when that year has no such period.
+ */
+export function periodByNumber(c: PayCalendar, year: number, number: number): CalendarPeriod | null {
+  if (!Number.isInteger(year) || !Number.isInteger(number) || number < 1 || number > 60) return null;
+  if (!c.numberResetsYearly) {
+    const p = periodByIndex(c, number - c.anchorNumber);
+    return p.number === number ? p : null;
+  }
+  const first = periodOf(c, addDays(`${year}-01-01`, -(2 * c.periodDays + c.checkOffsetDays))).index;
+  for (let i = first; i < first + Math.ceil(400 / c.periodDays) + 2; i++) {
+    const p = periodByIndex(c, i);
+    if (yearOf(p.checkDate) > year) break;
+    if (yearOf(p.checkDate) === year && p.number === number) return p;
+  }
+  return null;
+}
+
 /** Periods from `before` back to `after` ahead of the one holding `today`, newest first. */
 export function periodsAround(c: PayCalendar, today: LocalDate, before = 6, after = 1): CalendarPeriod[] {
   const cur = periodOf(c, today).index;

@@ -37,7 +37,7 @@ describe("the dev stub's router", () => {
   });
 
   it("picks the report, dates, shops and barbers from the question", () => {
-    expect(stubPlan("How did Makenna do at Coralville last week?", opts)).toMatchObject({ name: "run_report", args: { report: "sales_summary", preset: "7d", locations: ["Ray'z Coralville"], barbers: ["Makenna R."] } });
+    expect(stubPlan("How did Makenna do at Coralville last week?", opts)).toMatchObject({ name: "run_report", args: { report: "sales_summary", preset: "lastweek", locations: ["Ray'z Coralville"], barbers: ["Makenna R."] } });
     expect(stubPlan("Who were the top barbers yesterday?", opts)).toMatchObject({ args: { report: "sales_by_barber", preset: "yesterday", view: "barbers" } });
     expect(stubPlan("What's running low?", opts)).toMatchObject({ args: { report: "low_stock" } });
     expect(stubPlan("Payroll hours this pay period", opts)).toMatchObject({ args: { report: "labor", preset: "payperiod" } });

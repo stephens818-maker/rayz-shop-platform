@@ -1,6 +1,7 @@
-import { periodOf, periodByIndex, type CalendarPeriod } from "@/domain/payroll/calendar";
+import { periodByNumber, periodOf, periodByIndex, sameCalendar, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
+import { parsePayPeriodNumber, payPeriodNumberPreset } from "@/domain/report-range";
 import { addDays, formatDate, isValidLocalDate, todayLocal, type LocalDate } from "@/lib/time";
-import { ensurePayGroups } from "./groups";
+import { brandCalendar, ensurePayGroups } from "./groups";
 
 /** A pay period on one or more pay groups' calendars (shops on the same calendar share one). */
 export interface PayPeriodRef {
@@ -70,6 +71,74 @@ export async function payPeriodPresets(today: LocalDate = todayLocal(), shopIds?
     { id: "lastquarter", label: "Last quarter" },
     { id: "ytd", label: "Year to date" },
   ];
+}
+
+/**
+ * The pay calendar "This pay period" and "Last pay period" follow for a set of shops: theirs when
+ * they all share one (Dubuque alone gets Dubuque's), otherwise the brand's.
+ */
+export async function calendarForShops(shopIds: readonly string[]): Promise<PayCalendar> {
+  const groups = (await ensurePayGroups()).filter((g) => shopIds.includes(g.shopId));
+  if (groups.length && groups.every((g) => sameCalendar(g.calendar, groups[0].calendar))) return groups[0].calendar;
+  return brandCalendar();
+}
+
+export interface PayPeriodOption {
+  id: string;
+  number: number;
+  start: LocalDate;
+  end: LocalDate;
+  checkDate: LocalDate;
+  current: boolean;
+}
+
+/** The specific pay periods to pick from, per pay calendar: shops sharing one calendar are one group, labelled with their names. */
+export interface PayPeriodPickerGroup {
+  payGroupId: string;
+  label: string;
+  shopIds: string[];
+  periods: PayPeriodOption[];
+}
+
+/**
+ * Every numbered pay period whose check falls this year or last, up to the one running now, newest
+ * first, for each pay calendar the shops are on (Dubuque runs on its own).
+ */
+export async function payPeriodPicker(shopIds: readonly string[], today: LocalDate = todayLocal()): Promise<PayPeriodPickerGroup[]> {
+  const groups = (await ensurePayGroups()).filter((g) => shopIds.includes(g.shopId));
+  const out: (PayPeriodPickerGroup & { cal: PayCalendar })[] = [];
+  for (const g of groups) {
+    const same = out.find((o) => sameCalendar(o.cal, g.calendar));
+    if (same) {
+      same.shopIds.push(g.shopId);
+      same.label = `${same.label}, ${g.shop}`;
+      continue;
+    }
+    const cur = periodOf(g.calendar, today);
+    const year = Number(cur.checkDate.slice(0, 4));
+    const periods: PayPeriodOption[] = [];
+    for (let i = cur.index; periods.length < 60; i--) {
+      const p = periodByIndex(g.calendar, i);
+      if (Number(p.checkDate.slice(0, 4)) < year - 1) break;
+      if (p.number < 1) continue;
+      periods.push({ id: payPeriodNumberPreset(g.id, Number(p.checkDate.slice(0, 4)), p.number), number: p.number, start: p.start, end: p.end, checkDate: p.checkDate, current: i === cur.index });
+    }
+    out.push({ payGroupId: g.id, label: g.shop, shopIds: [g.shopId], periods, cal: g.calendar });
+  }
+  return out.map(({ cal: _, ...g }) => g);
+}
+
+/** A specific pay period picked by number (`ppn:<pay group>:<year>:<number>`): its dates on that pay group's calendar, or null. */
+export async function payPeriodByNumber(preset: string): Promise<{ id: string; from: LocalDate; to: LocalDate; payGroupId: string; number: number; label: string } | null> {
+  const n = parsePayPeriodNumber(preset);
+  if (!n) return null;
+  const groups = await ensurePayGroups();
+  const g = groups.find((x) => x.id === n.payGroupId);
+  const p = g ? periodByNumber(g.calendar, n.year, n.number) : null;
+  if (!g || !p) return null;
+  const on = groups.filter((x) => sameCalendar(x.calendar, g.calendar));
+  const where = [...(on.length < groups.length ? [on.map((x) => x.shop).join(", ")] : []), ...(n.year !== Number(todayLocal().slice(0, 4)) ? [String(n.year)] : [])];
+  return { id: preset, from: p.start, to: p.end, payGroupId: g.id, number: p.number, label: `Pay period ${String(p.number).padStart(2, "0")}${where.length ? ` (${where.join(", ")})` : ""}` };
 }
 
 /**

@@ -128,7 +128,7 @@ describe("definitions", () => {
     expect(reportRange({ preset: "all", from: null, to: null }, "2026-10-24")).toBeNull();
     expect(reportRange({ preset: "30d", from: null, to: null }, "2026-10-24")).toEqual({ from: "2026-09-25", to: "2026-10-24" });
     expect(reportRange({ preset: "custom", from: "2026-10-10", to: "2026-10-01" }, "2026-10-24")).toEqual({ from: "2026-10-01", to: "2026-10-10" });
-    expect(rangeLabel({ preset: "month", from: null, to: null }, "2026-10-24")).toBe("This month (Oct 1 – Oct 24, 2026)");
+    expect(rangeLabel({ preset: "month", from: null, to: null }, "2026-10-24")).toBe("Month to date (Oct 1 – Oct 24, 2026)");
     expect(rangeLabel({ preset: "all", from: null, to: null }, "2026-10-24")).toBe("All time");
   });
 });

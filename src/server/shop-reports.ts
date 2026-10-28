@@ -514,7 +514,7 @@ export async function retentionData(scope: ReportScope, loc: ViewCtx, params: Re
         ],
       }),
     ],
-    notes: ["For a quarter against the quarter before, pick This quarter or Last quarter. The Lapsed clients report lists the clients to win back."],
+    notes: ["For a quarter against the quarter before, pick Quarter to date or Last quarter. The Lapsed clients report lists the clients to win back."],
   };
 }
 

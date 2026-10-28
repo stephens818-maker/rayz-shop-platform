@@ -1,22 +1,49 @@
 import { DEFAULT_BRAND_CALENDAR, payPeriodFor, type BrandCalendar } from "./payroll";
-import { LocalDate, addDays, todayLocal, weekdayOf } from "@/lib/time";
+import { LocalDate, addDays, formatDate, todayLocal, weekdayOf } from "@/lib/time";
 
 export const PRESETS: { id: string; label: string }[] = [
   { id: "lastday", label: "Last business day" },
   { id: "today", label: "Today" },
   { id: "yesterday", label: "Yesterday" },
   { id: "week", label: "This week" },
+  { id: "lastweek", label: "Last week" },
   { id: "7d", label: "Last 7 days" },
   { id: "4w", label: "Last 4 weeks" },
-  { id: "month", label: "This month" },
+  { id: "month", label: "Month to date" },
   { id: "lastmonth", label: "Last month" },
   { id: "payperiod", label: "This pay period" },
   { id: "lastpayperiod", label: "Last pay period" },
   { id: "30d", label: "Last 30 days" },
-  { id: "quarter", label: "This quarter" },
+  { id: "quarter", label: "Quarter to date" },
   { id: "lastquarter", label: "Last quarter" },
   { id: "ytd", label: "Year to date" },
 ];
+
+/** The ranges every report offers, in this order; a report may add its own after them. A specific pay period and custom dates are picked beside them. */
+export const STANDARD_PRESET_IDS = ["today", "yesterday", "week", "lastweek", "payperiod", "lastpayperiod", "month", "lastmonth", "quarter", "ytd"] as const;
+export const STANDARD_PRESETS: { id: string; label: string }[] = STANDARD_PRESET_IDS.map((id) => PRESETS.find((p) => p.id === id)!);
+
+/** Report dates are calendar days in the shops' time zone. */
+export const RANGE_TIME_ZONE = "America/Chicago";
+export const RANGE_TIME_ZONE_LABEL = "Central time (America/Chicago)";
+
+/** A specific pay period by its iSolved number on one pay group's calendar: `ppn:<pay group id>:<check year>:<number>`. */
+export const PAY_PERIOD_NUMBER_PRESET = "ppn:";
+export const payPeriodNumberPreset = (payGroupId: string, year: number, number: number) => `${PAY_PERIOD_NUMBER_PRESET}${payGroupId}:${year}:${number}`;
+export function parsePayPeriodNumber(id: string | null | undefined): { payGroupId: string; year: number; number: number } | null {
+  const m = id?.match(/^ppn:([0-9a-f-]{36}):(\d{4}):(\d{1,2})$/i);
+  return m ? { payGroupId: m[1], year: Number(m[2]), number: Number(m[3]) } : null;
+}
+
+/** "Oct 4, 2026", "Oct 4 – 17, 2026", "Oct 26 – Nov 8, 2026", "Dec 27, 2026 – Jan 9, 2027". */
+export function rangeText(from: LocalDate, to: LocalDate): string {
+  if (from === to) return formatDate(from, "MMM d, yyyy");
+  if (from.slice(0, 4) !== to.slice(0, 4)) return `${formatDate(from, "MMM d, yyyy")} – ${formatDate(to, "MMM d, yyyy")}`;
+  return `${formatDate(from, "MMM d")} – ${formatDate(to, from.slice(0, 7) === to.slice(0, 7) ? "d, yyyy" : "MMM d, yyyy")}`;
+}
+
+/** A range as headers, exports and emails show it: "Last pay period: Oct 4 – 17, 2026", or the dates alone for custom dates. */
+export const rangeHeading = (r: { from: LocalDate; to: LocalDate; label?: string | null }) => (r.label ? `${r.label}: ${rangeText(r.from, r.to)}` : rangeText(r.from, r.to));
 
 /** The first day of the calendar quarter `date` falls in. */
 export function quarterStart(date: LocalDate): LocalDate {
@@ -77,6 +104,10 @@ export function presetRange(id: string, today: LocalDate = todayLocal(), cal: Br
       return { from: addDays(today, -1), to: addDays(today, -1) };
     case "week":
       return { from: addDays(today, -weekdayOf(today)), to: today };
+    case "lastweek": {
+      const start = addDays(today, -weekdayOf(today) - 7);
+      return { from: start, to: addDays(start, 6) };
+    }
     case "7d":
       return { from: addDays(today, -6), to: today };
     case "30d":

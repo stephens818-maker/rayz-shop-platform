@@ -398,7 +398,7 @@ export async function pphReportData(scope: ReportScope, loc: ViewCtx, params: Re
       { id: "yesterday", label: "Yesterday" },
       { id: "week", label: "This week" },
       { id: "30d", label: "Last 30 days" },
-      { id: "month", label: "This month" },
+      { id: "month", label: "Month to date" },
       { id: "lastmonth", label: "Last month" },
       ...presets,
     ],
