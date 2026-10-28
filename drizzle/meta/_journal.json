@@ -1051,6 +1051,13 @@
       "when": 1796642640000,
       "tag": "core_0149_pay_schedule",
       "breakpoints": true
+    },
+    {
+      "idx": 150,
+      "version": "7",
+      "when": 1796642700000,
+      "tag": "core_0150_shop_transfer_backfill",
+      "breakpoints": true
     }
   ]
 }

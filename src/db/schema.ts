@@ -2185,6 +2185,7 @@ export const payments = pgTable(
     /** What Stripe actually charged the platform, from the balance transaction, when known. */
     processorFeeCents: integer("processor_fee_cents"),
     stripeChargeId: text("stripe_charge_id"),
+    /** History only: a destination charge's transfer from before separate charges. Its shop row in payment_transfers (core_0150) has it now; nothing reads or writes this. */
     stripeTransferId: text("stripe_transfer_id"),
     /** Card charges only: platform = settled in the brand's own Stripe account; connected = in stripeAccountId. Null for history from before Connect. */
     settlement: text("settlement").$type<"platform" | "connected">(),
@@ -2265,13 +2266,15 @@ export const paymentTransfers = pgTable(
 );
 
 export type TransferReversalKind = "refund" | "dispute" | "dispute_won";
-export type TransferReversalStatus = "pending" | "sent" | "netted" | "failed" | "none";
+export type TransferReversalStatus = "pending" | "sent" | "netted" | "failed" | "none" | "in_refund";
 
 /**
  * What a refund or dispute took back from a shop's transfer, and what a won dispute sent back. Always
  * a shop row (a trigger refuses a tip row). netted: the transfer hadn't gone yet, so it was lowered
- * instead; none: nothing of the shop's transfer was left. uncovered_cents is what the shop's transfer
- * couldn't cover (a tip already with the barber), which the platform carries.
+ * instead; none: nothing of the shop's transfer was left; in_refund: a refund of a destination charge
+ * from before core_0150, which Stripe reversed with the refund itself (reverse_transfer, never used
+ * since). uncovered_cents is what the shop's transfer couldn't cover (a tip already with the barber),
+ * which the platform carries.
  */
 export const paymentTransferReversals = pgTable(
   "payment_transfer_reversals",
@@ -2301,7 +2304,7 @@ export const paymentTransferReversals = pgTable(
     check("payment_transfer_reversals_kind", sql`${t.kind} in ('refund', 'dispute', 'dispute_won')`),
     check("payment_transfer_reversals_source", sql`(${t.kind} = 'refund') = (${t.refundId} is not null) and (${t.kind} = 'refund') = (${t.stripeDisputeId} is null)`),
     check("payment_transfer_reversals_dispute_id", sql`${t.stripeDisputeId} is null or ${t.stripeDisputeId} ~ '^(dp|du|sim)_[A-Za-z0-9_]{1,80}$'`),
-    check("payment_transfer_reversals_status", sql`${t.status} in ('pending', 'sent', 'netted', 'failed', 'none')`),
+    check("payment_transfer_reversals_status", sql`${t.status} in ('pending', 'sent', 'netted', 'failed', 'none', 'in_refund')`),
     check("payment_transfer_reversals_amounts", sql`${t.amountCents} >= 0 and ${t.uncoveredCents} >= 0`),
     check("payment_transfer_reversals_sent", sql`(${t.status} = 'sent') = (${t.stripeId} is not null)`),
     uniqueIndex("payment_transfer_reversals_refund_uq").on(t.refundId).where(sql`${t.refundId} is not null`),
@@ -3016,8 +3019,8 @@ export const tipPayoutPeriods = pgTable(
 );
 
 /**
- * How each employee is paid tips, and their own Stripe Connect Express account for card or bank
- * payouts. Onboarding is Stripe-hosted: no bank or card details are ever stored here.
+ * How each employee is paid tips, and their own Stripe Connect recipient account (no Stripe
+ * Dashboard, ST-I9) for card or bank payouts. Onboarding is Stripe-hosted: no bank or card details are ever stored here.
  */
 export const staffPayoutAccounts = pgTable(
   "staff_payout_accounts",

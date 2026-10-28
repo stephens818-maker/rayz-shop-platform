@@ -31,6 +31,15 @@ describe("I10: one charge path, separate charges and transfers", () => {
     expect(where(/\b(on_behalf_of|transfer_data|application_fee_amount)\s*:/)).toEqual([]);
   });
 
+  it("a refund never reverses a transfer with the charge: reverse_transfer and refund_application_fee are set nowhere, so a tip is never clawed back", () => {
+    expect(where(/\b(reverse_transfer|refund_application_fee)\s*:/)).toEqual([]);
+    expect(where(/\breverseTransfer\b/)).toEqual([]);
+  });
+
+  it("payment_transfers replaced payments.stripe_transfer_id: nothing reads or writes it", () => {
+    expect(where(/payments\.stripeTransferId|stripeTransferId:\s*c\?\.transferId|from payments where stripe_transfer_id/)).toEqual([]);
+  });
+
   it("chargeCard sets the sale's transfer_group, and only money-movement transfers, with source_transaction", () => {
     expect(where(/\btransfer_group\s*:/)).toEqual(["server/payments/money-movement.ts", "server/payments/processor.ts"]);
     expect(where(/\bsource_transaction\s*:/)).toEqual(["server/payments/money-movement.ts"]);

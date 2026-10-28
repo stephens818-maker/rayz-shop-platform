@@ -62,7 +62,7 @@ export async function platformEvent(event: Stripe.Event) {
     const pi = typeof d.payment_intent === "string" ? d.payment_intent : (d.payment_intent?.id ?? null);
     const p = pi ? await db.query.payments.findFirst({ where: eq(payments.stripePaymentIntentId, pi) }) : null;
     const tipsAbsorbed = p ? await recordTipDispute(p.id, d.id, todayLocal(new Date((d.created ?? event.created) * 1000))) : 0;
-    const takenBack = p?.chargeType === "separate" ? await disputeOpened(p.id, d.id, d.amount) : null;
+    const takenBack = p?.chargeType ? await disputeOpened(p.id, d.id, d.amount) : null;
     await audit(
       SYSTEM,
       "stripe.charge.dispute.created",
@@ -75,7 +75,7 @@ export async function platformEvent(event: Stripe.Event) {
     const d = event.data.object as Stripe.Dispute;
     const pi = typeof d.payment_intent === "string" ? d.payment_intent : (d.payment_intent?.id ?? null);
     const p = pi ? await db.query.payments.findFirst({ where: eq(payments.stripePaymentIntentId, pi) }) : null;
-    const closed = p?.chargeType === "separate" ? await disputeClosed(p.id, d.id, d.status, d.amount) : null;
+    const closed = p?.chargeType ? await disputeClosed(p.id, d.id, d.status, d.amount) : null;
     await audit(
       SYSTEM,
       "stripe.charge.dispute.closed",

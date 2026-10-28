@@ -86,7 +86,7 @@ import {
 import { assertPromptsAnswered, settlePrompts } from "./checkout-prompts";
 import { recordCheckout } from "./service-times";
 import { syncTipLedger } from "./tips/ledger";
-import { planSaleTransfers, settleSale } from "./payments/settlement";
+import { planSaleTransfers, recordDestinationTransfer, reverseUnrecordedTransfer, settleSale } from "./payments/settlement";
 import { saleTransferGroup } from "@/domain/charge-split";
 import { cashAwaiting, cashTipPayoutsCents } from "./tips/payouts";
 import { defaultOpening, movesOutCents } from "./drawer";
@@ -1324,7 +1324,7 @@ export async function finalizeSale(input: FinalizeInput) {
       }
       for (const l of legs) {
         const c = l.charge ?? null;
-        await tx.insert(payments).values({
+        const [paid] = await tx.insert(payments).values({
           saleId: ctx.sale.id,
           shopId: ctx.shop.id,
           businessDate,
@@ -1374,14 +1374,23 @@ export async function finalizeSale(input: FinalizeInput) {
                 : null))
             : null,
           stripeChargeId: c?.chargeId ?? null,
-          stripeTransferId: c?.transferId ?? null,
           settlement: c ? (c.destination ? "connected" : "platform") : null,
           chargeType: c ? (c.transferId ? "destination" : "separate") : null,
           transferGroup: c ? saleTransferGroup(ctx.sale.id) : null,
           terminalReaderId: c ? (l.reader?.id ?? null) : null,
           payerCustomerId: l.payerCustomerId,
           payerLabel: l.payerLabel,
-        });
+        }).returning({ id: payments.id });
+        if (c?.transferId && c.destination)
+          await recordDestinationTransfer(tx, {
+            paymentId: paid.id,
+            saleId: ctx.sale.id,
+            shopId: ctx.shop.id,
+            accountId: c.destination.accountId,
+            amountCents: l.chargeCents,
+            feeCents: c.destination.applicationFeeCents,
+            transferId: c.transferId,
+          });
       }
 
       await tx
@@ -1505,7 +1514,9 @@ export async function finalizeSale(input: FinalizeInput) {
           l.charge.paymentIntentId,
           l.chargeCents,
           ctx.sale.id,
-          !!l.charge.transferId,
+          l.charge.transferId && l.charge.destination
+            ? { transferId: l.charge.transferId, amountCents: l.chargeCents - l.charge.destination.applicationFeeCents }
+            : null,
         );
     throw e;
   }
@@ -1577,16 +1588,16 @@ async function compensateCharge(
   paymentIntentId: string,
   amountCents: number,
   saleId: string,
-  reverseTransfer: boolean,
+  destinationTransfer: { transferId: string; amountCents: number } | null,
 ) {
   const recorded = await db.query.payments
     .findFirst({ where: eq(payments.stripePaymentIntentId, paymentIntentId) })
     .catch(() => null);
   if (recorded) return;
   try {
-    await refundCard(paymentIntentId, amountCents, `comp-${paymentIntentId}`, {
-      reverseTransfer,
-    });
+    await refundCard(paymentIntentId, amountCents, `comp-${paymentIntentId}`);
+    if (destinationTransfer)
+      await reverseUnrecordedTransfer(`comp-${paymentIntentId}`, destinationTransfer.transferId, destinationTransfer.amountCents);
     await audit(
       SYSTEM,
       "payment.compensated",

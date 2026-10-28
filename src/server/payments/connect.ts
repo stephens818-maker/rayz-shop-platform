@@ -443,7 +443,8 @@ async function itemizePayout(accountId: string, payoutId: string) {
   const transfers = [...new Set(items.map((i) => i.sourceTransfer).filter((x): x is string => !!x))];
   const fees = transfers.length
     ? ((await db.execute(
-        sql`select stripe_transfer_id t, application_fee_cents f from payments where stripe_transfer_id in (${sql.join(transfers.map((t) => sql`${t}`), sql`, `)})`,
+        sql`select pt.stripe_transfer_id t, p.application_fee_cents f from payment_transfers pt join payments p on p.id = pt.payment_id
+          where pt.kind = 'shop' and pt.stripe_transfer_id in (${sql.join(transfers.map((t) => sql`${t}`), sql`, `)})`,
       )) as unknown as { t: string; f: number }[])
     : [];
   return summarizePayout(items, new Map(fees.map((r) => [r.t, r.f])));

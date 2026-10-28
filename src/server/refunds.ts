@@ -278,7 +278,7 @@ async function reverse(tx: Tx, sale: Sale, o: ReverseOpts) {
   for (const step of plan) {
     const p = pays.find((x) => x.id === step.tenderId)!;
     if (p.method === "card" && p.stripePaymentIntentId) {
-      stripeIds.set(p.id, await refundCard(p.stripePaymentIntentId, step.amountCents, `refund-${p.id}-${p.refundedCents}-${step.amountCents}-${randomUUID()}`, { reverseTransfer: p.chargeType === "destination" && !!p.stripeAccountId }));
+      stripeIds.set(p.id, await refundCard(p.stripePaymentIntentId, step.amountCents, `refund-${p.id}-${p.refundedCents}-${step.amountCents}-${randomUUID()}`));
     }
   }
 

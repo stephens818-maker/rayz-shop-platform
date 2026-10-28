@@ -17,6 +17,7 @@ import { pushDevices } from "./notifications/queue";
 import { cardFeeConfigFor, saleFeeChannel } from "./payments/card-fee";
 import { SIM_CONFIRMATION_TOKENS, inspectPaymentMethod, isRequiresAction, refundCard, simulatedIntent, stripe } from "./payments/processor";
 import { cardForPayment, ensureStripeCustomer, merchantDisplayName } from "./payments/saved-cards";
+import { reverseUnrecordedTransfer } from "./payments/settlement";
 import { deliverReceipt } from "./receipts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -293,16 +294,18 @@ async function refundStray(ap: typeof appPayments.$inferSelect, actor: Actor) {
   const s = stripe();
   let succeeded = false;
   // A separate charge has no transfers until its sale is recorded, so only a destination charge from before has one to reverse.
-  let reverse = false;
+  let transfer: Stripe.Transfer | null = null;
   if (s && !ap.stripePaymentIntentId.startsWith("sim_")) {
-    const pi = await s.paymentIntents.retrieve(ap.stripePaymentIntentId).catch(() => null);
+    const pi = await s.paymentIntents.retrieve(ap.stripePaymentIntentId, { expand: ["latest_charge.transfer"] }).catch(() => null);
     succeeded = pi?.status === "succeeded";
-    reverse = !!pi?.transfer_data;
+    const tr = (pi?.latest_charge as Stripe.Charge | null)?.transfer;
+    transfer = tr && typeof tr === "object" ? tr : null;
   } else {
     succeeded = simulatedIntent(ap.stripePaymentIntentId)?.status === "succeeded";
   }
   if (!succeeded) return false;
-  await refundCard(ap.stripePaymentIntentId, ap.amountCents, `app-stray-${ap.id}`, { reverseTransfer: reverse });
+  await refundCard(ap.stripePaymentIntentId, ap.amountCents, `app-stray-${ap.id}`);
+  if (transfer) await reverseUnrecordedTransfer(`app-stray-${ap.id}`, transfer.id, transfer.amount - transfer.amount_reversed);
   await db.update(appPayments).set({ status: "refunded", updatedAt: new Date() }).where(eq(appPayments.id, ap.id));
   await audit(actor, "app_payment.refunded_stray", "sale", ap.saleId, { appPaymentId: ap.id, paymentIntentId: ap.stripePaymentIntentId, amountCents: ap.amountCents }, ap.shopId);
   return true;

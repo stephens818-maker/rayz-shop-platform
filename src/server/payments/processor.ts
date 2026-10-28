@@ -149,7 +149,7 @@ interface SimIntent {
 interface SimState {
   intents: Map<string, SimIntent>;
   byKey: Map<string, string>;
-  refunds: { id: string; paymentIntentId: string; amountCents: number; reverseTransfer: boolean }[];
+  refunds: { id: string; paymentIntentId: string; amountCents: number }[];
   refundKeys: Map<string, string>;
 }
 const simGlobal = globalThis as unknown as { __rayzSim?: SimState };
@@ -334,12 +334,11 @@ export function simulatedIntent(paymentIntentId: string) {
 }
 
 /**
- * `reverseTransfer`: only for a destination charge from before separate charges, whose money went
- * to the shop's account with the charge; the refund is pulled back from it, and the application fee
- * isn't returned. A separate charge's refund is taken back from the shop's transfer afterwards
- * (settlement.ts), never from a tip.
+ * Refunds the charge on the platform, never with reverse_transfer: the refund is taken back from the
+ * shop's transfer afterwards (settlement.ts), for the refunded amount, never from a tip. A destination
+ * charge from before separate charges has its shop transfer in payment_transfers too (core_0150).
  */
-export async function refundCard(paymentIntentId: string, amountCents: number, idempotencyKey: string, opts: { reverseTransfer?: boolean } = {}): Promise<string> {
+export async function refundCard(paymentIntentId: string, amountCents: number, idempotencyKey: string): Promise<string> {
   const s = stripe();
   if (!s || paymentIntentId.startsWith("sim_")) {
     await simLatency();
@@ -352,15 +351,12 @@ export async function refundCard(paymentIntentId: string, amountCents: number, i
       pi.amountRefundedCents += amountCents;
     }
     const id = simId("sim_re");
-    sim.refunds.push({ id, paymentIntentId, amountCents, reverseTransfer: !!opts.reverseTransfer });
+    sim.refunds.push({ id, paymentIntentId, amountCents });
     sim.refundKeys.set(idempotencyKey, id);
     return id;
   }
   try {
-    const r = await s.refunds.create(
-      { payment_intent: paymentIntentId, amount: amountCents, ...(opts.reverseTransfer ? { reverse_transfer: true, refund_application_fee: false } : {}) },
-      { idempotencyKey },
-    );
+    const r = await s.refunds.create({ payment_intent: paymentIntentId, amount: amountCents }, { idempotencyKey });
     return r.id;
   } catch (e) {
     throw new AppError("payment_failed", (e as Stripe.errors.StripeError).message ?? "Card refund failed");
@@ -372,7 +368,7 @@ export function simulateDashboardRefund(paymentIntentId: string, amountCents: nu
   const pi = sim.intents.get(paymentIntentId);
   if (!pi) throw new Error("Unknown simulated PaymentIntent");
   pi.amountRefundedCents += amountCents;
-  sim.refunds.push({ id: simId("sim_re"), paymentIntentId, amountCents, reverseTransfer: false });
+  sim.refunds.push({ id: simId("sim_re"), paymentIntentId, amountCents });
   return pi.amountRefundedCents;
 }
 

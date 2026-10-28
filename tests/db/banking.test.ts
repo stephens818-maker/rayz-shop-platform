@@ -242,7 +242,7 @@ describe("refunds follow the account the payment settled in, whatever the shop u
     try {
       await m.checkout.refundSale({ saleId: t.sale.id, items: [], tipCents: 300, refundCardFee: false, reason: "Tip typo", restock: false, actor });
       expect(m.processor.simulatorLedger().refunds.filter((x) => x.paymentIntentId === pay.stripePaymentIntentId)).toEqual([
-        expect.objectContaining({ amountCents: 300, reverseTransfer: false }),
+        expect.objectContaining({ amountCents: 300 }),
       ]);
       const [ref] = await m.db.db.select().from(m.schema.refunds).where(eq(m.schema.refunds.saleId, t.sale.id));
       expect(ref.shopId).toBe(shopIds.brand);
@@ -268,7 +268,7 @@ describe("refunds follow the account the payment settled in, whatever the shop u
       expect(await paymentFor(after.sale.id)).toMatchObject({ settlement: "platform", stripeAccountId: null });
       await m.checkout.refundSale({ saleId: t.sale.id, items: [], tipCents: 200, refundCardFee: false, reason: "Tip typo", restock: false, actor });
       expect(m.processor.simulatorLedger().refunds.filter((x) => x.paymentIntentId === pay.stripePaymentIntentId)).toEqual([
-        expect.objectContaining({ amountCents: 200, reverseTransfer: false }),
+        expect.objectContaining({ amountCents: 200 }),
       ]);
       expect(await m.db.db.select().from(m.schema.paymentTransferReversals).where(eq(m.schema.paymentTransferReversals.paymentId, pay.id))).toEqual([
         expect.objectContaining({ kind: "refund", amountCents: 200, status: "sent" }),

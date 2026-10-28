@@ -33,7 +33,8 @@ import { createSaleTransfer, directPayoutsAvailable, reverseShopTransfer } from 
  *   stays in the shop's transfer and is paid through payroll. A shop on the brand's account has no
  *   shop row: its money is already on the platform.
  * - planRefundReversals and the dispute handlers take a refund or dispute back from the shop's
- *   transfer only, up to what's left of it, never from a tip (the database refuses a reversal of a
+ *   transfer only (after a plain refund: never reverse_transfer, not even for a destination charge
+ *   from before, whose shop row core_0150 recorded), up to what's left of it, never from a tip (the database refuses a reversal of a
  *   tip row). Before the transfer has been tried, it's lowered instead (netted). What the shop's
  *   transfer can't cover (uncovered_cents) is booked as a platform loss (bookLoss) once it's final:
  *   at the refund, or when a dispute is lost. A won dispute sends what it took back to the shop.
@@ -148,6 +149,33 @@ export async function planSaleTransfers(tx: Tx, saleId: string) {
     planned++;
   }
   return planned;
+}
+
+/**
+ * A destination charge from before separate charges, handed back by an idempotent replay: Stripe made
+ * its shop transfer with the charge (the charge less the fee, tip included), so its shop row is
+ * recorded as sent, and its refunds and disputes are taken back from it like any other.
+ */
+export async function recordDestinationTransfer(tx: Tx, p: { paymentId: string; saleId: string; shopId: string; accountId: string; amountCents: number; feeCents: number; transferId: string }) {
+  const cents = p.amountCents - p.feeCents;
+  if (cents <= 0) return null;
+  const now = new Date();
+  const [row] = await tx
+    .insert(paymentTransfers)
+    .values({ paymentId: p.paymentId, saleId: p.saleId, shopId: p.shopId, kind: "shop", destinationAccount: p.accountId, amountCents: cents, transferGroup: saleTransferGroup(p.saleId), status: "sent", stripeTransferId: p.transferId, attempts: 1, sentAt: now })
+    .onConflictDoNothing()
+    .returning();
+  return row ?? null;
+}
+
+/**
+ * A destination charge from before separate charges given back without ever being recorded as a sale
+ * (a checkout that didn't commit, an app payment for a ticket paid another way). After the plain
+ * refund, the transfer Stripe made with it is reversed in full.
+ */
+export async function reverseUnrecordedTransfer(key: string, transferId: string, amountCents: number) {
+  if (amountCents <= 0) return null;
+  return reverseShopTransfer({ key, transferId, amountCents, metadata: { reason: "unrecorded destination charge" } });
 }
 
 type TransferRow = typeof paymentTransfers.$inferSelect;
@@ -306,7 +334,7 @@ export async function planRefundReversals(tx: Tx, saleId: string) {
     .from(refunds)
     .innerJoin(payments, eq(payments.id, refunds.paymentId))
     .leftJoin(paymentTransferReversals, eq(paymentTransferReversals.refundId, refunds.id))
-    .where(and(eq(refunds.saleId, saleId), eq(payments.chargeType, "separate"), isNull(paymentTransferReversals.id)))
+    .where(and(eq(refunds.saleId, saleId), inArray(payments.chargeType, ["separate", "destination"]), isNull(paymentTransferReversals.id)))
     .orderBy(asc(refunds.createdAt), asc(refunds.id));
   let n = 0;
   for (const r of rows) {

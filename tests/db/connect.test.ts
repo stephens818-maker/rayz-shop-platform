@@ -110,7 +110,7 @@ describe("separate charges and transfers", () => {
     const [pay] = await m.db.db.select().from(m.schema.payments).where(eq(m.schema.payments.saleId, t.sale.id));
     await m.checkout.refundSale({ saleId: t.sale.id, items: [], tipCents: 300, refundCardFee: false, reason: "Tip typo", restock: false, actor });
     const ref = m.processor.simulatorLedger().refunds.filter((x) => x.paymentIntentId === pay.stripePaymentIntentId);
-    expect(ref).toEqual([expect.objectContaining({ amountCents: 300, reverseTransfer: false })]);
+    expect(ref).toEqual([expect.objectContaining({ amountCents: 300 })]);
     expect(await reversals(pay.id)).toEqual([expect.objectContaining({ kind: "refund", amountCents: 300, uncoveredCents: 0, status: "sent" })]);
 
     const v = await ticket("moline");
@@ -118,7 +118,7 @@ describe("separate charges and transfers", () => {
     const [vp] = await m.db.db.select().from(m.schema.payments).where(eq(m.schema.payments.saleId, v.sale.id));
     await m.checkout.voidSale(v.sale.id, "Rang up the wrong client", actor);
     expect(m.processor.simulatorLedger().refunds.filter((x) => x.paymentIntentId === vp.stripePaymentIntentId)).toEqual([
-      expect.objectContaining({ amountCents: vp.amountCents, reverseTransfer: false }),
+      expect.objectContaining({ amountCents: vp.amountCents }),
     ]);
     // The whole shop transfer comes back; the processing fee it never had is the platform's.
     expect(await reversals(vp.id)).toEqual([expect.objectContaining({ kind: "refund", amountCents: vp.amountCents - vp.applicationFeeCents, uncoveredCents: vp.applicationFeeCents, status: "sent" })]);
