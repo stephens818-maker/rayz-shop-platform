@@ -36,9 +36,9 @@ import {
   withdrawTimeOff,
 } from "./front";
 import { StaffAppContext, guardedStaff, shopOf, signInRoute, staffRoute, withCacheRule } from "./http";
-import { accountSession, bankingView, dashboardLink, earningsRange, myEarnings, myExternalAccounts, myPayouts, myTipsView, onboardingLink, setMyDepositConsent, setMyPayoutMethod } from "./money";
-import { myEarningsTips, myTipTransfers } from "./earnings-detail";
-import { myPeriodEarnings, myYearToDate, payoutSetup } from "./pay";
+import { accountSession, bankingView, dashboardLink, earningsRange, myEarnings as myRangeEarnings, myExternalAccounts, myPayouts, myTipsView, onboardingLink, setMyDepositConsent, setMyPayoutMethod } from "./money";
+import { myEarnings, myEarningsDays, myEarningsTickets, myPayPeriodList, myPayoutsView } from "./earnings";
+import { myYearToDate, payoutSetup } from "./pay";
 import { markPopupsSeen, popupsFor } from "./popups";
 import { addAppointmentNote, appointmentNotes, dayRange, myAppointment, myAppointments, mySchedule } from "./schedule";
 import * as S from "./schemas";
@@ -223,23 +223,23 @@ export const postTimecardSignOff = staffRoute({ perms: "timesheet.own", person: 
 const PAY = { perms: ["timesheet.own", "tips.own", "compensation.own", "report.my_sales.view"], person: true, message: "You can't see your earnings" } as const;
 const TIPS = { perms: "tips.own", person: true, message: "You can't see tips" } as const;
 
-/** GET /me/earnings?period=: one pay period, per shop, from the same payroll run as the iSolved export. */
-export const getPeriodEarnings = staffRoute(PAY, async (req, ctx) => {
-  const q = query(req, S.PeriodEarningsQuery);
-  return json(await myPeriodEarnings(ctx, q.period));
+/** GET /me/pay-periods: their pay periods (id = start date) with each one's status. */
+export const getMyPayPeriods = staffRoute(PAY, async (req, ctx) => {
+  query(req, S.NoQuery);
+  return json(await myPayPeriodList(ctx));
 });
 
-/** GET /me/earnings/tips?period=: their own tips per ticket and per day, card and cash on tickets, and cash they declared. */
-export const getEarningsTips = staffRoute(TIPS, async (req, ctx) => {
-  const q = query(req, S.PeriodEarningsQuery);
-  return json(await myEarningsTips(ctx, q.period));
-});
+/** GET /me/earnings?period=current|<id>: one pay period from their line of the Payroll Report, the greater-of worked out here. */
+export const getPeriodEarnings = staffRoute(PAY, async (req, ctx) => json(await myEarnings(ctx, query(req, S.MyEarningsQuery))));
 
-/** GET /me/earnings/transfers?period=: each of their card tips' transfer to their Stripe account and the payout after it. */
-export const getEarningsTransfers = staffRoute(TIPS, async (req, ctx) => {
-  const q = query(req, S.PeriodEarningsQuery);
-  return json(await myTipTransfers(ctx, q.period));
-});
+/** GET /me/earnings/days?periodId=: each day's tips, sales and hours, adding up to the period. */
+export const getEarningsDays = staffRoute(PAY, async (req, ctx) => json(await myEarningsDays(ctx, query(req, S.MyEarningsQuery))));
+
+/** GET /me/earnings/tickets?date=: their tickets that day, their own tip on each and how it reaches them. */
+export const getEarningsTickets = staffRoute(PAY, async (req, ctx) => json(await myEarningsTickets(ctx, query(req, S.MyTicketsQuery))));
+
+/** GET /me/payouts?periodId=: their card tips' transfers to their Stripe account and the Stripe payouts to their bank. */
+export const getMyPayouts = staffRoute(TIPS, async (req, ctx) => json(await myPayoutsView(ctx, query(req, S.MyEarningsQuery))));
 
 /** GET /me/earnings/ytd?year= */
 export const getYearToDate = staffRoute(PAY, async (req, ctx) => {
@@ -518,7 +518,7 @@ export const getPayouts = staffRoute(TIPS, async (_req, ctx) => json(await myPay
 export const getEarnings = staffRoute({ perms: null, person: true }, async (req, ctx) => {
   const q = query(req, S.EarningsQuery);
   const r = earningsRange(q.from, q.to);
-  return json(await myEarnings(ctx, r.from, r.to));
+  return json(await myRangeEarnings(ctx, r.from, r.to));
 });
 
 /**

@@ -159,10 +159,10 @@ describe("rollout: per-shop go-live flags", () => {
 
   it("the staff app's earnings say which shops' figures come from Squire data", async () => {
     const { staffContextOf } = await import("@/server/auth/staff");
-    const { myPeriodEarnings } = await import("@/server/staff-api/pay");
+    const { myEarnings } = await import("@/server/staff-api/earnings");
     const earnings = async (staffId: string, shopId: string) => {
       const ctx = (await staffContextOf(staffId, undefined, { ip: null, deviceShopIds: [], shopPref: "all" }))!;
-      return (await myPeriodEarnings({ ...ctx, sessionId: "test" }, fx.start, fx.end)).shops.find((s) => s.shopId === shopId);
+      return (await myEarnings({ ...ctx, sessionId: "test" }, { periodId: fx.start }, fx.end)).shops.find((s) => s.shopId === shopId);
     };
     expect(await earnings(fx.jamie, shop.Moline)).toMatchObject({ source: "platform", squireImported: false });
     expect(await earnings(fx.coralA, shop.Coralville)).toMatchObject({ source: "squire", squireImported: true, hours: { regular: 38, overtime: 2, pto: 8 } });

@@ -940,6 +940,75 @@ export function exportRowChecks(b: Pick<ShopBlock, "exportRows" | "exportHeaders
   });
 }
 
+export type GreaterOfRule = "hourly" | "commission";
+export type GreaterOfCode = "hourly_higher" | "commission_higher" | "equal";
+
+/**
+ * What one line of the Payroll Report pays the employee, gross, in cents: the staff app's My Earnings
+ * (the app does no pay math). Each part is one earning on their paystub, rounded once, so the parts
+ * add up to grossCents exactly. Regular is their regular hours at their wage (the report's D, which is
+ * E_Regular_Hours at their rate), Comm Sales is the report's M as exported (service commission above
+ * hourly pay, product commission and late commission), overtime is the report's T (an estimate until
+ * iSolved runs it), training and paid time are E_Training_Hours at their training rate and
+ * E_Ray'z Paid Time_Hours at their wage, then the guarantee top-up and OT premium as exported, and
+ * every tip received, declared cash included (E_Cash Tips Recd).
+ *
+ * The greater-of is the report's: hourly pay on regular hours against service commission, and the
+ * commission applies only when it's higher (I > 0). greaterOfCents is what that side pays:
+ * regular pay plus the commission above it.
+ */
+export function employeePay(l: Line) {
+  const c = toCents;
+  const payWage = l.input.zeroHourlyPay ? 0 : l.wage;
+  const hourlyPayCents = c(l.hourlyTotal);
+  const serviceCommissionCents = c(l.commission);
+  const productCommissionCents = c(l.productTotal);
+  const lateCommissionCents = c(l.lateCommission ?? 0);
+  const commSalesCents = c(l.netComm);
+  const commissionOverHourlyCents = commSalesCents - productCommissionCents - lateCommissionCents;
+  const appliedRule: GreaterOfRule = l.serviceTotal > 0 ? "commission" : "hourly";
+  const explanationCode: GreaterOfCode = serviceCommissionCents === hourlyPayCents ? "equal" : serviceCommissionCents > hourlyPayCents ? "commission_higher" : "hourly_higher";
+  const trainingRate = l.input.trainingRate ?? payWage;
+  const overtimePayCents = c(l.otPay);
+  const trainingPayCents = c(l.trainingHours * trainingRate);
+  const ptoPayCents = c(l.ptoHours * payWage);
+  const guaranteeTopUpCents = c(l.guaranteeTopUp ?? 0);
+  const otPremiumCents = c(l.otPremiumAdj ?? 0);
+  const tipsCents = c(l.tips);
+  const declaredCashTipsCents = c(l.declaredCashTips ?? 0);
+  const cashTipsReceivedCents = tipsCents + declaredCashTipsCents;
+  const wagesCents = hourlyPayCents + commSalesCents + overtimePayCents + trainingPayCents + ptoPayCents + guaranteeTopUpCents + otPremiumCents;
+  return {
+    appliedRule,
+    explanationCode,
+    hourlyRateCents: c(payWage),
+    hourlyPayCents,
+    serviceCommissionRate: l.servicePct,
+    serviceCommissionCents,
+    productCommissionRate: l.productPct,
+    productCommissionCents,
+    lateCommissionCents,
+    commSalesCents,
+    commissionOverHourlyCents,
+    greaterOfCents: hourlyPayCents + commissionOverHourlyCents,
+    /** Hourly pay above service commission, where hourly applies: what the greater-of added. */
+    topUpCents: appliedRule === "hourly" ? Math.max(0, hourlyPayCents - serviceCommissionCents) : 0,
+    overtimePayCents,
+    trainingRateCents: c(trainingRate),
+    trainingPayCents,
+    ptoPayCents,
+    guaranteeTopUpCents,
+    otPremiumCents,
+    tipsCents,
+    declaredCashTipsCents,
+    cashTipsReceivedCents,
+    wagesCents,
+    grossCents: wagesCents + cashTipsReceivedCents,
+  };
+}
+
+export type EmployeePay = ReturnType<typeof employeePay>;
+
 /**
  * The reconciliation gate (spec §5). Approve-and-lock is blocked while this returns anything:
  * a report total that isn't the sum of its rows, a per-shop export column whose total isn't the report's,

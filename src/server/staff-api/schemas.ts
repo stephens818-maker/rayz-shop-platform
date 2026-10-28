@@ -218,7 +218,16 @@ export const VoidPunchBody = z.object({ reason: Reason });
 // ───────────────────────────── Earnings and payouts (ST-C6, ST-C7, ST-C9) ─────────────────────────────
 
 /** Always the signed-in employee's own: anything else in the query (a staffId, say) is 400, never quietly dropped. */
-export const PeriodEarningsQuery = z.strictObject({ period: DateStr.optional().describe("Any day in the pay period; today when left out") });
+const MyPeriod = {
+  period: z.string().max(10).optional().describe("current, or a pay period's id (its start date, from GET /me/pay-periods). The current period when nothing is sent"),
+  periodId: z.string().max(10).optional().describe("A pay period's id: its start date. Same as period=<id>; send one or the other"),
+  from: DateStr.optional().describe("With to, instead of a period"),
+  to: DateStr.optional(),
+};
+/** My Earnings: the employee is the token's, so any other key (staffId and the like) is a 400. */
+export const MyEarningsQuery = z.strictObject(MyPeriod);
+export const MyTicketsQuery = z.strictObject({ ...MyPeriod, date: DateStr.optional().describe("One day's tickets: on its own, or inside the period or from/to sent. Today when nothing is sent") });
+export const NoQuery = z.strictObject({});
 export const YtdQuery = z.strictObject({ year: z.coerce.number().int().min(2020).max(2100).optional() });
 export const CutoverAnswerBody = z.object({ shopId: z.uuid(), status: z.enum(["confirmed", "disputed"]), note: z.string().max(500).nullish().describe("Required to dispute") });
 

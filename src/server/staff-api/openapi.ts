@@ -104,30 +104,48 @@ const MORE: Op[] = [
   // ST-C6, ST-C7, ST-C9
   {
     method: "get",
+    path: "/me/pay-periods",
+    tag: "Tips and pay",
+    summary:
+      "My Earnings, the period picker: the signed-in employee's pay periods across their shops, newest first, current included. id is the period's start date (pass it as period or periodId). periodStatus is draft, approved, locked or exported; exportStatus is not_sent or sent; isEstimate is true until the period is locked. Always their own: any query parameter is 400.",
+    permission: "Any of timesheet.own, tips.own, compensation.own or report.my_sales.view",
+    query: S.NoQuery,
+  },
+  {
+    method: "get",
     path: "/me/earnings",
     tag: "Tips and pay",
     summary:
-      "One pay period (any day in it), per shop and in total, from the same payroll run as the iSolved export, to the cent: hours (timesheet.own), card, cash and gift-card tips (tips.own), service and product sales with refunds netted (report.my_sales.view with reports.money), wages and commission (compensation.own). Parts they may not see are null. payout says how tips reach them. paystub (ST-N8): their lines in the shop's payroll file under the names the iSolved paystub prints (Regular, Overtime 1.5, Comm Sales, Cash Tips Recd…), with header, unit (hours or dollars), group (hours, tips or wages, filtered by what they may see) and memo for tips they already have; label the app's earnings with these. source (the rollout): platform, or squire for a shop still on Squire whose figures come from Squire's Commissions report (no tender split: its tips are all adjustmentsCents); squireImported is false until that report is imported for the period, so show it as not ready yet. tips.declaredCashCents is cash they declared and tips.cashTipsRecdCents their E_Cash Tips Recd (tips plus declared cash). pay (compensation.own): hourly pay on regular hours against service commission, greaterOf.result commission or hourly, greaterOf.paidCents plus productCommissionCents and lateCommissionCents adding up to totalWagesCents exactly, then OT, training, any guarantee top-up and the OT premium; commSalesCents is the E_Comm Sales column. reconciliation, checked on the server: isolved is every column of their row in the shop's iSolved file (amount) against their Payroll Report line (payrollReport), and tickets is GET /me/earnings/tips's totals against the report's TIPS and declared cash; matches is false when any shown check fails, and adjustedOnReport names report fields a manager typed over. Always their own: any query parameter but period is 400.",
+      "My Earnings for one pay period (period=current or a period id; or from and to that are exactly one period, otherwise 400). Every amount is integer cents, computed on the server by the same code that builds the Payroll Report and the iSolved file, so the app does no pay math: hours (timesheet.own), hourlyPayCents, serviceCommissionCents, greaterOfCents with appliedRule (hourly, commission, or mixed across shops) and explanationCode, product and late commission, commSalesCents (E_Comm Sales), OT, training and PTO pay (compensation.own), card and cash tips (tips.own; cash includes declared cash, so totalTipsCents is E_Cash Tips Recd), sales (report.my_sales.view with reports.money) and totalCents (wages plus E_Cash Tips Recd; null unless they may see both wages and tips). Parts they may not see are null. periodStatus, exportStatus, isEstimate, snapshotId and computedAt say how final it is. shops[] has the same per shop with reconciliation against their iSolved row. Always their own: staffId or any other parameter is 400.",
     permission: "Any of those",
-    query: S.PeriodEarningsQuery,
+    query: S.MyEarningsQuery,
   },
   {
     method: "get",
-    path: "/me/earnings/tips",
+    path: "/me/earnings/days",
     tag: "Tips and pay",
     summary:
-      "My Earnings, tips: the signed-in employee's own tips for the pay period holding `period`, at each shop. tickets: each ticket's card, cash and gift-card tip, refundedCents taken back, tipsCents net, shared (their share of a split ticket; nobody else's share is ever shown), and transfer (the card tip's transfer to their Stripe account at the sale, or null) and payout. days: the same by day, with declaredCashCents (cash they declared, SB-C3). adjustments: a manager's tip adjustments with the reason. totals.tipsCents is what the Payroll Report's TIPS adds up from and totals.cashTipsRecdCents adds declared cash, as E_Cash Tips Recd does; GET /me/earnings has the check. previous and next are a day in the periods either side (next is null for the current one). Always their own: any query parameter but period is 400.",
-    permission: "tips.own",
-    query: S.PeriodEarningsQuery,
+      "My Earnings by day for a pay period (periodId, period, or from and to up to 31 days): card and cash tips (cash includes declared), service and product sales, production and training hours, tickets. Days add up to GET /me/earnings for the same period. Always their own.",
+    permission: "Any of those",
+    query: S.MyEarningsQuery,
   },
   {
     method: "get",
-    path: "/me/earnings/transfers",
+    path: "/me/earnings/tickets",
     tag: "Tips and pay",
     summary:
-      "My Earnings, Stripe: for the pay period holding `period`, each of their card tips that went to their own Stripe account at the sale (I10): status (pending, sent, failed or cancelled) with statusLabel, stripeTransferId and sentAt, and payout, the tip payout that takes it on to their bank or debit card (status, statusLabel, stripePayoutId, paidAt; payoutStatusLabel says 'Not in a payout yet' while it waits in their Stripe balance). payouts: the period's tip payouts as GET /payouts shows them. totals by transfer status and paidOutCents. Always their own: any query parameter but period is 400.",
+      "My Earnings for one day's tickets (date): client first name, service, their service and product amounts, card, cash and gift-card tip (their share only when split), tipDisposition (stripe, payroll or cash) and the card tip's transfer and payout. refunds the shop covered are listed with reducesPay false. Always their own.",
+    permission: "tips.own or report.my_sales.view",
+    query: S.MyTicketsQuery,
+  },
+  {
+    method: "get",
+    path: "/me/payouts",
+    tag: "Tips and pay",
+    summary:
+      "Card tips on their way to the employee's bank for a pay period (periodId, period, or from and to up to 31 days). transfers: each card tip's transfer to their Stripe account, status pending, in_transit, paid or reversed with arrivalDate. Ray'z never reverses a tip transfer: reversed appears only when Stripe reversed it (reversedBy stripe) or the bank returned the payout (reversedBy bank_return). payouts: Stripe payouts to their bank, status pending, in_transit, paid, failed or canceled, with arrivalDate and bankLast4. Always their own.",
     permission: "tips.own",
-    query: S.PeriodEarningsQuery,
+    query: S.MyEarningsQuery,
   },
   { method: "get", path: "/me/earnings/ytd", tag: "Tips and pay", summary: "Year to date: Ray'z plus what was imported from Squire for the year (W-2 continuity), per shop.", permission: "Any of those", query: S.YtdQuery },
   {

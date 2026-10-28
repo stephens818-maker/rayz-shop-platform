@@ -2,37 +2,31 @@ import "server-only";
 import { and, eq, inArray, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { shops, staffYtdImports } from "@/db/schema";
-import { exportRowChecks, paystubLines, toCents, type Line, type ShopBlock } from "@/domain/payroll/calc";
 import { reportView } from "@/domain/permissions";
 import { METHOD_LABEL, PAYOUT_PATH_TEXT, defaultShopTipSettings, effectiveMethod } from "@/domain/tips";
 import { todayLocal, type LocalDate } from "@/lib/time";
 import { workShopIds } from "@/server/auth/access";
 import { can } from "@/server/auth/staff";
 import { forbidden } from "@/server/errors";
-import { buildPayroll } from "@/server/payroll/run";
 import { payrollSalesBetween } from "@/server/reports";
 import { staffAccount } from "@/server/tips/accounts";
 import { shopTipConfigs } from "@/server/tips/ledger";
 import { STRIPE_PAYOUTS_HELD, stripePayoutsOn } from "@/server/tips/payout-model";
 import { tipOverrides } from "@/server/compensation";
-import { dayOf, myPayPeriods, myTipDetail, periodNav, periodView, type ShopTips } from "./earnings-detail";
 import type { StaffAppContext } from "./http";
 
 /**
- * Earnings by pay period (ST-C6): their own line of the Payroll Report at each shop, so every amount
- * is the one in the iSolved export to the cent (a locked period is the approved snapshot), with the
- * tips split by tender, refunds already netted, and hours. Plus how tips reach them (ST-C7: direct to
- * their own bank or debit card through Stripe by default, payroll where the shop or they choose it).
+ * What an employee may see of their own earnings, their year to date, and how tips reach them (ST-C7:
+ * direct to their own bank or debit card through Stripe by default, payroll where the shop or they
+ * choose it). Pay by period is in earnings.ts.
  */
-
-const cents = (dollars: number) => Math.round(dollars * 100);
 
 async function myShops(staffId: string) {
   const ids = await workShopIds(staffId);
   return ids.length ? db.select({ id: shops.id, name: shops.name }).from(shops).where(and(inArray(shops.id, ids), ne(shops.status, "archived"))) : [];
 }
 
-function sees(ctx: StaffAppContext) {
+export function sees(ctx: StaffAppContext) {
   const s = {
     hours: can(ctx, "timesheet.own"),
     tips: can(ctx, "tips.own"),
@@ -43,154 +37,7 @@ function sees(ctx: StaffAppContext) {
   return s;
 }
 
-type Sees = ReturnType<typeof sees>;
-
-/**
- * Their pay at the shop the way the report works it out (Total Wages): hourly pay on regular hours
- * against service commission, whichever is greater (the greater-of), then product commission and
- * commission owed from locked periods. paidCents and the parts after it add up to totalWagesCents
- * exactly. OT, training, a guarantee top-up and the OT premium are on top, as on the report.
- */
-function payOf(line: Line | undefined) {
-  const c = (x: number | undefined) => (line ? toCents(x ?? 0) : 0);
-  const commission = !!line && line.serviceTotal > 0;
-  const totalWagesCents = c(line?.totalWages);
-  const productCommissionCents = c(line?.productTotal);
-  const lateCommissionCents = c(line?.lateCommission);
-  return {
-    hourlyRateCents: c(line?.wage),
-    hourlyPayCents: c(line?.hourlyTotal),
-    servicePct: line?.servicePct ?? 0,
-    serviceCommissionCents: c(line?.commission),
-    greaterOf: {
-      result: commission ? ("commission" as const) : ("hourly" as const),
-      paidCents: totalWagesCents - productCommissionCents - lateCommissionCents,
-      commissionOverHourlyCents: commission ? c(line?.serviceTotal) : 0,
-    },
-    productPct: line?.productPct ?? 0,
-    productCommissionCents,
-    lateCommissionCents,
-    totalWagesCents,
-    commSalesCents: c(line?.netComm),
-    overtimeCents: c(line?.otPay),
-    trainingCents: c(line?.trainingPay),
-    guaranteeTopUpCents: c(line?.guaranteeTopUp),
-    otPremiumCents: c(line?.otPremiumOwed),
-    mixedRates: !!line?.input.mixedRates?.length,
-  };
-}
-
-/**
- * Their figures checked on the server: each column of their row in the shop's iSolved file against
- * their line of the Payroll Report, and the period's tickets and declarations against the report's
- * TIPS and declared cash. Only the parts they may see; `matches` is false when any shown check fails.
- */
-function reconciliationOf(see: Sees, block: ShopBlock | undefined, line: Line | undefined, tips: ShopTips | null) {
-  const isolved = (block && line ? exportRowChecks(block, line) : [])
-    .filter((x) => see[x.group])
-    .map((x) => ({ header: x.header, unit: x.unit, group: x.group, amount: x.exported, payrollReport: x.report, matches: x.matches }));
-  const tickets = tips
-    ? (() => {
-        const report = { tipsCents: line ? toCents(line.tips) : 0, declaredCashCents: line ? toCents(line.declaredCashTips) : 0 };
-        return { tipsCents: tips.totals.tipsCents, declaredCashCents: tips.totals.declaredCashCents, payrollReport: report, matches: tips.totals.tipsCents === report.tipsCents && tips.totals.declaredCashCents === report.declaredCashCents };
-      })()
-    : null;
-  return { matches: isolved.every((x) => x.matches) && (tickets?.matches ?? true), isolved, tickets, adjustedOnReport: line?.overridden ?? [] };
-}
-
-function shopEarnings(see: Sees, line: Line | undefined, split: { card: number; cash: number; giftCard: number; refunds: number }) {
-  const tipsCents = line ? cents(line.tips) : 0;
-  const declaredCashCents = line ? cents(line.declaredCashTips) : 0;
-  return {
-    hours: see.hours
-      ? { regular: line?.hours ?? 0, overtime: line?.otHours ?? 0, pto: line?.ptoHours ?? 0, training: line?.trainingHours ?? 0, total: (line?.hours ?? 0) + (line?.otHours ?? 0) }
-      : null,
-    tips: see.tips
-      ? {
-          totalCents: tipsCents,
-          cardCents: split.card,
-          cashCents: split.cash,
-          giftCardCents: split.giftCard,
-          /** Already taken out of the tender amounts. */
-          refundedCents: split.refunds,
-          /** Manager tip adjustments, so the parts add up to the payroll total. */
-          adjustmentsCents: tipsCents - split.card - split.cash - split.giftCard,
-          inPayrollCents: line ? cents(line.tipsInPayroll) : 0,
-          paidSeparatelyCents: line ? cents(line.tipsOutside) : 0,
-          alreadyPaidOutCents: line ? cents(line.tipsPaidOut) : 0,
-          /** Cash they declared (SB-C3): reported and taxed, never paid by the shop, and not in totalCents. */
-          declaredCashCents,
-          /** E_Cash Tips Recd in the iSolved file: every tip plus declared cash. */
-          cashTipsRecdCents: tipsCents + declaredCashCents,
-        }
-      : null,
-    sales: see.sales ? { serviceNetCents: line ? cents(line.service) : 0, productNetCents: line ? cents(line.product) : 0 } : null,
-    wages: see.wages
-      ? {
-          hourlyCents: line ? cents(line.hourlyTotal) : 0,
-          commissionCents: line ? cents(line.netComm) : 0,
-          totalWagesCents: line ? cents(line.totalWages) : 0,
-          overtimeCents: line ? cents(line.otPay) : 0,
-          trainingCents: line ? cents(line.trainingPay) : 0,
-          guaranteeTopUpCents: line ? cents(line.guaranteeTopUp) : 0,
-        }
-      : null,
-  };
-}
-
-/** GET /me/earnings?period=<a date in it>: the pay period holding that date at each shop they work at. */
-export async function myPeriodEarnings(ctx: StaffAppContext, period: string | undefined, today: LocalDate = todayLocal()) {
-  const day = dayOf(period, today);
-  const see = sees(ctx);
-  const me = ctx.staff.id;
-  const per = await myPayPeriods(me, day);
-  const runs = new Map<string, Awaited<ReturnType<typeof buildPayroll>>>();
-  for (const { p } of per) {
-    const k = `${p.start}_${p.end}`;
-    if (!runs.has(k)) runs.set(k, await buildPayroll(p.start, p.end, { clockChecks: false }));
-  }
-  const tipDetail = see.tips ? await myTipDetail(me, per) : null;
-  const out = [];
-  for (const { shop, p } of per) {
-    const view = runs.get(`${p.start}_${p.end}`);
-    const block = view?.blocks.find((b) => b.shopId === shop.id);
-    const line = block?.lines.find((l) => l.staffId === me);
-    const source = block?.source ?? "platform";
-    const [s] = see.tips && source === "platform" ? await payrollSalesBetween({ shopIds: [shop.id], staffId: me }, p.start, p.end) : [];
-    const e = shopEarnings(see, line, { card: s?.cardTipsCents ?? 0, cash: s?.cashTipsCents ?? 0, giftCard: s?.giftCardTipsCents ?? 0, refunds: s?.tipRefundsCents ?? 0 });
-    const paystub = block ? paystubLines(block, me).filter((l) => see[l.group]) : [];
-    const tips = source === "platform" ? (tipDetail?.get(shop.id)?.tips ?? null) : null;
-    out.push({
-      shopId: shop.id,
-      shop: shop.name,
-      period: periodView(p),
-      locked: !!block?.locked,
-      source,
-      squireImported: source === "squire" && !!block?.squireImport,
-      ...e,
-      pay: see.wages ? payOf(line) : null,
-      paystub,
-      reconciliation: reconciliationOf(see, block, line, tips),
-    });
-  }
-  return { sees: see, date: day, ...periodNav(per, today), shops: out, totals: sumShops(see, out), payout: await payoutSetup(ctx) };
-}
-
-function sumShops(see: Sees, rows: ReturnType<typeof shopEarnings>[]) {
-  const add = <T extends Record<string, number>>(list: (T | null)[]): T | null => {
-    const xs = list.filter((x): x is T => !!x);
-    if (!xs.length) return null;
-    const out = {} as Record<string, number>;
-    for (const x of xs) for (const [k, v] of Object.entries(x)) out[k] = Math.round(((out[k] ?? 0) + v) * 100) / 100;
-    return out as T;
-  };
-  return {
-    hours: see.hours ? add(rows.map((r) => r.hours)) : null,
-    tips: see.tips ? add(rows.map((r) => r.tips)) : null,
-    sales: see.sales ? add(rows.map((r) => r.sales)) : null,
-    wages: see.wages ? add(rows.map((r) => r.wages)) : null,
-  };
-}
+export type Sees = ReturnType<typeof sees>;
 
 /** GET /me/earnings/ytd?year=: the year so far, Ray'z plus what came over from Squire (read-only). */
 export async function myYearToDate(ctx: StaffAppContext, year: number | undefined, today: LocalDate = todayLocal()) {

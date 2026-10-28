@@ -366,3 +366,38 @@ export const TIP_TRANSFER_LABEL = {
 
 /** Where a tip already in their Stripe account stands before a payout takes it to their bank. */
 export const NOT_IN_PAYOUT_LABEL = "Not in a payout yet";
+
+/** The staff app's statuses (My Earnings): a tip's transfer to their Stripe account, and the Stripe payout to their bank or card. */
+export type AppTransferStatus = "pending" | "paid" | "reversed";
+export type AppPayoutStatus = "pending" | "in_transit" | "paid" | "failed" | "canceled";
+
+/**
+ * A Stripe tip payout as the app shows it: Stripe's own status once it has the payout (in transit
+ * until the bank has it), pending before then (waiting for approval, a hold or the batch), and failed
+ * when a payout already paid came back from the bank.
+ */
+export function appPayoutStatus(p: { status: string; stripeStatus: string | null; returnedAt: Date | null }): AppPayoutStatus {
+  if (p.returnedAt) return "failed";
+  if (p.status === "paid") return "paid";
+  if (p.status === "failed") return p.stripeStatus === "canceled" ? "canceled" : "failed";
+  if (p.status === "cancelled") return "canceled";
+  if (p.status === "processing" && (p.stripeStatus === "in_transit" || p.stripeStatus === "paid")) return p.stripeStatus;
+  return "pending";
+}
+
+/**
+ * A card tip's transfer to their Stripe account at the sale, as the app shows it, or null for one
+ * that never happened (a refund before it was sent took it all). Tip transfers are never reversed by
+ * the platform: reversed means only that Stripe reversed it, or that the payout carrying it was
+ * returned by their bank, and reversedBy says which. One Stripe refused at the sale is pending: it's
+ * paid with their next tip payout.
+ */
+export function appTransferStatus(
+  t: { status: string; stripeReversedAt: Date | null },
+  payout: { returnedAt: Date | null } | null,
+): { status: AppTransferStatus; reversedBy: "stripe" | "bank_return" | null } | null {
+  if (t.status === "cancelled") return null;
+  if (t.stripeReversedAt) return { status: "reversed", reversedBy: "stripe" };
+  if (payout?.returnedAt) return { status: "reversed", reversedBy: "bank_return" };
+  return { status: t.status === "sent" ? "paid" : "pending", reversedBy: null };
+}

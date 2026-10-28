@@ -94,7 +94,7 @@ export interface WeekBreakdown {
   /** Hours that count toward the 40, across every shop of the entity. */
   basis: number;
   ot: number;
-  slices: { shop: string; periodStart: LocalDate; basis: number; ot: number; locked: boolean; inThisRun: boolean }[];
+  slices: { shopId: string; shop: string; periodStart: LocalDate; basis: number; worked: number; training: number; ot: number; locked: boolean; inThisRun: boolean }[];
 }
 
 /** A figure of record on a locked shop that the live data no longer has: the file stays as approved, and this is flagged. */
@@ -561,6 +561,54 @@ function squireFigures(q: typeof payrollSquireInputs.$inferSelect | undefined) {
     lateTipRefunds: 0,
     salesTax: (q?.salesTaxCents ?? 0) / 100,
   } satisfies Partial<LineInput>;
+}
+
+export interface EmployeeDaySales {
+  date: LocalDate;
+  shopId: string;
+  /** Tickets they're the barber on. */
+  tickets: number;
+  serviceCents: number;
+  productCents: number;
+}
+
+/**
+ * One employee's days at the shops given, read the way buildPayroll reads them for the report: hours
+ * by shop and local date from the time clock (centi-hours, dailyHours), and service and product sales
+ * by day as the report credits them (payrollSalesBetween with the commission base's extras), in cents.
+ * Days at a shop whose payroll for that period comes from Squire are left out: Squire's report has
+ * only the period's total. Over a pay period, each figure adds up to the employee's line of the report
+ * before a manager's override.
+ */
+export async function employeeDays(staffId: string, shopIds: readonly string[], from: LocalDate, to: LocalDate) {
+  if (!shopIds.length || from > to) return { hours: [] as DayHours[], sales: [] as EmployeeDaySales[] };
+  const [groups, settings, rollout] = await Promise.all([ensurePayGroups(), loadSettings(), loadRolloutPlan()]);
+  const groupOf = new Map(groups.map((g) => [g.shopId, g]));
+  const ids = [...shopIds];
+  const groupIds = ids.flatMap((id) => (groupOf.has(id) ? [groupOf.get(id)!.id] : []));
+  const runs = groupIds.length
+    ? await db
+        .select({ g: payrollRuns.payGroupId, s: payrollRuns.periodStart, snapshot: payrollRuns.snapshot })
+        .from(payrollRuns)
+        .where(and(inArray(payrollRuns.payGroupId, groupIds), lte(payrollRuns.periodStart, to), gte(payrollRuns.periodEnd, from)))
+    : [];
+  const runOf = new Map(runs.map((r) => [`${r.g}|${r.s}`, r]));
+  const sourceOn = (shopId: string, date: LocalDate): PayrollSource => {
+    const g = groupOf.get(shopId);
+    const start = periodOf(g?.calendar ?? settings.calendar, date).start;
+    const run = g ? runOf.get(`${g.id}|${start}`) : undefined;
+    return run ? ((run.snapshot as Snapshot).source ?? "platform") : rollout.sourceOf(shopId, start);
+  };
+  const entries = await db
+    .select({ staffId: timeEntries.staffId, shopId: timeEntries.shopId, kind: timeEntries.kind, startsAt: timeEntries.startsAt, endsAt: timeEntries.endsAt })
+    .from(timeEntries)
+    .where(and(eq(timeEntries.staffId, staffId), inArray(timeEntries.shopId, ids), lt(timeEntries.startsAt, endOfLocalDay(to)), gt(timeEntries.endsAt, startOfLocalDay(from))));
+  const hours = dailyHours(entries).filter((d) => d.date >= from && d.date <= to && sourceOn(d.shopId, d.date) === "platform");
+  const sales: EmployeeDaySales[] = [];
+  for (let d = from; d <= to; d = addDays(d, 1))
+    for (const s of await payrollSalesBetween({ shopIds: ids, staffId }, d, d))
+      if (sourceOn(s.shopId, d) === "platform") sales.push({ date: d, shopId: s.shopId, tickets: s.tickets, serviceCents: s.serviceSalesCents + baseExtra(s, "service", settings), productCents: s.productSalesCents + baseExtra(s, "product", settings) });
+  return { hours, sales };
 }
 
 /** Punches at a shop whose payroll for the period comes from Squire don't count: Squire's hours are the record. */
@@ -1035,7 +1083,17 @@ function weekBreakdowns(slices: Slice[], staffIds: string[], weeks: LocalDate[],
           weekStart: w,
           basis: centi(list.reduce((a, s) => a + s.basis, 0)),
           ot: centi(list.reduce((a, s) => a + s.ot, 0)),
-          slices: list.map((s) => ({ shop: shopName(s.shopId), periodStart: s.periodStart, basis: centi(s.basis), ot: centi(s.ot), locked: s.locked, inThisRun: s.periodStart === start && runShops.has(s.shopId) })),
+          slices: list.map((s) => ({
+            shopId: s.shopId,
+            shop: shopName(s.shopId),
+            periodStart: s.periodStart,
+            basis: centi(s.basis),
+            worked: centi(s.worked),
+            training: centi(s.training),
+            ot: centi(s.ot),
+            locked: s.locked,
+            inThisRun: s.periodStart === start && runShops.has(s.shopId),
+          })),
         };
       })
       .filter((w) => w.slices.length);
