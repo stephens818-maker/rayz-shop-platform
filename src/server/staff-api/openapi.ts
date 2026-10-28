@@ -116,7 +116,7 @@ const MORE: Op[] = [
     path: "/me/earnings",
     tag: "Tips and pay",
     summary:
-      "My Earnings for one pay period (period=current or a period id; or from and to that are exactly one period, otherwise 400). Every amount is integer cents, computed on the server by the same code that builds the Payroll Report and the iSolved file, so the app does no pay math: hours (timesheet.own), hourlyPayCents, serviceCommissionCents, greaterOfCents with appliedRule (hourly, commission, or mixed across shops) and explanationCode, product and late commission, commSalesCents (E_Comm Sales), OT, training and PTO pay (compensation.own), card and cash tips (tips.own; cash includes declared cash, so totalTipsCents is E_Cash Tips Recd), sales (report.my_sales.view with reports.money) and totalCents (wages plus E_Cash Tips Recd; null unless they may see both wages and tips). Parts they may not see are null. periodStatus, exportStatus, isEstimate, snapshotId and computedAt say how final it is. shops[] has the same per shop with reconciliation against their iSolved row. Always their own: staffId or any other parameter is 400.",
+      "My Earnings for one pay period (period=current or a period id; or from and to that are exactly one period, otherwise 400). Every amount is integer cents, computed on the server by the same code that builds the Payroll Report and the iSolved file, so the app does no pay math: hours (timesheet.own), hourlyPayCents, serviceCommissionCents, greaterOfCents with appliedRule (hourly, commission, or mixed across shops) and explanationCode, product and late commission, commSalesCents (E_Comm Sales), OT, training and PTO pay (compensation.own), card and cash tips (tips.own; cash includes declared cash, so totalTipsCents is E_Cash Tips Recd), sales (report.my_sales.view with reports.money) and totalCents (wages plus E_Cash Tips Recd; null unless they may see both wages and tips). Parts they may not see are null. Pay comes from periodPay, the payroll engine function the Payroll Report and the iSolved file use. A locked or exported period is what its lock kept (fromLock true), never worked out again. periodStatus (draft, approved, locked or exported), exportStatus, isEstimate (true until locked), snapshotId and computedAt say how final it is. OT: otPremiumCents is an estimate (otIsEstimate true, otDisclosure to show) since iSolved applies the final 1.5x; workweeks[] has each Chicago workweek (Sunday to Saturday) with hours at every shop added up, each shop's part (shops[]), basisHours and otHours. adjustments[]: changes after a period was exported, paid in this open period and flagged: late_tip, late_declaration (cash tips declared after their period locked) and tip_refunded_after_export (effectCents 0: the shop covers it). A locked period is never reopened, pay is never negative and a tip is never clawed back. shops[] has the same per shop with reconciliation against their iSolved row, fromLock, and tipToBarber and tipTransfersEnabled (the shop's tip switch). Always their own: staffId or any other parameter is 400.",
     permission: "Any of those",
     query: S.MyEarningsQuery,
   },
@@ -125,7 +125,7 @@ const MORE: Op[] = [
     path: "/me/earnings/days",
     tag: "Tips and pay",
     summary:
-      "My Earnings by day for a pay period (periodId, period, or from and to up to 31 days): card and cash tips (cash includes declared), service and product sales, production and training hours, tickets. Days add up to GET /me/earnings for the same period. Always their own.",
+      "My Earnings by day for a pay period (periodId, period, or from and to up to 31 days): card and cash tips (cash includes declared), service and product sales, production and training hours, tickets. Days add up to GET /me/earnings for the same period. A locked or exported period's days are what its lock kept (fromLock true). periodStatus and isEstimate as on /me/earnings. Always their own.",
     permission: "Any of those",
     query: S.MyEarningsQuery,
   },
@@ -134,7 +134,7 @@ const MORE: Op[] = [
     path: "/me/earnings/tickets",
     tag: "Tips and pay",
     summary:
-      "My Earnings for one day's tickets (date): client first name, service, their service and product amounts, card, cash and gift-card tip (their share only when split), tipDisposition (stripe, payroll or cash) and the card tip's transfer and payout. refunds the shop covered are listed with reducesPay false. Always their own.",
+      "My Earnings for one day's tickets: periodId (a pay period id or current) and date (a Chicago calendar day inside that period) are both required, otherwise 400. Each ticket: the client's first name only, service, their service and product amounts, card, cash and gift-card tip (their share only when split) and tipDisposition (stripe, payroll or cash; payroll where the shop's tip switch is off). The card tip's transfer and the payout carrying it are separate fields: transferStatus (pending, paid, or reversed with transferReversedBy stripe) with transferArrivalDate, and payoutId, payoutStatus (pending, in_transit, paid, failed or canceled; a payout is never reversed) with payoutArrivalDate. refunds the shop covered are listed with reducesPay false. periodStatus and isEstimate for the period. Always their own.",
     permission: "tips.own or report.my_sales.view",
     query: S.MyTicketsQuery,
   },
@@ -143,7 +143,7 @@ const MORE: Op[] = [
     path: "/me/payouts",
     tag: "Tips and pay",
     summary:
-      "Card tips on their way to the employee's bank for a pay period (periodId, period, or from and to up to 31 days). transfers: each card tip's transfer to their Stripe account, status pending or paid (in their Stripe account) with arrivalDate, and payoutStatus for the payout carrying it on. Ray'z never reverses a tip transfer: reversed (reversedBy stripe) appears only when Stripe reversed it. payouts: Stripe payouts to their bank, status pending, in_transit, paid, failed or canceled, with arrivalDate and bankLast4; a payout their bank returned is failed with returned true, and its tips go out again with the next payout. Always their own.",
+      "Card tips on their way to the employee's bank for a pay period (periodId, period, or from and to up to 31 days). transfers: each card tip's transfer to their Stripe account, transferStatus pending or paid (in their Stripe account) with transferArrivalDate, and, separately, payoutId, payoutStatus and payoutArrivalDate for the payout carrying it on. Ray'z never reverses a tip transfer: transferStatus reversed (transferReversedBy stripe) appears only when Stripe reversed it. payouts: Stripe payouts to their bank, payoutStatus pending, in_transit, paid, failed or canceled (never reversed), with arrivalDate and bankLast4; a payout their bank returned is failed with returned true, and its tips go out again with the next payout. shops[]: each shop's tipToBarber switch, tipTransfersEnabled and payrollCopy (card tips are paid through payroll where the switch is off). periodStatus and isEstimate for the period. Always their own.",
     permission: "tips.own",
     query: S.MyEarningsQuery,
   },

@@ -31,6 +31,7 @@ import { currentDeclarationsOf } from "@/server/tips/declarations";
 import { syncTipLedger } from "@/server/tips/ledger";
 import type { TipPayout } from "@/server/tips/payouts";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
+import { tipToBarberShops } from "@/server/payments/settlement";
 import type { StaffAppContext } from "./http";
 import { payoutSetup, sees, type Sees } from "./pay";
 
@@ -284,10 +285,10 @@ function tendersOf(list: readonly Pick<LedgerRow, "method" | "amountCents">[]) {
 
 const dateOf = (d: Date | null | undefined) => (d ? localDateOf(d) : null);
 
-/** A Stripe tip payout, as TipPayoutView. */
+/** A Stripe tip payout. payoutStatus is Stripe's (pending, in_transit, paid, failed, canceled): a payout is never "reversed". */
 function payoutBrief(p: TipPayout) {
   return {
-    status: appPayoutStatus(p),
+    payoutStatus: appPayoutStatus(p),
     amountCents: receivedCents(p),
     arrivalDate: p.arrivalDate ?? (p.status === "paid" ? dateOf(p.paidAt) : null),
     bankLast4: p.destinationLast4,
@@ -295,20 +296,33 @@ function payoutBrief(p: TipPayout) {
   };
 }
 
-/** A card tip's transfer to their Stripe account at the sale, as TipTransferView; null for one never made. */
+/** A card tip's transfer to their Stripe account at the sale; null for one never made. Its status is the transfer's, never the payout's. */
 function transferBrief(t: Transfer) {
   const s = appTransferStatus(t);
-  return s ? { status: s.status, reversedBy: s.reversedBy, amountCents: t.amountCents, arrivalDate: t.status === "sent" ? dateOf(t.sentAt) : null } : null;
+  return s ? { transferStatus: s.status, transferReversedBy: s.reversedBy, amountCents: t.amountCents, transferArrivalDate: t.status === "sent" ? dateOf(t.sentAt) : null } : null;
 }
 
-type ShopMethod = Awaited<ReturnType<typeof payoutSetup>>["shops"][number]["method"];
-const transfersOn = (m: ShopMethod | undefined) => m === "stripe" && stripePayoutsOn();
-const payrollCopyOf = (m: ShopMethod | undefined) => (transfersOn(m) ? null : m === "cash" ? CASH_TIPS_COPY : PAYROLL_TIPS_COPY);
+type Setup = Awaited<ReturnType<typeof payoutSetup>>;
+interface TipRoute {
+  method: Setup["shops"][number]["method"];
+  /** The shop's tip switch (tip_to_barber, with FEATURE_TIP_TO_BARBER): off, its card tips are paid through payroll. */
+  tipToBarber: boolean;
+  /** Their card tips here go to their Stripe account at the sale: Stripe is how they're paid, Stripe payouts are on, and the shop's switch is on. */
+  transfers: boolean;
+}
 
-/** How their tip on a ticket reaches them: Stripe, the shop's cash drawer, or payroll. */
-function dispositionOf(r: LedgerRow | undefined, m: ShopMethod | undefined): "stripe" | "payroll" | "cash" {
+/** How each of their shops pays them their tips, held to each shop's tip switch. */
+async function tipRoutesOf(setup: Setup): Promise<Map<string, TipRoute>> {
+  const on = await tipToBarberShops(setup.shops.map((x) => x.shopId));
+  return new Map(setup.shops.map((x) => [x.shopId, { method: x.method, tipToBarber: on.has(x.shopId), transfers: x.method === "stripe" && stripePayoutsOn() && on.has(x.shopId) }]));
+}
+
+const payrollCopyOf = (r: TipRoute | undefined) => (r?.transfers ? null : r?.method === "cash" ? CASH_TIPS_COPY : PAYROLL_TIPS_COPY);
+
+/** How their tip on a ticket reaches them: Stripe (a transfer made, or the shop's switch on), the shop's cash drawer, or payroll. */
+function dispositionOf(r: LedgerRow | undefined, route: TipRoute | undefined): "stripe" | "payroll" | "cash" {
   if (r?.transfer && r.transfer.status !== "cancelled") return "stripe";
-  const via = r?.payout?.method ?? (transfersOn(m) ? "stripe" : m);
+  const via = r?.payout?.method ?? (route?.transfers ? "stripe" : route?.method === "cash" ? "cash" : "payroll");
   return via === "stripe" ? "stripe" : via === "cash" ? "cash" : "payroll";
 }
 
@@ -447,7 +461,7 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
     see.tips ? shopCoveredRefunds(me, shopIds, per.start, per.end) : [],
     payoutSetup(ctx),
   ]);
-  const methodOf = new Map(setup.shops.map((s) => [s.shopId, s.method]));
+  const routes = await tipRoutesOf(setup);
 
   const slices = per.cals.map((c) => {
     const block = view?.blocks.find((b) => b.shopId === c.shop.id);
@@ -457,15 +471,16 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
     const t = { card: sum(here, (d) => d.cardTipsCents), cash: sum(here, (d) => d.cashTipsCents), giftCard: sum(here, (d) => d.giftCardTipsCents) };
     const tipsCents = pay?.tipsCents ?? 0;
     const declaredCents = pay?.declaredCashTipsCents ?? 0;
-    const m = methodOf.get(c.shop.id);
+    const route = routes.get(c.shop.id);
     return {
       line,
       pay,
       out: {
         shopId: c.shop.id,
         shopName: c.shop.name,
-        tipTransfersEnabled: transfersOn(m),
-        payrollCopy: payrollCopyOf(m),
+        tipToBarber: !!route?.tipToBarber,
+        tipTransfersEnabled: !!route?.transfers,
+        payrollCopy: payrollCopyOf(route),
         cardTipsCents: see.tips ? t.card : null,
         cashTipsCents: see.tips ? t.cash + declaredCents : null,
         serviceSalesCents: see.sales ? (line ? toCents(line.service) : 0) : null,
@@ -642,23 +657,22 @@ interface TicketRow {
 }
 
 /**
- * GET /me/earnings/tickets?date= (inside a period or from/to, or on its own): their tickets that day,
- * each with the services and products credited to them (as payroll credits them: the ticket's
- * barber, less lines done by someone else, plus lines they did on someone else's ticket), their own
- * tip by tender (their share on a split ticket, never anyone else's) and how it reaches them.
+ * GET /me/earnings/tickets?periodId=&date=: their tickets on one Chicago calendar day of one of their
+ * pay periods, each with the services and products credited to them (as payroll credits them: the
+ * ticket's barber, less lines done by someone else, plus lines they did on someone else's ticket),
+ * their own tip by tender (their share on a split ticket, never anyone else's), how it reaches them,
+ * and the card tip's transfer status and its payout's status, each in its own field. Clients by
+ * first name only.
  */
-export async function myEarningsTickets(ctx: StaffAppContext, q: PeriodQuery & { date?: string }, today: LocalDate = todayLocal()) {
+export async function myEarningsTickets(ctx: StaffAppContext, q: { periodId: string; date: string }, today: LocalDate = todayLocal()) {
   const see = sees(ctx);
   if (!see.tips && !see.sales) throw forbidden("You don't have permission to see tips or sales");
   const me = ctx.staff.id;
   const { shops: mine, cals } = await myCalendars(me);
-  const asked = q.period !== undefined || q.periodId !== undefined || q.from !== undefined || q.to !== undefined;
-  const span = asked ? spanOf(cals, q, today) : { from: q.date ?? today, to: q.date ?? today, period: null };
-  if (q.date && (q.date < span.from || q.date > span.to)) throw bad("date isn't in that pay period or range", "date");
-  const from = q.date ?? span.from;
-  const to = q.date ?? span.to;
-  if (diffDays(to, from) >= MAX_RANGE_DAYS) throw bad(`Tickets cover at most ${MAX_RANGE_DAYS} days`, "to");
-  const ids = mine.map((s) => s.id);
+  const per = periodById(cals, periodIdOf({ periodId: q.periodId })!, today, "periodId");
+  if (!isValidLocalDate(q.date) || q.date < per.start || q.date > per.end) throw bad(`date is a Chicago calendar day in that pay period, ${per.start} to ${per.end}`, "date");
+  const date = q.date;
+  const ids = per.cals.map((c) => c.shop.id);
   const name = new Map(mine.map((s) => [s.id, s.name]));
   const list = ids.length
     ? await rows<TicketRow>(sql`
@@ -670,29 +684,31 @@ export async function myEarningsTickets(ctx: StaffAppContext, q: PeriodQuery & {
         from sales s
         left join customers c on c.id = s.customer_id
         left join appointments a on a.id = s.appointment_id
-        where s.shop_id in ${uuids(ids)} and s.business_date between ${from} and ${to} and s.status in ${PAID} and ${notSquireEra()}
+        where s.shop_id in ${uuids(ids)} and s.business_date = ${date} and s.status in ${PAID} and ${notSquireEra()}
           and (s.staff_id = ${me}
             or exists (select 1 from sale_line_moves lm where lm.sale_id = s.id and lm.staff_id = ${me})
             or exists (select 1 from tip_ledger tl where tl.sale_id = s.id and tl.staff_id = ${me}))
         order by coalesce(a.starts_at, s.created_at), s.id`)
     : [];
-  const [ledger, setup, covered] = await Promise.all([
+  const [ledger, setup, covered, state] = await Promise.all([
     see.tips ? myLedger(me, ids, { saleIds: list.map((t) => t.saleId) }) : [],
     payoutSetup(ctx),
-    see.tips ? shopCoveredRefunds(me, ids, from, to) : [],
+    see.tips ? shopCoveredRefunds(me, ids, date, date) : [],
+    periodStates([per], today).then((m) => m.get(per.start)!),
   ]);
-  const methodOf = new Map(setup.shops.map((s) => [s.shopId, s.method]));
+  const routes = await tipRoutesOf(setup);
   const tickets = list.map((t) => {
     const mineHere = ledger.filter((r) => r.saleId === t.saleId);
     const tip = mineHere.find((r) => r.kind === "tip" && r.transfer) ?? mineHere.find((r) => r.kind === "tip");
     const tender = tendersOf(mineHere);
     const late = mineHere.find((r) => r.kind === "tip" && r.date !== t.date);
-    const payout = tip?.payout?.method === "stripe" ? tip.payout : null;
+    const payout = see.tips && tip?.payout?.method === "stripe" ? payoutBrief(tip.payout) : null;
+    const transfer = see.tips && tip?.transfer ? transferBrief(tip.transfer) : null;
     return {
       saleId: t.saleId,
       shopId: t.shopId,
       shopName: name.get(t.shopId) ?? "",
-      clientFirstName: t.clientFirstName ?? "Walk-in",
+      clientFirstName: firstNameOnly(t.clientFirstName),
       startedAt: new Date(t.startedAt).toISOString(),
       serviceName: t.serviceName ?? "",
       serviceCents: see.sales ? t.serviceCents : null,
@@ -701,16 +717,23 @@ export async function myEarningsTickets(ctx: StaffAppContext, q: PeriodQuery & {
       cashTipCents: see.tips ? tender.cash : null,
       giftCardTipCents: see.tips ? tender.giftCard : null,
       shared: see.tips ? mineHere.some((r) => r.shared) : null,
-      tipDisposition: see.tips ? dispositionOf(tip, methodOf.get(t.shopId)) : null,
-      transfer: see.tips && tip?.transfer ? transferBrief(tip.transfer) : null,
-      payout: see.tips && payout ? payoutBrief(payout) : null,
+      tipDisposition: see.tips ? dispositionOf(tip, routes.get(t.shopId)) : null,
+      transferStatus: transfer?.transferStatus ?? null,
+      transferReversedBy: transfer?.transferReversedBy ?? null,
+      transferArrivalDate: transfer?.transferArrivalDate ?? null,
+      payoutId: see.tips && tip?.payout?.method === "stripe" ? tip.payout.id : null,
+      payoutStatus: payout?.payoutStatus ?? null,
+      payoutArrivalDate: payout?.arrivalDate ?? null,
       lateDeclaration: false,
       originalDate: late ? t.date : null,
       postedDate: late?.date ?? null,
     };
   });
-  return { from, to, date: q.date ?? null, tickets, refunds: covered };
+  return { periodId: per.id, date, timezone: SHOP_TZ, ...periodFlags(state), tickets, refunds: covered };
 }
+
+/** A client on an employee's screen: their first name only, whatever was typed into the field. */
+export const firstNameOnly = (raw: string | null) => raw?.trim().split(/\s+/)[0] || "Walk-in";
 
 // ───────────────────────────── GET /me/payouts ─────────────────────────────
 
@@ -750,12 +773,12 @@ export async function myPayoutsView(ctx: StaffAppContext, q: PeriodQuery, today:
         saleId: r.saleId,
         shopId: r.shopId,
         amountCents: t.amountCents,
-        status: t.status,
-        reversedBy: t.reversedBy,
-        arrivalDate: t.arrivalDate,
+        transferStatus: t.transferStatus,
+        transferReversedBy: t.transferReversedBy,
+        transferArrivalDate: t.transferArrivalDate,
         date: r.date,
         payoutId: payout?.id ?? null,
-        payoutStatus: po?.status ?? null,
+        payoutStatus: po?.payoutStatus ?? null,
         payoutArrivalDate: po?.arrivalDate ?? null,
       },
     ];
@@ -763,7 +786,8 @@ export async function myPayoutsView(ctx: StaffAppContext, q: PeriodQuery, today:
   const payouts = new Map<string, TipPayout>();
   for (const r of ledger) if (r.payout?.method === "stripe") payouts.set(r.payout.id, r.payout);
   for (const p of made) payouts.set(p.id, p);
-  const anyOn = setup.shops.some((s) => transfersOn(s.method));
+  const routes = await tipRoutesOf(setup);
+  const anyOn = [...routes.values()].some((r) => r.transfers);
   return {
     from: span.from,
     to: span.to,
@@ -771,7 +795,8 @@ export async function myPayoutsView(ctx: StaffAppContext, q: PeriodQuery, today:
     ...periodFlags(state),
     bankLast4: acct?.destinationLast4 ?? null,
     tipTransfersEnabled: anyOn,
-    payrollCopy: anyOn ? null : payrollCopyOf(setup.shops[0]?.method),
+    payrollCopy: anyOn ? null : payrollCopyOf(routes.get(setup.shops[0]?.shopId ?? "")),
+    shops: setup.shops.map((x) => ({ shopId: x.shopId, tipToBarber: !!routes.get(x.shopId)?.tipToBarber, tipTransfersEnabled: !!routes.get(x.shopId)?.transfers, payrollCopy: payrollCopyOf(routes.get(x.shopId)) })),
     transfers,
     payouts: [...payouts.values()]
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())

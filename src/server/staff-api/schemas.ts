@@ -226,7 +226,10 @@ const MyPeriod = {
 };
 /** My Earnings: the employee is the token's, so any other key (staffId and the like) is a 400. */
 export const MyEarningsQuery = z.strictObject(MyPeriod);
-export const MyTicketsQuery = z.strictObject({ ...MyPeriod, date: DateStr.optional().describe("One day's tickets: on its own, or inside the period or from/to sent. Today when nothing is sent") });
+export const MyTicketsQuery = z.strictObject({
+  periodId: z.string().max(10).describe("A pay period's id (its start date, from GET /me/pay-periods), or current"),
+  date: DateStr.describe("A Chicago (shop-local) calendar day inside that pay period: its tickets"),
+});
 export const NoQuery = z.strictObject({});
 export const YtdQuery = z.strictObject({ year: z.coerce.number().int().min(2020).max(2100).optional() });
 export const CutoverAnswerBody = z.object({ shopId: z.uuid(), status: z.enum(["confirmed", "disputed"]), note: z.string().max(500).nullish().describe("Required to dispute") });

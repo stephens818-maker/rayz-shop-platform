@@ -235,7 +235,7 @@ export const getPeriodEarnings = staffRoute(PAY, async (req, ctx) => json(await 
 /** GET /me/earnings/days?periodId=: each day's tips, sales and hours, adding up to the period. */
 export const getEarningsDays = staffRoute(PAY, async (req, ctx) => json(await myEarningsDays(ctx, query(req, S.MyEarningsQuery))));
 
-/** GET /me/earnings/tickets?date=: their tickets that day, their own tip on each and how it reaches them. */
+/** GET /me/earnings/tickets?periodId=&date=: their tickets on one Chicago day of that pay period, their own tip on each and how it reaches them. */
 export const getEarningsTickets = staffRoute(PAY, async (req, ctx) => json(await myEarningsTickets(ctx, query(req, S.MyTicketsQuery))));
 
 /** GET /me/payouts?periodId=: their card tips' transfers to their Stripe account and the Stripe payouts to their bank. */
