@@ -1,16 +1,17 @@
 /**
- * Production per hour (PPH, Charles): what someone brings in for each hour on the clock, worked out
+ * Productivity Per Hour (PPH, Charles): what someone brings in for each hour on the clock, worked out
  * the same way everywhere it shows (the PPH report, the Payroll Report's review columns, the Morning
  * Dashboard and My Earnings):
  *
- * - Service PPH: service sales before tax and tips, net of discounts and refunds, over clocked worked
- *   hours. Worked hours are regular plus overtime from the time clock; training and PTO aren't
- *   production time, so they're left out.
+ * - Service PPH, the default (PPH on its own means this): service sales before tax and tips, net of
+ *   discounts and refunds, over clocked worked hours. Worked hours are regular plus overtime from the
+ *   time clock; training and PTO aren't working time, so they're left out.
+ * - Clients per hour, its companion: completed service tickets over the same hours.
  * - Product PPH: product sales the same way, over the same hours.
  * - Total PPH: service and product sales together, over the same hours.
  *
  * With no worked hours it's N/A (null), never $0 or infinite. A total over several people, shops or
- * days is their sales added up over their hours added up, never an average of their PPHs.
+ * days is their sales (or tickets) added up over their hours added up, never an average.
  * Pure: no database, no clock.
  */
 import { LocalDate, addDays, diffDays, formatDate } from "@/lib/time";
@@ -18,15 +19,22 @@ import { LocalDate, addDays, diffDays, formatDate } from "@/lib/time";
 export const PPH_MEASURES = ["service", "product", "total"] as const;
 export type PphMeasure = (typeof PPH_MEASURES)[number];
 export const PPH_LABEL: Record<PphMeasure, string> = { service: "Service PPH", product: "Product PPH", total: "Total PPH" };
-export const parsePphMeasure = (v: unknown): PphMeasure => (v === "product" || v === "total" ? v : "service");
+
+/** What a PPH table ranks by: the three PPHs and clients per hour, service PPH first and by default. */
+export const PPH_RANKS = ["service", "clients", "product", "total"] as const;
+export type PphRank = (typeof PPH_RANKS)[number];
+export const CLIENTS_LABEL = "Clients per hour";
+export const RANK_LABEL: Record<PphRank, string> = { ...PPH_LABEL, clients: CLIENTS_LABEL };
+export const parsePphRank = (v: unknown): PphRank => (PPH_RANKS.includes(v as PphRank) ? (v as PphRank) : "service");
 
 /** What the PPH shows when there are no worked hours. */
 export const NA = "N/A";
 
-/** Sales (in any one unit: cents or dollars) and worked hours. */
+/** Sales (in any one unit: cents or dollars), completed service tickets and worked hours. */
 export interface PphInput {
   service: number;
   product: number;
+  clients: number;
   hours: number;
 }
 
@@ -35,32 +43,44 @@ export interface Pph extends PphInput {
   servicePph: number | null;
   productPph: number | null;
   totalPph: number | null;
+  /** Completed service tickets per worked hour; null without worked hours. */
+  clientsPerHour: number | null;
 }
 
 export const perHour = (amount: number, hours: number): number | null => (hours > 0 ? amount / hours : null);
 
 export function pph(x: PphInput): Pph {
-  return { ...x, servicePph: perHour(x.service, x.hours), productPph: perHour(x.product, x.hours), totalPph: perHour(x.service + x.product, x.hours) };
+  return {
+    ...x,
+    servicePph: perHour(x.service, x.hours),
+    productPph: perHour(x.product, x.hours),
+    totalPph: perHour(x.service + x.product, x.hours),
+    clientsPerHour: perHour(x.clients, x.hours),
+  };
 }
 
-/** From cents and centi-hours (the time clock's hundredths of an hour), each PPH to the whole cent. */
-export function pphCents(serviceCents: number, productCents: number, centiHours: number): Pph {
-  const p = pph({ service: serviceCents, product: productCents, hours: centiHours / 100 });
+/** From cents and centi-hours (the time clock's hundredths of an hour): each PPH to the whole cent, clients per hour to the hundredth. */
+export function pphCents(serviceCents: number, productCents: number, centiHours: number, clients = 0): Pph {
+  const p = pph({ service: serviceCents, product: productCents, clients, hours: centiHours / 100 });
   const c = (v: number | null) => (v === null ? null : Math.round(v));
-  return { ...p, servicePph: c(p.servicePph), productPph: c(p.productPph), totalPph: c(p.totalPph) };
+  return { ...p, servicePph: c(p.servicePph), productPph: c(p.productPph), totalPph: c(p.totalPph), clientsPerHour: p.clientsPerHour === null ? null : Math.round(p.clientsPerHour * 100) / 100 };
 }
 
-/** Sales and hours added up, then divided: the PPH of a shop, a brand or a range. */
+/** Sales, tickets and hours added up, then divided: the PPH of a shop, a brand or a range. */
 export const addUp = (xs: readonly PphInput[]): PphInput => ({
   service: xs.reduce((a, x) => a + x.service, 0),
   product: xs.reduce((a, x) => a + x.product, 0),
+  clients: xs.reduce((a, x) => a + x.clients, 0),
   hours: xs.reduce((a, x) => a + x.hours, 0),
 });
 
-export const pphOf = (p: Pick<Pph, "servicePph" | "productPph" | "totalPph">, m: PphMeasure) => (m === "service" ? p.servicePph : m === "product" ? p.productPph : p.totalPph);
+export const pphOf = (p: Pick<Pph, "servicePph" | "productPph" | "totalPph" | "clientsPerHour">, m: PphRank) =>
+  m === "service" ? p.servicePph : m === "product" ? p.productPph : m === "clients" ? p.clientsPerHour : p.totalPph;
 
 /** "$84.20" or N/A. */
 export const pphText = (v: number | null, money: (x: number) => string) => (v === null ? NA : money(v));
+/** "2.35" or N/A. */
+export const clientsText = (v: number | null) => (v === null ? NA : v.toFixed(2));
 
 /**
  * Worked hours on a Payroll Report line: regular plus overtime, less the overtime that came from
@@ -68,11 +88,15 @@ export const pphText = (v: number | null, money: (x: number) => string) => (v ==
  */
 export const workedHoursOf = (l: { hours: number; otHours: number; otFromTraining?: number }) => l.hours + l.otHours - (l.otFromTraining ?? 0);
 
-/** A Payroll Report line's PPH, in dollars: Service$ (E) and Product$ (J) over its worked hours. */
-type PayLine = { service: number; product: number; hours: number; otHours: number; otFromTraining?: number };
-export const linePph = (l: PayLine) => pph({ service: l.service, product: l.product, hours: workedHoursOf(l) });
-/** Several lines (a shop's block, every shop): their sales over their worked hours. */
-export const linesPph = (ls: readonly PayLine[]) => pph(addUp(ls.map((l) => ({ service: l.service, product: l.product, hours: workedHoursOf(l) }))));
+/** A Payroll Report line's PPH, in dollars: Service$ (E) and Product$ (J), and its completed service tickets, over its worked hours. */
+type PayLine = { staffId: string; shopId: string; service: number; product: number; hours: number; otHours: number; otFromTraining?: number };
+/** Completed service tickets per person and shop, keyed by {@link clientKey}. */
+export type ClientCounts = ReadonlyMap<string, number>;
+export const clientKey = (staffId: string, shopId: string) => `${staffId}|${shopId}`;
+const inputOf = (l: PayLine, clients: ClientCounts): PphInput => ({ service: l.service, product: l.product, clients: clients.get(clientKey(l.staffId, l.shopId)) ?? 0, hours: workedHoursOf(l) });
+export const linePph = (l: PayLine, clients: ClientCounts = new Map()) => pph(inputOf(l, clients));
+/** Several lines (a shop's block, every shop): their sales and tickets over their worked hours. */
+export const linesPph = (ls: readonly PayLine[], clients: ClientCounts = new Map()) => pph(addUp(ls.map((l) => inputOf(l, clients))));
 
 // ───────────────────────────── Ranking ─────────────────────────────
 
@@ -100,22 +124,25 @@ export function rankPph<T>(items: readonly T[], value: (x: T) => number | null, 
   return [...out, ...na.map((x) => ({ ...x, rank: null }))];
 }
 
-/** PPHs equal to the cent (or to a hundredth of a dollar) tie. */
+/** PPHs equal to the cent (or clients per hour, or dollars, to the hundredth) tie. */
 const same = (a: number, b: number) => Math.abs(a - b) < 0.005;
 
+/** Where each ranked figure sits among a PPH table's figures: worked hours, service and product sales, service tickets, then service PPH, clients per hour, product PPH and total PPH. */
+export const FIGURES = 8;
+const RANK_AT: Record<PphRank, number> = { service: 4, clients: 5, product: 6, total: 7 };
+
 /**
- * Sortable headings for a PPH table whose figures (worked hours, service and product sales, then the
- * three PPHs) follow `before` other columns: clicking a PPH heading ranks by it, highest first, and
- * clicking the one ranked by flips the order.
+ * Sortable headings for a PPH table whose figures follow `before` other columns: clicking a PPH (or
+ * clients per hour) heading ranks by it, highest first, and clicking the one ranked by flips the order.
  */
-export function pphSort(before: number, measure: PphMeasure, order: PphOrder) {
-  const at = (k: PphMeasure) => before + 3 + PPH_MEASURES.indexOf(k);
+export function pphSort(before: number, rank: PphRank, order: PphOrder) {
+  const at = (k: PphRank) => before + RANK_AT[k];
   return {
-    sortBy: Array.from({ length: before + 6 }, (_, j) => {
-      const k = PPH_MEASURES.find((x) => at(x) === j);
-      return k ? { rank: k, order: k === measure && order === "high" ? "low" : "high" } : null;
+    sortBy: Array.from({ length: before + FIGURES }, (_, j) => {
+      const k = PPH_RANKS.find((x) => at(x) === j);
+      return k ? { rank: k, order: k === rank && order === "high" ? "low" : "high" } : null;
     }),
-    sorted: { column: at(measure), dir: order === "high" ? ("desc" as const) : ("asc" as const) },
+    sorted: { column: at(rank), dir: order === "high" ? ("desc" as const) : ("asc" as const) },
   };
 }
 

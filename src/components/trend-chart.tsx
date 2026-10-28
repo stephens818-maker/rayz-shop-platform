@@ -22,15 +22,20 @@ export function moneyAxisTop(maxCents: number): number {
 
 const dollarsOf = (cents: number) => `$${(cents / 100).toLocaleString("en-US", { maximumFractionDigits: cents < 1000 ? 2 : 0 })}`;
 
+/** A round top for a plain number axis, like clients per hour: the same steps as dollars, 1 with nothing. */
+export const numberAxisTop = (max: number) => (max > 0 ? moneyAxisTop(max) : 1);
+
 /**
- * A line chart by period: rates (0 to 100%), or dollar amounts in cents on an axis from $0 to a round
- * top (`kind: "money"`). Gaps where a period has nothing; the same numbers are in the table below it.
+ * A line chart by period: rates (0 to 100%), dollar amounts in cents on an axis from $0 to a round
+ * top (`kind: "money"`), or plain numbers from 0 to a round top (`kind: "number"`). Gaps where a
+ * period has nothing; the same numbers are in the table below it.
  */
-export function TrendChart({ id, title, labels, series, kind = "pct" }: { id: string; title: string; labels: string[]; series: TrendSeries[]; kind?: "pct" | "money" }) {
+export function TrendChart({ id, title, labels, series, kind = "pct" }: { id: string; title: string; labels: string[]; series: TrendSeries[]; kind?: "pct" | "money" | "number" }) {
   const n = labels.length;
-  const top = kind === "money" ? moneyAxisTop(Math.max(0, ...series.flatMap((s) => s.values.filter((v): v is number => v !== null)))) : 1;
-  const tick = (g: number) => (kind === "money" ? dollarsOf(g * top) : `${Math.round(g * 100)}%`);
-  const shown = (v: number) => (kind === "money" ? dollarsOf(v) : `${Math.round(v * 100)}%`);
+  const max = Math.max(0, ...series.flatMap((s) => s.values.filter((v): v is number => v !== null)));
+  const top = kind === "money" ? moneyAxisTop(max) : kind === "number" ? numberAxisTop(max) : 1;
+  const shown = (v: number) => (kind === "money" ? dollarsOf(v) : kind === "number" ? v.toFixed(2) : `${Math.round(v * 100)}%`);
+  const tick = (g: number) => (kind === "number" ? (g * top).toLocaleString("en-US", { maximumFractionDigits: 2 }) : kind === "money" ? dollarsOf(g * top) : `${Math.round(g * 100)}%`);
   const x = (i: number) => PAD.l + (n <= 1 ? (W - PAD.l - PAD.r) / 2 : (i * (W - PAD.l - PAD.r)) / (n - 1));
   const y = (v: number) => PAD.t + (1 - Math.max(0, Math.min(1, v / top))) * (H - PAD.t - PAD.b);
   const every = Math.max(1, Math.ceil(n / 8));

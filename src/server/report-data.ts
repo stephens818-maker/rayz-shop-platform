@@ -138,13 +138,13 @@ export interface ReportOption {
   /** A dropdown next to the dates instead of a row of choices, for long lists. */
   select?: boolean;
 }
-/** A line chart of rates (or, with kind money, amounts in cents) over periods, drawn above the tables. Its numbers are also in a table. */
+/** A line chart of rates (or, with kind money, amounts in cents; with kind number, plain numbers like 2.35) over periods, drawn above the tables. Its numbers are also in a table. */
 export interface ReportChart {
   id: string;
   title: string;
   labels: string[];
   series: { label: string; values: (number | null)[]; dashed?: boolean; tone?: "alt" }[];
-  kind?: "pct" | "money";
+  kind?: "pct" | "money" | "number";
 }
 export interface ReportData {
   stats: ReportStat[];
