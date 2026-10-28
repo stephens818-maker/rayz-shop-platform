@@ -831,6 +831,11 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-10-28: core, Productivity Per Hour card on the web dashboard (Charles), for the Rayz App builder
+
+- **Web only:** a PPH card on `/admin` (the brand dashboard with All shops, a shop's with one picked): today so far, yesterday and the pay period to date, barber and location leaderboards with the total, and a 14-day sparkline. A shop's shows only that shop. No API change: `/me/earnings`' `pph` is unchanged, and the staff app keeps showing a barber only their own.
+- **Today counts open shifts up to now** on the dashboard only. The report, the Payroll Report and `/me/earnings` still count clocked-out hours. No migration; the next free number is still `core_0146`.
+
 ### 2026-10-28: core, Productivity Per Hour naming and clients per hour (Charles), for the Rayz App builder and the mobile agent
 
 - **Naming:** PPH is "Productivity Per Hour (PPH)" in every label. Service PPH (service sales per worked hour) is the default figure; show it first.

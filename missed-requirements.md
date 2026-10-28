@@ -1186,6 +1186,8 @@ The plan's P0 cases must all pass in the sandbox before the pilot. Status by cas
 - [x] Payroll Report: four review columns on the blocks, the Locations view and the drill-down. They're never in the iSolved file or the workbook download, and they match the report over the pay period.
 - [x] Morning Dashboard email: day and week to date, per location, against the brand and per barber.
 - [x] Staff app My Earnings: `pph`, own only, top level and per shop.
+- [x] Dashboard headline card on the brand dashboard and a shop's: today (shifts still on the clock counted to now), yesterday and the pay period to date (each shop's own period), barber and location leaderboards with the brand total, and a 14-day sparkline. A shop's dashboard shows only that shop; a barber without every barber's numbers sees only their own (`tests/db/pph-dashboard.test.ts`).
+- [ ] **Ask Charles:** on the dashboard, today counts open shifts up to now. Is that how he wants a live PPH read, or only clocked-out hours? And should a shop's dashboard show the brand figure beside the shop's (it doesn't now; he said a shop's shows only that shop)?
 - [ ] **Ask Charles:** Squire-era tickets count toward PPH on the days they were sold, though payroll leaves them out. Keep that? And should a commission base with the card fee or loyalty added (I10) also count in PPH, as the Payroll Report's Service$ does? For clients per hour: is a ticket the right unit (a family ticket counts once), and should a $0 comp service count as a client (it does now)?
 
 ## Deferred by decision

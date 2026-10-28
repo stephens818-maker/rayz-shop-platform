@@ -283,6 +283,16 @@ Card payments stay at PCI SAQ A: card details only ever pass through Stripe's fr
   - Until the consent columns from PR #8 exist, nobody qualifies, and the alert says to call clients through the shop line instead.
 - Tests: `tests/today.test.ts` (open-time math, no-show risk, rebook timing) and `tests/db/today.test.ts`. The DB test fixes the clock at 10 AM on a working day and covers each alert's cause, the reminder and running-late texts (sent once), drafting the PO, the retry, dismissal and shop scoping. It also covers the open-chair texts with consent (once a week, not after 7 PM).
 
+**Productivity Per Hour (PPH) card** (Charles, Oct 28), right under the four stats on the brand dashboard (All shops) and a shop's (one shop picked):
+
+- **Today** (so far), **Yesterday** and **Period to date**: service PPH big, with clients per hour, total PPH and worked hours under it. The same figures as the [PPH report](#reports-à-la-carte). Today counts shifts still on the clock up to now, unpaid breaks taken out as clock-out would, so a barber at work all day isn't N/A until they clock out; forgotten and stale clock-ins don't count.
+- **Period to date** is each shop's own pay period, from its first day to today. Where the shops' calendars differ, each shop uses its own.
+- **Last 14 days**: a sparkline of each day's service PPH on its own, with a gap on a day nobody worked.
+- **Leaderboards** for the period to date, or today or yesterday (chips; `?pph=today`): barbers across the dashboard's shops (with their locations), and on the brand dashboard every location, each ending in the total. The total is the **Brand** for someone with every shop, "All my shops" otherwise, and the shop's own on a shop's dashboard. The first 10, then a link to the PPH report. Ties share a rank; N/A (no hours) comes last.
+- **A shop's dashboard shows only that shop**: its barbers' sales and hours there, its total, no location board and no brand figure.
+- Only the dashboard's shops where they have the PPH report. Without **See every barber's numbers in reports** it's their own numbers, with no leaderboards. Without **See dollar amounts in reports** it's clients per hour instead of dollars. A shop login's home shows its shop's card only if its role is given the PPH report (it isn't by default).
+- Tests: `tests/pph-card.test.ts` and `tests/db/pph-dashboard.test.ts`.
+
 <a id="morning-dashboard"></a>
 ### Morning Dashboard
 
