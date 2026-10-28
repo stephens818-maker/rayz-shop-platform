@@ -2,7 +2,7 @@
 
 How the platform builds the bi-weekly Payroll Report and the per-shop iSolved timecard files, replacing Charles's payroll workbook. Section numbers follow the original review (§2.1 Total Wages, §3.2 overtime, §6 export), so the findings that refer to them still line up.
 
-**Status:** built. Code in `src/domain/payroll/` (pure math), `src/server/payroll/` (loading, locking, export) and `src/app/admin/payroll/` (pages). The Payroll Report page is `src/app/admin/reports/payroll/report/`. Migrations `core_0022_payroll`, `core_0128_payroll_approvals`, `core_0129_pay_calendar` and `core_0130_payroll_commission_adjustments`. Tests: `tests/payroll-engine.test.ts`, `tests/payroll-independent.test.ts` (hand-worked numbers from punches and pay-plan versions, not from the workbook), `tests/payroll-review.test.ts`, `tests/payroll-privacy.test.ts`, `tests/payroll-export.test.ts`, `tests/payroll-golden.test.ts` (all 33 golden rows and the iSolved file, cell for cell), `tests/payroll-time-csv.test.ts`, `tests/db/payroll.test.ts`, `tests/db/payroll-approval.test.ts`, `tests/db/payroll-reports.test.ts`, `tests/db/pay-calendar.test.ts`. Workbook problems are in [payroll-workbook-discrepancies.md](payroll-workbook-discrepancies.md).
+**Status:** built. Code in `src/domain/payroll/` (pure math), `src/server/payroll/` (loading, locking, export) and `src/app/admin/payroll/` (pages). The Payroll Report page is `src/app/admin/reports/payroll/report/`. Migrations `core_0022_payroll`, `core_0128_payroll_approvals`, `core_0129_pay_calendar`, `core_0130_payroll_commission_adjustments` and `core_0134_rollout` (§1.2). Tests: `tests/squire-commissions.test.ts`, `tests/db/rollout.test.ts`, `tests/payroll-engine.test.ts`, `tests/payroll-independent.test.ts` (hand-worked numbers from punches and pay-plan versions, not from the workbook), `tests/payroll-review.test.ts`, `tests/payroll-privacy.test.ts`, `tests/payroll-export.test.ts`, `tests/payroll-golden.test.ts` (all 33 golden rows and the iSolved file, cell for cell), `tests/payroll-time-csv.test.ts`, `tests/db/payroll.test.ts`, `tests/db/payroll-approval.test.ts`, `tests/db/payroll-reports.test.ts`, `tests/db/pay-calendar.test.ts`. Workbook problems are in [payroll-workbook-discrepancies.md](payroll-workbook-discrepancies.md).
 
 **No iSolved connection.** There's no API, sync, credentials or automated upload. The only output is a downloadable xlsx per shop, in exactly the workbook's format, which Charles uploads by hand after approve-and-lock (§6.4). The export sits behind a `PayrollExporter` interface so a direct integration can be added later (§10).
 
@@ -25,6 +25,22 @@ A barber who works at several shops gets one line per shop. Sales and tips land 
 ### 1.1 Shift CSV import
 
 Payroll → Hours takes a CSV with a header row. Columns (any order, case-insensitive): employee (Employee Number, iSolved name, display label, "First Last" or "Last, First"), shop (name, slug or pay group label), date (ISO or M/D/YY), start and end (24-hour or AM/PM), and optionally kind and note. An end before the start rolls over to the next day. Every row is checked first; errors are listed by line, and nothing is saved unless the whole file is clean. Entries in a locked period are refused.
+
+### 1.2 Shops still on Squire (the rollout)
+
+During the rollout ([rollout-runbook.md](rollout-runbook.md), migration `core_0134_rollout`), each shop's payroll for a pay period comes from one place. With no `shop_rollouts` row anywhere, every shop is on the platform, as above. Once any shop has one, a shop is on the platform from its **Payroll from here starting** period on, and on Squire data before it (or with no date). A locked period keeps the source it was locked with.
+
+For a shop on Squire data, the inputs above are replaced by Squire's **Commissions** report for that shop and period, imported on **Setup → Rollout** (`payroll_squire_imports`, one per shop and period, and `payroll_squire_inputs`, one per person):
+
+| Input | From Squire's report |
+| --- | --- |
+| Hours worked | The service block's Hours Worked (OT included). Squire's report has no OT, PTO or training hours: they're typed on the report with a reason, or read from OT, PTO and Training columns if they're added to the file. |
+| Service $ and product $ | Each block's Total |
+| Tips | The service block's Tips (or its Squire, POS and Gift Card tips added up). All of it is `E_Cash Tips Recd`: Squire paid the card tips, so nothing is paid out or charged here. |
+| Sales tax | Each block's Tax, reference only |
+| Unassigned sales | The report's Unassigned row |
+
+The shop's punches, tickets and declared tips for the period are left out, and it isn't checked for locked timesheets or for the tip tie-out. Names match the Staff page's Squire name, then the display or full name, then a first name only one person at the shop has; a line that matches nobody, or more than one, saves nothing. Approve is refused while a shop on Squire data has no import for the period. Everything else (rates, the line math, OT, the export, approve and lock) is the same for every shop.
 
 ## 2. Line math (the Locations sheet)
 
@@ -295,6 +311,8 @@ Anomalies never block the lock. They list what a person should look at before ap
 | `unassigned_sales` | Service or product sales at the shop with no employee on the ticket (Squire's "Unassigned sales"). Nobody is credited for them. |
 | `mixed_rates` | A wage, service % or product % changed inside the period, so the report shows "mixed" (§11) |
 | `hours_source` | PTO or training time entries left unpaid because those hours are entered by a manager (§11) |
+| `cross_source_ot` | Someone with hours at a shop on the platform and a shop on Squire data, for the same legal entity. Weekly OT spans both and Squire's report has only the period's total, so the O.T. hours are typed (§1.2) |
+| `rollout_source` | A shop that books here with its period on Squire data, or one still booking on Squire with its period from here (§1.2) |
 
 The time clock's flags cover shops not yet locked; a locked shop is history.
 
