@@ -3,14 +3,14 @@
  * every figure worked out by hand. Two pay periods for Jamie (Moline, Illinois, and Le Claire, Iowa:
  * one employer, so overtime crosses the shops) and Kat (Moline):
  *
- * - Sandbox (Stripe test mode, brand-settled shops): phone punches and a manager-fixed missed
+ * - Sandbox (Stripe test mode, brand-settled shops, FEATURE_TIP_TO_BARBER on): phone punches and a manager-fixed missed
  *   clock-out → each timesheet signed by the employee, approved by a manager and locked → the
  *   period's sales and tips → the tip batch moves Jamie's tips by transfer and payout (Kat hasn't
  *   finished Stripe setup, so hers are owed) → the payout.paid webhook → the Payroll Report (greater-
  *   of at each shop, overtime split by hours) → approved by someone who didn't change the figures →
  *   each shop's iSolved file downloaded, cell for cell → locked → Kat's owed tips on her paycheck and
  *   never again, the tips-paid file final.
- * - Production at launch (live keys, MONEY_MOVEMENT_LIVE off until the CPA signs off): nothing moves
+ * - Production at launch (live keys, FEATURE_TIP_TO_BARBER and MONEY_MOVEMENT_LIVE off until the CPA signs off): nothing moves
  *   on Stripe; Jamie's tips are owed and go on his paycheck in the iSolved file instead.
  */
 import ExcelJS from "exceljs";
@@ -238,6 +238,8 @@ afterAll(async () => {
 });
 
 describe("sandbox pay period: Stripe test mode, tips straight to Jamie's bank", () => {
+  beforeAll(() => void (process.env.FEATURE_TIP_TO_BARBER = "true"));
+  afterAll(() => void delete process.env.FEATURE_TIP_TO_BARBER);
   it("punches become hours: meal breaks unpaid, a missed clock-out fixed by a manager with a reason", async () => {
     const p = sandbox;
     // Week 1: Moline Mon–Fri 9 to 3 (30h), Le Claire Saturday 8 to 8:30 with a half-hour meal (12h). 42h: 2h of overtime.
@@ -432,6 +434,10 @@ describe("production at launch: live keys, direct payouts off until the CPA sign
     calls.length = 0;
     expect(mm.moneyMovementLive()).toBe(false);
     expect(mm.directPayoutsAvailable()).toBe(false);
+    // Turning FEATURE_TIP_TO_BARBER on alone doesn't move live money: MONEY_MOVEMENT_LIVE still has to be on.
+    process.env.FEATURE_TIP_TO_BARBER = "true";
+    expect([mm.directPayoutsAvailable(), mm.transfersPendingReason()]).toEqual([false, mm.LIVE_SWITCH_REASON]);
+    delete process.env.FEATURE_TIP_TO_BARBER;
 
     await shift(who.jamie, shop.moline, day(p, 1), H(9), H(15));
     await shift(who.jamie, shop.moline, day(p, 2), H(9), H(15));
@@ -440,7 +446,7 @@ describe("production at launch: live keys, direct payouts off until the CPA sign
     const cutoffAt = at(m.time.addDays(p.end, 1), H(9));
     const b = await tp.buildBatch({ shopId: shop.moline, kind: "manual", cutoff: p.end, asOf: m.time.addDays(p.end, 1), actor, now: cutoffAt });
     const [held] = (await payoutsOf(b.batchId)).filter((x) => x.staffId === who.jamie.id);
-    expect(held).toMatchObject({ method: "stripe", status: "held", holdKind: "transfers_pending", holdReason: mm.LIVE_SWITCH_REASON, netCents: 2000 });
+    expect(held).toMatchObject({ method: "stripe", status: "held", holdKind: "transfers_pending", holdReason: mm.TIP_TO_BARBER_REASON, netCents: 2000 });
     await tp.approveBatch(b.batchId, actor, cutoffAt);
     expect(calls.filter((c) => MONEY.includes(c.op))).toEqual([]);
 

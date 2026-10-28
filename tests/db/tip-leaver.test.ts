@@ -3,6 +3,8 @@
  * payouts come out of their batches when they're offboarded or made inactive; tips of open pay
  * periods go with their last paycheck even where the brand holds owed tips, and tips of locked
  * periods (already reported to iSolved as paid outside payroll) are paid in cash from the next batch.
+ * With FEATURE_TIP_TO_BARBER on (off, every owed tip goes through payroll), at a shop on the brand's
+ * account, since a connected shop's cash tips are never a Stripe payout.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Mods, actor, agreeToStripeDeposits, loadModules } from "./setup";
@@ -54,7 +56,8 @@ beforeAll(async () => {
   fx.shop = (await m.catalog.getShop("coralville"))!.id;
   fx.owner = (await m.db.db.query.staff.findFirst({ where: eq(s().staff.email, "owner@rayz.test") }))!.id;
   [fx.leaver, fx.stayer] = await Promise.all(["Delaney", "Jessica"].map(who));
-  await m.db.db.update(s().shops).set({ tipPayouts: { schedule: "manual", cardDelayDays: 0, defaultMethod: "cash" } }).where(eq(s().shops.id, fx.shop));
+  await m.db.db.update(s().shops).set({ paymentsMode: "brand", tipPayouts: { schedule: "manual", cardDelayDays: 0, defaultMethod: "cash" } }).where(eq(s().shops.id, fx.shop));
+  process.env.FEATURE_TIP_TO_BARBER = "true";
   await tl.syncTipLedger();
   await tl.recordOpeningTips(m.time.addDays(today, 1));
   (await import("@/server/payments/money-movement")).registerMoneyMovement(null);
@@ -78,6 +81,8 @@ beforeAll(async () => {
 }, 180_000);
 
 afterAll(async () => {
+  delete process.env.FEATURE_TIP_TO_BARBER;
+  if (m) await m.db.db.update(s().shops).set({ paymentsMode: "connected" }).where(eq(s().shops.id, fx.shop));
   await m?.db.closeDb();
 });
 

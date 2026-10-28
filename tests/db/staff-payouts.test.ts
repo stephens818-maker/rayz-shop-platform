@@ -149,6 +149,10 @@ async function activeOnStripe(staffId: string, acct: string) {
 }
 
 describe("owed tips go through payroll at the cutoff, once (ST-C14), and the tips-paid export (ST-C13, ST-I14)", () => {
+  // Cash tips at a connected shop are the shop's and never a Stripe payout, so Rock Island is on the brand's account here.
+  const rockIslandMode = (mode: "brand" | "connected") => m.db.db.update(s().shops).set({ paymentsMode: mode }).where(eq(s().shops.slug, "rock-island"));
+  beforeAll(() => rockIslandMode("brand"));
+  afterAll(() => rockIslandMode("connected"));
   it("owed Stripe tips are paid on the paycheck at lock and never again; the export is a draft until locked and adds up, then final", async () => {
     const { shop: sh, ids: [g, mz] } = await barbers("rock-island", ["Garrett", "Mercedez"]);
     await groups.ensurePayGroups();
