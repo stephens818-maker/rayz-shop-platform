@@ -20,7 +20,8 @@ import {
   trainingLine,
   type TrainingLine,
 } from "@/domain/my-earnings";
-import { linesPph } from "@/domain/pph";
+import { type ClientCounts, linesPph } from "@/domain/pph";
+import { blockTickets } from "@/server/service-tickets";
 import { appPayoutStatus, appTransferStatus } from "@/domain/staff-payouts";
 import { employeeFeeCents, receivedCents } from "@/domain/tips";
 import { SHOP_TZ, addDays, diffDays, endOfLocalDay, isValidLocalDate, localDateOf, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
@@ -457,13 +458,14 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
   const per = earningsPeriod(cals, q, today);
   const shopIds = per.cals.map((c) => c.shop.id);
   const view = await buildPayroll(per.start, per.end, { clockChecks: false });
-  const [state, ledger, days, declared, covered, setup] = await Promise.all([
+  const [state, ledger, days, declared, covered, setup, tickets] = await Promise.all([
     periodStates([per], today, new Map([[per.start, view]])).then((m) => m.get(per.start)!),
     see.tips ? myLedger(me, shopIds, { from: per.start, to: per.end }) : [],
     see.tips ? myDays(me, shopIds, per.start, per.end, today) : [],
     see.tips ? currentDeclarationsOf(me, shopIds, per.start, per.end) : [],
     see.tips ? shopCoveredRefunds(me, shopIds, per.start, per.end) : [],
     payoutSetup(ctx),
+    see.sales && see.hours && view ? blockTickets(view.blocks.filter((b) => shopIds.includes(b.shopId)), [me]) : new Map<string, number>(),
   ]);
   const routes = await tipRoutesOf(setup);
   const countsTowardOt = (view?.settings ?? DEFAULT_PAYROLL_SETTINGS).trainingCountsTowardOt;
@@ -506,7 +508,7 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
         pay: see.wages ? pay : null,
         training: trainingOf(line ? [line] : []),
         hours: see.hours ? shopHours(line) : null,
-        pph: pphOut(line ? [line] : [], see),
+        pph: pphOut(line ? [line] : [], see, tickets),
         reconciliation: reconciliationOf(see, block, line),
       },
     };
@@ -546,6 +548,7 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
     pph: pphOut(
       slices.flatMap((s) => (s.line ? [s.line] : [])),
       see,
+      tickets,
     ),
     cardTipsCents: tipsOf("cardTipsCents"),
     cashTipsCents: tipsOf("cashTipsCents"),
@@ -567,15 +570,24 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
 }
 
 /**
- * Their own production per hour (src/domain/pph.ts) from their lines of the Payroll Report: service
- * and product sales over worked hours (regular plus overtime). Needs both their sales and their hours;
- * PPHs are null (N/A) with no worked hours.
+ * Their own Productivity Per Hour (src/domain/pph.ts) from their lines of the Payroll Report: service
+ * and product sales over worked hours (regular plus overtime), and their completed service tickets
+ * over the same hours. Needs both their sales and their hours; the rates are null (N/A) with no
+ * worked hours.
  */
-function pphOut(lines: readonly Line[], see: Sees) {
+function pphOut(lines: readonly Line[], see: Sees, tickets: ClientCounts) {
   if (!see.sales || !see.hours) return null;
-  const p = linesPph(lines);
+  const p = linesPph(lines, tickets);
   const c = (v: number | null) => (v === null ? null : toCents(v));
-  return { workedHours: r2(p.hours), servicePphCents: c(p.servicePph), productPphCents: c(p.productPph), totalPphCents: c(p.totalPph), na: p.servicePph === null };
+  return {
+    workedHours: r2(p.hours),
+    servicePphCents: c(p.servicePph),
+    productPphCents: c(p.productPph),
+    totalPphCents: c(p.totalPph),
+    clients: p.clients,
+    clientsPerHour: p.clientsPerHour === null ? null : r2(p.clientsPerHour),
+    na: p.servicePph === null,
+  };
 }
 
 /** The training line with its hours left out for someone who may see pay but not their hours. */
