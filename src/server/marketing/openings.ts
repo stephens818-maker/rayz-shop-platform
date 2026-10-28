@@ -345,7 +345,7 @@ export async function previewOpenings(ctx: StaffContext, input: unknown, now = n
     });
     if (!out.sample && !p.problem) {
       const t = templatesOf(os.templates);
-      const values = { first_name: "Jordan", barber: p.firstName, shop: `Ray'z ${shop.name}`, day: p.dayText, book_link: `${appBaseUrl()}/m/…` };
+      const values = { first_name: "Jordan", barber: p.label || p.firstName, shop: `Ray'z ${shop.name}`, day: p.dayText, book_link: `${appBaseUrl()}/m/…` };
       out.sample = { sms: smsText(t.sms, values), emailSubject: fill(t.emailSubject, values), emailBody: fill(t.emailBody, values) };
       out.sendsAt = p.deferred ? p.sendAt.toISOString() : null;
     }
@@ -378,7 +378,7 @@ async function deliverOpenings(c: Campaign, shop: Shop, plan: Plan, s: Marketing
     const res = await deliver({
       campaign: c,
       shop,
-      target: { customerId: r.customerId, shopId: shop.id, staffId: plan.staffId, occasion: "openings", values: { barber: plan.firstName, day: plan.dayText }, path },
+      target: { customerId: r.customerId, shopId: shop.id, staffId: plan.staffId, occasion: "openings", values: { barber: plan.label || plan.firstName, day: plan.dayText }, path },
       contact: contacts.get(r.customerId),
       templates,
       channels,
@@ -667,7 +667,7 @@ export async function liveOpenings(id: string, now = new Date()): Promise<LiveOp
   if (!seg.success) return null;
   const [[shop], [b], service] = await Promise.all([
     db.select().from(shops).where(eq(shops.id, c.shopIds[0])),
-    db.select({ firstName: staff.firstName, slug: staff.publicSlug }).from(staff).where(eq(staff.id, seg.data.staffId)),
+    db.select({ firstName: staff.displayLabel, slug: staff.publicSlug }).from(staff).where(eq(staff.id, seg.data.staffId)),
     serviceById(seg.data.serviceId),
   ]);
   if (!shop || !b || !service) return null;

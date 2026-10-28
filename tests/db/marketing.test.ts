@@ -849,7 +849,7 @@ describe("lapsed clients: weeks, barbers and sequences", () => {
       expect(stepOf(x.stepId), String(d)).toBe(d);
       expect(x.staffId).toBe(B);
       expect(x.bookPath).toContain(`barber=${barber.slug}`);
-      expect((await job(x.jobId)).body).toContain(barber.first);
+      expect((await job(x.jobId)).body).toContain(barber.label);
     }
     const body = async (c: { id: string }) => (await job((await mine(c))[0].jobId)).body;
     expect(await body(c15)).not.toContain(small.code);
@@ -903,13 +903,24 @@ describe("lapsed clients: weeks, barbers and sequences", () => {
 
   it("signed by the client's barber with a link to book with them, or by 'your barber' when they can't be booked online", async () => {
     const B = fx.barber;
-    expect(AU.signedBy((await AU.barberCards([B])).get(B), fx.cv)).toEqual({ values: { barber: barber.first }, link: { barber: barber.slug } });
+    expect(AU.signedBy((await AU.barberCards([B])).get(B), fx.cv)).toEqual({ values: { barber: barber.label }, link: { barber: barber.slug } });
     expect(AU.signedBy(undefined, fx.cv)).toEqual({ values: { barber: "your barber" } });
     await onlineAtCv(false);
     try {
-      expect(AU.signedBy((await AU.barberCards([B])).get(B), fx.cv)).toEqual({ values: { barber: barber.first }, link: undefined });
+      expect(AU.signedBy((await AU.barberCards([B])).get(B), fx.cv)).toEqual({ values: { barber: barber.label }, link: undefined });
     } finally {
       await onlineAtCv(true);
+    }
+  });
+
+  it("signed with the brand's display label, so two barbers with the same first name read apart (never the surname)", async () => {
+    const B = fx.barber;
+    const relabel = (l: string) => m.db.db.update(s().staff).set({ displayLabel: l }).where(eq(s().staff.id, B));
+    await relabel(`${barber.first} Z.`);
+    try {
+      expect(AU.signedBy((await AU.barberCards([B])).get(B), fx.cv).values).toEqual({ barber: `${barber.first} Z.` });
+    } finally {
+      await relabel(barber.label);
     }
   });
 

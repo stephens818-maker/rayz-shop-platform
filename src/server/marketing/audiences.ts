@@ -173,7 +173,7 @@ async function abandoned(shopId: string, delayMinutes: number, now: Date): Promi
 async function announcements(shop: typeof shops.$inferSelect, s: Record<string, number>, now: Date): Promise<Target[]> {
   const since = new Date(now.getTime() - s.withinDays * DAY);
   const barbers = await db
-    .select({ id: staff.id, firstName: staff.firstName, slug: staff.publicSlug })
+    .select({ id: staff.id, firstName: staff.displayLabel, slug: staff.publicSlug })
     .from(staffShops)
     .innerJoin(staff, eq(staff.id, staffShops.staffId))
     .where(and(eq(staffShops.shopId, shop.id), eq(staffShops.visibleOnline, true), eq(staff.active, true), eq(staff.isBookable, true), eq(staff.kind, "person"), gte(staff.createdAt, since)));
@@ -217,7 +217,7 @@ async function slowDays(shop: typeof shops.$inferSelect, s: Record<string, numbe
   const free = new Set(clients.filter((c) => !c.future).map((c) => c.customer_id));
   const out: Target[] = [];
   const team = await db
-    .select({ id: staff.id, firstName: staff.firstName, slug: staff.publicSlug })
+    .select({ id: staff.id, firstName: staff.displayLabel, slug: staff.publicSlug })
     .from(staffShops)
     .innerJoin(staff, eq(staff.id, staffShops.staffId))
     .where(and(eq(staffShops.shopId, shop.id), eq(staff.active, true), eq(staff.isBookable, true)));
@@ -286,7 +286,7 @@ export async function barberCards(ids: readonly string[]): Promise<Map<string, B
   const list = [...new Set(ids)];
   if (!list.length) return new Map();
   const rows = await db
-    .select({ id: staff.id, firstName: staff.firstName, active: staff.active, bookable: staff.isBookable, slug: staff.publicSlug, shopId: staffShops.shopId, online: staffShops.visibleOnline })
+    .select({ id: staff.id, firstName: staff.displayLabel, active: staff.active, bookable: staff.isBookable, slug: staff.publicSlug, shopId: staffShops.shopId, online: staffShops.visibleOnline })
     .from(staff)
     .leftJoin(staffShops, eq(staffShops.staffId, staff.id))
     .where(inArray(staff.id, list));

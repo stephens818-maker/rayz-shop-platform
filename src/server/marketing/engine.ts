@@ -213,7 +213,7 @@ export async function deliver(i: DeliverInput): Promise<DeliverResult> {
 
     let barber = t.values?.barber ?? null;
     if (!barber && t.staffId) {
-      const [b] = await tx.select({ n: staff.firstName }).from(staff).where(eq(staff.id, t.staffId));
+      const [b] = await tx.select({ n: staff.displayLabel }).from(staff).where(eq(staff.id, t.staffId));
       barber = b?.n ?? null;
     }
     const token = marketingToken();

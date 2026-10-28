@@ -122,7 +122,7 @@ beforeAll(async () => {
   const byEmail = async (e: string) => (await m.db.db.query.staff.findFirst({ where: eq(s().staff.email, e) }))!;
   const cv = (await m.db.db.query.shops.findFirst({ where: eq(s().shops.slug, "coralville") }))!;
   const mk = await byEmail("makenna@rayz.test");
-  Object.assign(fx, { cv: cv.id, mk: mk.id, mkFirst: mk.firstName, michelle: (await byEmail("michelle@rayz.test")).id, desk: (await byEmail("coralville@rayz.test")).id, owner: (await byEmail("owner@rayz.test")).id });
+  Object.assign(fx, { cv: cv.id, mk: mk.id, mkFirst: mk.displayLabel, michelle: (await byEmail("michelle@rayz.test")).id, desk: (await byEmail("coralville@rayz.test")).id, owner: (await byEmail("owner@rayz.test")).id });
   fx.service = (await m.catalog.shopCatalog(cv.id, { onlineOnly: true })).find((x) => x.kind === "service")!.id;
   // A day of Makenna's well past the seed and the other tests, with plenty open that day and the next.
   for (let i = 21; i < 60 && !fx.day; i++) {
