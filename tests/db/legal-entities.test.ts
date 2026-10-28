@@ -52,6 +52,8 @@ describe("the legal entity on every shop, time, tip, transfer and export row (ST
       .returning();
     expect(decl.employerId).toBe(g.employerId);
 
+    // Paid in cash: its card tips are in the shop's own account (I10), so they're never a Stripe payout.
+    await m.db.db.update(s().shops).set({ tipPayouts: { schedule: "manual", cardDelayDays: 0, defaultMethod: "cash" } }).where(eq(s().shops.id, ri.id));
     await tl.syncTipLedger();
     const b = await tp.buildBatch({ shopId: ri.id, kind: "manual", cutoff: m.time.todayLocal(), actor });
     const payouts = await m.db.db.select().from(s().tipPayouts).where(eq(s().tipPayouts.batchId, b.batchId));
