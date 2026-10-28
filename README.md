@@ -27,7 +27,7 @@ docker run -d --name rayz-pg -p 5432:5432 -e POSTGRES_USER=rayz -e POSTGRES_PASS
 docker exec rayz-pg createdb -U rayz rayz_test   # for pnpm test:db
 
 pnpm install
-cp .env.example .env          # then set AUTH_SECRET to a long random string
+cp .env.example .env          # then set AUTH_SECRET and CLOCK_HMAC_SECRET to long random strings
 pnpm db:reset                 # runs migrations + seeds real shops/services and ~8 weeks of sample history
 pnpm dev                      # http://localhost:3000
 ```
@@ -3031,9 +3031,9 @@ Ray'z is replacing Squire Commander with its own staff app, where staff see thei
 - **Schedule and appointments:** `GET /schedule` shows their own hours, time off and blocks. `GET /appointments` lists only their own appointments. Opening someone else's needs **See every barber's calendar**; otherwise it's not found. Last names follow Client data.
 - **Client notes:** `GET`/`POST /appointments/{id}/notes` need **See client notes**. Private manager notes need **See and write private manager notes**, and each read is logged as a client view.
 - **Time clock (S2) and breaks, without biometrics:**
-  - From the phone: the front-desk QR code (it changes every 30 seconds), the shop's NFC sticker, or the shop's Wi-Fi or location, whichever the shop asks for.
-  - The QR code and the sticker both open `/admin/clock?shop=…&qr=…` (or `&tag=…`); the app sends `qr` or `tag` from that link as the proof.
-  - On the front-desk tablet: a manager registers it once (`POST /clock/kiosk/register`), then anyone punches with their own PIN, which locks after 5 wrong tries.
+  - **Only at the shop's front-desk clock** (launch-blocking). A phone punches only by scanning the QR code that clock shows: signed with `CLOCK_HMAC_SECRET`, single-use, good for a minute and redrawn every 15 seconds. The app sends `qr` from the scanned `/admin/clock?shop=…&qr=…` link as the proof. A personal staff token alone, the shop's Wi-Fi or location, or the NFC sticker is refused (403 `kiosk_required`).
+  - On the front-desk tablet: only a manager or owner pairs or revokes it (`POST /clock/kiosk/register` or a pairing code), each in the audit log. Then each person taps their own tile and enters their PIN. Tries are limited per person and per tablet, each is audited, and 5 wrong PINs lock that person until a manager unlocks them on their timesheet page.
+  - Each punch carries a single-use nonce (`X-Clock-Nonce`, kept in `clock_nonces` under a unique key) and its time (`X-Clock-Timestamp`, within a minute). A replay is 409 `nonce_replayed`. Without `CLOCK_HMAC_SECRET` (32+ characters) every clock route refuses with a 500.
   - Breaks start and end with a reason and a planned length. No face or fingerprint is ever asked for or kept.
 - **Tips, earnings and payouts (S3):**
   - `GET /tips` shows their tips by status and shop, and `GET /payouts` their payout history after fees.

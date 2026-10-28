@@ -430,6 +430,13 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
     - A brand that never saved its own surcharge setting gets `enabled: false` stored, and each shop's mirrored `card_fee_enabled` follows. A brand's saved choice and a shop's own setting are kept. New shops' `card_fee_enabled` defaults to off.
     - After the deploy, **Setup → Credit card surcharge** should show it off. Leave it off until Charles confirms: the 3% is at most the actual card cost, 30 days' notice went to Stripe and the card brands, the door and counter signs are up, and the CPA confirmed Iowa sales tax on the surcharge.
     - The next free migration is `core_0153`.
+64. Kiosk-only time clock (launch-blocking; migration `core_0153_clock_nonces`). **Set `CLOCK_HMAC_SECRET` before deploying**, in Preview and Production: a random value of at least 32 characters, different from `AUTH_SECRET` (for example `openssl rand -base64 48`). Without it every clock route refuses with a 500 (`clock_secret_missing`), in every environment.
+    - The migration adds `clock_nonces`: each punch's single-use request nonce and each used kiosk QR code, kept a day.
+    - From the deploy on, a self punch works only on the shop's paired front-desk clock, or by scanning the single-use QR code it shows. GPS, the shop's Wi-Fi and the NFC sticker no longer punch by themselves. Tell the staff before launch.
+    - Only a manager or owner pairs or revokes a front-desk clock. Five wrong PINs lock that person until a manager unlocks them on their timesheet page (**Timesheets → the person → Unlock PIN**).
+    - Changing the secret invalidates the QR codes on screen (they refresh within 15 seconds). Paired clocks stay paired.
+    - The Ray'z Staff app must send the new `X-Clock-Nonce` and `X-Clock-Timestamp` headers on punches (NOTES-SYNC); hold its release until it does.
+    - The next free migration is `core_0154`.
 
 ## Launch day: every surface at once, at the pilot shop
 
