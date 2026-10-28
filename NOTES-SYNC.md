@@ -831,6 +831,12 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-10-28: core, Productivity Per Hour naming and clients per hour (Charles), for the Rayz App builder and the mobile agent
+
+- **Naming:** PPH is "Productivity Per Hour (PPH)" in every label. Service PPH (service sales per worked hour) is the default figure; show it first.
+- **New on `/me/earnings`:** `pph.clients` (their completed service tickets) and `pph.clientsPerHour` (those over the same worked hours, 2 decimals, null with no hours), top level and per shop. Additive: the other `pph` fields are unchanged.
+- **Elsewhere:** clients per hour is a column, rank, stat and trend chart on the PPH report, a review column on the Payroll Report (never in the iSolved file) and a Morning Dashboard row. No migration; the next free number is still `core_0146`.
+
 ### 2026-10-28: core, PPH (Charles), for the Rayz App builder and the mobile agent
 
 - **PPH** is Productivity Per Hour (Charles's name; label it "Productivity Per Hour (PPH)"). The default is service PPH: service sales before tax and tips, net of discounts and refunds, over clocked worked hours (regular plus overtime; training and PTO aren't working time). Product PPH and total PPH use the same hours. No worked hours is N/A, never $0. A total is sales added up over hours added up.
