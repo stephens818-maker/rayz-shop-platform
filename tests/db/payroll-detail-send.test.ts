@@ -95,7 +95,12 @@ async function file(q: string) {
   const cents = (r: string[], h: string) => Math.round(Number(c(r, h)) * 100);
   return { res, heading: rows.slice(0, at), headers, body, c, cents };
 }
-const audits = (action: string) => m.db.db.select().from(m.schema.auditLog).where(m.drizzle.and(eq(m.schema.auditLog.action, action), eq(m.schema.auditLog.entityId, `${fx.start}_${fx.end}`)));
+const audits = (action: string) =>
+  m.db.db
+    .select()
+    .from(m.schema.auditLog)
+    .where(m.drizzle.and(eq(m.schema.auditLog.action, action), eq(m.schema.auditLog.entityId, `${fx.start}_${fx.end}`)))
+    .orderBy(m.schema.auditLog.at, m.schema.auditLog.id);
 const molineBlock = async () => (await run.buildPayroll(fx.start, fx.end, { clockChecks: false }))!.blocks.find((b) => b.shopId === fx.moline)!;
 
 beforeAll(async () => {

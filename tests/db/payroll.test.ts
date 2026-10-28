@@ -56,7 +56,8 @@ describe("payroll period", () => {
     expect(v.weeks[jamie.id].find((w) => w.weekStart === START)).toMatchObject({ basis: 45, ot: 5 });
     expect(v.mismatches).toEqual([]);
     const mol = v.blocks.find((b) => b.shopId === moline.id)!;
-    expect(mol.period).toMatchObject({ number: 1, checkDate: "2027-01-01" });
+    // iSolved's schedule moved this period's check off New Year's Day, so it's still 2026's period 27.
+    expect(mol.period).toMatchObject({ number: 27, checkDate: "2026-12-31", submitBy: "2026-12-29", datesMoved: true });
   });
 
   it("C6: an adjustment can't take overtime or hours below the punches; one above them is paid, flagged and audited", async () => {

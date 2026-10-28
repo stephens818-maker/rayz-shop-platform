@@ -155,7 +155,8 @@ describe("a pay period by number, per pay calendar", () => {
     expect(dbq.rangeLabel).toBe("Pay period 01 (Dubuque)");
     const unknown = await S.resolveRange({ preset: R.payPeriodNumberPreset("00000000-0000-4000-8000-000000000000", 2026, 1) }, opts);
     expect(unknown.preset).toBe("lastpayperiod");
-    expect((await S.resolveRange({ preset: R.payPeriodNumberPreset(fx.molineGroup, 2026, 27) }, opts)).preset).toBe("lastpayperiod");
+    expect((await S.resolveRange({ preset: R.payPeriodNumberPreset(fx.molineGroup, 2026, 27) }, opts)).from).toBe("2026-12-13");
+    expect((await S.resolveRange({ preset: R.payPeriodNumberPreset(fx.molineGroup, 2026, 28) }, opts)).preset).toBe("lastpayperiod");
   });
 
   it("This pay period and Last pay period follow the calendar of the shops picked", async () => {
