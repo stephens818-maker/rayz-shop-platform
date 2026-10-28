@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import ExcelJS from "exceljs";
-import { DEFAULT_PAYROLL_SETTINGS, LOCATIONS_COLUMNS, anomalies, assemble, computeLine, inNameOrder, locationSummary, type Line } from "@/domain/payroll/calc";
+import { DEFAULT_PAYROLL_SETTINGS, LOCATIONS_COLUMNS, anomalies, assemble, inNameOrder, locationSummary, totalsOf, type Line } from "@/domain/payroll/calc";
 import { evaluateWorkbookFormula, totalsFormulaProblems, type CellResult } from "@/domain/payroll/workbook-audit";
 import { renderIsolvedWorkbook } from "@/server/payroll/export";
 import { locationsWorkbook } from "@/server/payroll/locations";
@@ -331,7 +331,8 @@ for (const fx of FIXTURES) {
       const topUp = sum((l) => Math.max(l.serviceTotal, 0));
       const product = sum((l) => l.productTotal);
       const typedOver = sum((l) => l.netComm - l.netCommComputed);
-      const trainingPayIfCounted = sum((l) => computeLine(l.input, { ...DEFAULT_PAYROLL_SETTINGS, trainingPayInCost: true }).trainingPay);
+      const trainingPay = sum((l) => l.trainingPay);
+      const laborCost = sum((l) => l.laborCost);
       const got = {
         hours: sum((l) => l.hours),
         otHours: sum((l) => l.otHours),
@@ -347,11 +348,13 @@ for (const fx of FIXTURES) {
         ptoHours: sum((l) => l.ptoHours),
         trainingHours: sum((l) => l.trainingHours),
         otPay: sum((l) => l.otPay),
-        trainingPay: trainingPayIfCounted,
-        laborCost: sum((l) => l.laborCost),
-        laborCostWithTraining: sum((l) => l.laborCost) + trainingPayIfCounted,
-        grossProfitAfterLabor: total.service - sum((l) => l.laborCost),
+        trainingPay,
+        // The audit's Labor Cost and Gross Profit After Labor leave training pay out; the platform's include it (Charles, Oct 28).
+        laborCost: laborCost - trainingPay,
+        laborCostWithTraining: laborCost,
+        grossProfitAfterLabor: total.service - laborCost + trainingPay,
       };
+      expect(toCent(totalsOf(lines).grossProfit, total.service - want.grand.laborCostWithTraining)).toBe(true);
       for (const [k, v] of Object.entries(want.grand)) expect(toCent(got[k as keyof typeof got], v), `${k}: ${got[k as keyof typeof got]} vs ${v}`).toBe(true);
       expect(near(got.netComm, topUp + product + typedOver)).toBe(true);
       for (const [shop, t] of Object.entries(want.shopTabs)) {

@@ -181,7 +181,6 @@ const earning = (what: string) => z.string().trim().min(1, `Name the iSolved ear
 
 const PayrollInput = z.object({
   trainingCountsTowardOt: z.boolean(),
-  trainingPayInCost: z.boolean(),
   roundExport2dp: z.boolean(),
   hoursFromClock: z.boolean(),
   ftHoursPerWeek: z.number().min(1).max(60),

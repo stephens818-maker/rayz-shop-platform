@@ -42,15 +42,9 @@ export function SettingsForm({ initial, memoRequired }: { initial: PayrollSettin
     <div className="space-y-3">
       <Check
         label="Training hours on top of clocked hours count toward the weekly 40 for overtime (C2)"
-        hint="On by default until Charles answers Q11. Training inside the same person's clocked time is already in their hours and is never counted twice."
+        hint="On by default: under the FLSA training is generally hours worked, pending Charles and the CPA (Q11). Training inside the same person's clocked time is already in their hours and is never counted twice. Training pay itself is always training hours × the training rate, outside the greater-of, and in labor cost."
         checked={v.trainingCountsTowardOt}
         onChange={(x) => setV({ ...v, trainingCountsTowardOt: x })}
-      />
-      <Check
-        label="Training pay is labor cost on the Payroll Report"
-        hint="Training hours × training rate (or the hourly rate). Off until Charles answers Q11 (do clocked hours already include training?), like the workbook, so labor cost excludes training pay."
-        checked={v.trainingPayInCost}
-        onChange={(x) => setV({ ...v, trainingPayInCost: x })}
       />
       <Check
         label="Round export values to 2 decimals, half up (6.315 → 6.32)"

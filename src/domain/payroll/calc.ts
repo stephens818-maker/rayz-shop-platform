@@ -19,8 +19,6 @@ export interface PayrollSettings {
   otMultiplier: number;
   /** C2: training hours on top of clocked hours count toward the weekly 40; training inside clocked time is already there. Configurable until Charles answers Q11. */
   trainingCountsTowardOt: boolean;
-  /** Training hours paid at the training rate are labor cost. The workbook leaves them out. */
-  trainingPayInCost: boolean;
   /** 2-decimal half-up on export values. Off: the workbook's values go out unrounded (pending Charles). */
   roundExport2dp: boolean;
   /** Full time = averaging more than this many hours a week. Exactly this many is part time. */
@@ -178,7 +176,6 @@ export const DEFAULT_PAYROLL_SETTINGS: PayrollSettings = {
   dailyOtHours: null,
   otMultiplier: 1.5,
   trainingCountsTowardOt: true,
-  trainingPayInCost: false,
   roundExport2dp: false,
   ftHoursPerWeek: 32,
   ftBasis: "worked",
@@ -249,7 +246,6 @@ export function payrollSettings(raw: unknown): PayrollSettings {
     dailyOtHours: r.dailyOtHours === null || r.dailyOtHours === undefined ? null : num(r.dailyOtHours, 1, 24, d.dailyOtHours ?? 0) || null,
     otMultiplier: num(r.otMultiplier, 1, 3, d.otMultiplier),
     trainingCountsTowardOt: bool(r.trainingCountsTowardOt, d.trainingCountsTowardOt),
-    trainingPayInCost: bool(r.trainingPayInCost, d.trainingPayInCost),
     roundExport2dp: bool(r.roundExport2dp, d.roundExport2dp),
     ftHoursPerWeek: num(r.ftHoursPerWeek, 1, 60, d.ftHoursPerWeek),
     ftBasis: r.ftBasis && r.ftBasis in FT_BASIS_LABEL ? r.ftBasis : d.ftBasis,
@@ -325,7 +321,15 @@ export const OVERRIDE_LABEL: Record<Overridable, string> = {
 };
 
 /** A rate that changed inside the period, so the line's rate is a blend of the versions in effect (shown as "mixed"). */
-export type MixedRate = "wage" | "servicePct" | "productPct";
+export type MixedRate = "wage" | "servicePct" | "productPct" | "trainingRate";
+
+/** Where a line's training rate came from: the employee's effective-dated rate on their Staff page, Payroll setup's, or none (their hourly wage, flagged). */
+export type TrainingRateSource = "staff" | "payroll_setup" | "hourly";
+export const TRAINING_RATE_SOURCE: Record<TrainingRateSource, string> = {
+  staff: "training rate",
+  payroll_setup: "training rate (Payroll setup's)",
+  hourly: "hourly rate (no training rate set)",
+};
 
 export interface LineInput {
   staffId: string;
@@ -339,8 +343,9 @@ export interface LineInput {
   hourlyRate: number;
   servicePct: number;
   productPct: number;
-  /** Null = paid at the hourly rate. */
+  /** Dollars an hour for training, hours-weighted when the rate changed in the period. Null = paid at the hourly rate. */
   trainingRate: number | null;
+  trainingRateSource?: TrainingRateSource;
   /** All hours worked at this shop in the period, OT included (the Squire "Hours Worked" feed). */
   workedHours: number;
   otHours: number;
@@ -455,11 +460,15 @@ export interface Line {
   lateTipRefunds: number;
   /** Of those, the shop's cost: never taken from the employee unless the brand deducts them. */
   tipRefundsShopCost: number;
-  /** S */
+  /** S: training hours, less any that are this line's overtime (otFromTraining). */
   trainingHours: number;
+  /** Of Q, the OT hours past this line's worked hours: training on top of clocked hours that went over the 40 here (C2), paid as OT rather than as training. */
+  otFromTraining?: number;
   /** T = OT multiplier × C × Q. Base rate only; iSolved may compute blended OT higher. */
   otPay: number;
-  /** U = training rate × S when training pay counts as cost, else 0. */
+  /** What S is paid an hour: the training rate, or the hourly rate without one. Absent in periods locked before training pay was labor cost. */
+  trainingRate?: number;
+  /** U = training rate × S: its own pay, outside the greater-of. */
   trainingPay: number;
   /** The guaranteed minimum's top-up: 0 unless compensation plans are on and set one. */
   guaranteeTopUp: number;
@@ -484,10 +493,14 @@ export const belowPunches = (i: LineInput, k: "workedHours" | "otHours") => {
   return v !== undefined && toCents(v) < toCents(i[k]);
 };
 
+/** Training is paid at its own rate, never the greater-of's: hourly pay and commission don't change with it. */
+export const trainingRateOf = (i: Pick<LineInput, "trainingRate" | "hourlyRate" | "zeroHourlyPay">) => i.trainingRate ?? (i.zeroHourlyPay ? 0 : i.hourlyRate);
+
 export function computeLine(i: LineInput, s: PayrollSettings): Line {
   const worked = Math.max(i.workedHours, ov(i, "workedHours", i.workedHours));
   const otHours = Math.max(i.otHours, ov(i, "otHours", i.otHours));
-  const hours = worked - otHours;
+  const otFromTraining = Math.max(0, otHours - worked);
+  const hours = worked - (otHours - otFromTraining);
   const wage = i.hourlyRate;
   const payWage = i.zeroHourlyPay ? 0 : wage;
   const hourlyTotal = i.zeroHourlyPay ? 0 : ov(i, "hourlyTotal", hours * wage);
@@ -505,7 +518,7 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
   const totalWages = (serviceTotal > 0 ? hourlyTotal + serviceTotal : hourlyTotal) + productTotal + lateCommission;
   const otPremiumOwed = (i.otRegularRateAdj ?? 0) + (i.lateCommissions ?? []).reduce((a, c) => a + c.retroOtPremium, 0);
   const otPremiumAdj = s.otRegularRate === "adjust" ? otPremiumOwed : 0;
-  const trainingHours = ov(i, "trainingHours", i.trainingHours);
+  const trainingHours = Math.max(0, ov(i, "trainingHours", i.trainingHours) - otFromTraining);
   const otPay = s.otMultiplier * payWage * otHours;
   const tips = ov(i, "tips", i.tips);
   const tipsInPayroll = i.tipsInPayroll ?? 0;
@@ -513,7 +526,8 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
   const between = (x: number | undefined, max: number) => (max >= 0 ? Math.min(max, Math.max(0, x ?? 0)) : 0);
   const tipsInPayrollOwed = between(i.owedTipsInPayroll, tipsInPayroll);
   const tipsPaidOutStripe = between(i.tipsPaidByStripe, tipsPaidOut);
-  const trainingPay = s.trainingPayInCost ? (i.trainingRate ?? payWage) * trainingHours : 0;
+  const trainingRate = trainingRateOf(i);
+  const trainingPay = trainingRate * trainingHours;
   const guaranteeTopUp = i.guaranteeTopUp ?? 0;
   const chargedTips = Math.min(tips, Math.max(0, i.chargedTips ?? 0));
   const tipsOutside = tips - tipsInPayroll;
@@ -554,7 +568,9 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
     lateTipRefunds: i.lateTipRefunds ?? 0,
     tipRefundsShopCost: i.lateTipRefunds ?? 0,
     trainingHours,
+    ...(otFromTraining ? { otFromTraining } : {}),
     otPay,
+    trainingRate,
     trainingPay,
     guaranteeTopUp,
     lateCommission,
@@ -950,13 +966,13 @@ export type GreaterOfCode = "hourly_higher" | "commission_higher" | "equal";
  * E_Regular_Hours at their rate), Comm Sales is the report's M as exported (service commission above
  * hourly pay, product commission, late commission, and commSalesAdjustmentCents when payroll typed
  * over it on the report), overtime is the report's T (an estimate until
- * iSolved runs it), training and paid time are E_Training_Hours at their training rate and
- * E_Ray'z Paid Time_Hours at their wage, then the guarantee top-up and OT premium as exported, and
- * every tip received, declared cash included (E_Cash Tips Recd).
+ * iSolved runs it), training is the report's U (E_Training_Hours at their training rate) and paid
+ * time E_Ray'z Paid Time_Hours at their wage, then the guarantee top-up and OT premium as exported,
+ * and every tip received, declared cash included (E_Cash Tips Recd).
  *
  * The greater-of is the report's: hourly pay on regular hours against service commission, and the
  * commission applies only when it's higher (I > 0). greaterOfCents is what that side pays:
- * regular pay plus the commission above it.
+ * regular pay plus the commission above it. Training is never part of it: its own line, on top.
  */
 export function employeePay(l: Line) {
   const c = toCents;
@@ -971,9 +987,11 @@ export function employeePay(l: Line) {
   const commissionOverHourlyCents = !typedCommSales ? commSalesCents - productCommissionCents - lateCommissionCents : appliedRule === "commission" ? serviceCommissionCents - hourlyPayCents : 0;
   const commSalesAdjustmentCents = commSalesCents - commissionOverHourlyCents - productCommissionCents - lateCommissionCents;
   const explanationCode: GreaterOfCode = serviceCommissionCents === hourlyPayCents ? "equal" : serviceCommissionCents > hourlyPayCents ? "commission_higher" : "hourly_higher";
-  const trainingRate = l.input.trainingRate ?? payWage;
+  // A line locked before training pay was labor cost kept U at 0, though its E_Training_Hours were paid.
+  const trainingRate = l.trainingRate ?? l.input.trainingRate ?? payWage;
+  const trainingRateMixed = (l.input.mixedRates ?? []).includes("trainingRate");
   const overtimePayCents = c(l.otPay);
-  const trainingPayCents = c(l.trainingHours * trainingRate);
+  const trainingPayCents = l.trainingRate === undefined ? c(l.trainingHours * trainingRate) : c(l.trainingPay);
   const ptoPayCents = c(l.ptoHours * payWage);
   const guaranteeTopUpCents = c(l.guaranteeTopUp ?? 0);
   const otPremiumCents = c(l.otPremiumAdj ?? 0);
@@ -999,7 +1017,8 @@ export function employeePay(l: Line) {
     /** Hourly pay above service commission, where hourly applies: what the greater-of added. */
     topUpCents: appliedRule === "hourly" ? Math.max(0, hourlyPayCents - serviceCommissionCents) : 0,
     overtimePayCents,
-    trainingRateCents: c(trainingRate),
+    /** Null when the training rate changed during the period (trainingPayCents is each day's hours at that day's rate). */
+    trainingRateCents: trainingRateMixed ? null : c(trainingRate),
     trainingPayCents,
     ptoPayCents,
     guaranteeTopUpCents,
@@ -1035,6 +1054,19 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
       const sum = b.exportRows.reduce((a, r) => a + r.values[i], 0);
       if (!sameToTheCent(want, sum)) out.push({ shopId: b.shopId, column: header, check: "export", report: want, other: sum, detail: `${b.shop}: export ${header} adds up to a different total than the report's ${COLUMN_LABEL[c.from]}` });
     });
+    const priced = b.lines.filter((l) => l.trainingRate !== undefined);
+    if (priced.length) {
+      const ti = EXPORT_COLUMNS.findIndex((c) => c.from === "trainingHours");
+      const header = b.exportHeaders?.[ti] ?? EXPORT_COLUMNS[ti].header;
+      const report = priced.reduce((a, l) => a + l.trainingPay, 0);
+      const fromFile = priced.reduce((a, l) => a + (b.exportRows.find((r) => r.staffId === l.staffId)?.values[ti] ?? 0) * l.trainingRate!, 0);
+      if (!sameToTheCent(report, fromFile))
+        out.push({ shopId: b.shopId, column: COLUMN_LABEL.trainingPay, check: "export", report, other: fromFile, detail: `${b.shop}: the export's ${header} at each person's training rate add up to a different Training Pay than the report's` });
+      const cost = priced.reduce((a, l) => a + l.laborCost, 0);
+      const parts = priced.reduce((a, l) => a + l.totalWages + l.otPay + l.trainingPay + l.guaranteeTopUp + (l.otPremiumOwed ?? 0), 0);
+      if (!sameToTheCent(cost, parts))
+        out.push({ shopId: b.shopId, column: COLUMN_LABEL.laborCost, check: "rows", report: cost, other: parts, detail: `${b.shop}: Labor Cost isn't Total Wages + O.T. Pay + Training Pay (+ top-ups and the OT premium owed)` });
+    }
     const exported = (k: ExtraFrom) => {
       const i = from.indexOf(k);
       return i < 0 ? 0 : b.exportRows.reduce((a, r) => a + (r.values[EXPORT_COLUMNS.length + i] ?? 0), 0);
@@ -1151,9 +1183,11 @@ export type AnomalyKind =
   | "cross_source_ot"
   | "rollout_source"
   | "tips_in_payroll_memo"
-  | "sunday_punch";
+  | "sunday_punch"
+  | "no_training_rate"
+  | "training_overtime";
 
-export const MIXED_RATE_NAME: Record<MixedRate, string> = { wage: "hourly wage", servicePct: "service %", productPct: "product %" };
+export const MIXED_RATE_NAME: Record<MixedRate, string> = { wage: "hourly wage", servicePct: "service %", productPct: "product %", trainingRate: "training rate" };
 
 /** Things to look at before locking. None of these block the lock, and none are "fixed" automatically. */
 export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Anomaly[] {
@@ -1195,6 +1229,20 @@ export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Ano
         });
       else if (l.trainingHours > 0 && !s.trainingCountsTowardOt)
         out.push({ staffId: l.staffId, shopId: b.shopId, kind: "training_in_hours", message: `${who}: ${fmtHours(l.trainingHours)} training, left out of the weekly 40 (training toward overtime is off, Q11).` });
+      if (l.trainingHours > 0 && l.input.trainingRateSource === "hourly")
+        out.push({
+          staffId: l.staffId,
+          shopId: b.shopId,
+          kind: "no_training_rate",
+          message: `${who}: ${fmtHours(l.trainingHours)} of training paid at their hourly rate (${fmtMoney(trainingRateOf(l.input))}), because they have no training rate. Set one on their Staff page.`,
+        });
+      if (l.otFromTraining)
+        out.push({
+          staffId: l.staffId,
+          shopId: b.shopId,
+          kind: "training_overtime",
+          message: `${who}: ${fmtHours(l.otFromTraining)} of overtime here is training on top of clocked hours that went over the weekly 40 (C2), more than they clocked at this shop, so it's paid as O.T. hours instead of training hours.`,
+        });
       if (l.wage === 0 && l.service > 0 && l.servicePct === 0) out.push({ staffId: l.staffId, shopId: b.shopId, kind: "no_rate", message: `${who} has sales but no wage or commission rate.` });
       const mixed = l.input.mixedRates ?? [];
       if (mixed.length)
@@ -1202,7 +1250,13 @@ export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Ano
           staffId: l.staffId,
           shopId: b.shopId,
           kind: "mixed_rates",
-          message: `${who}: the ${mixed.map((k) => MIXED_RATE_NAME[k]).join(" and ")} changed during the period, so each sale is paid at the rate in effect on its checkout date and each day's hours at that day's wage. The report shows "mixed".`,
+          message: `${who}: the ${mixed.map((k) => MIXED_RATE_NAME[k]).join(" and ")} changed during the period, so ${[
+            mixed.some((k) => k === "servicePct" || k === "productPct") ? "each sale is paid at the rate in effect on its checkout date" : "",
+            mixed.includes("wage") ? "each day's hours at that day's wage" : "",
+            mixed.includes("trainingRate") ? "each day's training at that day's training rate" : "",
+          ]
+            .filter(Boolean)
+            .join(", ")}. The report shows "mixed".`,
         });
       for (const c of l.input.lateCommissions ?? [])
         out.push({

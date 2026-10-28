@@ -19,10 +19,8 @@ const ROW_CHECKS: [keyof GoldenRow["expected_raw"], keyof Line][] = [
   ["total_wages", "totalWages"],
   ["pct_of_gross", "pctOfGross"],
   ["ot_pay", "otPay"],
-  ["labor_cost", "laborCost"],
+  ["training_pay", "trainingPay"],
 ];
-
-const WITH_TRAINING_PAY = { ...DEFAULT_PAYROLL_SETTINGS, trainingPayInCost: true };
 
 /** Shops whose cached workbook totals skip rows with money in them (spec §8): the corrected totals differ. */
 const SKIPPED_ROWS = ["Utica", "Rock Island", "Silvis", "Coralville", "LeClaire"];
@@ -34,7 +32,7 @@ for (const fx of FIXTURES) {
   describe.skipIf(!fx.present)(`Charles's payroll workbook, ${fx.name}`, () => {
     const g = () => load(fx.dir);
 
-    it("every Locations row: Hourly Total, Gross /Hr, Commission$, Service Total, Product Total, NetComm, Total Wages and Total % of Gross", () => {
+    it("every Locations row: Hourly Total, Gross /Hr, Commission$, Service Total, Product Total, NetComm, Total Wages, Total % of Gross, O.T. Pay, Training Pay and Labor Cost with training", () => {
       const { golden, byShop } = g();
       expect(byShop.reduce((a, s) => a + s.inputs.length, 0)).toBe(golden.rows.length);
       const diffs: string[] = [];
@@ -48,8 +46,8 @@ for (const fx of FIXTURES) {
             const v = line[got] as number | null;
             if (!near(v, w)) diffs.push(`${s.shop} row ${row.inputs.row} ${want}: ${v} vs ${w}`);
           }
-          const training = computeLine(s.inputs[n], WITH_TRAINING_PAY).trainingPay;
-          if (!near(training, row.expected_raw.training_pay)) diffs.push(`${s.shop} row ${row.inputs.row} training_pay: ${training} vs ${row.expected_raw.training_pay}`);
+          const withTraining = cached(row.expected_raw.labor_cost)! + row.expected_raw.training_pay;
+          if (!near(line.laborCost, withTraining)) diffs.push(`${s.shop} row ${row.inputs.row} labor_cost with training: ${line.laborCost} vs ${withTraining}`);
         });
       expect(diffs).toEqual([]);
     });
@@ -104,7 +102,6 @@ for (const fx of FIXTURES) {
       for (const b of blocks) {
         const want = golden.corrected_location_totals_all_rows[b.shop];
         const t = b.totals;
-        const trainingPay = b.lines.reduce((a, l) => a + computeLine(l.input, WITH_TRAINING_PAY).trainingPay, 0);
         const got = {
           hours: t.hours,
           hourly_total: t.hourlyTotal,
@@ -115,11 +112,12 @@ for (const fx of FIXTURES) {
           tips: t.tips,
           gross_profit: t.service - t.totalWages,
           ot_pay: t.otPay,
-          training_pay: trainingPay,
-          labor_cost: t.laborCost,
-          labor_cost_with_training: t.laborCost + trainingPay,
-          gross_profit_after_labor: t.grossProfit,
+          training_pay: t.trainingPay,
+          labor_cost: t.laborCost - t.trainingPay,
+          labor_cost_with_training: t.laborCost,
+          gross_profit_after_labor: t.grossProfit + t.trainingPay,
         };
+        expect(near(t.grossProfit, want.service - want.labor_cost_with_training), `${b.shop} gross profit after labor with training`).toBe(true);
         for (const [k, v] of Object.entries(want)) expect(near(got[k as keyof typeof got], v), `${b.shop} ${k}`).toBe(true);
         const c = golden.workbook_location_totals_cached[b.shop];
         if (!near(t.service, c.E) || !near(t.totalWages, c.N)) differ.push(b.shop);
@@ -127,16 +125,17 @@ for (const fx of FIXTURES) {
       expect(differ.sort()).toEqual([...SKIPPED_ROWS].sort());
     });
 
-    it("OT pay counts in labor cost (Charles, Oct 22): Employee Cost + OT pay, Gross Profit lower by the same; training pay stays out until Q11; the export keeps OT hours only", () => {
+    it("OT pay (Charles, Oct 22) and training pay (Oct 28) count in labor cost: Employee Cost + OT pay + training pay, Gross Profit lower by the same; the export keeps OT and training hours only", () => {
       const { golden, blocks } = g();
       const want = Object.values(golden.corrected_location_totals_all_rows);
       const sum = (k: keyof (typeof want)[number]) => want.reduce((a, t) => a + t[k], 0);
       const lines = blocks.flatMap((b) => b.lines);
       const t = totalsOf(lines);
-      expect(near(t.laborCost, sum("total_wages") + sum("ot_pay"))).toBe(true);
-      expect(near(t.laborCost, sum("labor_cost"))).toBe(true);
-      expect(near(t.service - t.laborCost, sum("gross_profit") - sum("ot_pay"))).toBe(true);
-      expect(t.trainingPay).toBe(0);
+      expect(near(t.laborCost, sum("total_wages") + sum("ot_pay") + sum("training_pay"))).toBe(true);
+      expect(near(t.laborCost, sum("labor_cost_with_training"))).toBe(true);
+      expect(near(t.service - t.laborCost, sum("gross_profit") - sum("ot_pay") - sum("training_pay"))).toBe(true);
+      expect(t.trainingPay).toBeGreaterThan(0);
+      expect(near(t.trainingPay, lines.reduce((a, l) => a + (l.input.trainingRate ?? (l.input.zeroHourlyPay ? 0 : l.wage)) * l.trainingHours, 0))).toBe(true);
       expect(near(t.otPay, lines.reduce((a, l) => a + 1.5 * (l.input.zeroHourlyPay ? 0 : l.wage) * l.otHours, 0))).toBe(true);
       expect(lines.filter((l) => l.otPay > 0).length).toBe(golden.rows.filter((r) => r.inputs.ot_hours > 0 && r.inputs.hourly_total_override !== 0).length);
       for (const b of blocks) {
@@ -144,7 +143,9 @@ for (const fx of FIXTURES) {
         for (const r of b.exportRows) {
           const l = b.lines.find((x) => x.staffId === r.staffId)!;
           if (l.otPay) expect(r.values).not.toContain(l.otPay);
+          if (l.trainingPay) expect(r.values).not.toContain(l.trainingPay);
           expect(r.values[1]).toBe(l.otHours);
+          expect(r.values[5]).toBe(l.trainingHours);
         }
       }
     });

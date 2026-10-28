@@ -13,6 +13,7 @@ import {
   assemble,
   anomalies,
   computeLine,
+  employeePay,
   exportRows,
   ftStatus,
   payrollSettings,
@@ -427,15 +428,56 @@ describe("workbook line math", () => {
     expect(l.totalWages).toBe(computeLine(input(), DEFAULT_PAYROLL_SETTINGS).totalWages);
   });
 
-  it("training pay at the training rate is labor cost when switched on; off by default until Q11", () => {
-    const withPay = { ...DEFAULT_PAYROLL_SETTINGS, trainingPayInCost: true };
-    const on = computeLine(input({ trainingHours: 3.5, trainingRate: 12 }), withPay);
-    expect(on.trainingPay).toBe(42);
+  it("training pay is training hours × the training rate, its own line in labor cost (Charles, Oct 28); without a rate, the hourly rate", () => {
+    const on = computeLine(input({ trainingHours: 3.5, trainingRate: 12 }), DEFAULT_PAYROLL_SETTINGS);
+    expect([on.trainingPay, on.trainingRate]).toEqual([42, 12]);
     expect(on.laborCost).toBe(on.totalWages + 42);
-    expect(DEFAULT_PAYROLL_SETTINGS.trainingPayInCost).toBe(false);
-    const off = computeLine(input({ trainingHours: 3.5, trainingRate: 12 }), DEFAULT_PAYROLL_SETTINGS);
-    expect([off.trainingPay, off.laborCost]).toEqual([0, off.totalWages]);
-    expect(computeLine(input({ trainingHours: 2 }), withPay).trainingPay).toBe(29);
+    expect("trainingPayInCost" in DEFAULT_PAYROLL_SETTINGS).toBe(false);
+    expect(computeLine(input({ trainingHours: 2 }), DEFAULT_PAYROLL_SETTINGS).trainingPay).toBe(29);
+    expect(computeLine(input({ trainingHours: 2, zeroHourlyPay: true }), DEFAULT_PAYROLL_SETTINGS).trainingPay).toBe(0);
+    expect(computeLine(input({ trainingHours: 2, zeroHourlyPay: true, trainingRate: 10 }), DEFAULT_PAYROLL_SETTINGS).trainingPay).toBe(20);
+  });
+
+  it("training never enters commission or the greater-of: every greater-of column is the same with or without it", () => {
+    const cols = ["hours", "hourlyTotal", "commission", "serviceTotal", "productTotal", "netComm", "totalWages", "grossPerHour", "pctOfGross"] as const;
+    for (const over of [{ serviceSales: 500 }, { serviceSales: 2864.15 }, { serviceSales: 2900 }, { workedHours: 85, otHours: 5 }]) {
+      const without = computeLine(input(over), DEFAULT_PAYROLL_SETTINGS);
+      const withTraining = computeLine(input({ ...over, trainingHours: 6, trainingRate: 11 }), DEFAULT_PAYROLL_SETTINGS);
+      for (const k of cols) expect(withTraining[k], k).toBe(without[k]);
+      expect(employeePay(withTraining)).toMatchObject({ greaterOfCents: employeePay(without).greaterOfCents, appliedRule: employeePay(without).appliedRule, trainingPayCents: 6600 });
+      expect(withTraining.laborCost).toBeCloseTo(without.laborCost + 66, 10);
+    }
+  });
+
+  it("C2: overtime past the hours clocked at a shop is training that went over the 40 there, paid as O.T. hours, never negative regular hours", () => {
+    const l = computeLine(input({ workedHours: 0, otHours: 1.33, trainingHours: 8, trainingRate: 12, serviceSales: 0, productSales: 0, tips: 0 }), DEFAULT_PAYROLL_SETTINGS);
+    expect([l.hours, l.otHours, l.trainingHours, l.otFromTraining]).toEqual([0, 1.33, 8 - 1.33, 1.33]);
+    expect(l.hourlyTotal).toBe(0);
+    expect(l.trainingPay).toBeCloseTo((8 - 1.33) * 12, 10);
+    const { blocks, mismatches } = assemble([{ shopId: "A", shop: "Shop A", inputs: [l.input] }], DEFAULT_PAYROLL_SETTINGS);
+    expect(mismatches).toEqual([]);
+    expect(blocks[0].exportRows[0].values).toEqual([0, 1.33, 0, 0, 0, 8 - 1.33]);
+    expect(anomalies(blocks, DEFAULT_PAYROLL_SETTINGS).find((a) => a.kind === "training_overtime")?.message).toMatch(/1\.33h of overtime here is training/);
+    const clocked = computeLine(input({ workedHours: 30, otHours: 2, trainingHours: 8 }), DEFAULT_PAYROLL_SETTINGS);
+    expect([clocked.hours, clocked.trainingHours, clocked.otFromTraining]).toEqual([28, 8, undefined]);
+  });
+
+  it("training at the hourly rate for want of a training rate is flagged; a rate that changed in the period is mixed", () => {
+    const { blocks } = assemble(
+      [
+        {
+          shopId: "A",
+          shop: "Shop A",
+          inputs: [input({ trainingHours: 4, trainingRateSource: "hourly" }), input({ staffId: "b2", trainingHours: 4, trainingRate: 11.25, trainingRateSource: "staff", mixedRates: ["trainingRate"] }), input({ staffId: "b3", trainingRateSource: "hourly" })],
+        },
+      ],
+      DEFAULT_PAYROLL_SETTINGS,
+    );
+    const a = anomalies(blocks, DEFAULT_PAYROLL_SETTINGS);
+    expect(a.filter((x) => x.kind === "no_training_rate").map((x) => x.staffId)).toEqual(["b1"]);
+    expect(a.find((x) => x.kind === "no_training_rate")!.message).toBe("Barber One (Shop A): 4h of training paid at their hourly rate ($14.50), because they have no training rate. Set one on their Staff page.");
+    expect(a.find((x) => x.kind === "mixed_rates")!.message).toBe(`Barber One (Shop A): the training rate changed during the period, so each day's training at that day's training rate. The report shows "mixed".`);
+    expect(employeePay(blocks[0].lines[1])).toMatchObject({ trainingRateCents: null, trainingPayCents: 4500 });
   });
 
   it("a typed-over NetComm goes to the export but is flagged against the formula, never fixed", () => {
@@ -489,6 +531,30 @@ describe("reconciliation gate", () => {
     expect(assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ tips: 1.005 }), input({ staffId: "b2", tips: 1.005 })] }], DEFAULT_PAYROLL_SETTINGS).mismatches).toEqual([]);
   });
 
+  it("blocks when Training Pay isn't the export's E_Training_Hours at each person's training rate, or Labor Cost leaves it out", () => {
+    const shop = () => assemble([{ shopId: "A", shop: "Shop A", inputs: [input({ trainingHours: 3, trainingRate: 12 }), input({ staffId: "b2", trainingHours: 1.5 })] }], DEFAULT_PAYROLL_SETTINGS);
+    expect(shop().mismatches).toEqual([]);
+    const file = shop();
+    file.blocks[0].exportRows[0].values[5] = 2.5;
+    expect(reconcile(file.blocks, file.grand).map((x) => [x.check, x.column])).toEqual(
+      expect.arrayContaining([
+        ["export", "E_Training_Hours"],
+        ["export", "Training Pay"],
+      ]),
+    );
+    const cost = shop();
+    const l = cost.blocks[0].lines[0];
+    cost.blocks[0].lines[0] = { ...l, laborCost: l.laborCost - l.trainingPay };
+    cost.blocks[0].totals = totalsOf(cost.blocks[0].lines);
+    cost.grand = totalsOf(cost.blocks.map((b) => b.totals));
+    expect(reconcile(cost.blocks, cost.grand).map((x) => [x.check, x.column])).toEqual([["rows", "Labor Cost"]]);
+    const locked = shop();
+    locked.blocks[0].lines = locked.blocks[0].lines.map(({ trainingRate: _r, ...x }) => ({ ...x, trainingPay: 0, laborCost: x.laborCost - x.trainingPay }));
+    locked.blocks[0].totals = totalsOf(locked.blocks[0].lines);
+    locked.grand = totalsOf(locked.blocks.map((b) => b.totals));
+    expect(reconcile(locked.blocks, locked.grand)).toEqual([]);
+  });
+
   it("blocks when the Locations total isn't the shops", () => {
     const { blocks, grand } = assemble([{ shopId: "A", shop: "Shop A", inputs: [input()] }], DEFAULT_PAYROLL_SETTINGS);
     expect(reconcile(blocks, { ...grand, laborCost: grand.laborCost - 1 }).map((x) => x.check)).toEqual(["locations"]);
@@ -510,9 +576,8 @@ describe("iSolved export values", () => {
       "E_Ray'z Paid Time_Hours",
       "E_Training_Hours",
     ]);
-    const withPay = { ...DEFAULT_PAYROLL_SETTINGS, trainingPayInCost: true };
-    const lines = [computeLine(input({ workedHours: 87.5, otHours: 7.5, tips: 0, productSales: 0, serviceSales: 0, trainingHours: 2 }), withPay)];
-    const [row] = exportRows(lines, withPay);
+    const lines = [computeLine(input({ workedHours: 87.5, otHours: 7.5, tips: 0, productSales: 0, serviceSales: 0, trainingHours: 2 }), DEFAULT_PAYROLL_SETTINGS)];
+    const [row] = exportRows(lines, DEFAULT_PAYROLL_SETTINGS);
     expect(row.values).toEqual([80, 7.5, 0, 0, 0, 2]);
     expect(lines[0].otPay).toBe(163.125);
     expect(row.values).not.toContain(lines[0].otPay);

@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { EXPORT_COLUMNS, LOCATIONS_COLUMNS, exportRowChecks, toCents, type Line, type ShopBlock } from "@/domain/payroll/calc";
-import { OT_PAY_LABEL, periodPay } from "@/domain/my-earnings";
+import { OT_PAY_LABEL, periodPay, trainingLine } from "@/domain/my-earnings";
 import { locationsRow } from "@/server/payroll/locations";
 import { FIXTURES, load } from "./payroll-golden-fixtures";
 
@@ -66,7 +66,7 @@ for (const fx of FIXTURES)
       }
     });
 
-    it("wages are what iSolved pays for the row: each earning at its rate, overtime at 1.5x as an estimate, to the cent; the report's labor cost keeps OT pay in", () => {
+    it("wages are what iSolved pays for the row: each earning at its rate, overtime at 1.5x as an estimate, to the cent; the report's labor cost keeps OT and training pay in; training is its own line", () => {
       for (const { b, l, where } of rows) {
         const { wages, grossCents, tipsCents, declaredCashTipsCents } = periodPay([l]);
         const rate = wages.hourlyRateCents! / 100;
@@ -86,7 +86,11 @@ for (const fx of FIXTURES)
         expect(wages.wagesCents, where).toBe(isolved);
         expect(grossCents, where).toBe(isolved + toCents(exported(b, l, "E_Cash Tips Recd_Dollars")));
         expect(grossCents, where).toBe(wages.wagesCents + tipsCents + declaredCashTipsCents);
-        expect(toCents(l.laborCost), where).toBe(toCents(l.totalWages + l.otPay));
+        expect(toCents(l.laborCost), where).toBe(toCents(l.totalWages + l.otPay + l.trainingPay));
+        const t = trainingLine([l], { countsTowardOt: true });
+        expect([t.payCents, t.rateCents, t.inGreaterOf], where).toEqual([toCents(l.trainingPay), wages.trainingRateCents, false]);
+        expect(t.payCents, where).toBe(toCents(exported(b, l, "E_Training_Hours") * training));
+        expect(t.hours, where).toBe(exported(b, l, "E_Training_Hours"));
       }
       expect(OT_PAY_LABEL).toMatch(/estimate/i);
     });

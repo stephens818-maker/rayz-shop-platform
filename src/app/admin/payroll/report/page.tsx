@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Badge, Card, CardHeader, Notice, PageHeader, cx } from "@/components/ui";
 import { formatPayHours } from "@/lib/hours";
-import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, fmtHours, fmtMoney, type Line, type Totals } from "@/domain/payroll/calc";
+import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, TRAINING_RATE_SOURCE, fmtHours, fmtMoney, type Line, type Totals } from "@/domain/payroll/calc";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { reportView } from "@/domain/permissions";
 import { can, guardPage } from "@/server/auth/staff";
@@ -259,7 +259,8 @@ function Report({
       <Notice tone="blue">
         O.T. HRS come from the cross-shop rule: each Sunday–Saturday week, hours at every shop of the same legal entity add up, everything over {view.settings.otThresholdHours} is overtime, and
         it&apos;s shared out to the shops by their share of that week&apos;s hours. O.T. Pay is {view.settings.otMultiplier} × base rate × those hours and is labor cost here; iSolved computes the
-        real OT itself (it may compute blended OT higher). The iSolved files carry OT <strong>hours</strong> only. {view.settings.trainingPayInCost ? "Training Pay is in labor cost." : "Labor cost excludes training pay (a payroll setting, off until Q11 is answered)."} Export values go out {view.settings.roundExport2dp ? "rounded to 2 decimals, half up" : "unrounded, exactly as computed"}.
+        real OT itself (it may compute blended OT higher). The iSolved files carry OT <strong>hours</strong> only. Training Pay is training hours × each person&apos;s training rate, outside the greater-of, and in labor cost; the files carry
+        training hours in E_Training_Hours. Export values go out {view.settings.roundExport2dp ? "rounded to 2 decimals, half up" : "unrounded, exactly as computed"}.
       </Notice>
 
       {view.blocks.map((b) => (
@@ -418,7 +419,7 @@ function Locations({ view }: { view: PayrollView }) {
     <Card>
       <CardHeader
         title="Locations"
-        subtitle={`Employee Cost is labor cost: Total Wages plus O.T. Pay${view.settings.trainingPayInCost ? " and Training Pay" : " (Training Pay left out until Q11 is answered)"}. Every number is a sum of the shop blocks below.`}
+        subtitle="Employee Cost is labor cost: Total Wages plus O.T. Pay and Training Pay. Every number is a sum of the shop blocks below."
       />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -605,9 +606,10 @@ function ShopBlockCard({ b, view, canRun, downloadable, earlier }: { b: BlockVie
                     </p>
                     <p>
                       <span className="font-medium">Training Pay</span>:{" "}
-                      {s.trainingPayInCost
-                        ? `${hrsH(l.trainingHours)} × ${fmtMoney(l.input.trainingRate ?? l.wage)}${l.input.trainingRate === null ? " (hourly rate)" : " training rate"} = ${fmtMoney(l.trainingPay)}`
-                        : "left out of labor cost (setting)"}
+                      {l.trainingRate === undefined
+                        ? "left out of labor cost (locked before training pay counted)"
+                        : `${hrsH(l.trainingHours)} × ${fmtMoney(l.trainingRate)} ${TRAINING_RATE_SOURCE[l.input.trainingRateSource ?? (l.input.trainingRate === null ? "hourly" : "payroll_setup")]}${(l.input.mixedRates ?? []).includes("trainingRate") ? " (mixed: the rate changed in the period)" : ""} = ${fmtMoney(l.trainingPay)}, outside the greater-of`}
+                      {l.otFromTraining ? ` · ${hrsH(l.otFromTraining)} more went over the 40 here and is paid as O.T. hours` : ""}
                       {l.trainingHours > 0 &&
                         (s.trainingCountsTowardOt
                           ? ` · ${hrsH(l.trainingHours - (l.input.trainingOverlapHours ?? 0))} of it counts toward the weekly 40 (on top of clocked hours, C2)`
