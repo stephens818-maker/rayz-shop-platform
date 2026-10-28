@@ -530,6 +530,7 @@ Append-only `analytics_events`, written by database triggers on the tables both 
     - **Tips** (`tips.own`): `cardTipsCents`; `cashTipsCents`, which includes cash they declared; `giftCardTipsCents`; and `cashOnTicketsCents`, `declaredCashTipsCents` and `tipAdjustmentsCents` for the breakdown. `totalTipsCents` is `E_Cash Tips Recd_Dollars`.
     - **Sales** (`report.my_sales.view` with `reports.money`): `serviceSalesCents` and `productSalesCents`.
     - **`pph`** (sales and `timesheet.own`, otherwise null), top level and per shop: their own Productivity Per Hour, `{ workedHours, servicePphCents, productPphCents, totalPphCents, clients, clientsPerHour, na }`. Service and product sales before tax and tips over regular plus overtime hours (not training or PTO), the Payroll Report's PPH columns to the cent. Label it "Productivity Per Hour (PPH)"; service PPH is the default figure. `clients` is their completed service tickets and `clientsPerHour` those over the same hours, to 2 decimals (show "Clients per hour"). With no worked hours the rates are null and `na` is true: show "N/A". Never anyone else's.
+    - **`productPerClient`** (their sales, otherwise null), top level and per shop: `{ productSalesCents, uniqueClients, productSalesPerClientCents, na }`. Product$ over the unique clients of their completed tickets in the period, a walk-in once per ticket; null and `na` true with no clients. Show "Product sales per client", "N/A" when `na`.
     - **`totalCents`:** wages plus Cash Tips Recd. It's null unless they may see both wages and tips.
     - **`workweeks[]`:** one per Chicago workweek (Sunday to Saturday) touching the period, with hours at every shop added up, since overtime is per employer across shops. Each has `weekStart`, `weekEnd`, `timezone`, `productionHours`, `trainingHours`, `regularHours`, `otHours`, `basisHours` (the hours toward the threshold), `partial`, `otIsEstimate`, `otLabelCode` and `otLabel`, `shops[]` (`shopId`, `shopName`, `productionHours`, `trainingHours`, `otHours`) and `postings` by period.
     - **`adjustments[]`:** changes after a period was exported, paid in this open period and flagged. Each is `{ id, kind, shopId, saleId, amountCents, effectCents, originalDate, postedDate, lateDeclaration, flagged: true, reducesPay: false, copy }`, and `kind` is one of:
@@ -830,6 +831,12 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 - My Earnings, PY-RD-01: the report's Total Wages is rounded once, while the paycheck rounds each part. They can differ by 1 cent (the contract test shows it). Keep the report's figure, or round each part there too?
 
 ## Log
+
+### 2026-10-28: core, product sales per client (Charles), for the Rayz App builder and the mobile agent
+
+- **What it is:** product sales before tax ÷ unique clients served on completed tickets (paid or partly refunded, with a service or product on them) in the period. A client with a profile counts once however often they came; a walk-in (no client on the ticket) counts once per ticket. Refunded, voided and gift-card-only tickets don't count. No clients is N/A. Label it "Product sales per client".
+- **New on `/me/earnings`:** `productPerClient`, top level and per shop, their own only: `{ productSalesCents, uniqueClients, productSalesPerClientCents, na }`. `productSalesCents` is Product$ from their Payroll Report line; `uniqueClients` is distinct across the period (and across their shops at the top level, so it can be less than the shops' added up). Null without their sales (`report.my_sales.view` with `reports.money`); with no clients the rate is null and `na` true: show "N/A". Additive: nothing else changed.
+- **Web:** a card under the PPH card on `/admin`, a rank, columns and chart on the PPH report, and Morning Dashboard rows. No migration; the next free number is still `core_0146`.
 
 ### 2026-10-28: core, Productivity Per Hour card on the web dashboard (Charles), for the Rayz App builder
 

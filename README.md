@@ -293,6 +293,13 @@ Card payments stay at PCI SAQ A: card details only ever pass through Stripe's fr
 - Only the dashboard's shops where they have the PPH report. Without **See every barber's numbers in reports** it's their own numbers, with no leaderboards. Without **See dollar amounts in reports** it's clients per hour instead of dollars. A shop login's home shows its shop's card only if its role is given the PPH report (it isn't by default).
 - Tests: `tests/pph-card.test.ts` and `tests/db/pph-dashboard.test.ts`.
 
+**Product sales per client card** (Charles, Oct 28), right under the PPH card, from the same shops, people and days:
+
+- Product sales before tax ÷ **unique clients served** on completed tickets (paid or partly refunded, with a service or product on them). A client with a profile counts once however often they came and whoever cut them; a walk-in (no client on the ticket) counts once per ticket. A family ticket counts its payer. Refunded, voided and gift-card-only tickets don't count. N/A with no clients.
+- **Today**, **Yesterday** and **Period to date** tiles with the product sales and unique clients under each, a **Last 14 days** sparkline, and barber and location leaderboards (own chips, `?ppc=today`) ending in the total. A shop's or the brand's clients are the distinct clients across its barbers, so the barbers' client counts don't add up to it.
+- Same rules as the PPH card: a shop's dashboard shows only that shop, and a barber without every barber's numbers sees only their own. It's a dollar figure, so there's no card without **See dollar amounts in reports**.
+- Also in the PPH report (a rank, columns, a stat and a trend chart), the Morning Dashboard and `/me/earnings` (`productPerClient`). Tests: `tests/pph-card.test.ts`, `tests/pph.test.ts` and `tests/db/product-per-client.test.ts`.
+
 <a id="morning-dashboard"></a>
 ### Morning Dashboard
 
@@ -307,7 +314,7 @@ The last open day's numbers with week to date and the same day last week, today'
 | Sales | Sales summary | Gross and net, services and products, tips, card fees, refunds, tickets, average ticket; net by day this week against last, and by location. Voids need Discounts & refunds. The barber table needs Barber performance, and without **See every barber's numbers** shows only your own row |
 | Clients and bookings | KPIs | New and returning clients, bookings made (online, walk-in, front desk), appointments, cancellations, no-shows |
 | Barber utilization | Barber performance | Booked against available hours, overall and per barber, day and week to date. Average cut against booked time needs Service times |
-| Productivity Per Hour (PPH) | PPH | Service PPH (the default), clients per hour, product and total PPH and worked hours, day and week to date; per location, against the brand, and per barber, highest week-to-date service PPH first (only your own row without **See every barber's numbers**). N/A with no hours |
+| Productivity Per Hour (PPH) | PPH | Service PPH (the default), clients per hour, product and total PPH, product sales per client and worked hours, day and week to date; per location, against the brand, and per barber, highest week-to-date service PPH first (only your own row without **See every barber's numbers**). N/A with no hours (product sales per client: with no clients) |
 | Rebook rate | Rebook rate | Visits rebooked at checkout and the rate, day and week to date against the prior period and the brand; new-client rebook rate; per barber with their week against the brand (only your own row without **See every barber's numbers**); future appointments; 2nd-visit retention of the new clients seen 60 to 89 days earlier |
 | Loyalty and gift cards | Loyalty / Gift cards | Rewards earned and redeemed; gift cards sold and redeemed, and what's still owed |
 | Campaign Center | Campaign Center (or We have openings) | Sends, clicks, bookings, coupon redemptions and attributed revenue for messages sent that day |
@@ -1218,7 +1225,7 @@ Each report is its own page with **two permissions of its own**: `report.<key>.v
 | Call-ins and client outreach | `call_ins` | Call-ins by shop and barber, the appointments they hit, and how each ended: moved, rebooked, declined, no response, flagged |
 | Google review links | `google_reviews` | Review follow-ups sent and clicks on each location's Google review link (from receipts and follow-ups), by barber and by location |
 | Labor hours and cost | `labor` | Clocked hours and OT, sales per labor hour; with `payroll.rates`, hourly rate, labor cost and labor % of sales |
-| Productivity Per Hour (PPH) | `pph` | Service PPH, the default (service sales before tax and tips, net of discounts and refunds, over clocked worked hours), with clients per hour alongside (completed service tickets over the same hours), and product and total PPH; N/A with no hours. Per barber, location and brand, over any range or pay period. Ranked by any of the four, highest or lowest first (click a heading), with a daily, weekly, monthly or pay-period trend. Barbers see their own (`core_0145`) |
+| Productivity Per Hour (PPH) | `pph` | Service PPH, the default (service sales before tax and tips, net of discounts and refunds, over clocked worked hours), with clients per hour alongside (completed service tickets over the same hours), and product and total PPH; N/A with no hours. Product sales per client too: product sales over unique clients served (a walk-in once per ticket), N/A with no clients. Per barber, location and brand, over any range or pay period. Ranked by any of the five, highest or lowest first (click a heading), with a daily, weekly, monthly or pay-period trend. Barbers see their own (`core_0145`) |
 | Attendance | `attendance` | Late, left early, early in, missed punches, forgotten clock-outs, and scheduled days with no punch |
 | Cash drawer | `cash_drawer` | Drawer closes with expected, counted, and variance |
 | Tip payouts | `tip_payouts` | Tips earned, refunded and adjusted per shop and employee, how they were paid (cash, Stripe, payroll, before tip payouts) and what's still unpaid, then every payout |
