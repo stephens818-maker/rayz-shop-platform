@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { tipWeights } from "@/domain/handoff";
-import { DEFAULT_PAYROLL_SETTINGS, EXPORT_COLUMNS, paystubLines, paystubName } from "@/domain/payroll/calc";
+import { DEFAULT_PAYROLL_SETTINGS, EXPORT_COLUMNS, type Line, exportRowChecks, paystubLines, paystubName } from "@/domain/payroll/calc";
 import { effectiveAccess, templateFor } from "@/domain/permissions";
 import { poolExcluded, tipPoolProblem } from "@/domain/tip-pool";
 
@@ -74,5 +74,29 @@ describe("earnings named as on the paystub (ST-N8)", () => {
       ["Tips Paid Out", "dollars", "tips", 120, true],
     ]);
     expect(paystubLines({ ...block, exportFrom: [...block.exportFrom] }, "nobody")).toEqual([]);
+  });
+});
+
+describe("My Earnings reconciliation: their row in the file against their report line", () => {
+  const line = { staffId: "me", hours: 38.5, otHours: 2, tips: 80.25, declaredCashTips: 39.75, netComm: 412.35, ptoHours: 0, trainingHours: 1.5 } as unknown as Line;
+  const block = { exportHeaders: EXPORT_COLUMNS.map((c) => c.header), exportFrom: [], exportRows: [{ staffId: "me", key: 101, isolvedName: "Doe, Jo", values: [38.5, 2, 120, 412.35, 0, 1.5] }] };
+
+  it("checks every column, Cash Tips Recd being tips plus declared cash", () => {
+    const checks = exportRowChecks(block, line);
+    expect(checks.map((c) => [c.header, c.group, c.exported, c.report, c.matches])).toEqual([
+      ["E_Regular_Hours", "hours", 38.5, 38.5, true],
+      ["E_Overtime 1.5_Hours", "hours", 2, 2, true],
+      ["E_Cash Tips Recd_Dollars", "tips", 120, 120, true],
+      ["E_Comm Sales_Dollars", "wages", 412.35, 412.35, true],
+      ["E_Ray'z Paid Time_Hours", "hours", 0, 0, true],
+      ["E_Training_Hours", "hours", 1.5, 1.5, true],
+    ]);
+  });
+
+  it("flags a cell a cent off, and a person missing from the file", () => {
+    const off = exportRowChecks({ ...block, exportRows: [{ ...block.exportRows[0], values: [38.5, 2, 120.01, 412.35, 0, 1.5] }] }, line);
+    expect(off.filter((c) => !c.matches).map((c) => c.header)).toEqual(["E_Cash Tips Recd_Dollars"]);
+    const missing = exportRowChecks({ ...block, exportRows: [] }, line);
+    expect(missing.filter((c) => !c.matches).map((c) => c.header)).toEqual(["E_Regular_Hours", "E_Overtime 1.5_Hours", "E_Cash Tips Recd_Dollars", "E_Comm Sales_Dollars", "E_Training_Hours"]);
   });
 });

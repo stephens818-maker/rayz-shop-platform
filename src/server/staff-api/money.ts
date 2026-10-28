@@ -1,7 +1,7 @@
 import "server-only";
 import { and, count, eq, gte, inArray, lt, ne } from "drizzle-orm";
 import { db } from "@/db";
-import { appointments, shops } from "@/db/schema";
+import { appointments, shops, type tipPayouts } from "@/db/schema";
 import { BANKING_STATUS_LABEL, BankingStatus, destinationLabel, requirementLabels } from "@/domain/banking";
 import { addTotals, commissionBetween, zeroTotals } from "@/domain/compensation";
 import { reportView } from "@/domain/permissions";
@@ -52,6 +52,7 @@ import { waitingForSetup } from "@/server/tips/payouts";
 import type { StaffAppContext } from "./http";
 
 const MAX_DAYS = 62;
+type TipPayout = typeof tipPayouts.$inferSelect;
 
 async function myShops(staffId: string) {
   const ids = await workShopIds(staffId);
@@ -101,29 +102,34 @@ export async function myPayouts(ctx: StaffAppContext) {
   return {
     waitingForSetup: t.waitingForSetup,
     owed: t.owed,
-    payouts: t.payouts
-      .filter((p) => p.method !== "prior" && p.status !== "cancelled")
-      .map((p) => ({
-        id: p.id,
-        shopId: p.shopId,
-        shop: name.get(p.shopId) ?? "",
-        method: p.method,
-        instant: p.instant,
-        status: p.status,
-        statusLabel: heldLabel(p) ?? STATUS_LABEL[p.status as keyof typeof STATUS_LABEL] ?? p.status,
-        waitingForSetup: p.status === "held" && p.holdKind === "stripe_setup",
-        owed: p.status === "held" && (p.holdKind === "stripe_setup" || p.holdKind === "transfers_pending"),
-        failureMessage: p.failureMessage,
-        tipsCents: p.grossCents + p.adjustCents,
-        feesCents: p.feeCents + employeeFeeCents(p),
-        instantFeeCents: p.instantFeeCents,
-        instantFeePaidBy: p.instant && p.instantFeeCents ? p.instantFeePaidBy : null,
-        netCents: receivedCents(p),
-        to: p.destinationLast4 ? { type: p.destinationType, last4: p.destinationLast4 } : null,
-        createdAt: p.createdAt.toISOString(),
-        sentAt: p.sentAt?.toISOString() ?? null,
-        paidAt: p.paidAt?.toISOString() ?? null,
-      })),
+    payouts: t.payouts.filter((p) => p.method !== "prior" && p.status !== "cancelled").map((p) => payoutView(p, name.get(p.shopId) ?? "")),
+  };
+}
+
+export const payoutStatusLabel = (p: Pick<TipPayout, "status" | "holdKind">) => heldLabel(p) ?? STATUS_LABEL[p.status as keyof typeof STATUS_LABEL] ?? p.status;
+
+/** One of their tip payouts as the app shows it: how, its status, and what they got after fees. */
+export function payoutView(p: TipPayout, shop: string) {
+  return {
+    id: p.id,
+    shopId: p.shopId,
+    shop,
+    method: p.method,
+    instant: p.instant,
+    status: p.status,
+    statusLabel: payoutStatusLabel(p),
+    waitingForSetup: p.status === "held" && p.holdKind === "stripe_setup",
+    owed: p.status === "held" && (p.holdKind === "stripe_setup" || p.holdKind === "transfers_pending"),
+    failureMessage: p.failureMessage,
+    tipsCents: p.grossCents + p.adjustCents,
+    feesCents: p.feeCents + employeeFeeCents(p),
+    instantFeeCents: p.instantFeeCents,
+    instantFeePaidBy: p.instant && p.instantFeeCents ? p.instantFeePaidBy : null,
+    netCents: receivedCents(p),
+    to: p.destinationLast4 ? { type: p.destinationType, last4: p.destinationLast4 } : null,
+    createdAt: p.createdAt.toISOString(),
+    sentAt: p.sentAt?.toISOString() ?? null,
+    paidAt: p.paidAt?.toISOString() ?? null,
   };
 }
 

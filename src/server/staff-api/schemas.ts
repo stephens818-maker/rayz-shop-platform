@@ -217,8 +217,9 @@ export const VoidPunchBody = z.object({ reason: Reason });
 
 // ───────────────────────────── Earnings and payouts (ST-C6, ST-C7, ST-C9) ─────────────────────────────
 
-export const PeriodEarningsQuery = z.object({ period: DateStr.optional().describe("Any day in the pay period; today when left out") });
-export const YtdQuery = z.object({ year: z.coerce.number().int().min(2020).max(2100).optional() });
+/** Always the signed-in employee's own: anything else in the query (a staffId, say) is 400, never quietly dropped. */
+export const PeriodEarningsQuery = z.strictObject({ period: DateStr.optional().describe("Any day in the pay period; today when left out") });
+export const YtdQuery = z.strictObject({ year: z.coerce.number().int().min(2020).max(2100).optional() });
 export const CutoverAnswerBody = z.object({ shopId: z.uuid(), status: z.enum(["confirmed", "disputed"]), note: z.string().max(500).nullish().describe("Required to dispute") });
 
 // ───────────────────────────── Time off (ST-I1) ─────────────────────────────

@@ -355,3 +355,14 @@ export function heldLabel(p: { status: string; holdKind: string | null }): strin
   if (p.holdKind === "transfers_pending") return "Owed: paid through payroll unless sent first";
   return null;
 }
+
+/** A card tip's transfer to the barber's Stripe account at the sale (I10), as the barber reads it. */
+export const TIP_TRANSFER_LABEL = {
+  pending: "On its way to your Stripe account",
+  sent: "In your Stripe account",
+  failed: "Couldn't be sent at the sale, so it's paid with your next tip payout",
+  cancelled: "Refunded before it was sent",
+} as const satisfies Record<"pending" | "sent" | "failed" | "cancelled", string>;
+
+/** Where a tip already in their Stripe account stands before a payout takes it to their bank. */
+export const NOT_IN_PAYOUT_LABEL = "Not in a payout yet";

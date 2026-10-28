@@ -913,6 +913,33 @@ export function paystubLines(b: Pick<ShopBlock, "exportRows" | "exportHeaders" |
   });
 }
 
+export interface RowCheck {
+  header: string;
+  unit: "hours" | "dollars";
+  group: PaystubGroup;
+  /** What their row in the shop's payroll file carries. */
+  exported: number;
+  /** What their line of the Payroll Report says the column carries, by reconcile()'s rules. */
+  report: number;
+  matches: boolean;
+}
+
+/** Every column of one person's row in their shop's payroll file, zeros included, against their line of the report. */
+export function exportRowChecks(b: Pick<ShopBlock, "exportRows" | "exportHeaders" | "exportFrom">, line: Line): RowCheck[] {
+  const row = b.exportRows.find((r) => r.staffId === line.staffId);
+  const headers = b.exportHeaders ?? EXPORT_COLUMNS.map((c) => c.header);
+  const extra = extraFromOf(b);
+  const tipColumns = hasTipColumns(extra);
+  const cardSplit = extra.includes("cardTipsOutside");
+  const from: (Summed | ExtraFrom)[] = [...EXPORT_COLUMNS.map((c) => c.from), ...extra];
+  return headers.map((header, i) => {
+    const k = from[i];
+    const report = k === "tipsOutside" ? (!tipColumns ? cashTipsRecd(line) : cardSplit ? line.tipsOutside - line.cardTipsOutside : line.tipsOutside) : k ? (line[k] ?? 0) : 0;
+    const exported = row?.values[i] ?? 0;
+    return { header, unit: paystubName(header).unit, group: (k && PAYSTUB_GROUP[k]) ?? "wages", exported, report, matches: sameToTheCent(exported, report) };
+  });
+}
+
 /**
  * The reconciliation gate (spec §5). Approve-and-lock is blocked while this returns anything:
  * a report total that isn't the sum of its rows, a per-shop export column whose total isn't the report's,

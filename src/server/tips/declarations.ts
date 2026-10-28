@@ -126,6 +126,16 @@ export async function myDeclarations(staffId: string, from: LocalDate, today: Lo
   };
 }
 
+/** One employee's current declarations at these shops in [start, end], as payroll counts them. */
+export async function currentDeclarationsOf(staffId: string, shopIds: readonly string[], start: LocalDate, end: LocalDate, tx: DBorTx = db) {
+  if (!shopIds.length) return [];
+  return tx
+    .select({ id: tipDeclarations.id, shopId: tipDeclarations.shopId, businessDate: tipDeclarations.businessDate, amountCents: tipDeclarations.amountCents, source: tipDeclarations.source })
+    .from(tipDeclarations)
+    .where(and(eq(tipDeclarations.staffId, staffId), inArray(tipDeclarations.shopId, [...shopIds]), gte(tipDeclarations.businessDate, start), lte(tipDeclarations.businessDate, end), current))
+    .orderBy(desc(tipDeclarations.businessDate), desc(tipDeclarations.createdAt));
+}
+
 /** Current declared cash tips in [start, end], per `staffId|shopId`, in cents. */
 export async function declaredTipsBetween(shopIds: readonly string[], start: LocalDate, end: LocalDate, tx: DBorTx = db): Promise<Map<string, number>> {
   if (!shopIds.length) return new Map();

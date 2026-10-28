@@ -37,6 +37,7 @@ import {
 } from "./front";
 import { StaffAppContext, guardedStaff, shopOf, signInRoute, staffRoute, withCacheRule } from "./http";
 import { accountSession, bankingView, dashboardLink, earningsRange, myEarnings, myExternalAccounts, myPayouts, myTipsView, onboardingLink, setMyDepositConsent, setMyPayoutMethod } from "./money";
+import { myEarningsTips, myTipTransfers } from "./earnings-detail";
 import { myPeriodEarnings, myYearToDate, payoutSetup } from "./pay";
 import { markPopupsSeen, popupsFor } from "./popups";
 import { addAppointmentNote, appointmentNotes, dayRange, myAppointment, myAppointments, mySchedule } from "./schedule";
@@ -220,11 +221,24 @@ export const postTimecardSignOff = staffRoute({ perms: "timesheet.own", person: 
 });
 
 const PAY = { perms: ["timesheet.own", "tips.own", "compensation.own", "report.my_sales.view"], person: true, message: "You can't see your earnings" } as const;
+const TIPS = { perms: "tips.own", person: true, message: "You can't see tips" } as const;
 
 /** GET /me/earnings?period=: one pay period, per shop, from the same payroll run as the iSolved export. */
 export const getPeriodEarnings = staffRoute(PAY, async (req, ctx) => {
   const q = query(req, S.PeriodEarningsQuery);
   return json(await myPeriodEarnings(ctx, q.period));
+});
+
+/** GET /me/earnings/tips?period=: their own tips per ticket and per day, card and cash on tickets, and cash they declared. */
+export const getEarningsTips = staffRoute(TIPS, async (req, ctx) => {
+  const q = query(req, S.PeriodEarningsQuery);
+  return json(await myEarningsTips(ctx, q.period));
+});
+
+/** GET /me/earnings/transfers?period=: each of their card tips' transfer to their Stripe account and the payout after it. */
+export const getEarningsTransfers = staffRoute(TIPS, async (req, ctx) => {
+  const q = query(req, S.PeriodEarningsQuery);
+  return json(await myTipTransfers(ctx, q.period));
 });
 
 /** GET /me/earnings/ytd?year= */
@@ -476,8 +490,6 @@ export const getKioskHome = kioskRoute(async (_req, k) => json(await kioskHome(k
 export const getKioskQueue = kioskRoute(async (_req, k) => json(await kioskQueueView(k)));
 
 // ───────────────────────────── Tips, earnings, payouts and banking ─────────────────────────────
-
-const TIPS = { perms: "tips.own", person: true, message: "You can't see tips" } as const;
 
 /** GET /tips */
 export const getTips = staffRoute(TIPS, async (req, ctx) => {
