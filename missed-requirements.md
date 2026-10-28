@@ -1062,13 +1062,30 @@ The web platform, the iOS and Android customer apps and the Ray'z Staff app go l
 
 - [x] The runbook: store submission lead times, holding approved builds for release, the launch-time switches and the cutover order.
 - [x] Server-side levers that need no app release: the booking switch (Setup → App switches, app and website), each shop's Online booking switch, minimum versions and the maintenance message in both apps' `/config`.
-- [ ] Charles: the launch date and time, whether all 8 shops leave Squire at that time, and whether the Play Console account is a personal or an organization account (a personal account adds a 14-day closed test).
+- [ ] Charles: the launch date and time, which shop is the pilot (section 48), and whether the Play Console account is a personal or an organization account (a personal account adds a 14-day closed test).
 - [ ] Mobile: the customer apps submitted to App Review and Google Play at least 3 weeks ahead (5 for a new personal Play account), held for release.
 - [ ] Staff app builder: the same for the Ray'z Staff app, with kiosk mode (ST-I6).
 - [ ] Each app tested in the sandbox against the real API (PR #7's apps run on a mock today), its status posted in NOTES-SYNC.
 - [ ] Mobile: PR #3's `LAUNCH_AT` rebased and landed first, so one instant opens every surface.
-- [ ] Charles: does the rule replace PR #4's option B (shops opening one by one)?
+- [x] Charles: PR #4's option B stands. Every surface goes live at once, and the shops follow the rollout in section 48.
 - [ ] All four surfaces tested together in the sandbox on the builds being released.
+
+## 48. The rollout: one pilot shop, then the rest (Charles, Oct 28)
+
+Charles approved the plan: (1) all scope, the apps included, complete and tested in the sandbox; (2) one pilot shop goes live while Squire stays as its backup; (3) the other shops switch after one clean pay period. The runbook is `docs/rollout-runbook.md`; DEPLOY.md step 51 and "Launch day" follow it.
+
+- [x] Per-shop go-live flags on **Setup → Rollout** (`core_0134_rollout`): wave (one pilot), planned go-live, the first pay period whose payroll comes from here, and Squire backup until. Nothing changes until a shop has a row.
+- [x] The wave gate: a second-wave shop can't **Sign off and switch**, or be set to book here in Shop settings, until an owner signs off the pilot's clean pay period and the pilot still books here. A hand back clears the sign-off.
+- [x] The clean pay period: payroll from here, booked here the whole period, over, approved and locked, nothing changed since, tips tie out to the cent, no late commission; plus the owner's note on what can't be checked (paychecks right, iSolved took the file, no complaints).
+- [x] Squire's Commissions report imported per shop and pay period (service and product blocks, names matched to the Staff page's Squire name, nothing saved on any problem, replaced until the lock).
+- [x] Payroll for a period mixing shops on the platform and shops on Squire data: one run, approval refused until each Squire shop's report is in, punches and tickets at a Squire shop left out, Squire-paid tips all in `E_Cash Tips Recd`, OT, PTO and training typed, overtime across both flagged (`cross_source_ot`), mismatched booking and source flagged (`rollout_source`), and each locked period keeps its source.
+- [x] The staff app's earnings say which shops' figures come from Squire data (`source`, `squireImported`).
+- [x] Tests: `tests/squire-commissions.test.ts` and `tests/db/rollout.test.ts` (a mixed period approved, locked and exported; the wave gate before and after the sign-off and after a hand back).
+- [x] The per-shop migration and cutover runbook, with rollback and the mid-period hand back.
+- [ ] Charles: which shop is the pilot, and its go-live day (the first day of a pay period).
+- [ ] In the sandbox: whether Squire's Commissions report can be filtered to one shop (if not, export it with a Shop or Location column).
+- [ ] The whole runbook rehearsed for the pilot on a staging copy, including one mixed pay period imported, approved and locked (C14).
+- [ ] The pilot's first clean pay period signed off; then the second wave.
 
 ## Deferred by decision
 
