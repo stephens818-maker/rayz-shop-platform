@@ -17,7 +17,7 @@ function secret(): Uint8Array {
  * login_2fa: a correct password waiting for its authenticator code (or for setting one up).
  * staff_app_access: the staff app's Bearer token (/api/staff/v1), naming its sign-in (sid).
  */
-export type TokenType = "staff_session" | "customer_access" | "otp_select" | "trusted_device" | "device_request" | "handoff" | "login_2fa" | "staff_app_access" | "staff_app_2fa_setup";
+export type TokenType = "staff_session" | "customer_access" | "otp_select" | "trusted_device" | "device_request" | "handoff" | "login_2fa" | "staff_app_access" | "staff_app_2fa_setup" | "staff_app_step_up";
 
 export async function signToken(payload: Record<string, unknown>, typ: TokenType, ttlSeconds: number): Promise<string> {
   return new SignJWT({ ...payload, typ })

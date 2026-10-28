@@ -13,6 +13,28 @@ import { requireInTenant } from "@/server/tenant";
 import { clockState } from "@/server/time-clock";
 import { declareCashTips, myDeclarations } from "@/server/tips/declarations";
 import { assertStripePayouts } from "@/server/tips/payout-model";
+import {
+  ACTION_FOR_STATUS,
+  EXPIRED_CODE,
+  ON_DEMAND_OFF,
+  appConfigFields,
+  appStepUp,
+  approveKiosk,
+  bearerKiosk,
+  cashTipAdjustment,
+  clockFromToken,
+  earningsReport,
+  kioskAudit,
+  kioskPinPunch,
+  kioskQrToken,
+  kioskRoster,
+  maskedDestination,
+  otpVerifyView,
+  punchRecord,
+  requestKiosk,
+  revokeKiosk,
+  unlockKioskPin,
+} from "./app-contract";
 import { appDeviceStatus, finishAppTwoFactorSetup, recordStaffAppWipe, startAppTwoFactorSetup, refreshStaffTokens, requestAppDevice, requestWhere, staffAppSession, staffCodeLogin, staffLogout, staffPasswordLogin } from "./auth";
 import { block, book, move, myCalendar, openings, runningLate, seesEveryColumn, setStatus, unblock } from "./calendar";
 import { clientCard, contactForApp, findClientsFor, revealForApp } from "./clients";
@@ -36,7 +58,23 @@ import {
   withdrawTimeOff,
 } from "./front";
 import { StaffAppContext, guardedStaff, shopOf, signInRoute, staffRoute, withCacheRule } from "./http";
-import { accountSession, bankingView, dashboardLink, earningsRange, myEarnings as myRangeEarnings, myExternalAccounts, myPayouts, myTipsView, onboardingLink, setMyDepositConsent, setMyPayoutMethod } from "./money";
+import {
+  accountSession,
+  bankingView,
+  dashboardLink,
+  earningsRange,
+  instantQuote,
+  myEarnings as myRangeEarnings,
+  myExternalAccounts,
+  myPayouts,
+  myTipsView,
+  onboardingLink,
+  payoutAccountSession,
+  payoutAccountView,
+  setInstantOptIn,
+  setMyDepositConsent,
+  setMyPayoutMethod,
+} from "./money";
 import { logEarningsView, myEarnings, myEarningsDays, myEarningsTickets, myPayPeriodList, myPayoutsView } from "./earnings";
 import { myYearToDate, payoutSetup } from "./pay";
 import { markPopupsSeen, popupsFor } from "./popups";
@@ -123,7 +161,8 @@ export const getDeviceStatus = signInRoute(async (req) => json(await appDeviceSt
 /** GET /config: minimum versions, switches and links, read at launch before sign-in. Not version-gated. */
 export const getConfig = route(async (req) => {
   await loadDisplay();
-  return withCacheRule(req, json(staffAppConfig(req)));
+  const cfg = staffAppConfig(req);
+  return withCacheRule(req, json({ ...cfg, ...(await appConfigFields(cfg)) }));
 });
 
 // ───────────────────────────── Me ─────────────────────────────
@@ -162,6 +201,9 @@ const MANAGER_PERMS = ["calendar.view_all", "calendar.manage", "walkins.manage",
 /** GET /me: who they are, their shops, what this app may show them, and every permission they hold. */
 export const getMe = staffRoute({ perms: null }, async (_req, ctx) => {
   return json({
+    id: ctx.staff.id,
+    firstName: ctx.staff.firstName,
+    shopIds: ctx.assignedShops.filter((s) => ctx.shopIds.includes(s.id)).map((s) => s.id),
     staff: { id: ctx.staff.id, firstName: ctx.staff.firstName, displayLabel: ctx.staff.displayLabel, kind: ctx.staff.kind, role: { id: ctx.staff.roleId, key: ctx.staff.roleKey, name: ctx.staff.roleName } },
     shops: ctx.assignedShops.filter((s) => ctx.shopIds.includes(s.id)).map((s) => ({ id: s.id, name: s.name })),
     currentShopId: ctx.currentShopId,
@@ -335,11 +377,12 @@ export const postAppointment = staffRoute({ perms: null }, async (req, ctx) => {
   return json(await book(ctx, { ...v, staffId: v.staffId ?? ctx.staff.id, addonIds: v.addonIds ?? [], customerId: v.customerId ?? null, customer: v.customer ?? null, notes: v.notes ?? null, squeezeIn: !!v.squeezeIn }), 201);
 });
 
-/** POST /appointments/{id}/status */
+/** POST /appointments/{id}/status: { action }, or the app's { status } to move it to. */
 export const postAppointmentStatus = staffRoute<{ id: string }>({ perms: null }, async (req, ctx, params) => {
   const { id } = S.IdParam.parse(params);
-  const v = await body(req, S.StatusBody);
-  return json(await setStatus(ctx, id, v.action));
+  const v = await body(req, S.AppStatusBody);
+  const appointment = await setStatus(ctx, id, v.action ?? ACTION_FOR_STATUS[v.status!]);
+  return json({ ...appointment, appointment });
 });
 
 /** POST /appointments/{id}/move */
@@ -416,11 +459,25 @@ export const postPunch = staffRoute(CLOCK, async (req, ctx) => {
   return json(await appPunch(ctx, req, v));
 });
 
+/** The app sends what it scanned as token, and clock-out's cash tips flat. Nothing biometric is ever taken. */
 const punchAs = (type: "in" | "out") =>
   staffRoute(CLOCK, async (req, ctx) => {
     assertClockOn();
-    const v = await body(req, S.ClockInOutBody);
-    return json(await appPunch(ctx, req, { ...v, type }));
+    const raw: unknown = await req
+      .clone()
+      .json()
+      .catch(() => null);
+    if (raw && typeof raw === "object" && "biometric" in raw) throw new AppError("bad_request", `Clock-${type} does not use biometrics.`, { field: "biometric" });
+    const { token, cashTipCents, attestation, ...v } = await body(req, S.ClockInOutBody);
+    const scanned = token ? clockFromToken(token) : null;
+    if (token && !scanned) throw new AppError("bad_request", EXPIRED_CODE, { field: "token" });
+    const shopId = scanned?.shopId ?? v.shopId;
+    if (!shopId) throw new AppError("bad_request", "Scan the code at the shop, or send shopId", { field: "token" });
+    const cashTips = v.cashTips ?? (cashTipCents !== undefined && attestation ? { cents: cashTipCents, attest: true as const } : undefined);
+    if (type === "out" && cashTipCents && !attestation) throw new AppError("bad_request", "Confirm these are all the cash tips you received today.", { field: "attestation" });
+    const view = await appPunch(ctx, req, { ...v, shopId, proof: scanned?.proof ?? v.proof, cashTips, type });
+    const declared = "cashTips" in view ? view.cashTips.declared : null;
+    return json({ ...view, punch: await punchRecord(ctx.staff.id, view, declared) });
   });
 
 /** POST /clock/in */
@@ -787,3 +844,111 @@ export const postPayQuestionAnswer = staffRoute<{ id: string }>(ANSWER_PAY, asyn
   const v = await body(req, S.PayQuestionAnswerBody);
   return json(await answerPayQuestion(viewer(ctx), id, v.answer));
 });
+
+// ───────────────────────────── The app's names (mobile packages/mock-api) ─────────────────────────────
+
+/** POST /auth/otp/start: /auth/code/start, with where the code went, masked. */
+export const postOtpStart = signInRoute(async (req) => {
+  const v = await body(req, S.CodeStartBody);
+  return json({ ...(await startStaffCode(v, requestWhere(req))), destination: maskedDestination(v) });
+});
+
+/** POST /auth/otp/verify: /auth/code/verify, with the tokens flat and who signed in. */
+export const postOtpVerify = signInRoute(async (req) => {
+  const v = await body(req, S.CodeVerifyBody);
+  return json(await otpVerifyView(await verifyStaffCode(v, requestWhere(req))));
+});
+
+/** POST /auth/step-up: /me/step-up, with pin read as their authenticator code. */
+export const postAppStepUp = staffRoute({ perms: null }, async (req, ctx) => json(await appStepUp(ctx, await body(req, S.AppStepUpBody))));
+
+/** GET /me/earnings/report?format=csv|pdf: My Earnings as a file, whole workweeks only; audited like every My Earnings view. */
+export const getEarningsReport = staffRoute(EARNINGS, async (req, ctx) => {
+  const res = await earningsReport(ctx, query(req, S.MyReportQuery));
+  await logEarningsView(ctx, "me/earnings/report", new URL(req.url).searchParams);
+  return res;
+});
+
+/** POST /me/cash-tips: /tips/declarations under the app's names; the row comes back as the app's adjustment. */
+export const postCashTips = staffRoute(TIPS, async (req, ctx) => {
+  const v = await body(req, S.CashTipBody);
+  assertShopAccess(ctx, v.shopId);
+  const d = await declareCashTips({ staffId: ctx.staff.id, shopId: v.shopId, businessDate: v.originalDate, amountCents: v.amountCents, attested: v.attestation, replacesId: v.replacesId ?? null, reason: v.reason ?? null, source: "staff_app", actor: ctx.actor });
+  return json({ adjustment: cashTipAdjustment(d) }, 201);
+});
+
+/** POST /me/devices: POST /devices with the app's defaults (Expo push, the X-Client platform). */
+export const postMyDevice = staffRoute({ perms: null, person: true }, async (req, ctx) => {
+  const v = await body(req, S.AppDeviceBody);
+  const platform = v.platform ?? (req.headers.get("x-client") === "android" ? "android" : "ios");
+  return json(await registerStaffDevice(ctx, { platform, provider: v.provider ?? "expo", token: v.token, appVersion: v.appVersion, osVersion: v.osVersion, pushEnabled: v.reminders }), 201);
+});
+
+/** GET /me/payout-account: their recipient account as the app's PayoutAccount. ?refresh=1 reads Stripe first. */
+export const getPayoutAccount = banking(async (req, ctx) => {
+  const q = query(req, S.BankingQuery);
+  return json({ account: await payoutAccountView(ctx, { refresh: !!q.refresh }) });
+});
+
+/** POST /me/payout-account/session: the embedded components' client secret (/banking/account-session). */
+export const postPayoutAccountSession = banking(async (_req, ctx) => json(await payoutAccountSession(ctx)));
+
+/** POST /me/payout-account/session/complete: the app is back from the embedded components; read Stripe and answer the state. */
+export const postPayoutAccountSessionComplete = banking(async (req, ctx) => {
+  await body(req, S.PayoutSessionCompleteBody);
+  const account = await payoutAccountView(ctx, { refresh: true });
+  return json({ state: account.state, account });
+});
+
+/** POST /me/instant-payouts/quote: the instant payout fee on an amount, and who pays it. */
+export const postInstantQuote = banking(async (req, ctx) => {
+  const v = await body(req, S.InstantQuoteBody);
+  return json(await instantQuote(ctx, v.amountCents));
+});
+
+/** POST /me/instant-payouts: cashing out on demand isn't offered; instant payouts go with each approved tip payout. */
+export const postInstantPayout = banking(async (req) => {
+  await body(req, S.InstantQuoteBody);
+  throw new AppError("conflict", ON_DEMAND_OFF, { reason: "on_demand_off" });
+});
+
+/** PATCH /me/payout-preferences */
+export const patchPayoutPreferences = banking(async (req, ctx) => json(await setInstantOptIn(ctx, await body(req, S.PayoutPreferencesBody))));
+
+const KIOSK_ADMIN = { perms: "settings.shop", message: "A manager has to approve this kiosk." } as const;
+
+/** POST /kiosk/pair: a manager on the tablet asks to make it a front-desk clock. */
+export const postKioskRequest = staffRoute(KIOSK_ADMIN, async (req, ctx) => json(await requestKiosk(ctx, await body(req, S.KioskRequestBody)), 201));
+
+/** POST /kiosk/pair/{id}/approve */
+export const postKioskApprove = staffRoute<{ id: string }>(KIOSK_ADMIN, async (req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  return json(await approveKiosk(ctx, id, await body(req, S.KioskApproveBody)), 201);
+});
+
+/** POST /kiosk/{id}/revoke */
+export const postKioskRevoke = staffRoute<{ id: string }>(KIOSK_ADMIN, async (_req, ctx, params) => {
+  const { id } = S.IdParam.parse(params);
+  return json(await revokeKiosk(ctx, id));
+});
+
+/** GET /audit: kiosk entries at their shops. */
+export const getKioskAudit = staffRoute(KIOSK_ADMIN, async (req, ctx) => json(await kioskAudit(ctx, query(req, S.AuditQuery))));
+
+/** GET /kiosk/roster */
+export const getKioskRoster = signInRoute(async (req) => json(await kioskRoster(await bearerKiosk(req))));
+
+/** GET /kiosk/qr */
+export const getKioskQrToken = signInRoute(async (req) => {
+  const k = await bearerKiosk(req);
+  return json(await kioskQrToken(k, query(req, S.KioskQrQuery).shopId));
+});
+
+/** POST /kiosk/pin */
+export const postKioskPin = signInRoute(async (req) => {
+  const k = await bearerKiosk(req);
+  return json(await kioskPinPunch(k, req, await body(req, S.KioskPinBody)));
+});
+
+/** POST /kiosk/pin/unlock */
+export const postKioskUnlock = staffRoute({ perms: "timesheet.edit", message: "A manager has to unlock this PIN." }, async (req, ctx) => json(await unlockKioskPin(ctx, await body(req, S.KioskUnlockBody))));

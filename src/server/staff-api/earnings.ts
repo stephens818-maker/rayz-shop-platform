@@ -744,23 +744,24 @@ interface TicketRow {
 
 /**
  * GET /me/earnings/tickets?periodId=&date=: their tickets on one Chicago calendar day of one of their
- * pay periods, each with the services and products credited to them (as payroll credits them: the
+ * pay periods (every day of it when date is left out), each with the services and products credited to them (as payroll credits them: the
  * ticket's barber, less lines done by someone else, plus lines they did on someone else's ticket),
  * their own tip by tender (their share on a split ticket, never anyone else's), how it reaches them,
- * and the card tip's transfer status and its payout's status, each in its own field. Clients by
- * first name only.
+ * and the card tip's transfer status and its payout's status, each in its own field (and as the
+ * app's transfer and payout objects). Clients by first name only.
  */
-export async function myEarningsTickets(ctx: StaffAppContext, q: { periodId?: string; from?: string; to?: string; date: string }, today: LocalDate = todayLocal()) {
+export async function myEarningsTickets(ctx: StaffAppContext, q: { period?: string; periodId?: string; from?: string; to?: string; date?: string }, today: LocalDate = todayLocal()) {
   const see = sees(ctx);
   if (!see.tips && !see.sales) throw forbidden("You don't have permission to see tips or sales");
   const me = ctx.staff.id;
   const { shops: mine, cals } = await myCalendars(me);
-  if (q.periodId === undefined && q.from === undefined && q.to === undefined) throw bad("Send periodId, or from and to", "periodId");
-  const span = spanOf(cals, { periodId: q.periodId, from: q.from, to: q.to }, today);
+  if (q.period === undefined && q.periodId === undefined && q.from === undefined && q.to === undefined) throw bad("Send periodId, or from and to", "periodId");
+  if (q.period !== undefined && q.periodId !== undefined) throw bad("Send period or periodId, not both", "period");
+  const span = spanOf(cals, { periodId: q.periodId ?? q.period, from: q.from, to: q.to }, today);
   const per = span.period;
-  if (!isValidLocalDate(q.date) || q.date < span.from || q.date > span.to)
+  if (q.date !== undefined && (!isValidLocalDate(q.date) || q.date < span.from || q.date > span.to))
     throw bad(`date is a Chicago calendar day in ${per ? "that pay period" : "from/to"}, ${span.from} to ${span.to}`, "date");
-  const date = q.date;
+  const date = q.date ?? null;
   const ids = (per?.cals ?? cals).map((c) => c.shop.id);
   const name = new Map(mine.map((s) => [s.id, s.name]));
   const list = ids.length
@@ -773,7 +774,7 @@ export async function myEarningsTickets(ctx: StaffAppContext, q: { periodId?: st
         from sales s
         left join customers c on c.id = s.customer_id
         left join appointments a on a.id = s.appointment_id
-        where s.shop_id in ${uuids(ids)} and s.business_date = ${date} and s.status in ${PAID} and ${notSquireEra()}
+        where s.shop_id in ${uuids(ids)} and s.business_date between ${date ?? span.from} and ${date ?? span.to} and s.status in ${PAID} and ${notSquireEra()}
           and (s.staff_id = ${me}
             or exists (select 1 from sale_line_moves lm where lm.sale_id = s.id and lm.staff_id = ${me})
             or exists (select 1 from tip_ledger tl where tl.sale_id = s.id and tl.staff_id = ${me}))
@@ -782,7 +783,7 @@ export async function myEarningsTickets(ctx: StaffAppContext, q: { periodId?: st
   const [ledger, setup, covered, state] = await Promise.all([
     see.tips ? myLedger(me, ids, { saleIds: list.map((t) => t.saleId) }) : [],
     payoutSetup(ctx),
-    see.tips ? shopCoveredRefunds(me, ids, date, date) : [],
+    see.tips ? shopCoveredRefunds(me, ids, date ?? span.from, date ?? span.to) : [],
     per ? periodStates([per], today).then((m) => m.get(per.start)!) : null,
   ]);
   const routes = await tipRoutesOf(setup);
@@ -807,6 +808,8 @@ export async function myEarningsTickets(ctx: StaffAppContext, q: { periodId?: st
       giftCardTipCents: see.tips ? tender.giftCard : null,
       shared: see.tips ? mineHere.some((r) => r.shared) : null,
       tipDisposition: see.tips ? dispositionOf(tip, routes.get(t.shopId)) : null,
+      transfer: transfer && { status: transfer.transferStatus, amountCents: transfer.amountCents, arrivalDate: transfer.transferArrivalDate },
+      payout: payout && { status: payout.payoutStatus, amountCents: payout.amountCents, arrivalDate: payout.arrivalDate, bankLast4: payout.bankLast4, failureMessage: payout.failureMessage },
       transferStatus: transfer?.transferStatus ?? null,
       transferReversedBy: transfer?.transferReversedBy ?? null,
       transferArrivalDate: transfer?.transferArrivalDate ?? null,
@@ -826,7 +829,7 @@ export const firstNameOnly = (raw: string | null) => raw?.trim().split(/\s+/)[0]
 
 // ───────────────────────────── Audit ─────────────────────────────
 
-const VIEW_KEYS = ["period", "periodId", "from", "to", "date", "year"] as const;
+const VIEW_KEYS = ["period", "periodId", "from", "to", "date", "year", "format"] as const;
 
 /**
  * Every My Earnings view, in the audit log: who, which endpoint and period (the query already held to
@@ -875,6 +878,8 @@ export async function myPayoutsView(ctx: StaffAppContext, q: PeriodQuery, today:
         saleId: r.saleId,
         shopId: r.shopId,
         amountCents: t.amountCents,
+        status: t.transferStatus,
+        arrivalDate: t.transferArrivalDate,
         transferStatus: t.transferStatus,
         transferReversedBy: t.transferReversedBy,
         transferArrivalDate: t.transferArrivalDate,
@@ -902,7 +907,7 @@ export async function myPayoutsView(ctx: StaffAppContext, q: PeriodQuery, today:
     transfers,
     payouts: [...payouts.values()]
       .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-      .map((p) => ({ id: p.id, shopId: p.shopId, ...payoutBrief(p), feeCents: employeeFeeCents(p), instant: p.instant, returned: !!p.returnedAt, createdAt: p.createdAt.toISOString(), paidAt: p.paidAt?.toISOString() ?? null })),
+      .map((p) => ({ id: p.id, shopId: p.shopId, ...payoutBrief(p), status: appPayoutStatus(p), feeCents: employeeFeeCents(p), instant: p.instant, returned: !!p.returnedAt, createdAt: p.createdAt.toISOString(), paidAt: p.paidAt?.toISOString() ?? null })),
   };
 }
 

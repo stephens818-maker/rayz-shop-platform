@@ -241,6 +241,13 @@ export async function clearPin(staffId: string, actor: Actor, shopId: string | n
   await audit(actor, "timeclock.pin_clear", "staff", staffId, {}, shopId);
 }
 
+/** A manager lifts a PIN lock early; the PIN stays as it is. */
+export async function unlockPin(staffId: string, actor: Actor, shopId: string) {
+  const [s] = await db.update(staff).set({ clockPinFailures: 0, clockPinLockedUntil: null }).where(eq(staff.id, staffId)).returning({ lockedUntil: staff.clockPinLockedUntil });
+  if (!s) throw notFound("Staff member");
+  await audit(actor, "timeclock.pin_unlock", "staff", staffId, {}, shopId);
+}
+
 /** Checks a PIN typed on a shop's device. Five wrong tries lock that person's PIN for five minutes. */
 export async function checkPin(staffId: string, pin: string, now = new Date()): Promise<void> {
   const s = await db.query.staff.findFirst({ where: and(eq(staff.id, staffId), eq(staff.active, true)) });

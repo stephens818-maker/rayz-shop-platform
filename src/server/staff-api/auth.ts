@@ -340,8 +340,8 @@ export async function assertStaffMfa(ctx: { staff: { id: string; demo?: boolean 
   const [row] = await db.select({ mfaAt: staffAppTokens.mfaAt }).from(staffAppTokens).where(and(eq(staffAppTokens.id, ctx.sessionId), eq(staffAppTokens.staffId, ctx.staff.id))).limit(1);
   if (row?.mfaAt) return;
   const me = await db.query.staff.findFirst({ where: eq(staff.id, ctx.staff.id), columns: { totpEnabledAt: true } });
-  if (me?.totpEnabledAt) throw new AppError("forbidden", MFA_CODE_MESSAGE, { mfaRequired: "code" });
-  throw new AppError("forbidden", MFA_ENROLL_MESSAGE, { mfaRequired: "enroll" });
+  if (me?.totpEnabledAt) throw new AppError("forbidden", MFA_CODE_MESSAGE, { mfaRequired: "code", reason: "step_up_required" });
+  throw new AppError("forbidden", MFA_ENROLL_MESSAGE, { mfaRequired: "enroll", reason: "step_up_required" });
 }
 
 /** This session passed a second factor now. */

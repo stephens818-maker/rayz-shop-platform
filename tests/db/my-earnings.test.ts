@@ -308,9 +308,10 @@ describe("My Earnings: their own pay periods, pay, days, tickets and payouts", (
     const t = (id: string) => (r.tickets as J[]).find((x) => x.saleId === id);
     const [card, inCash] = trail.makenna.sales;
     expect(t(card)).toMatchObject({ shopId: shop.coralville, clientFirstName: expect.any(String), serviceName: expect.stringMatching(/./), cardTipCents: 1237, cashTipCents: 0, shared: false, tipDisposition: "stripe", transferStatus: "paid", transferReversedBy: null, transferArrivalDate: today, payoutId: trail.makenna.payouts[0], payoutStatus: "pending", payoutArrivalDate: null });
-    expect(t(card)).not.toHaveProperty("transfer");
-    expect(t(card)).not.toHaveProperty("payout");
-    expect(t(inCash)).toMatchObject({ cardTipCents: 0, cashTipCents: 503, transferStatus: null, payoutStatus: null });
+    // The app's objects carry the same, each with its own status: never one status for both.
+    expect(t(card).transfer).toEqual({ status: "paid", amountCents: 1237, arrivalDate: today });
+    expect(t(card).payout).toMatchObject({ status: "pending", arrivalDate: null, bankLast4: "6789" });
+    expect(t(inCash)).toMatchObject({ cardTipCents: 0, cashTipCents: 503, transferStatus: null, payoutStatus: null, transfer: null, payout: null });
     expect(t(split)).toMatchObject({ cardTipCents: 1209, shared: true, transferStatus: "paid" });
     for (const x of r.tickets as J[]) expect(x.clientFirstName).not.toMatch(/\s/);
     for (const id of trail.michelle.sales) expect(t(id)).toBeUndefined();
@@ -323,11 +324,11 @@ describe("My Earnings: their own pay periods, pay, days, tickets and payouts", (
     expect(p.bankLast4).toBe("6789");
     expect((p.transfers as J[]).map((t) => t.saleId).sort()).toEqual([card, split].sort());
     for (const t of p.transfers) expect(t).toMatchObject({ transferStatus: "paid", transferReversedBy: null, transferArrivalDate: today, payoutStatus: "pending" });
-    for (const t of p.transfers) expect(t).not.toHaveProperty("status");
+    for (const t of p.transfers) expect(t.status).toBe(t.transferStatus);
     expect(trail.makenna.payouts).toContain(p.transfers[0].payoutId);
     expect((p.payouts as J[]).map((x) => x.id)).toEqual(trail.makenna.payouts);
     expect(p.payouts[0]).toMatchObject({ payoutStatus: "pending", arrivalDate: null, returned: false, bankLast4: "6789" });
-    expect(p.payouts[0]).not.toHaveProperty("status");
+    expect(p.payouts[0].status).toBe(p.payouts[0].payoutStatus);
     expect(p.shops.find((x: J) => x.shopId === shop.coralville)).toMatchObject({ tipToBarber: true, tipTransfersEnabled: true, payrollCopy: null });
 
     const [row] = await m.db.db.select().from(s().tipPayouts).where(eq(s().tipPayouts.id, trail.makenna.payouts[0]));
@@ -435,9 +436,8 @@ describe("nobody reads anyone else's earnings", () => {
       `me/earnings/tickets?periodId=current&date=${m.time.addDays(e.from, -1)}`,
       `me/earnings/tickets?periodId=current&date=${m.time.addDays(e.to, 1)}`,
       `me/earnings/tickets?date=${today}`,
-      "me/earnings/tickets?periodId=current",
       "me/earnings/tickets",
-      `me/earnings/tickets?period=current&date=${today}`,
+      "me/earnings/tickets?period=current&periodId=current",
       `me/earnings/tickets?periodId=current&date=${today}&from=${e.from}`,
       `me/earnings/tickets?periodId=current&date=2026-02-30`,
     ];
@@ -457,7 +457,7 @@ describe("nobody reads anyone else's earnings", () => {
 
   it("no route under /me takes an id for these, and every handler reads the employee from the token", async () => {
     const files = STAFF_ROUTE_FILES.map(routePathOf);
-    expect(files.filter((x) => x.startsWith("me/earnings")).sort()).toEqual(["me/earnings", "me/earnings/days", "me/earnings/tickets", "me/earnings/ytd"]);
+    expect(files.filter((x) => x.startsWith("me/earnings")).sort()).toEqual(["me/earnings", "me/earnings/days", "me/earnings/report", "me/earnings/tickets", "me/earnings/ytd"]);
     expect(files).toEqual(expect.arrayContaining(["me/pay-periods", "me/payouts"]));
     for (const f of files.filter((x) => /^me\/(earnings|pay-periods|payouts)/.test(x))) expect(f).not.toMatch(/\[/);
     const { readFileSync } = await import("node:fs");

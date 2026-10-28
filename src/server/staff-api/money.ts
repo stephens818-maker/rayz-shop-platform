@@ -15,6 +15,7 @@ import {
   effectiveMethod,
   employeeFeeCents,
   entryStatus,
+  instantFeeCents,
   instantFeePayer,
   parseInstantFee,
   receivedCents,
@@ -354,4 +355,69 @@ export async function setMyPayoutMethod(ctx: StaffAppContext, v: { method: TipMe
   if (v.method && !TIP_METHODS.includes(v.method)) throw new AppError("bad_request", "Unknown payout method");
   await setPayoutChoice(ctx.staff.id, v, ctx.actor);
   return bankingView(ctx);
+}
+
+// ───────────────────────────── The app's payout account (mobile PayoutAccount) ─────────────────────────────
+
+/** Their recipient account as the app's PayoutAccount: Stripe's flags and requirement keys, the last 4 only. Stripe collects everything in the embedded components. */
+export async function payoutAccountView(ctx: StaffAppContext, o: { refresh?: boolean } = {}) {
+  if (o.refresh) await refreshStaffAccount(ctx.staff.id).catch(() => null);
+  const a = await staffAccount(ctx.staff.id);
+  const pastDue = a?.requirementsPastDue ?? [];
+  return {
+    state: staffAccountStatus(a),
+    payoutsEnabled: !!a?.payoutsEnabled,
+    detailsSubmitted: !!a?.detailsSubmitted,
+    currentlyDue: (a?.requirementsDue ?? []).filter((k) => !pastDue.includes(k)),
+    pastDue,
+    pendingVerification: a?.requirementsPending ?? [],
+    currentDeadline: a?.requirementsDeadline?.toISOString() ?? null,
+    disabledReason: a?.disabledReason ?? null,
+    externalLast4: a?.destinationLast4 ?? null,
+    externalType: a?.destinationType === "bank_account" ? ("bank" as const) : a?.destinationType === "card" ? ("card" as const) : null,
+    instantEligible: !!a?.instantEligible,
+    instantOptIn: !!a?.instant,
+    collection: "embedded" as const,
+  };
+}
+
+/** POST /me/payout-account/session: the Account Session's client secret for the embedded components. Null in the simulator, where setup finishes at once. */
+export async function payoutAccountSession(ctx: StaffAppContext) {
+  const r = await accountSession(ctx);
+  return {
+    clientSecret: r.session?.clientSecret ?? null,
+    expiresAt: r.session?.expiresAt ?? null,
+    publishableKey: r.session?.publishableKey ?? null,
+    collection: "embedded" as const,
+    simulator: connectMode() === "simulator",
+  };
+}
+
+/**
+ * What an instant payout of an amount would cost them, at Stripe's fee as the brand sets it
+ * (TIP_INSTANT_FEE): the fee, and how much of it comes out of their tips (all of it where the brand
+ * passes the fee on, none where the shop pays it).
+ */
+export async function instantQuote(ctx: StaffAppContext, amountCents: number) {
+  const [{ policy }, a] = await Promise.all([shopTipConfigs(await workShopIds(ctx.staff.id)), staffAccount(ctx.staff.id)]);
+  const rate = parseInstantFee(process.env.TIP_INSTANT_FEE) ?? DEFAULT_INSTANT_FEE;
+  const feeCents = instantFeeCents(amountCents, rate);
+  const paidBy = instantFeePayer(policy);
+  return {
+    amountCents,
+    feeCents,
+    deductedFromTipsCents: paidBy === "employee" ? feeCents : 0,
+    feePaidBy: paidBy,
+    allowed: policy.instantAllowed,
+    eligible: !!a?.instantEligible,
+    arrival: "Usually within 30 minutes",
+    terms: currentInstantFeeTerms(),
+  };
+}
+
+/** PATCH /me/payout-preferences: instant payouts on or off, keeping how they're paid. */
+export async function setInstantOptIn(ctx: StaffAppContext, v: { instantOptIn: boolean; acceptInstantFee?: string | null }) {
+  const a = await staffAccount(ctx.staff.id);
+  await setPayoutChoice(ctx.staff.id, { method: a?.method ?? null, instant: v.instantOptIn, acceptInstantFee: v.acceptInstantFee ?? null }, ctx.actor);
+  return { instantOptIn: !!(await staffAccount(ctx.staff.id))?.instant };
 }

@@ -11,6 +11,7 @@ import { noteViewer } from "@/server/client-notes";
 import { clientPolicy } from "@/server/client-privacy";
 import { AppError } from "@/server/errors";
 import { queueStaffAlert } from "@/server/staff-alerts";
+import { calendarAppointments } from "./app-contract";
 import { StaffAppContext, conflictsView, shopOf } from "./http";
 import { myAppointment } from "./schedule";
 
@@ -32,7 +33,13 @@ export async function myCalendar(ctx: StaffAppContext, q: { date?: string; shopI
   const data = await loadDayCalendar(shopId, date, everyone ? null : ctx.staff.id, ctx, policy, reasonViewer(ctx), noteViewer(ctx, policy));
   return {
     date: data.date,
+    shopId: data.shop.id,
     shop: { id: data.shop.id, name: data.shop.name },
+    /** Their own appointments that day, as the app's Today list reads them. */
+    appointments: calendarAppointments(
+      data.columns.map((c) => ({ staffId: c.id, appts: c.appts })),
+      ctx.staff.id,
+    ),
     closed: data.closed,
     openMin: data.openMin,
     closeMin: data.closeMin,

@@ -6,7 +6,7 @@ import { clockDevices, clockPairings, shops } from "@/db/schema";
 import { appBaseUrl } from "@/lib/deployment";
 import { Actor, audit } from "./audit";
 import { randomToken, sameSecret, sha256 } from "./auth/tokens";
-import { AppError, forbidden } from "./errors";
+import { AppError, forbidden, notFound } from "./errors";
 import { rateLimit } from "./rate-limit";
 
 /**
@@ -72,16 +72,45 @@ export async function redeemPairing(input: { code: string; installId?: string | 
       .where(and(eq(clockPairings.codeHash, codeHash(code)), isNull(clockPairings.usedAt), gt(clockPairings.expiresAt, now)))
       .for("update");
     if (!p) throw wrong;
-    const [device] = await tx
-      .insert(clockDevices)
-      .values({ shopId: p.shopId, label: p.label, tokenHash: sha256(token), registeredBy: p.createdBy, pairedAt: now, installHash: installId ? installHash(installId) : null })
-      .returning({ id: clockDevices.id });
-    await tx.update(clockPairings).set({ usedAt: now, deviceId: device.id }).where(eq(clockPairings.id, p.id));
-    const shop = await tx.query.shops.findFirst({ where: eq(shops.id, p.shopId), columns: { name: true } });
-    return { pairing: p, deviceId: device.id, shop: shop?.name ?? "" };
+    return pairDevice(tx, p, token, installId, now);
   });
   await audit({ staffId: result.pairing.createdBy, label: `kiosk:${result.pairing.label}` }, "timeclock.device_pair", "clock_device", result.deviceId, { label: result.pairing.label, via: installId ? "staff_app" : "web", ip: input.ip }, result.pairing.shopId);
   return { token, device: { id: result.deviceId, shopId: result.pairing.shopId, shop: result.shop, label: result.pairing.label } };
+}
+
+type Pairing = typeof clockPairings.$inferSelect;
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+async function pairDevice(tx: Tx, p: Pairing, token: string, installId: string | null, now: Date) {
+  const [device] = await tx
+    .insert(clockDevices)
+    .values({ shopId: p.shopId, label: p.label, tokenHash: sha256(token), registeredBy: p.createdBy, pairedAt: now, installHash: installId ? installHash(installId) : null })
+    .returning({ id: clockDevices.id });
+  await tx.update(clockPairings).set({ usedAt: now, deviceId: device.id }).where(eq(clockPairings.id, p.id));
+  const shop = await tx.query.shops.findFirst({ where: eq(shops.id, p.shopId), columns: { name: true } });
+  return { pairing: p, deviceId: device.id, shop: shop?.name ?? "" };
+}
+
+/**
+ * The staff app's kiosk pairing: a manager signed in on the tablet starts a request (startPairing)
+ * and approves it by its id, with no code to type. Used once, like a code; the audit entry says
+ * whether the manager approved their own request.
+ */
+export async function approvePairing(c: { actor: Actor; shopIds: readonly string[] }, pairingId: string, rawInstallId: string | null | undefined, now = new Date()) {
+  if (!c.actor.staffId) throw forbidden();
+  const installId = rawInstallId?.trim() || null;
+  if (installId && !/^[A-Za-z0-9._:-]{8,128}$/.test(installId)) throw new AppError("bad_request", "That install id isn't valid");
+  const token = randomToken();
+  const result = await db.transaction(async (tx) => {
+    const [p] = await tx.select().from(clockPairings).where(eq(clockPairings.id, pairingId)).for("update");
+    if (!p || !c.shopIds.includes(p.shopId)) throw notFound("Kiosk request");
+    if (p.usedAt) throw new AppError("conflict", "This kiosk was already approved.");
+    if (p.expiresAt <= now) throw new AppError("conflict", "This kiosk request expired. Start a new one.");
+    return pairDevice(tx, p, token, installId, now);
+  });
+  const { pairing } = result;
+  await audit(c.actor, "kiosk.approve", "clock_device", result.deviceId, { label: pairing.label, requestId: pairing.id, selfApproval: pairing.createdBy === c.actor.staffId, via: "staff_app" }, pairing.shopId);
+  return { token, device: { id: result.deviceId, shopId: pairing.shopId, shop: result.shop, label: pairing.label } };
 }
 
 /** A paired front-desk clock from its token, while it's in use; an app install's token only with its own install id. Marks it seen. */

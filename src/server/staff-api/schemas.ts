@@ -79,7 +79,12 @@ export const PunchBody = z.object({
   ...Queued,
 });
 
-export const ClockInOutBody = PunchBody.omit({ type: true });
+export const ClockInOutBody = PunchBody.omit({ type: true }).extend({
+  shopId: z.uuid().optional().describe("Required unless token is sent"),
+  token: z.string().max(600).optional().describe("The front-desk QR code (GET /kiosk/qr token) or the NFC sticker's link, as scanned: its shop and qr or tag stand in for shopId and proof"),
+  cashTipCents: z.number().int().min(0).max(1_000_000).optional().describe("Clocking out: today's cash tips, the same as cashTips.cents; send attestation true with it"),
+  attestation: z.boolean().optional().describe("With cashTipCents: they checked GET /clock cashTips.attestation"),
+});
 
 export const BreakStartBody = z.object({
   shopId: z.uuid().optional().describe("The shop they're clocked in at when left out"),
@@ -231,11 +236,13 @@ const MyPeriod = {
 /** My Earnings: the employee is the token's, so any other key (staffId and the like) is a 400. */
 export const MyEarningsQuery = z.strictObject(MyPeriod);
 export const MyTicketsQuery = z.strictObject({
+  period: z.string().max(10).optional().describe("current, or a pay period's id; the same as periodId"),
   periodId: z.string().max(10).optional().describe("A pay period's id (its start date, from GET /me/pay-periods), or current. Send this, or from and to"),
   from: DateStr.optional().describe("With to, instead of periodId: a Chicago date range (up to 31 days)"),
   to: DateStr.optional(),
-  date: DateStr.describe("A Chicago (shop-local) calendar day inside that pay period or range: its tickets"),
+  date: DateStr.optional().describe("A Chicago (shop-local) calendar day inside that pay period or range: its tickets. Every ticket in the period or range when left out"),
 });
+export const MyReportQuery = z.strictObject({ ...MyPeriod, format: z.enum(["csv", "pdf"]).optional().describe("csv (the default) or pdf") });
 export const NoQuery = z.strictObject({});
 export const YtdQuery = z.strictObject({ year: z.coerce.number().int().min(2020).max(2100).optional() });
 export const CutoverAnswerBody = z.object({ shopId: z.uuid(), status: z.enum(["confirmed", "disputed"]), note: z.string().max(500).nullish().describe("Required to dispute") });
@@ -281,3 +288,51 @@ export const PayQuestionBody = z.object({
 export const PayQuestionEscalateBody = z.object({ note: z.string().max(PAY_QUESTION_MAX_CHARS).nullish().describe("Why the answer didn't settle it") });
 export const PayQuestionAnswerBody = z.object({ answer: z.string().min(1).max(PAY_QUESTION_MAX_CHARS) });
 export const TeamPayQuestionsQuery = z.object({ open: z.enum(["true", "false"]).optional().describe("true: only the ones not closed") });
+
+// ───────────────────────────── The app's contract (mobile packages/mock-api) ─────────────────────────────
+
+export const APP_APPOINTMENT_STATUSES = ["booked", "confirmed", "checked_in", "in_service", "completed", "cancelled", "no_show"] as const;
+export const AppStatusBody = z
+  .object({
+    action: StatusBody.shape.action.optional(),
+    status: z.enum(APP_APPOINTMENT_STATUSES).optional().describe("The status to move it to, instead of action: checked_in, in_service, completed, no_show, cancelled, confirmed, or booked to undo"),
+  })
+  .refine((v) => !!v.action !== !!v.status, "Send action or status");
+export const AppStepUpBody = StepUpBody.extend({
+  pin: z.string().max(12).optional().describe("The 6-digit code from their authenticator app, as the app's step-up screen sends it. Never the time clock PIN"),
+});
+export const CashTipBody = z.object({
+  shopId: z.uuid(),
+  amountCents: z.number().int().min(0).max(1_000_000),
+  originalDate: DateStr.describe("The day they got the tips; not in the future"),
+  attestation: z.boolean().describe("They checked the attestation from GET /tips/declarations rules"),
+  replacesId: z.uuid().nullish().describe("Correcting one of their declarations: same shop and day"),
+  reason: z.string().trim().max(300).nullish().describe("Required with replacesId"),
+});
+export const AppDeviceBody = z.object({
+  token: z.string().min(8).max(4096),
+  platform: z.enum(["ios", "android"]).optional().describe("X-Client when left out, else ios"),
+  provider: z.enum(["apns", "fcm", "expo"]).optional().describe("expo when left out"),
+  appVersion: z.string().max(40).nullish(),
+  osVersion: z.string().max(40).nullish(),
+  reminders: z.boolean().optional().describe("Pushes about their own clients' bookings; the same as pushEnabled"),
+  marketing: z.boolean().optional().describe("Ignored: staff get no marketing pushes"),
+});
+export const InstantQuoteBody = z.object({ amountCents: z.number().int().min(1).max(1_000_000) });
+export const PayoutPreferencesBody = z.object({
+  instantOptIn: z.boolean(),
+  acceptInstantFee: z.string().max(200).nullish().describe("Turning instant on where the brand asks: the fee text shown (GET /banking instant.fee.terms), exactly"),
+});
+export const PayoutSessionCompleteBody = z.object({ state: z.string().max(40).optional().describe("Ignored: the state is read from Stripe") });
+export const KioskRequestBody = z.object({ shopId: z.uuid(), label: z.string().max(60).optional().describe("Front desk when left out") });
+export const KioskApproveBody = z.object({ deviceId: z.string().min(8).max(128).optional().describe("This install's own random id, to bind the credential to it; send it as X-Device-Id on each kiosk call then") });
+export const KioskQrQuery = z.object({ shopId: z.uuid().optional().describe("The kiosk's own shop; any other is 404") });
+export const KioskPinBody = z.object({
+  staffId: z.uuid(),
+  pin: z.string().max(12),
+  direction: z.enum(["in", "out"]).optional().describe("in when left out"),
+  cashTipCents: z.number().int().min(0).max(1_000_000).optional().describe("Not taken on the kiosk: declare cash tips on their own phone (POST /me/cash-tips)"),
+  attestation: z.boolean().optional(),
+});
+export const KioskUnlockBody = z.object({ staffId: z.uuid(), kioskId: z.uuid() });
+export const AuditQuery = z.object({ shopId: z.uuid().optional(), limit: z.coerce.number().int().min(1).max(200).optional().describe("50 when left out") });

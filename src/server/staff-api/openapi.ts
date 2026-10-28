@@ -34,6 +34,8 @@ interface Op {
   query?: z.ZodObject;
   params?: boolean;
   kiosk?: boolean;
+  /** A kiosk credential as the Bearer token: no shop header. */
+  kioskBearer?: boolean;
   public?: boolean;
   /** 204 with no body. */
   empty?: boolean;
@@ -51,7 +53,7 @@ const MORE: Op[] = [
     path: "/config",
     tag: "App",
     summary:
-      "Read at launch, before sign-in, and never version-gated: minimum and latest versions per platform (send X-Client: ios|android and X-App-Version; older than the minimum is 426 upgrade_required on every other route), the maintenance message, switches (clock, stripePayouts, tapToPay), the payout default (stripe; payroll where FEATURE_STAFF_STRIPE_PAYOUTS=false), links to the staff privacy policy, terms and support, and legal versions. display says how times and hours read on every screen: timeFormat 12h (the default: 9:05 AM, 5:30 PM, never 24-hour) or 24h, its timePattern, the shop timeZone (times in responses are UTC ISO), and payrollHours (decimal or hm).",
+      "Read at launch, before sign-in, and never version-gated: minimum and latest versions per platform (send X-Client: ios|android and X-App-Version; older than the minimum is 426 upgrade_required on every other route), the maintenance message, switches (clock, stripePayouts, tapToPay), the payout default (stripe; payroll where FEATURE_STAFF_STRIPE_PAYOUTS=false), links to the staff privacy policy, terms and support, and legal versions. display says how times and hours read on every screen: timeFormat 12h (the default: 9:05 AM, 5:30 PM, never 24-hour) or 24h, its timePattern, the shop timeZone (times in responses are UTC ISO), and payrollHours (decimal or hm). The app's own fields too: timezone, timeFormat, weekStartDay (0: workweeks start Sunday), appName, minSupportedVersion, latestVersion, tipTransfersDefault (FEATURE_TIP_TO_BARBER), supportPhone, supportEmail, privacyUrl, termsUrl and shops[] (each shop's id, slug, launched, launchAt, closedCopy, booking native, external or closed, externalBookingUrl, payments, clockIn and tipTransfers).",
     permission: "Anyone",
     public: true,
   },
@@ -84,10 +86,10 @@ const MORE: Op[] = [
   },
   { method: "post", path: "/me/sessions/sign-out-others", tag: "Me", summary: "Sign out every phone but this one. { ended }.", permission: "Their own" },
   // ST-C3
-  { method: "get", path: "/me/calendar", tag: "Calendar", summary: "One day at one shop: their own column, or every barber's with calendar.view_all or calendar.manage (all=0 for just theirs). Blocks, clock state, appointments with names as Client data shows them. Never a client phone.", permission: "Signed in", query: S.CalendarQuery },
+  { method: "get", path: "/me/calendar", tag: "Calendar", summary: "One day at one shop: their own column, or every barber's with calendar.view_all or calendar.manage (all=0 for just theirs). Blocks, clock state, appointments with names as Client data shows them. Never a client phone. shopId, and appointments: their own that day as the app lists them ({ id, startsAt, clientId, clientFirstName, serviceName, status }).", permission: "Signed in", query: S.CalendarQuery },
   { method: "get", path: "/me/schedule", tag: "Schedule", summary: "Same as GET /schedule.", permission: ME, query: S.ScheduleQuery },
   { method: "post", path: "/appointments", tag: "Calendar", summary: "Book from the phone: their own column unless they have calendar.manage; on the grid unless squeezeIn with calendar.squeeze_in. A new client's details each need Client data's add permission. Audited as staff_app.", permission: "Signed in; calendar.manage for others' columns", body: S.BookBody },
-  { method: "post", path: "/appointments/{id}/status", tag: "Calendar", summary: "confirm, check_in, start, finish (to checkout), complete, no_show, cancel or undo: their own, or anyone's with calendar.manage. Audited.", permission: "Their own; calendar.manage for others'", body: S.StatusBody, params: true },
+  { method: "post", path: "/appointments/{id}/status", tag: "Calendar", summary: "action confirm, check_in, start, finish (to checkout), complete, no_show, cancel or undo; or status, the one to move to (confirmed, checked_in, in_service, completed, no_show, cancelled, or booked to undo). Their own, or anyone's with calendar.manage. Audited. The appointment comes back, and again as appointment.", permission: "Their own; calendar.manage for others'", body: S.AppStatusBody, params: true },
   { method: "post", path: "/appointments/{id}/move", tag: "Calendar", summary: "Move to another time or barber, with the web calendar's rules.", permission: "Their own; calendar.manage for others'", body: S.MoveBody, params: true },
   { method: "post", path: "/appointments/{id}/late", tag: "Calendar", summary: "The client told the desk they're running late: the barber gets an app alert (first name only). Nothing goes to the client.", permission: "Their own; calendar.manage for others'", body: S.LateBody, params: true },
   { method: "get", path: "/openings", tag: "Calendar", summary: "Open starts on a barber's grid for a service and add-ons on a day.", permission: "Their own; calendar.manage for others'", query: S.OpeningsQuery },
@@ -99,12 +101,12 @@ const MORE: Op[] = [
   { method: "post", path: "/clients/{id}/reveal", tag: "Clients", summary: "One masked detail in full, with a reason; logged. Phone, email and address are never revealed in the app.", permission: "clients.reveal", body: S.RevealBody, params: true },
   { method: "post", path: "/clients/{id}/contact", tag: "Clients", summary: "A call bridged through the shop line, or a text from the shop's number (consent and STOP checked). The number never comes back.", permission: "clients.message", body: S.ContactBody, params: true },
   // ST-C5
-  { method: "post", path: "/clock/in", tag: "Time clock", summary: "POST /clock/punch with type in. 409 with details.feature = clock while the app clock is switched off (STAFF_APP_CLOCK_OFF).", permission: "timeclock.punch", body: S.ClockInOutBody },
+  { method: "post", path: "/clock/in", tag: "Time clock", summary: "POST /clock/punch with type in. Send token (what the phone scanned: the front-desk QR code from GET /kiosk/qr, or the NFC sticker's link) instead of shopId and proof. Returns punch { id, staffId, shopId, inAt, outAt, cashTipCents, attestation } too. A biometric field is 400: nothing biometric is taken. 409 with details.feature = clock while the app clock is switched off (STAFF_APP_CLOCK_OFF).", permission: "timeclock.punch", body: S.ClockInOutBody },
   {
     method: "post",
     path: "/clock/out",
     tag: "Time clock",
-    summary: "POST /clock/punch with type out. With cashTips (where GET /clock has cashTips), declares today's cash tips too; the reply's cashTips has the declaration or why it couldn't be taken, and the punch stands either way.",
+    summary: "POST /clock/punch with type out. With cashTips (where GET /clock has cashTips), declares today's cash tips too (or cashTipCents with attestation true; cashTipCents without it is 400); the reply's cashTips has the declaration or why it couldn't be taken, and the punch stands either way. token and punch as on /clock/in.",
     permission: "timeclock.punch",
     body: S.ClockInOutBody,
   },
@@ -150,7 +152,7 @@ const MORE: Op[] = [
     path: "/me/earnings/tickets",
     tag: "Tips and pay",
     summary:
-      "My Earnings for one day's tickets: periodId (a pay period id or current), or from and to (up to 31 days), with date (a Chicago calendar day inside them) are required, otherwise 400. periodId is null for a from/to that isn't a pay period. Each ticket: the client's first name only, service, their service and product amounts, card, cash and gift-card tip (their share only when split) and tipDisposition (stripe, payroll or cash; payroll where the shop's tip switch is off). The card tip's transfer and the payout carrying it are separate fields: transferStatus (pending, paid, or reversed with transferReversedBy stripe) with transferArrivalDate, and payoutId, payoutStatus (pending, in_transit, paid, failed or canceled; a payout is never reversed) with payoutArrivalDate. refunds the shop covered are listed with reducesPay false. periodStatus and isEstimate for the period. Always their own.",
+      "My Earnings tickets: periodId or period (a pay period id or current), or from and to (up to 31 days), otherwise 400; with date (a Chicago calendar day inside them), that day's only. periodId is null for a from/to that isn't a pay period. Each ticket: the client's first name only, service, their service and product amounts, card, cash and gift-card tip (their share only when split) and tipDisposition (stripe, payroll or cash; payroll where the shop's tip switch is off). The card tip's transfer and the payout carrying it are separate fields: transferStatus (pending, paid, or reversed with transferReversedBy stripe) with transferArrivalDate, and payoutId, payoutStatus (pending, in_transit, paid, failed or canceled; a payout is never reversed) with payoutArrivalDate; transfer { status, amountCents, arrivalDate } and payout { status, amountCents, arrivalDate, bankLast4, failureMessage } carry the same as objects. refunds the shop covered are listed with reducesPay false. periodStatus and isEstimate for the period. Always their own.",
     permission: "tips.own or report.my_sales.view. Needs staff MFA on this session (403 details.mfaRequired) and every view is in the audit log.",
     query: S.MyTicketsQuery,
   },
@@ -159,7 +161,7 @@ const MORE: Op[] = [
     path: "/me/payouts",
     tag: "Tips and pay",
     summary:
-      "Card tips on their way to the employee's bank for a pay period (periodId, period, or from and to up to 31 days). transfers: each card tip's transfer to their Stripe account, transferStatus pending or paid (in their Stripe account) with transferArrivalDate, and, separately, payoutId, payoutStatus and payoutArrivalDate for the payout carrying it on. Ray'z never reverses a tip transfer: transferStatus reversed (transferReversedBy stripe) appears only when Stripe reversed it. payouts: Stripe payouts to their bank, payoutStatus pending, in_transit, paid, failed or canceled (never reversed), with arrivalDate and bankLast4; a payout their bank returned is failed with returned true, and its tips go out again with the next payout. shops[]: each shop's tipToBarber switch, tipTransfersEnabled and payrollCopy (card tips are paid through payroll where the switch is off). periodStatus and isEstimate for the period. Always their own.",
+      "Card tips on their way to the employee's bank for a pay period (periodId, period, or from and to up to 31 days). transfers: each card tip's transfer to their Stripe account, transferStatus pending or paid (in their Stripe account) with transferArrivalDate, and, separately, payoutId, payoutStatus and payoutArrivalDate for the payout carrying it on. Ray'z never reverses a tip transfer: transferStatus reversed (transferReversedBy stripe) appears only when Stripe reversed it. payouts: Stripe payouts to their bank, payoutStatus pending, in_transit, paid, failed or canceled (never reversed), with arrivalDate and bankLast4 (status repeats transferStatus on a transfer, with arrivalDate, and payoutStatus on a payout); a payout their bank returned is failed with returned true, and its tips go out again with the next payout. shops[]: each shop's tipToBarber switch, tipTransfersEnabled and payrollCopy (card tips are paid through payroll where the switch is off). periodStatus and isEstimate for the period. Always their own.",
     permission: "tips.own. Needs staff MFA on this session (403 details.mfaRequired) and every view is in the audit log.",
     query: S.MyEarningsQuery,
   },
@@ -211,6 +213,107 @@ const MORE: Op[] = [
   { method: "post", path: "/staff/{id}/sign-out", tag: "Manager", summary: "Sign someone out of the staff app on every phone (a lost or shared phone) without deactivating them. Deactivating does this too. 204.", permission: "permissions.manage", params: true, empty: true },
 ];
 
+const EARNINGS_GUARD = "Any of timesheet.own, tips.own, compensation.own or report.my_sales.view. Needs staff MFA on this session (403 details.mfaRequired) and every view is in the audit log.";
+const KIOSK_CREDENTIAL = "The kiosk credential from POST /kiosk/pair/{id}/approve as the Bearer token (or X-Clock-Device); a staff sign-in token is 403";
+/** The Ray'z Staff app's names for the routes above (mobile/packages/mock-api), answered by the same code. */
+const APP: Op[] = [
+  { method: "post", path: "/auth/otp/start", tag: "Sign-in", summary: "POST /auth/code/start, plus destination: where the code went, masked (r•••@example.com, •••-•••-1234), from what was typed.", permission: "Anyone", body: S.CodeStartBody, public: true },
+  {
+    method: "post",
+    path: "/auth/otp/verify",
+    tag: "Sign-in",
+    summary: "POST /auth/code/verify with the tokens flat: accessToken, refreshToken, expiresIn, and staff { id, firstName, shops }. With two-step sign-in, { twoFactor } for /auth/login/code as before.",
+    permission: "Any active staff login",
+    body: S.CodeVerifyBody,
+    public: true,
+  },
+  {
+    method: "post",
+    path: "/auth/step-up",
+    tag: "Me",
+    summary: "POST /me/step-up for the app: code (or pin, read as their authenticator code; never a clock PIN). { stepUpToken, expiresIn: 900, required }. A code counts as this session's MFA for My Earnings.",
+    permission: "Signed in",
+    body: S.AppStepUpBody,
+  },
+  {
+    method: "get",
+    path: "/me/earnings/report",
+    tag: "Tips and pay",
+    summary: "My Earnings as a file (format csv, the default, or pdf) for a pay period (period or periodId) or for from and to covering whole Sunday–Saturday workweeks (a range that cuts a workweek is 400). The same gross numbers as GET /me/earnings, sent as an attachment. Always their own.",
+    permission: EARNINGS_GUARD,
+    query: S.MyReportQuery,
+  },
+  {
+    method: "post",
+    path: "/me/cash-tips",
+    tag: "Tips and pay",
+    summary: "POST /tips/declarations under the app's names: amountCents for originalDate at shopId with attestation true; replacesId and reason correct one. 201 { adjustment } (late true when its pay period was already locked).",
+    permission: "tips.own",
+    body: S.CashTipBody,
+  },
+  { method: "post", path: "/me/devices", tag: "Push", summary: "POST /devices under the app's names: token, platform (from X-Client when left out), provider (expo), appVersion, osVersion and reminders. 201.", permission: "Their own", body: S.AppDeviceBody },
+  {
+    method: "get",
+    path: "/me/payout-account",
+    tag: "Banking",
+    summary:
+      "{ account }: their recipient account as the app's PayoutAccount: state (not_started, in_progress, pending_verification, requirements_due, restricted, active or rejected), payoutsEnabled, detailsSubmitted, currentlyDue, pastDue, pendingVerification, currentDeadline, disabledReason, externalLast4, externalType (bank or card), instantEligible, instantOptIn and collection embedded. ?refresh=1 reads Stripe first. Never a number.",
+    permission: "tips.own",
+    query: S.BankingQuery,
+  },
+  { method: "post", path: "/me/payout-account/session", tag: "Banking", summary: "POST /banking/account-session for the app: { clientSecret, expiresAt, publishableKey, collection, simulator }. clientSecret is null in the simulator, where setup finishes at once.", permission: "tips.own" },
+  { method: "post", path: "/me/payout-account/session/complete", tag: "Banking", summary: "The app is back from the embedded components: reads Stripe and answers { state, account }. A state sent is ignored.", permission: "tips.own", body: S.PayoutSessionCompleteBody },
+  {
+    method: "post",
+    path: "/me/instant-payouts/quote",
+    tag: "Banking",
+    summary: "The instant payout fee on amountCents: { amountCents, feeCents, deductedFromTipsCents, feePaidBy (employee or shop, from the brand's policy), allowed, eligible, arrival, terms }.",
+    permission: "tips.own",
+    body: S.InstantQuoteBody,
+  },
+  { method: "post", path: "/me/instant-payouts", tag: "Banking", summary: "Cashing out on demand isn't offered: 409 with details.reason on_demand_off. With instant payouts on (PATCH /me/payout-preferences), each approved tip payout goes instantly.", permission: "tips.own", body: S.InstantQuoteBody },
+  { method: "patch", path: "/me/payout-preferences", tag: "Banking", summary: "PUT /banking/method for the instant switch: instantOptIn, with acceptInstantFee (the fee text shown) where the brand asks. { instantOptIn }.", permission: "tips.own", body: S.PayoutPreferencesBody },
+  {
+    method: "post",
+    path: "/kiosk/pair",
+    tag: "Front-desk clock",
+    summary: "A manager signed in on the tablet asks to make it a shop's front-desk clock. 201 { requestId, shopId, status: pending, expiresAt, code, url }; approve it with POST /kiosk/pair/{id}/approve (or type the code into POST /clock/kiosk/pair). Audited.",
+    permission: "settings.shop",
+    body: S.KioskRequestBody,
+  },
+  {
+    method: "post",
+    path: "/kiosk/pair/{id}/approve",
+    tag: "Front-desk clock",
+    summary: "Approve the request (once, within 10 minutes). 201 { kioskId, credential, shopId, device }: the credential is shown once; the kiosk sends it as its Bearer token. 404 outside their shops, 409 used or expired. Audited.",
+    permission: "settings.shop",
+    body: S.KioskApproveBody,
+    params: true,
+  },
+  { method: "post", path: "/kiosk/{id}/revoke", tag: "Front-desk clock", summary: "Unpair a front-desk clock: its credential stops at once. { kioskId, revoked: true }. Audited.", permission: "settings.shop", params: true },
+  { method: "get", path: "/kiosk/roster", tag: "Front-desk clock", summary: "The PIN pad's team at the kiosk's shop: { shopId, shop, staff: [{ id, firstName, photoUrl }] }. First names only.", permission: KIOSK_CREDENTIAL, kioskBearer: true },
+  {
+    method: "get",
+    path: "/kiosk/qr",
+    tag: "Front-desk clock",
+    summary: "The code to draw for phones to scan: { token (a link; send it as token to POST /clock/in), url, expiresAt, shopId, kioskId, rotatesSeconds: 30 }. It's the shop's code for those 30 seconds, taken for about a minute, by anyone on the team who scans it there.",
+    permission: KIOSK_CREDENTIAL,
+    query: S.KioskQrQuery,
+    kioskBearer: true,
+  },
+  {
+    method: "post",
+    path: "/kiosk/pin",
+    tag: "Front-desk clock",
+    summary: "Punch as the person whose PIN was typed (direction in or out; in when left out); returns punch too. A wrong PIN is 400; five lock theirs for five minutes (409) until then or a manager's POST /kiosk/pin/unlock. Cash tips are declared on their phone, not here.",
+    permission: KIOSK_CREDENTIAL,
+    body: S.KioskPinBody,
+    kioskBearer: true,
+  },
+  { method: "post", path: "/kiosk/pin/unlock", tag: "Front-desk clock", summary: "Clear a locked PIN for someone on the team at that kiosk's shop (never their own). The PIN stays. Audited.", permission: "timesheet.edit", body: S.KioskUnlockBody },
+  { method: "get", path: "/audit", tag: "Front-desk clock", summary: "Front-desk clock entries at their shops, newest first: pairings, approvals, unpairings and PIN unlocks.", permission: "settings.shop", query: S.AuditQuery },
+];
+
 const RAIL_OFF = " 403 with details.feature = staff_stripe_payouts where FEATURE_STAFF_STRIPE_PAYOUTS=false switches direct Stripe payouts off; tips are paid through payroll (iSolved) there. See GET /me/payout-setup.";
 
 const OPS: Op[] = [
@@ -221,7 +324,7 @@ const OPS: Op[] = [
   { method: "post", path: "/auth/wiped", tag: "Sign-in", summary: "The app wiped its data after a 401 with details.wipe (ST-I18), sent with the session's last refresh token; recorded against that sign-in. 204, known token or not.", permission: "Any refresh token, live or ended", body: S.WipedBody, public: true, empty: true },
   { method: "post", path: "/auth/device/request", tag: "Sign-in", summary: "Approved-device sign-in: ask a manager to approve this install at a location whose sign-in rule takes approved devices, after a 403 with details.networkBlocked and details.deviceTicket (or while signed in, with Bearer, at a location blocked from here). Returns { shop, status: pending, deviceToken }. Keep deviceToken in secure storage and send it as X-Device-Token on sign-in and every request; it counts once approved. null when this install already has one (send it as X-Device-Token here too).", permission: "A blocked sign-in's ticket, or a live session", body: S.DeviceRequestBody, public: true },
   { method: "get", path: "/auth/device", tag: "Sign-in", summary: "What this install's X-Device-Token stands for: { devices: [{ shopId, shop, label, status }] }, status pending, approved, declined or revoked. Empty without a token.", permission: "X-Device-Token", public: true },
-  { method: "get", path: "/me", tag: "Me", summary: "Who they are, their shops, the app features they may use and every permission they hold.", permission: "Signed in" },
+  { method: "get", path: "/me", tag: "Me", summary: "Who they are, their shops, the app features they may use and every permission they hold. id, firstName and shopIds (their shops' ids) at the top as the app reads them.", permission: "Signed in" },
   { method: "get", path: "/me/notifications", tag: "Me", summary: "How they hear about their own clients' bookings, changes, cancellations and arrivals, and their phones.", permission: "Their own (not a shop login)" },
   { method: "put", path: "/me/notifications", tag: "Me", summary: "Change it. push is the app.", permission: "Their own (not a shop login)", body: S.NotificationPrefsBody },
   { method: "get", path: "/schedule", tag: "Schedule", summary: "Their working days: hours, time off, lunch and other blocks (private reasons masked), and how many are booked.", permission: "Their own (not a shop login)", query: S.ScheduleQuery },
@@ -328,13 +431,14 @@ const OPS: Op[] = [
   { method: "patch", path: "/devices/{id}", tag: "Push", summary: "A rotated token, notification permission or app version.", permission: "Their own", body: S.DevicePatch, params: true },
   { method: "delete", path: "/devices/{id}", tag: "Push", summary: "Stop pushes to the phone. 204.", permission: "Their own", params: true },
   ...MORE,
+  ...APP,
 ];
 
 /** The staff app's API as OpenAPI 3.1, for the app builder. */
 export function staffOpenApiDocument(baseUrl: string) {
   const paths: Record<string, Record<string, unknown>> = {};
   for (const op of OPS) {
-    const parameters = [...(op.params ? [idParam] : []), ...(op.query ? queryParams(op.query) : []), ...(op.public ? [] : [shopHeader]), ...(op.kiosk ? [deviceHeader, installHeader] : [])];
+    const parameters = [...(op.params ? [idParam] : []), ...(op.query ? queryParams(op.query) : []), ...(op.public || op.kioskBearer ? [] : [shopHeader]), ...(op.kiosk ? [deviceHeader, installHeader] : [])];
     (paths[op.path] ??= {})[op.method] = {
       tags: [op.tag],
       summary: op.summary,
