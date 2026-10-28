@@ -1,22 +1,20 @@
-import { eq } from "drizzle-orm";
 import type Stripe from "stripe";
-import { db, type DBorTx } from "@/db";
-import { shops } from "@/db/schema";
+import { flags } from "@/lib/flags";
 import { AppError } from "@/server/errors";
 import { stripe } from "./processor";
 
 /**
- * The one place money moves from the platform to an employee's own Stripe account (ST-C11, separate
- * charges and transfers). Stripe can't transfer from a shop's connected account to a barber's, so a
- * tip payout is a transfer from the platform's balance, where the card tips were left at checkout,
- * to the employee's recipient account, then a payout to their bank or debit card.
+ * The one place money moves out of the platform's balance (ST-C11, I10 separate charges and
+ * transfers): a sale's transfers to the shop's connected account and to each barber's Express
+ * account (createSaleTransfer), taking a refund or dispute back from the shop's transfer
+ * (reverseShopTransfer; a tip transfer is never reversed), and tip payouts to an employee's bank or
+ * debit card (platformTipTransfers).
  *
- * The default implementation is `platformTipTransfers`. Tips only sit on the platform for shops whose
- * cards settle to the brand's own account; a shop on its own or its owner's connected account keeps
- * its tips there until chargeCard leaves them on the platform (mobile, NOTES-SYNC), so its payouts
- * are held as owed (`holdReason`) and go through payroll at the cutoff. Live keys are refused until
- * MONEY_MOVEMENT_LIVE=true, the switch the CPA signs off on; payouts are held as owed until then.
- * The simulator pays without Stripe, so demos and tests still run end to end.
+ * Tip transfers, at the sale or at a payout, need FEATURE_TIP_TO_BARBER, off until the CPA signs
+ * off; off, a card tip is in the shop's transfer and is paid through payroll. Live keys are refused
+ * for anything that touches an employee's account until MONEY_MOVEMENT_LIVE=true. A shop's own
+ * transfer is the shop's sales, not an employee's money, so it runs whenever cards do. The
+ * simulator moves nothing, so demos and tests still run end to end.
  *
  * Every Stripe call is idempotent on `key` (the caller's own record id), so a retry, a double click
  * or a crashed worker never moves money twice.
@@ -68,6 +66,8 @@ export interface TipTransfer {
   shopId: string;
   /** To the employee's account and out to their bank or card. */
   amountCents: number;
+  /** Of that, already in the employee's Stripe balance: tips transferred to them at the sale. Only the rest is transferred now. */
+  prefundedCents: number;
   /** What the payout costs the shop: the amount, plus an instant fee the shop pays. */
   shopCostCents: number;
   /** The employee's connected account. */
@@ -88,38 +88,35 @@ export interface MoneyMovement {
   readonly name: string;
   /** Moves the money, saving each id through `save` as soon as it exists. A failure throws MovementError with the ids so far. */
   send(t: TipTransfer, save: (ids: MovedIds) => Promise<void>): Promise<MovedIds>;
-  /** Puts the money back after a failed or bounced payout. Safe to call twice. */
+  /** Puts the money back after a failed or bounced payout. Safe to call twice. Tips transferred at the sale stay with the employee. */
   unwind(o: { key: string; ids: MovedIds; transferReversed?: boolean; metadata: Record<string, string> }): Promise<{ ok: boolean; errors: string[] }>;
-  /** Why a shop's payouts can't be sent this way yet (they're held as owed), or null when they can. */
-  holdReason?(shopId: string, tx?: DBorTx): Promise<string | null>;
 }
 
-export const CONNECTED_SHOP_REASON =
-  "This shop's card payments settle to its own Stripe account, so its card tips aren't on the platform to transfer yet (the checkout change is pending). These tips are owed and are paid through payroll at the pay period cutoff.";
-
 /**
- * Transfer from the platform balance to the employee's account, then pay out, saving each id as soon
- * as it exists. A shop-paid instant fee needs nothing more: the employee's account is
- * `fees.payer: application`, so Stripe bills it to the platform, out of the brand-settled shop's own money.
+ * Transfer what isn't already in the employee's balance from the platform's, then pay out, saving
+ * each id as soon as it exists. Tips transferred at the sale (FEATURE_TIP_TO_BARBER) wait in the
+ * employee's balance (a manual payout schedule) for the batch that pays them. A shop-paid instant
+ * fee needs nothing more: the employee's account is `fees.payer: application`, so Stripe bills it to
+ * the platform.
  */
 export const platformTipTransfers: MoneyMovement = {
   name: "platform_transfers",
-  async holdReason(shopId, tx = db) {
-    const row = await tx.query.shops.findFirst({ where: eq(shops.id, shopId), columns: { paymentsMode: true } });
-    return row?.paymentsMode === "brand" ? null : CONNECTED_SHOP_REASON;
-  },
   async send(t, save) {
     const ids: MovedIds = { debitId: null, transferId: null, payoutId: null };
     const s = moneyClient();
     if (!s) throw new MovementError("Stripe isn't set up", ids);
-    if (t.amountCents <= 0 || t.shopCostCents < t.amountCents) throw new MovementError("Nothing to send", ids);
+    if (t.amountCents <= 0 || t.shopCostCents < t.amountCents || t.prefundedCents < 0) throw new MovementError("Nothing to send", ids);
+    const transfer = t.amountCents - Math.min(t.prefundedCents, t.amountCents);
     try {
-      const tr = await s.transfers.create(
-        { amount: t.amountCents, currency: "usd", destination: t.to, transfer_group: t.group, description: t.description, metadata: t.metadata },
-        { idempotencyKey: `${t.key}-transfer` },
-      );
-      ids.transferId = tr.id;
-      await save(ids);
+      if (transfer > 0) {
+        if (!flags.tipToBarber()) throw new Error(TIP_TO_BARBER_OFF);
+        const tr = await s.transfers.create(
+          { amount: transfer, currency: "usd", destination: t.to, transfer_group: t.group, description: t.description, metadata: t.metadata },
+          { idempotencyKey: `${t.key}-transfer` },
+        );
+        ids.transferId = tr.id;
+        await save(ids);
+      }
       const po = await s.payouts.create(
         {
           amount: t.amountCents,
@@ -160,11 +157,69 @@ export function registerMoneyMovement(m: MoneyMovement | null) {
 /** The transfer path, or null when there is none. */
 export const moneyMovement = (): MoneyMovement | null => registered;
 
-/** Tips can go straight to an employee's account here: the simulator always can; real Stripe once a transfer path is registered and the keys are test keys or the live switch is on. */
-export const directPayoutsAvailable = () => !stripe() || (registered !== null && moneyMovementReady());
+/** Tips can go straight to an employee's account here: FEATURE_TIP_TO_BARBER is on, and the simulator, or real Stripe with a transfer path and test keys or the live switch on. */
+export const directPayoutsAvailable = () => flags.tipToBarber() && (!stripe() || (registered !== null && moneyMovementReady()));
+
+export const TIP_TO_BARBER_OFF = "Tips to barbers' Stripe accounts are off until the CPA signs off (FEATURE_TIP_TO_BARBER)";
+
+export const TIP_TO_BARBER_REASON = `${TIP_TO_BARBER_OFF}. Card tips stay with the shop, and these tips are owed and are paid through payroll at the pay period cutoff.`;
 
 export const TRANSFERS_PENDING_REASON =
   "Direct transfers to employees' Stripe accounts aren't switched on in this deployment. These tips are owed and are paid through payroll at the pay period cutoff, unless transfers are on by then.";
 
-/** Why direct payouts are off here, for the hold: the live switch, or no transfer path at all. */
-export const transfersPendingReason = () => (stripe() && !moneyMovementReady() ? LIVE_SWITCH_REASON : TRANSFERS_PENDING_REASON);
+/** Why direct payouts are off here, for the hold: FEATURE_TIP_TO_BARBER, the live switch, or no transfer path at all. */
+export const transfersPendingReason = () => (!flags.tipToBarber() ? TIP_TO_BARBER_REASON : stripe() && !moneyMovementReady() ? LIVE_SWITCH_REASON : TRANSFERS_PENDING_REASON);
+
+// ───────────────────────────── A sale's transfers (I10) ─────────────────────────────
+
+/** One transfer of a sale's charge: the shop's portion, or one barber's tip. */
+export interface SaleTransfer {
+  /** The payment_transfers row id. */
+  key: string;
+  kind: "shop" | "tip";
+  amountCents: number;
+  destination: string;
+  transferGroup: string;
+  /** The charge (ch_): the transfer waits for its funds. Null only for a won dispute's money back. */
+  sourceTransaction: string | null;
+  description: string;
+  metadata: Record<string, string>;
+}
+
+const simMoveId = (p: string, key: string) => `sim_${p}_${key.replace(/[^A-Za-z0-9]/g, "").slice(0, 24)}`;
+
+/** The client for a sale transfer: the platform's for the shop's portion; for a tip, the employee money client, and only with FEATURE_TIP_TO_BARBER. */
+function saleClient(kind: SaleTransfer["kind"]): Stripe | null {
+  if (kind === "shop") return stripe();
+  if (!flags.tipToBarber()) throw new AppError("conflict", TIP_TO_BARBER_OFF, { reason: "tip_to_barber_off" });
+  return moneyClient();
+}
+
+/** Creates one transfer of a sale, idempotent on its row. Returns the transfer id (sim_tr_ in the simulator). */
+export async function createSaleTransfer(t: SaleTransfer): Promise<string> {
+  if (!Number.isInteger(t.amountCents) || t.amountCents <= 0) throw new AppError("bad_request", "A transfer must be a positive amount");
+  const s = saleClient(t.kind);
+  if (!s || t.destination.startsWith("sim_")) return simMoveId("tr", t.key);
+  const tr = await s.transfers.create(
+    {
+      amount: t.amountCents,
+      currency: "usd",
+      destination: t.destination,
+      transfer_group: t.transferGroup,
+      ...(t.sourceTransaction ? { source_transaction: t.sourceTransaction } : {}),
+      description: t.description,
+      metadata: { ...t.metadata, kind: t.kind },
+    },
+    { idempotencyKey: `sale-transfer-${t.key}` },
+  );
+  return tr.id;
+}
+
+/** Takes part of a shop's transfer back for a refund or dispute, idempotent on the reversal's row. Never called for a tip transfer (the database refuses those rows too). */
+export async function reverseShopTransfer(o: { key: string; transferId: string; amountCents: number; metadata: Record<string, string> }): Promise<string> {
+  if (!Number.isInteger(o.amountCents) || o.amountCents <= 0) throw new AppError("bad_request", "A reversal must be a positive amount");
+  const s = stripe();
+  if (!s || o.transferId.startsWith("sim_")) return simMoveId("trr", o.key);
+  const r = await s.transfers.createReversal(o.transferId, { amount: o.amountCents, metadata: o.metadata }, { idempotencyKey: `shop-reversal-${o.key}` });
+  return r.id;
+}

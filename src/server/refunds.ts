@@ -30,6 +30,7 @@ import { ticketAppointmentIds } from "./family-ticket";
 import { refundCard } from "./payments/processor";
 import { sendUpdatedReceipt } from "./receipts";
 import { syncTipLedger } from "./tips/ledger";
+import { planRefundReversals, settleSale } from "./payments/settlement";
 
 const NONE = "00000000-0000-0000-0000-000000000000";
 
@@ -101,12 +102,14 @@ export async function refundSale(req: RefundRequest) {
   if (!req.reason.trim()) throw new AppError("bad_request", "A reason is required");
   if (!Number.isInteger(req.tipCents) || req.tipCents < 0) throw new AppError("bad_request", "Tip refund must be zero or more");
   if (!req.items.length && req.tipCents === 0 && !req.refundCardFee) throw new AppError("bad_request", "Pick what to refund");
-  return db.transaction(async (tx) => {
+  const r = await db.transaction(async (tx) => {
     const sale = await lockSale(tx, req.saleId);
     if (sale.isImported) throw new AppError("conflict", "This ticket was imported from Squire. Refund it in Squire.");
     if (!["paid", "partially_refunded"].includes(sale.status)) throw new AppError("conflict", `Can't refund a ${sale.status.replace("_", " ")} ticket`);
     return reverse(tx, sale, { kind: "refund", source: "staff", items: req.items, tipCents: req.tipCents, refundCardFee: req.refundCardFee, reason: req.reason, restock: req.restock, actor: req.actor, maxCents: req.maxCents, now });
   });
+  await settleSale(req.saleId);
+  return r;
 }
 
 /** Everything still refundable on a ticket. */
@@ -157,6 +160,7 @@ export async function voidSale(saleId: string, reason: string, actor: Actor, now
     });
     if (actor.approvedBy) await tx.update(sales).set({ voidApprovedBy: actor.approvedBy.staffId }).where(eq(sales.id, saleId));
   });
+  await settleSale(saleId);
 }
 
 /** Over the limit: a manager whose limit covers it approves with their PIN. */
@@ -274,13 +278,14 @@ async function reverse(tx: Tx, sale: Sale, o: ReverseOpts) {
   for (const step of plan) {
     const p = pays.find((x) => x.id === step.tenderId)!;
     if (p.method === "card" && p.stripePaymentIntentId) {
-      stripeIds.set(p.id, await refundCard(p.stripePaymentIntentId, step.amountCents, `refund-${p.id}-${p.refundedCents}-${step.amountCents}-${randomUUID()}`, { reverseTransfer: !!p.stripeAccountId }));
+      stripeIds.set(p.id, await refundCard(p.stripePaymentIntentId, step.amountCents, `refund-${p.id}-${p.refundedCents}-${step.amountCents}-${randomUUID()}`, { reverseTransfer: p.chargeType === "destination" && !!p.stripeAccountId }));
     }
   }
 
   const itemsJson = lines.map((l) => ({ saleItemId: l.itemId, name: l.name, kind: l.kind, qty: l.qty, cents: l.netCents + l.taxCents, netCents: l.netCents }));
   await recordSteps(tx, sale, pays, plan, { kind: o.kind, source: o.source, reason: o.reason, actor: o.actor, now: o.now, items: itemsJson, stripeIds });
   await syncTipLedger(tx, { saleId: sale.id });
+  await planRefundReversals(tx, sale.id);
 
   const restock: Movement[] = [];
   for (const l of lines) {
@@ -422,7 +427,7 @@ const DASHBOARD_REASON = "Refunded in the Stripe dashboard";
 export async function recordProcessorRefund(paymentIntentId: string, amountRefundedCents: number, ref: { eventId: string; stripeRefundId?: string | null }, now = new Date()) {
   const p0 = await db.query.payments.findFirst({ where: eq(payments.stripePaymentIntentId, paymentIntentId) });
   if (!p0) return { recorded: 0, reason: "unknown_payment" as const };
-  return db.transaction(async (tx) => {
+  const out = await db.transaction(async (tx) => {
     const sale = await lockSale(tx, p0.saleId);
     const [p] = await tx.select().from(payments).where(eq(payments.id, p0.id)).for("update");
     const delta = Math.min(amountRefundedCents, p.amountCents) - p.refundedCents;
@@ -450,8 +455,11 @@ export async function recordProcessorRefund(paymentIntentId: string, amountRefun
     const status = total >= sale.totalCents ? "refunded" : "partially_refunded";
     await tx.update(sales).set({ status }).where(eq(sales.id, sale.id));
     await audit(SYSTEM, "sale.refund", "sale", sale.id, { source: "stripe_dashboard", eventId: ref.eventId, amountCents: delta, refundId: row.id, awaitingLines: true }, sale.shopId, tx);
+    await planRefundReversals(tx, sale.id);
     return { recorded: delta, reason: "recorded" as const, refundId: row.id, status };
   });
+  if (out.recorded) await settleSale(p0.saleId);
+  return out;
 }
 
 export interface AssignLinesRequest {

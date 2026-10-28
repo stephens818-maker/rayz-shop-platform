@@ -89,7 +89,7 @@ const notReady = (shopName: string, a: ShopPaymentAccount | EntityPaymentAccount
 /** Where a card charge at a shop goes, by its payments mode. */
 export type ChargeRoute =
   | { settlement: "platform"; destination: null; estimatedFeeCents: number; descriptorSuffix: string | null }
-  | { settlement: "connected"; destination: Destination; estimatedFeeCents: number; descriptorSuffix: null };
+  | { settlement: "connected"; destination: Destination; estimatedFeeCents: number; descriptorSuffix: string | null };
 
 /**
  * Every card charge at a shop is routed here: to the brand's own account, to the shop's own or its
@@ -102,9 +102,10 @@ export async function chargeRoute(shop: { id: string; name: string }, amountCent
   const estimatedFeeCents = processingFeeCents(amountCents, feeSchedule()[entryMode]);
   if (row.paymentsMode === "cash_only")
     throw new AppError("payment_failed", `${shop.name} takes cash and gift cards only. Choose a Stripe account for it in Location setup to take cards.`, { reason: "cash_only", state: "cash_only" });
-  if (row.paymentsMode === "brand") return { settlement: "platform", destination: null, estimatedFeeCents, descriptorSuffix: descriptorSuffix(row.statementDescriptor, brandDescriptorPrefix()) };
+  const suffix = descriptorSuffix(row.statementDescriptor, brandDescriptorPrefix());
+  if (row.paymentsMode === "brand") return { settlement: "platform", destination: null, estimatedFeeCents, descriptorSuffix: suffix };
   const destination = await chargeDestination({ ...shop, paymentsMode: row.paymentsMode, ownerEntityId: row.ownerEntityId }, amountCents, entryMode, tx);
-  return { settlement: "connected", destination, estimatedFeeCents: destination.applicationFeeCents, descriptorSuffix: null };
+  return { settlement: "connected", destination, estimatedFeeCents: destination.applicationFeeCents, descriptorSuffix: suffix };
 }
 
 /** Where a card charge to the shop's own or its owner's connected account goes, with the platform's application fee. Refuses accounts that can't take charges. */

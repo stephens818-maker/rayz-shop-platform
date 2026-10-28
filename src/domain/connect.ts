@@ -1,13 +1,14 @@
 /**
  * Stripe Connect, merchant-of-record model: one Ray'z platform account, and per shop a choice of
  * where its card money settles (PaymentsMode):
- *  - connected: the shop's own connected account. A card charge is a destination charge settled on
- *    behalf of it (on_behalf_of + transfer_data.destination); the platform keeps an application fee
- *    equal to the shop's processing fee, so revenue, tips, surcharges, refunds, fees and payouts all
- *    land in the shop's own account and bank. For a shop run by its own LLC.
+ *  - connected: the shop's own connected account. Separate charges and transfers (I10, Charles,
+ *    2026-10-28): the card is charged on the platform, the merchant of record, then the shop's
+ *    portion (service, product, tax and the surcharge, less the shop's processing fee) is
+ *    transferred to the shop's account; behind FEATURE_TIP_TO_BARBER each card tip goes to its
+ *    barber's Express account, and otherwise it's in the shop's transfer. Refunds and disputes come
+ *    back out of the shop's transfer only. For a shop run by its own LLC.
  *  - entity: the shop's owner entity's connected account (entity_payment_accounts), shared by every
- *    shop that owner has in this mode. The same destination charge and processing-fee application
- *    fee; payouts go to the owner's bank.
+ *    shop that owner has in this mode. The same transfers; payouts go to the owner's bank.
  *  - brand: the brand's own (platform) Stripe account, paid out to the brand's bank.
  *  - cash_only: no cards; cash and gift cards only.
  * Pure: the states, the fee schedule, statement descriptors, payout schedules and their labels.

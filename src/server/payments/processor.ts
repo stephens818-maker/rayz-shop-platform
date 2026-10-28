@@ -33,17 +33,6 @@ export interface CardDetails {
   expYear?: number | null;
 }
 
-/**
- * I10, not decided yet: who is the merchant of record when a charge settles to a shop's (or owner's)
- * connected account. "on_behalf_of" (the default, as before): the shop is, on the statement and for
- * the card network. "destination": the platform is, and the money is transferred to the shop. Both
- * charge on the platform, so saved cards on platform-level Customers work either way.
- */
-export type ChargeModel = "on_behalf_of" | "destination";
-export function chargeModel(): ChargeModel {
-  return process.env.STRIPE_CHARGE_MODEL === "destination" ? "destination" : "on_behalf_of";
-}
-
 /** Stripe's surcharge field on the PaymentIntent (a Stripe preview): off until Stripe signs off on it. */
 export const surchargeFieldOn = () => process.env.STRIPE_SURCHARGE_FIELD === "true";
 
@@ -124,15 +113,17 @@ export interface ChargeResult {
   processor: "stripe" | "simulator";
   paymentIntentId: string;
   card: CardDetails;
-  /** The shop's connected account the charge settled to, and the platform's application fee. */
+  /** The shop's connected account the shop's portion is transferred to after the charge, and the processing fee the platform keeps. */
   destination: Destination | null;
+  /** The charge, the source_transaction of every transfer of it. */
   chargeId: string | null;
+  /** Only a destination charge from before separate charges (an idempotent replay) has one. */
   transferId: string | null;
   /** What Stripe charged the platform for this charge, when the balance transaction says. */
   processorFeeCents: number | null;
 }
 
-/** Where a card charge settles: a shop's connected account, with the processing fee kept by the platform. */
+/** Where a card charge's shop portion goes: a shop's connected account, with the processing fee kept by the platform. */
 export interface Destination {
   accountId: string;
   applicationFeeCents: number;
@@ -151,6 +142,7 @@ interface SimIntent {
   card: CardDetails;
   metadata: Record<string, string>;
   destination: Destination | null;
+  transferGroup: string | null;
   customerId: string | null;
   statementDescriptorSuffix: string | null;
 }
@@ -187,7 +179,7 @@ function simResult(pi: SimIntent): ChargeResult {
     card: pi.card,
     destination: pi.destination,
     chargeId: `sim_ch_${suffix}`,
-    transferId: pi.destination ? `sim_tr_${suffix}` : null,
+    transferId: null,
     processorFeeCents: pi.destination?.applicationFeeCents ?? null,
   };
 }
@@ -214,11 +206,12 @@ const actionNeeded = (paymentIntentId: string, clientSecret: string) =>
   new AppError("payment_failed", "Your bank wants you to confirm this payment.", { reason: "requires_action", paymentIntentId, clientSecret } satisfies RequiresAction);
 
 /**
- * The one place a PaymentIntent is created. With a destination, it's a destination charge on the
- * platform settled to the shop's connected account: the shop gets the charge less the application
- * fee, and refunds come back out of its account. Whether the shop or the platform is the merchant
- * of record is chargeModel() (I10). `customerId` is a platform-level Stripe Customer, so a saved
- * card can pay at any shop.
+ * The one place a PaymentIntent is created. Separate charges and transfers (I10, Charles,
+ * 2026-10-28): every card sale is charged on the platform, the merchant of record, with the sale's
+ * transfer_group and nothing of the shop's on the intent. Once the sale is recorded, the settlement
+ * module (settlement.ts) transfers the shop's portion to `destination` and, behind
+ * FEATURE_TIP_TO_BARBER, each tip to its barber, with this charge as source_transaction.
+ * `customerId` is a platform-level Stripe Customer, so a saved card can pay at any shop.
  */
 export async function chargeCard(opts: {
   /** A PaymentMethod, or a ConfirmationToken (ctoken_...) from the app. */
@@ -227,9 +220,12 @@ export async function chargeCard(opts: {
   description: string;
   metadata: Record<string, string>;
   idempotencyKey: string;
+  /** Where the shop's portion is transferred afterwards; null for a shop on the brand's account. Never sent to Stripe on the intent. */
   destination?: Destination | null;
+  /** saleTransferGroup(saleId): ties the charge to its transfers. */
+  transferGroup?: string | null;
   customerId?: string | null;
-  /** Brand-account charges: the shop's part of the card statement, after the brand's prefix. */
+  /** The shop's part of the card statement, after the brand's prefix. */
   statementDescriptorSuffix?: string | null;
   /** The credit card surcharge in amountCents, sent as Stripe's surcharge amount when that's on. */
   surchargeCents?: number;
@@ -267,8 +263,9 @@ export async function chargeCard(opts: {
           card: { funding: card.funding, brand: card.brand, last4: card.last4, ...(card.wallet ? { wallet: card.wallet } : {}) },
           metadata: opts.metadata,
           destination: dest,
+          transferGroup: opts.transferGroup ?? null,
           customerId: opts.customerId ?? null,
-          statementDescriptorSuffix: dest ? null : (opts.statementDescriptorSuffix ?? null),
+          statementDescriptorSuffix: opts.statementDescriptorSuffix ?? null,
         };
     if (!existing) {
       sim.intents.set(pi.id, pi);
@@ -302,10 +299,8 @@ export async function chargeCard(opts: {
       confirm: true,
       description: opts.description,
       metadata: opts.metadata,
-      ...(dest
-        ? { ...(chargeModel() === "on_behalf_of" ? { on_behalf_of: dest.accountId } : {}), transfer_data: { destination: dest.accountId }, application_fee_amount: dest.applicationFeeCents }
-        : {}),
-      ...(!dest && opts.statementDescriptorSuffix ? { statement_descriptor_suffix: opts.statementDescriptorSuffix } : {}),
+      ...(opts.transferGroup ? { transfer_group: opts.transferGroup } : {}),
+      ...(opts.statementDescriptorSuffix ? { statement_descriptor_suffix: opts.statementDescriptorSuffix } : {}),
       ...(surcharge as object),
       expand: ["latest_charge.balance_transaction"],
     };
@@ -339,8 +334,10 @@ export function simulatedIntent(paymentIntentId: string) {
 }
 
 /**
- * `reverseTransfer`: the charge went to a shop's connected account, so the refund is pulled back
- * from that account. The application fee isn't returned, the same as Stripe's fee on a refund.
+ * `reverseTransfer`: only for a destination charge from before separate charges, whose money went
+ * to the shop's account with the charge; the refund is pulled back from it, and the application fee
+ * isn't returned. A separate charge's refund is taken back from the shop's transfer afterwards
+ * (settlement.ts), never from a tip.
  */
 export async function refundCard(paymentIntentId: string, amountCents: number, idempotencyKey: string, opts: { reverseTransfer?: boolean } = {}): Promise<string> {
   const s = stripe();
@@ -375,7 +372,7 @@ export function simulateDashboardRefund(paymentIntentId: string, amountCents: nu
   const pi = sim.intents.get(paymentIntentId);
   if (!pi) throw new Error("Unknown simulated PaymentIntent");
   pi.amountRefundedCents += amountCents;
-  sim.refunds.push({ id: simId("sim_re"), paymentIntentId, amountCents, reverseTransfer: !!pi.destination });
+  sim.refunds.push({ id: simId("sim_re"), paymentIntentId, amountCents, reverseTransfer: false });
   return pi.amountRefundedCents;
 }
 

@@ -292,15 +292,14 @@ async function refundStray(ap: typeof appPayments.$inferSelect, actor: Actor) {
   if (!ap.stripePaymentIntentId || (await paidBy(ap.stripePaymentIntentId))) return false;
   const s = stripe();
   let succeeded = false;
+  // A separate charge has no transfers until its sale is recorded, so only a destination charge from before has one to reverse.
   let reverse = false;
   if (s && !ap.stripePaymentIntentId.startsWith("sim_")) {
     const pi = await s.paymentIntents.retrieve(ap.stripePaymentIntentId).catch(() => null);
     succeeded = pi?.status === "succeeded";
     reverse = !!pi?.transfer_data;
   } else {
-    const pi = simulatedIntent(ap.stripePaymentIntentId);
-    succeeded = pi?.status === "succeeded";
-    reverse = !!pi?.destination;
+    succeeded = simulatedIntent(ap.stripePaymentIntentId)?.status === "succeeded";
   }
   if (!succeeded) return false;
   await refundCard(ap.stripePaymentIntentId, ap.amountCents, `app-stray-${ap.id}`, { reverseTransfer: reverse });

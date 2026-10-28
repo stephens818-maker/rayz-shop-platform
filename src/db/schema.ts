@@ -2168,8 +2168,12 @@ export const payments = pgTable(
     entryMode: text("entry_mode"), // keyed | terminal
     giftCardId: uuid("gift_card_id").references(() => giftCards.id),
     refundedCents: integer("refunded_cents").notNull().default(0),
-    /** The shop's connected account this card charge settled to (on_behalf_of + transfer_data.destination). */
+    /** The shop's connected account this card charge's shop portion goes to (payment_transfers), or, for a destination charge, settled to. */
     stripeAccountId: text("stripe_account_id"),
+    /** separate (I10, 2026-10-28): charged on the platform, then transferred (payment_transfers). destination: before that, settled to stripeAccountId. Null for non-card. */
+    chargeType: text("charge_type").$type<"destination" | "separate">(),
+    /** The charge's Stripe transfer_group; its transfers carry it too. */
+    transferGroup: text("transfer_group"),
     /** What the platform kept to cover processing: the shop's processing fee for this charge. */
     applicationFeeCents: integer("application_fee_cents").notNull().default(0),
     /** What Stripe actually charged the platform, from the balance transaction, when known. */
@@ -2188,6 +2192,7 @@ export const payments = pgTable(
   (t) => [
     check("payments_payer_label", sql`${t.payerLabel} is null or char_length(${t.payerLabel}) <= 40`),
     check("payments_settlement", sql`${t.settlement} is null or ${t.settlement} in ('platform', 'connected')`),
+    check("payments_charge_type", sql`${t.chargeType} is null or ${t.chargeType} in ('destination', 'separate')`),
     check("payments_fee_basis", sql`${t.feeBasis} is null or ${t.feeBasis} in ('charge_excluding_tip', 'charge_including_tip')`),
     check("payments_fee_channel", sql`${t.feeChannel} is null or ${t.feeChannel} in ('pos', 'app', 'deposit', 'card_on_file')`),
     check("payments_fee_waived", sql`not ${t.feeWaived} or (${t.method} = 'card' and ${t.cardFeeCents} = 0 and ${t.feeWaivedCents} > 0 and ${t.feeWaivedReason} is not null)`),
@@ -2195,6 +2200,102 @@ export const payments = pgTable(
     index("payments_account_idx").on(t.stripeAccountId),
     index("payments_sale_idx").on(t.saleId),
     uniqueIndex("payments_stripe_pi_uq").on(t.stripePaymentIntentId),
+  ],
+);
+
+export type PaymentTransferKind = "shop" | "tip";
+export type PaymentTransferStatus = "pending" | "sent" | "failed" | "cancelled";
+
+/**
+ * Separate charges and transfers (I10): what a card charge on the platform sends on. One shop row,
+ * the shop's portion to its connected account; one tip row per barber whose tip goes to their Stripe
+ * account (FEATURE_TIP_TO_BARBER). Each is created with source_transaction, idempotent on the row's
+ * id. Refunds and disputes reverse the shop row only (payment_transfer_reversals); a trigger keeps a
+ * tip row's amount, barber and account fixed, and reversed_cents stays 0 on tip rows.
+ */
+export const paymentTransfers = pgTable(
+  "payment_transfers",
+  {
+    id: id(),
+    paymentId: uuid("payment_id").notNull().references(() => payments.id),
+    saleId: uuid("sale_id").notNull().references(() => sales.id),
+    shopId: uuid("shop_id").notNull().references(() => shops.id),
+    kind: text("kind").$type<PaymentTransferKind>().notNull(),
+    staffId: uuid("staff_id").references(() => staff.id),
+    destinationAccount: text("destination_account").notNull(),
+    amountCents: integer("amount_cents").notNull(),
+    transferGroup: text("transfer_group").notNull(),
+    /** pending until Stripe has it (retried by the cron), then sent; failed after the last try; cancelled when a refund before it was sent took it all. */
+    status: text("status").$type<PaymentTransferStatus>().notNull().default("pending"),
+    stripeTransferId: text("stripe_transfer_id"),
+    /** Shop rows only: what refunds and disputes have taken back. */
+    reversedCents: integer("reversed_cents").notNull().default(0),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    createdAt: createdAt(),
+    sentAt: ts("sent_at"),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    check("payment_transfers_kind", sql`${t.kind} in ('shop', 'tip')`),
+    check("payment_transfers_staff", sql`(${t.kind} = 'tip') = (${t.staffId} is not null)`),
+    check("payment_transfers_status", sql`${t.status} in ('pending', 'sent', 'failed', 'cancelled')`),
+    check("payment_transfers_amount", sql`${t.amountCents} >= 0 and (${t.amountCents} > 0 or ${t.status} = 'cancelled')`),
+    check("payment_transfers_sent", sql`(${t.status} = 'sent') = (${t.stripeTransferId} is not null)`),
+    check("payment_transfers_reversed", sql`${t.reversedCents} >= 0 and ${t.reversedCents} <= ${t.amountCents}`),
+    check("payment_transfers_tips_kept", sql`${t.kind} = 'shop' or ${t.reversedCents} = 0`),
+    uniqueIndex("payment_transfers_shop_uq").on(t.paymentId).where(sql`${t.kind} = 'shop'`),
+    uniqueIndex("payment_transfers_tip_uq").on(t.paymentId, t.staffId).where(sql`${t.kind} = 'tip'`),
+    uniqueIndex("payment_transfers_stripe_uq").on(t.stripeTransferId),
+    index("payment_transfers_sale_idx").on(t.saleId),
+    index("payment_transfers_pending_idx").on(t.createdAt).where(sql`${t.status} = 'pending'`),
+  ],
+);
+
+export type TransferReversalKind = "refund" | "dispute" | "dispute_won";
+export type TransferReversalStatus = "pending" | "sent" | "netted" | "failed" | "none";
+
+/**
+ * What a refund or dispute took back from a shop's transfer, and what a won dispute sent back. Always
+ * a shop row (a trigger refuses a tip row). netted: the transfer hadn't gone yet, so it was lowered
+ * instead; none: nothing of the shop's transfer was left. uncovered_cents is what the shop's transfer
+ * couldn't cover (a tip already with the barber), which the platform carries.
+ */
+export const paymentTransferReversals = pgTable(
+  "payment_transfer_reversals",
+  {
+    id: id(),
+    transferId: uuid("transfer_id")
+      .notNull()
+      .references(() => paymentTransfers.id),
+    paymentId: uuid("payment_id")
+      .notNull()
+      .references(() => payments.id),
+    kind: text("kind").$type<TransferReversalKind>().notNull(),
+    refundId: uuid("refund_id").references(() => refunds.id),
+    stripeDisputeId: text("stripe_dispute_id"),
+    amountCents: integer("amount_cents").notNull(),
+    uncoveredCents: integer("uncovered_cents").notNull().default(0),
+    status: text("status").$type<TransferReversalStatus>().notNull().default("pending"),
+    /** The transfer reversal (trr_), or for a won dispute the new transfer (tr_). */
+    stripeId: text("stripe_id"),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    createdAt: createdAt(),
+    sentAt: ts("sent_at"),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    check("payment_transfer_reversals_kind", sql`${t.kind} in ('refund', 'dispute', 'dispute_won')`),
+    check("payment_transfer_reversals_source", sql`(${t.kind} = 'refund') = (${t.refundId} is not null) and (${t.kind} = 'refund') = (${t.stripeDisputeId} is null)`),
+    check("payment_transfer_reversals_dispute_id", sql`${t.stripeDisputeId} is null or ${t.stripeDisputeId} ~ '^(dp|du|sim)_[A-Za-z0-9_]{1,80}$'`),
+    check("payment_transfer_reversals_status", sql`${t.status} in ('pending', 'sent', 'netted', 'failed', 'none')`),
+    check("payment_transfer_reversals_amounts", sql`${t.amountCents} >= 0 and ${t.uncoveredCents} >= 0`),
+    check("payment_transfer_reversals_sent", sql`(${t.status} = 'sent') = (${t.stripeId} is not null)`),
+    uniqueIndex("payment_transfer_reversals_refund_uq").on(t.refundId).where(sql`${t.refundId} is not null`),
+    uniqueIndex("payment_transfer_reversals_dispute_uq").on(t.stripeDisputeId, t.kind).where(sql`${t.stripeDisputeId} is not null`),
+    index("payment_transfer_reversals_transfer_idx").on(t.transferId),
+    index("payment_transfer_reversals_pending_idx").on(t.createdAt).where(sql`${t.status} = 'pending'`),
   ],
 );
 

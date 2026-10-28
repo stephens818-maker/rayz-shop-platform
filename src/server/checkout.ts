@@ -86,6 +86,8 @@ import {
 import { assertPromptsAnswered, settlePrompts } from "./checkout-prompts";
 import { recordCheckout } from "./service-times";
 import { syncTipLedger } from "./tips/ledger";
+import { planSaleTransfers, settleSale } from "./payments/settlement";
+import { saleTransferGroup } from "@/domain/charge-split";
 import { cashAwaiting, cashTipPayoutsCents } from "./tips/payouts";
 import { defaultOpening, movesOutCents } from "./drawer";
 import { saleFeeChannel, shopCardFeeConfig, shopFeePolicy } from "./payments/card-fee";
@@ -1299,6 +1301,7 @@ export async function finalizeSale(input: FinalizeInput) {
             ? `sale-${ctx.sale.id}-${attempt}-${i}`
             : `sale-${ctx.sale.id}-${attempt}`,
           destination: l.route?.destination ?? null,
+          transferGroup: saleTransferGroup(ctx.sale.id),
           statementDescriptorSuffix: l.route?.descriptorSuffix ?? null,
           customerId: l.tender.stripeCustomerId ?? null,
           surchargeCents: l.feeCents,
@@ -1373,6 +1376,8 @@ export async function finalizeSale(input: FinalizeInput) {
           stripeChargeId: c?.chargeId ?? null,
           stripeTransferId: c?.transferId ?? null,
           settlement: c ? (c.destination ? "connected" : "platform") : null,
+          chargeType: c ? (c.transferId ? "destination" : "separate") : null,
+          transferGroup: c ? saleTransferGroup(ctx.sale.id) : null,
           terminalReaderId: c ? (l.reader?.id ?? null) : null,
           payerCustomerId: l.payerCustomerId,
           payerLabel: l.payerLabel,
@@ -1488,6 +1493,7 @@ export async function finalizeSale(input: FinalizeInput) {
         );
       }
       await syncTipLedger(tx, { saleId: ctx.sale.id });
+      await planSaleTransfers(tx, ctx.sale.id);
       await (await import("./booking-groups")).onSalePaid(ctx.sale.id, tx);
       // The customer screen asks the client itself; at the counter, a standing choice answers for them.
       if (!input.handoffId) await (await import("./receipts")).sendStandingReceipt(ctx.sale.id, tx, now);
@@ -1499,10 +1505,11 @@ export async function finalizeSale(input: FinalizeInput) {
           l.charge.paymentIntentId,
           l.chargeCents,
           ctx.sale.id,
-          !!l.charge.destination,
+          !!l.charge.transferId,
         );
     throw e;
   }
+  if (legs.some((l) => l.charge)) await settleSale(ctx.sale.id);
 
   await settlePrompts(ctx.sale.id, input.actor, now).catch((e: Error) =>
     console.error("settling checkout prompts failed", e.message),

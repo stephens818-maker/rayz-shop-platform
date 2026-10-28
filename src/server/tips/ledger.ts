@@ -62,12 +62,14 @@ export async function syncTipLedger(tx: DBorTx = db, o: { saleId?: string; shopI
       where r2.payment_id = r.payment_id and (r2.created_at, r2.id) <= (r.created_at, r.id)) >= pay.amount_cents - pay.card_fee_cents))`;
   const inWindow = sql`r.business_date <= coalesce(t.business_date, s.business_date) + ${cfg.reversalWindowDays}::int`;
   const byRule = cfg.reversalRule === "any_refund" ? sql`true` : cfg.reversalRule === "never" ? sql`false` : sql`(${full} and ${inWindow})`;
-  // Already paid: the tip's payout is fixed (held, approved, sent or paid; a reversal would only net
+  // Already paid: the tip was transferred to the barber's Stripe account at the sale (I10: never
+  // clawed back), its payout is fixed (held, approved, sent or paid; a reversal would only net
   // against later tips), or the ticket is from an earlier pay period than the refund (its shop's pay
   // group, else the brand's calendar). Those are always the shop's cost (ST-C15).
   const cal = (await settingAt<PayrollSettings>("payroll", null, tx)).calendar;
   const periodIx = (d: SQL) => sql`floor((${d} - coalesce(g.anchor_start, ${cal.anchorStart}::date))::numeric / coalesce(g.period_days, ${cal.periodDays}))`;
-  const afterPayout = sql`(coalesce(tp.status in ('held', 'approved', 'processing', 'paid'), false) or ${periodIx(sql`r.business_date`)} > ${periodIx(sql`s.business_date`)})`;
+  const transferred = sql`exists (select 1 from payment_transfers pt where pt.kind = 'tip' and pt.payment_id = r.payment_id and pt.staff_id = coalesce(sh.staff_id, s.staff_id) and pt.status in ('pending', 'sent'))`;
+  const afterPayout = sql`(${transferred} or coalesce(tp.status in ('held', 'approved', 'processing', 'paid'), false) or ${periodIx(sql`r.business_date`)} > ${periodIx(sql`s.business_date`)})`;
   const reverses = sql`(not ${afterPayout} and ${byRule})`;
   const refunded = sql`
     from refunds r join sales s on s.id = r.sale_id

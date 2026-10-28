@@ -128,6 +128,8 @@ export const TABLES: Record<string, Coverage> = {
   pay_period_dates: is("shop", "A shop's pay periods' check and iSolved submit-by dates"),
   pay_questions: REC,
   payments: PAY,
+  payment_transfer_reversals: PAY,
+  payment_transfers: PAY,
   payout_reconciliations: PAY,
   payroll_employers: is("structure", "The legal entities (one FEIN each) the pay groups and tips belong to"),
   payroll_employer_states: is("structure", "A legal entity's state tax registrations"),

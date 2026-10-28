@@ -11,6 +11,7 @@ import { todayLocal } from "@/lib/time";
 import { completeFromWebhook, failFromWebhook } from "@/server/app-pay";
 import { PLATFORM_ACCOUNT, recordPayout } from "./connect";
 import { recordDetached, recordSetupIntent } from "./saved-cards";
+import { disputeClosed, disputeOpened } from "./settlement";
 import { onceOnly } from "./stripe-events";
 
 /**
@@ -18,7 +19,8 @@ import { onceOnly } from "./stripe-events";
  * books refunds made outside the POS (the Stripe dashboard) through the same reversal as a POS
  * refund, at the shop the payment belongs to, whichever account it settled in, and logs disputes
  * against that shop. Refunds the POS made itself arrive here too; they're already recorded, so
- * they're a no-op. Payouts here are the brand account's, for shops on the brand account. A reversed
+ * they're a no-op. A dispute on a separate charge (I10) takes the disputed amount back from the
+ * shop's transfer, never a tip, and a won dispute sends it back to the shop. Payouts here are the brand account's, for shops on the brand account. A reversed
  * transfer of a tip payout puts its tips back into the next batch. Events from shops' and
  * employees' own accounts come to the Connect webhook. Membership sign-ups, invoices and cancellations
  * (Stripe Billing, on the brand account) keep each membership's status and month in step.
@@ -60,7 +62,21 @@ export async function platformEvent(event: Stripe.Event) {
     const pi = typeof d.payment_intent === "string" ? d.payment_intent : (d.payment_intent?.id ?? null);
     const p = pi ? await db.query.payments.findFirst({ where: eq(payments.stripePaymentIntentId, pi) }) : null;
     const tipsAbsorbed = p ? await recordTipDispute(p.id, d.id, todayLocal(new Date((d.created ?? event.created) * 1000))) : 0;
-    await audit(SYSTEM, "stripe.charge.dispute.created", "payment", p?.id ?? pi ?? d.id, { eventId: event.id, amountCents: d.amount, reason: d.reason, stripeAccountId: p?.stripeAccountId ?? null, tipsAbsorbed }, p?.shopId ?? null);
+    const takenBack = p?.chargeType === "separate" ? await disputeOpened(p.id, d.id, d.amount) : null;
+    await audit(
+      SYSTEM,
+      "stripe.charge.dispute.created",
+      "payment",
+      p?.id ?? pi ?? d.id,
+      { eventId: event.id, amountCents: d.amount, reason: d.reason, stripeAccountId: p?.stripeAccountId ?? null, tipsAbsorbed, ...(takenBack ? { fromShopTransferCents: takenBack.amountCents, uncoveredCents: takenBack.uncoveredCents } : {}) },
+      p?.shopId ?? null,
+    );
+  } else if (event.type === "charge.dispute.closed") {
+    const d = event.data.object as Stripe.Dispute;
+    const pi = typeof d.payment_intent === "string" ? d.payment_intent : (d.payment_intent?.id ?? null);
+    const p = pi ? await db.query.payments.findFirst({ where: eq(payments.stripePaymentIntentId, pi) }) : null;
+    const back = p?.chargeType === "separate" ? await disputeClosed(p.id, d.id, d.status === "won") : null;
+    await audit(SYSTEM, "stripe.charge.dispute.closed", "payment", p?.id ?? pi ?? d.id, { eventId: event.id, status: d.status, ...(back ? { backToShopCents: back.amountCents } : {}) }, p?.shopId ?? null);
   } else if (event.type === "transfer.reversed") {
     await applyTransferReversed(event.data.object as Stripe.Transfer);
   } else if (event.type.startsWith("payout.") && !event.account) {

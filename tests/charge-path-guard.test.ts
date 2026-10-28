@@ -15,7 +15,7 @@ function walk(dir: string): string[] {
 const files = walk(SRC).map((f) => ({ path: relative(SRC, f), text: readFileSync(f, "utf8") }));
 const where = (re: RegExp) => files.filter((f) => re.test(f.text)).map((f) => f.path);
 
-describe("I10: one charge path, so switching to separate charges and transfers is one change", () => {
+describe("I10: one charge path, separate charges and transfers", () => {
   it("a PaymentIntent is created in exactly one place, chargeCard", () => {
     expect(where(/paymentIntents\.create\(/)).toEqual(["server/payments/processor.ts"]);
     const text = files.find((f) => f.path === "server/payments/processor.ts")!.text;
@@ -27,12 +27,24 @@ describe("I10: one charge path, so switching to separate charges and transfers i
     expect(at > start && (end < 0 || at < end)).toBe(true);
   });
 
-  it("the destination (on_behalf_of, transfer_data) is set only there", () => {
-    expect(where(/\b(on_behalf_of|transfer_data)\s*:/)).toEqual(["server/payments/processor.ts"]);
+  it("no charge settles to a connected account any more: on_behalf_of, transfer_data and application_fee_amount are set nowhere", () => {
+    expect(where(/\b(on_behalf_of|transfer_data|application_fee_amount)\s*:/)).toEqual([]);
   });
 
-  it("no transfer or payout to a connected account is created outside money-movement", () => {
+  it("chargeCard sets the sale's transfer_group, and only money-movement transfers, with source_transaction", () => {
+    expect(where(/\btransfer_group\s*:/)).toEqual(["server/payments/money-movement.ts", "server/payments/processor.ts"]);
+    expect(where(/\bsource_transaction\s*:/)).toEqual(["server/payments/money-movement.ts"]);
+    const text = files.find((f) => f.path === "server/payments/processor.ts")!.text;
+    const start = text.indexOf("export async function chargeCard(");
+    expect(text.slice(start, text.indexOf("\nexport ", start + 1))).toMatch(/transfer_group: opts\.transferGroup/);
+  });
+
+  it("no transfer, reversal or payout is created outside money-movement", () => {
     expect(where(/\b(transfers|payouts)\.create\w*\(/).filter((p) => p !== "server/payments/money-movement.ts")).toEqual([]);
+  });
+
+  it("the transfers of a sale and their reversals are sent only by the settlement module", () => {
+    expect(where(/\b(createSaleTransfer|reverseShopTransfer)\(/).sort()).toEqual(["server/payments/money-movement.ts", "server/payments/settlement.ts"]);
   });
 
   describe("FEATURE_TIP_TO_BARBER", () => {

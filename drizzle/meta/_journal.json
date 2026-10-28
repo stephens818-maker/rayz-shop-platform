@@ -946,6 +946,13 @@
       "when": 1796610240000,
       "tag": "core_0134_rollout",
       "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "7",
+      "when": 1796613840000,
+      "tag": "core_0135_separate_charges",
+      "breakpoints": true
     }
   ]
 }
