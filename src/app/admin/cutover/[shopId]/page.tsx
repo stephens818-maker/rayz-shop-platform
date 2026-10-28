@@ -10,6 +10,7 @@ import { handBackReport, listCutovers, REQUIRED_FILES } from "@/server/cutover";
 import { payoutCutoverReport, ytdImports } from "@/server/payout-cutover";
 import { inTenant } from "@/server/tenant";
 import { shopOnboardingCounts } from "@/server/tips/onboarding";
+import { tipToBarberAt } from "@/server/payments/settlement";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { Importer } from "../../import/importer";
 import { STAGE } from "../stages";
@@ -31,7 +32,7 @@ export default async function ShopCutoverPage({ params }: { params: Promise<{ sh
   const owner = can(ctx, "settings.brand");
   const rec = c?.reconciliation && c.squireFrozenAt && c.reconciledAt && c.reconciledAt > c.squireFrozenAt ? c.reconciliation : null;
   const report = stage === "live" ? await handBackReport(shopId) : null;
-  const stripe = stripePayoutsOn();
+  const stripe = stripePayoutsOn() && (await tipToBarberAt(shopId));
   const team = (await shopOnboardingCounts([shopId])).get(shopId)!;
   const allSet = !stripe || team.notDone.length === 0;
   const ends = c?.squireTipsEndOn ?? null;

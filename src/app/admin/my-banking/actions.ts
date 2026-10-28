@@ -9,7 +9,7 @@ import { safe } from "@/server/action";
 import { authorize } from "@/server/auth/staff";
 import { AppError, forbidden } from "@/server/errors";
 import { connectMode } from "@/server/payments/connect";
-import { refreshStaffAccount, setDepositConsent, setPayoutChoice, simulateDestinationChange, simulateStaffOnboarding, staffAccount, staffDashboardUrl, staffOnboardingUrl } from "@/server/tips/accounts";
+import { NO_STRIPE_DASHBOARD, refreshStaffAccount, setDepositConsent, setPayoutChoice, simulateDestinationChange, simulateStaffOnboarding, staffAccount, staffOnboardingUrl } from "@/server/tips/accounts";
 
 async function origin() {
   const h = await headers();
@@ -46,20 +46,20 @@ export async function setMyPayoutMethodAction(input: z.input<typeof choiceSchema
 export async function startStripeSetupAction() {
   return safe(async () => {
     const ctx = await me();
+    const before = await staffAccount(ctx.staff.id);
     const url = await staffOnboardingUrl(ctx.staff.id, ctx.actor, await origin());
-    if (!url) await simulateStaffOnboarding(ctx.staff.id, ctx.actor);
+    if (!url && !before?.detailsSubmitted) await simulateStaffOnboarding(ctx.staff.id, ctx.actor);
     revalidate();
     return { url };
   });
 }
 
 /**
- * Stripe's Express dashboard, where the employee changes their card or bank. An account with no
- * Stripe dashboard (the default, ST-I9) changes them in the staff app's embedded account management
- * instead. In the simulator it switches between a test card and a test bank.
+ * Barbers have no Stripe Dashboard (ST-I9): they change their card or bank in the staff app's
+ * embedded account management. In the simulator it switches between a test card and a test bank.
  */
 export async function changeDestinationAction() {
-  return safe(async () => {
+  return safe(async (): Promise<{ url: string | null }> => {
     const ctx = await me();
     const a = await staffAccount(ctx.staff.id);
     if (a?.simulated && connectMode() === "simulator") {
@@ -67,10 +67,7 @@ export async function changeDestinationAction() {
       revalidate();
       return { url: null };
     }
-    if (a?.dashboard === "none" && a.detailsSubmitted) throw new AppError("conflict", "Change your card or bank in the staff app: Banking, then Manage payout account.");
-    const url = await staffDashboardUrl(ctx.staff.id);
-    if (!url) throw new AppError("conflict", "Stripe didn't open your payout dashboard. Finish setup first, or try again.");
-    return { url };
+    throw new AppError("conflict", a?.detailsSubmitted ? NO_STRIPE_DASHBOARD : "Finish setting up Stripe payouts first.");
   });
 }
 

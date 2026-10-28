@@ -27,6 +27,7 @@ import { AppError } from "./errors";
 import { mapStatus, parseSquireDateTime, readSquireCsv, RowError, shopFinder, squireMoney, ticketAmounts, ticketRef } from "./importer";
 import { getLoyaltyConfig } from "./loyalty";
 import { toCsv } from "./reports";
+import { tipToBarberAt } from "./payments/settlement";
 import { assertMaySwitch } from "./rollout-plan";
 import { shopOnboardingCounts } from "./tips/onboarding";
 import { stripePayoutsOn } from "./tips/payout-model";
@@ -473,7 +474,7 @@ export async function signOffAndSwitch(actor: Actor, shopId: string, now = new D
   const later = await importsSince(shopId, c.reconciledAt);
   if (later.length) throw new AppError("conflict", "Something was imported after the last reconciliation. Reconcile again before switching");
   const waiver = o.staffWaiver?.trim().slice(0, 500) || null;
-  if (!stripePayoutsOn()) return switchShop(actor, shop, c, now, { model: "payroll" });
+  if (!stripePayoutsOn() || !(await tipToBarberAt(shopId))) return switchShop(actor, shop, c, now, { model: "payroll" });
   const team = (await shopOnboardingCounts([shopId], now)).get(shopId)!;
   if (team.notDone.length && !waiver) {
     const names = team.notDone.map((p) => p.name);

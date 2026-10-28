@@ -220,6 +220,35 @@ describe("reminders", () => {
     const [mail] = await messages("casey.tips@rayz.test");
     expect(mail.subject).toBe("Stripe needs more to pay your tips");
   });
+
+  it("where tips to barbers are off (the shop's kill switch or the brand flag), setup isn't offered: no invites, no reminders, no new account", async () => {
+    const coralville = await shop("coralville");
+    const [casey, jessica] = await Promise.all(["Casey", "Jessica"].map(who));
+    const off = (v: boolean) => m.db.db.update(s().shops).set({ tipToBarber: !v }).where(eq(s().shops.id, coralville.id));
+    await contact(jessica, "jessica.tips@rayz.test", null);
+    onTestFinished(async () => void (await contact(jessica, null, null)));
+    expect(await ob.sendOnboardingInvites({ actor, staffIds: [jessica], choice: "email", allowedShopIds: [coralville.id], now: at(24) })).toMatchObject({ sent: 1 });
+    await off(true);
+    onTestFinished(async () => void (await off(false)));
+    const roster = (await ob.onboardingRoster([coralville.id], at(30))).rows;
+    expect(roster.find((x) => x.staffId === jessica)).toMatchObject({ onboardingOpen: false });
+    // Casey also works where tips to barbers are on, so setup stays open for her.
+    expect(roster.find((x) => x.staffId === casey)).toMatchObject({ onboardingOpen: true });
+    const r = await ob.sendOnboardingInvites({ actor, staffIds: [jessica], choice: "email", allowedShopIds: [coralville.id], now: at(30) });
+    expect(r).toEqual({ sent: 0, skipped: [{ staffId: jessica, name: "Jessica", why: expect.stringMatching(/Tips to barbers are off/) }] });
+    await ob.onboardingReminderCron(at(30));
+    expect(await messages("jessica.tips@rayz.test")).toHaveLength(1);
+
+    await expect(accounts.ensureStaffAccount(jessica, actor)).rejects.toMatchObject({ code: "forbidden", details: { reason: "tip_to_barber_off" } });
+    await expect(accounts.staffOnboardingUrl(jessica, actor, "https://rayz.test")).rejects.toMatchObject({ details: { reason: "tip_to_barber_off" } });
+
+    await off(false);
+    expect(await accounts.payoutOnboardingOpen(jessica)).toBe(true);
+    process.env.FEATURE_TIP_TO_BARBER = "false";
+    onTestFinished(() => void delete process.env.FEATURE_TIP_TO_BARBER);
+    expect(await accounts.payoutOnboardingOpen(jessica)).toBe(false);
+    expect((await ob.onboardingRoster([coralville.id], at(24))).rows.every((x) => !x.onboardingOpen)).toBe(true);
+  });
 });
 
 describe("tips wait, never lost, until onboarding is done", () => {

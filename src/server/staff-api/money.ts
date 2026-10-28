@@ -28,8 +28,11 @@ import { commissionLines, loadCompensationSettings, setupRates, tipOverrides, ve
 import { AppError, forbidden } from "@/server/errors";
 import { connectMode } from "@/server/payments/connect";
 import {
+  NO_STRIPE_DASHBOARD,
+  PAYOUT_ONBOARDING_OFF,
   StaffPayoutAccount,
   accountDestination,
+  payoutOnboardingOpen,
   currentInstantFeeTerms,
   depositConsentView,
   externalAccountsView,
@@ -42,7 +45,6 @@ import {
   staffAccountSession,
   staffAccountState,
   staffAccountStatus,
-  staffDashboardUrl,
   staffOnboardingUrl,
 } from "@/server/tips/accounts";
 import { ledgerRows, myTips, shopTipConfigs, staffPayoutConfig } from "@/server/tips/ledger";
@@ -206,13 +208,14 @@ export async function bankingView(ctx: StaffAppContext, o: { refresh?: boolean }
   const shopRows = await myShops(me);
   if (o.refresh) await refreshStaffAccount(me).catch(() => null);
   const ids = shopRows.map((s) => s.id);
-  const [{ policy, byShop, policyOf }, acct, planned, waiting, cfg, consent] = await Promise.all([
+  const [{ policy, byShop, policyOf }, acct, planned, waiting, cfg, consent, open] = await Promise.all([
     shopTipConfigs(ids),
     staffAccount(me),
     tipOverrides([me]),
     waitingForSetup([me]),
     staffPayoutConfig(),
     depositConsentView(me),
+    payoutOnboardingOpen(me),
   ]);
   const state = staffAccountState(acct);
   const account = staffAccountStatus(acct);
@@ -235,6 +238,7 @@ export async function bankingView(ctx: StaffAppContext, o: { refresh?: boolean }
     checking: requirementLabels(acct?.requirementsPending ?? []),
     deadline: acct?.requirementsDeadline?.toISOString() ?? null,
     onboarding: { step, label: ONBOARDING_LABEL[step] },
+    payoutOnboarding: { available: open, reason: open ? null : PAYOUT_ONBOARDING_OFF },
     requirements: {
       due: keyed(acct?.requirementsDue ?? []),
       pending: keyed(acct?.requirementsPending ?? []),
@@ -291,7 +295,7 @@ const instantFeeText = () => {
 };
 
 /**
- * Stripe's hosted setup for their own Express account (identity, then a bank account and a debit
+ * Stripe's hosted setup for their own recipient account (identity, then a bank account and a debit
  * card for instant payouts), started or picked up where they left it, and also used to add whatever
  * Stripe asks for later. The app opens `url` in the browser; Stripe sends it back to
  * /staff-app/stripe. In the simulator there's no Stripe page and setup finishes at once (url null).
@@ -300,7 +304,7 @@ export async function onboardingLink(ctx: StaffAppContext) {
   const before = await staffAccount(ctx.staff.id);
   const step = onboardingStep(before, staffAccountState(before));
   const url = await staffOnboardingUrl(ctx.staff.id, ctx.actor, appBaseUrl(), "app");
-  if (!url) await simulateStaffOnboarding(ctx.staff.id, ctx.actor);
+  if (!url && !before?.detailsSubmitted) await simulateStaffOnboarding(ctx.staff.id, ctx.actor);
   return { url, step, banking: await bankingView(ctx) };
 }
 
@@ -311,7 +315,7 @@ export async function onboardingLink(ctx: StaffAppContext) {
  */
 export async function accountSession(ctx: StaffAppContext) {
   const session = await staffAccountSession(ctx.staff.id, ctx.actor);
-  if (!session) await simulateStaffOnboarding(ctx.staff.id, ctx.actor);
+  if (!session && !(await staffAccount(ctx.staff.id))?.detailsSubmitted) await simulateStaffOnboarding(ctx.staff.id, ctx.actor);
   return {
     session: session ? { ...session, publishableKey: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || null } : null,
     banking: await bankingView(ctx),
@@ -325,16 +329,14 @@ export async function myExternalAccounts(ctx: StaffAppContext, o: { refresh?: bo
   return { status: staffAccountState(acct), externalAccounts: externalAccountsView(acct), simulator: connectMode() === "simulator" };
 }
 
-/** Stripe's Express dashboard, where they change their card or bank. In the simulator it switches between a test card and a test bank. */
+/** Barbers have no Stripe Dashboard (ST-I9), so this is 409 outside the simulator, where it switches between a test card and a test bank. */
 export async function dashboardLink(ctx: StaffAppContext) {
   const a = await staffAccount(ctx.staff.id);
   if (a?.simulated && connectMode() === "simulator") {
     await simulateDestinationChange(ctx.staff.id, ctx.actor);
     return { url: null, banking: await bankingView(ctx) };
   }
-  const url = await staffDashboardUrl(ctx.staff.id);
-  if (!url) throw new AppError("conflict", "Stripe didn't open your payout dashboard. Finish setup first, or try again.");
-  return { url, banking: null };
+  throw new AppError("conflict", a?.detailsSubmitted ? NO_STRIPE_DASHBOARD : "Finish setting up Stripe payouts first.", { reason: "no_stripe_dashboard" });
 }
 
 export async function setMyDepositConsent(ctx: StaffAppContext, v: { agree: boolean; version?: string | null }) {

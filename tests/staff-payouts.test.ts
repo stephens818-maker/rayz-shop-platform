@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  ACCOUNT_DASHBOARDS,
   ACCOUNT_STATES,
   AFTER_PAYOUT_RULES,
   DEFAULT_STAFF_PAYOUT_SETTINGS,
+  ONBOARDING_MODES,
   REVERSAL_RULES,
+  SERVICE_AGREEMENTS,
+  TIP_REFUND_OVERFLOW,
   accountState,
   bankingStatusOf,
   canReceiveIn,
@@ -55,9 +59,22 @@ describe("staff payout settings", () => {
   });
 
   it("keeps good values and drops bad ones to the default", () => {
-    expect(staffPayoutSettings({ dashboard: "express", reversalWindowDays: 30, tipDate: "payment_date", taxCheckMonth: 12 })).toMatchObject({ dashboard: "express", reversalWindowDays: 30, tipDate: "payment_date", taxCheckMonth: 12 });
+    expect(staffPayoutSettings({ reversalWindowDays: 30, tipDate: "payment_date", taxCheckMonth: 12, tipRefundOverflow: "shop" })).toMatchObject({ reversalWindowDays: 30, tipDate: "payment_date", taxCheckMonth: 12, tipRefundOverflow: "shop" });
     expect(staffPayoutSettings({ dashboard: "full", reversalWindowDays: 500, owedVia: "twice", taxCheckMonth: 13, taxForms: "file", instantFeeAck: "yes", tipsOnPaycheck: "on" })).toEqual(DEFAULT_STAFF_PAYOUT_SETTINGS);
     expect(staffPayoutSettings({ reversalWindowDays: 2.5 }).reversalWindowDays).toBe(7);
+  });
+
+  it("fixes barber accounts to recipient, no Stripe dashboard and embedded onboarding: settings saved as Express, full or hosted read as the fixed values (ST-I9)", () => {
+    expect(ACCOUNT_DASHBOARDS).toEqual(["none"]);
+    expect(SERVICE_AGREEMENTS).toEqual(["recipient"]);
+    expect(ONBOARDING_MODES).toEqual(["embedded"]);
+    expect(staffPayoutSettings({ dashboard: "express", serviceAgreement: "full", onboarding: "hosted" })).toMatchObject({ dashboard: "none", serviceAgreement: "recipient", onboarding: "embedded", taxForms: "will_not_file" });
+  });
+
+  it("a refund bigger than the sale's portion is absorbed by the platform unless the brand picks the shop", () => {
+    expect(DEFAULT_STAFF_PAYOUT_SETTINGS.tipRefundOverflow).toBe("platform");
+    expect(TIP_REFUND_OVERFLOW).toEqual(["platform", "shop"]);
+    expect(staffPayoutSettings({ tipRefundOverflow: "barber" }).tipRefundOverflow).toBe("platform");
   });
 
   it("instant payouts are off by default (ST-I12)", () => {

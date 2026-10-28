@@ -4,23 +4,22 @@ import { useState } from "react";
 import { Button, Card, CardHeader, Field, Input, Notice, Select } from "@/components/ui";
 import { useSettingSync } from "@/components/brand-sync";
 import {
-  ACCOUNT_DASHBOARDS,
   AFTER_PAYOUT_LABEL,
   DASHBOARD_LABEL,
   ONBOARDING_LABEL,
-  ONBOARDING_MODES,
   OWED_VIA,
   OWED_VIA_LABEL,
   REVERSAL_RULES,
   REVERSAL_RULE_LABEL,
   REVERSAL_WINDOW_DAYS,
-  SERVICE_AGREEMENTS,
   SERVICE_AGREEMENT_LABEL,
   StaffPayoutSettings,
   TAX_FORMS_LABEL,
   TAX_FORM_FILING,
   TIP_DATE_LABEL,
   TIP_DATE_RULES,
+  TIP_REFUND_OVERFLOW,
+  TIP_REFUND_OVERFLOW_LABEL,
 } from "@/domain/staff-payouts";
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -55,9 +54,14 @@ export function StaffPayoutsForm({ settings, directPayouts }: { settings: StaffP
           </Notice>
         )}
         <div className="grid gap-3 sm:grid-cols-2">
-          <Choice label="Barber's Stripe dashboard" hint="None: setup, card and bank changes happen in the staff app." value={s.dashboard} options={ACCOUNT_DASHBOARDS} labels={DASHBOARD_LABEL} onChange={put("dashboard")} />
-          <Choice label="Stripe service agreement" value={s.serviceAgreement} options={SERVICE_AGREEMENTS} labels={SERVICE_AGREEMENT_LABEL} onChange={put("serviceAgreement")} />
-          <Choice label="Onboarding" value={s.onboarding} options={ONBOARDING_MODES} labels={ONBOARDING_LABEL} onChange={put("onboarding")} />
+          <Field label="Barber's Stripe account" hint="A Connect recipient account for every barber: no Stripe Dashboard login, and Ray'z pays Stripe's fees so Stripe sends no 1099.">
+            <p className="text-sm text-zinc-700">
+              {SERVICE_AGREEMENT_LABEL[s.serviceAgreement]} · Dashboard: {DASHBOARD_LABEL[s.dashboard]}
+            </p>
+          </Field>
+          <Field label="Payout setup" hint="Setup, card and bank changes happen in the staff app with Stripe's embedded components.">
+            <p className="text-sm text-zinc-700">{ONBOARDING_LABEL[s.onboarding]}</p>
+          </Field>
           <Choice label="Tips nobody can pay directly yet" value={s.owedVia} options={OWED_VIA} labels={OWED_VIA_LABEL} onChange={put("owedVia")} />
           <Choice label="A refund takes the tip back" hint="Otherwise the shop absorbs it. Disputes are always the shop's." value={s.reversalRule} options={REVERSAL_RULES} labels={REVERSAL_RULE_LABEL} onChange={put("reversalRule")} />
           {s.reversalRule === "full_refund_in_window" && (
@@ -74,6 +78,14 @@ export function StaffPayoutsForm({ settings, directPayouts }: { settings: StaffP
           <Field label="A tip refunded after it was paid" hint="Or once it's in a payout, or from an earlier pay period. Never taken back from the barber, so there's nothing to choose.">
             <p className="text-sm text-zinc-700">{AFTER_PAYOUT_LABEL.shop_cost}</p>
           </Field>
+          <Choice
+            label="A refund bigger than the sale's portion"
+            hint="Refunds come out of the shop's portion first. Past it, the tip is already with the barber and never taken back. Confirm with Charles."
+            value={s.tipRefundOverflow}
+            options={TIP_REFUND_OVERFLOW}
+            labels={TIP_REFUND_OVERFLOW_LABEL}
+            onChange={put("tipRefundOverflow")}
+          />
           <Choice label="A tip belongs to" value={s.tipDate} options={TIP_DATE_RULES} labels={TIP_DATE_LABEL} onChange={put("tipDate")} />
           <Choice label="Stripe tax forms (1099)" value={s.taxForms} options={TAX_FORM_FILING} labels={TAX_FORMS_LABEL} onChange={put("taxForms")} />
           <Field label="Yearly tax form check due in" hint="Before Stripe files for the year just ended; the brand is emailed weekly until it's recorded.">

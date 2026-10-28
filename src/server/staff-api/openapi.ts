@@ -229,7 +229,7 @@ const OPS: Op[] = [
     path: "/banking",
     tag: "Banking",
     summary:
-      "Their Stripe Connect Express account: the account id, status, onboarding step (start, resume, update or done), Stripe's requirements (due, pending, deadline), the default card or bank's type, name and last 4, and instant payouts (allowed, the card they go to, the fee and who pays it). waitingForSetup: tips approved for them and waiting until Stripe can pay them. Never a number.",
+      "Their Stripe Connect recipient account (no Stripe Dashboard login; set up with the embedded components): the account id, status, onboarding step (start, resume, update or done), Stripe's requirements (due, pending, deadline), the default card or bank's type, name and last 4, and instant payouts (allowed, the card they go to, the fee and who pays it). payoutOnboarding.available: false where tips to barbers are off at every shop they work at (FEATURE_TIP_TO_BARBER or each shop's switch); hide payout setup then (onboarding-link and account-session return 403 tip_to_barber_off until setup is done). waitingForSetup: tips approved for them and waiting until Stripe can pay them. Never a number.",
     permission: "tips.own",
     query: S.BankingQuery,
   },
@@ -247,10 +247,10 @@ const OPS: Op[] = [
     path: "/banking/account-session",
     tag: "Banking",
     summary:
-      "An Account Session for Stripe's embedded components (Connect.js): account_onboarding, account_management (change the card or bank: accounts have no Stripe Dashboard by default) and notification_banner. Returns clientSecret (short-lived; never store or log it), expiresAt, accountId and publishableKey. Call again when it expires. session is null in the simulator, where setup finishes at once. If embedded onboarding fails to load, fall back to /banking/onboarding-link.",
+      "An Account Session for Stripe's embedded components (Connect.js): account_onboarding, account_management (change the card or bank: accounts have no Stripe Dashboard) and notification_banner. Returns clientSecret (short-lived; never store or log it), expiresAt, accountId and publishableKey. Call again when it expires. session is null in the simulator, where setup finishes at once. If embedded onboarding fails to load, fall back to /banking/onboarding-link.",
     permission: "tips.own",
   },
-  { method: "post", path: "/banking/dashboard-link", tag: "Banking", summary: "A one-time sign-in to their Stripe Express dashboard, for accounts made with one (dashboard express). Accounts with no dashboard (the default) change the card or bank in the embedded account management (/banking/account-session); this returns 409 for them.", permission: "tips.own" },
+  { method: "post", path: "/banking/dashboard-link", tag: "Banking", summary: "Barbers' accounts have no Stripe Dashboard (recipient accounts, ST-I9), so this returns 409 outside the simulator: change the card or bank in the embedded account management (/banking/account-session). In the simulator it switches between a test card and a test bank.", permission: "tips.own" },
   {
     method: "put",
     path: "/banking/method",

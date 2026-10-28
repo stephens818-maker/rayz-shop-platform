@@ -9,6 +9,7 @@ import { formatDate, formatDateTime, todayLocal } from "@/lib/time";
 import { guardPage, reportShopIds } from "@/server/auth/staff";
 import { OnboardingRow, onboardingRoster } from "@/server/tips/onboarding";
 import { taxFormStatus } from "@/server/tips/accounts";
+import { flags } from "@/lib/flags";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { OnboardingTracker, TrackerRow } from "./client";
 
@@ -34,10 +35,10 @@ function remindersOf(r: OnboardingRow) {
 
 export default async function PayoutOnboardingPage({ searchParams }: { searchParams: Promise<{ shop?: string }> }) {
   const ctx = await guardPage("/admin/tips/onboarding");
-  if (!stripePayoutsOn())
+  if (!stripePayoutsOn() || !flags.tipToBarber())
     return (
       <Empty title="Payout onboarding is switched off">
-        Direct Stripe payouts are switched off on this deployment, so tips are paid through payroll (the iSolved export) and nobody has a payout account to set up.
+        Tips to barbers&rsquo; Stripe accounts are switched off on this deployment, so tips are paid through payroll (the iSolved export) and nobody has a payout account to set up.
       </Empty>
     );
   const sp = await searchParams;
@@ -50,7 +51,9 @@ export default async function PayoutOnboardingPage({ searchParams }: { searchPar
     db.select({ shopId: shopCutovers.shopId, end: shopCutovers.squireTipsEndOn }).from(shopCutovers).where(inArray(shopCutovers.shopId, shopIds)),
     ctx.brandWide ? taxFormStatus() : null,
   ]);
-  const { rows, counts, total, waitingCents } = roster;
+  const { counts, total, waitingCents } = roster;
+  const rows = roster.rows.filter((r) => r.onboardingOpen);
+  const hidden = roster.rows.length - rows.length;
   const label = shopIds.length === 1 ? (names.find((n) => n.id === shopIds[0])?.name ?? "This shop") : shopIds.length === ctx.shopIds.length ? "Every shop" : `${shopIds.length} shops`;
   const upcoming = ends
     .filter((e) => e.end && e.end >= today)
@@ -109,6 +112,11 @@ export default async function PayoutOnboardingPage({ searchParams }: { searchPar
         <Stat label={ONBOARDING_LABEL.not_invited} value={String(counts.not_invited)} tone={counts.not_invited ? "down" : undefined} />
         <Stat label="Tips waiting" value={formatCents(waitingCents)} hint="approved, sent once they finish" />
       </div>
+      {hidden > 0 && (
+        <Notice tone="blue">
+          {hidden} {hidden === 1 ? "person works" : "people work"} only at shops with tips to barbers turned off (Tip payout settings), so payout setup isn&rsquo;t offered to them: their tips are paid through payroll.
+        </Notice>
+      )}
       {upcoming.map((u) => (
         <Notice key={u.name} tone={u.left ? "amber" : "green"}>
           {u.name}: Squire stops paying tips on {formatDate(u.end, "EEEE, MMM d")}.{" "}

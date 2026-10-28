@@ -25,13 +25,13 @@ import { Actor, SYSTEM, audit } from "@/server/audit";
 import { AppError } from "@/server/errors";
 import { enqueueRaw } from "@/server/notifications/queue";
 import { connectMode } from "@/server/payments/connect";
-import { StaffPayoutAccount, staffAccountState } from "./accounts";
+import { StaffPayoutAccount, payoutOnboardingFor, staffAccountState } from "./accounts";
 import { tipPolicy } from "./ledger";
 import { assertStripePayouts, stripePayoutsOn } from "./payout-model";
 import { PAYOUT_SETUP_PATH, waitingForSetup } from "./payouts";
 
 /**
- * Staff payout onboarding: everyone sets up a new Stripe Express account under Ray'z (no Squire
+ * Staff payout onboarding: everyone sets up a new Stripe recipient account under Ray'z (no Squire
  * account carries over). Managers see where each person is, send invites by text or email in bulk,
  * and reminders follow until the person is done. Contact details never leave the server; the roster
  * says only whether there's an email or a phone to send to.
@@ -62,6 +62,8 @@ export interface OnboardingRow {
   hasPhone: boolean;
   status: BankingStatus;
   progress: OnboardingProgress;
+  /** Payout setup is offered to them: tips to barbers are on at one of their shops (payoutOnboardingFor). */
+  onboardingOpen: boolean;
   invite: { firstSentAt: Date; lastSentAt: Date; invites: number; reminders: number; channels: InviteChannel[]; remindersStoppedAt: Date | null } | null;
   nextReminderAt: Date | null;
   /** What Stripe still needs from them, in plain words. */
@@ -105,12 +107,13 @@ export async function onboardingRoster(shopIds: readonly string[], now = new Dat
     people.set(l.staffId, p);
   }
   const staffIds = [...people.keys()];
-  const [accounts, invites, waiting, cutovers, policies] = await Promise.all([
+  const [accounts, invites, waiting, cutovers, policies, open] = await Promise.all([
     staffIds.length ? db.select().from(staffPayoutAccounts).where(inArray(staffPayoutAccounts.staffId, staffIds)) : [],
     staffIds.length ? db.select().from(staffOnboardingInvites).where(inArray(staffOnboardingInvites.staffId, staffIds)) : [],
     waitingForSetup(staffIds),
     ids.length ? db.select({ shopId: shopCutovers.shopId, end: shopCutovers.squireTipsEndOn }).from(shopCutovers).where(inArray(shopCutovers.shopId, ids)) : [],
     policiesFor(links.map((l) => l.shopId)),
+    payoutOnboardingFor(staffIds),
   ]);
   const acct = new Map(accounts.map((a) => [a.staffId, a]));
   const inv = new Map(invites.map((i) => [i.staffId, i]));
@@ -130,6 +133,7 @@ export async function onboardingRoster(shopIds: readonly string[], now = new Dat
       hasPhone: p.hasPhone,
       status,
       progress,
+      onboardingOpen: open.has(staffId),
       invite: i && { firstSentAt: i.firstSentAt, lastSentAt: i.lastSentAt, invites: i.invites, reminders: i.reminders, channels: i.channels, remindersStoppedAt: i.remindersStoppedAt },
       nextReminderAt: i ? nextReminderAt(i, progress, policy) : null,
       needs: progress === "blocked" ? requirementLabels(a?.requirementsDue ?? []) : [],
@@ -211,6 +215,7 @@ export async function sendOnboardingInvites(o: { actor: Actor; staffIds: readonl
   for (const id of wanted) {
     const r = byId.get(id);
     if (!r) skipped.push({ staffId: id, name: null, why: "Not on the team at your locations" });
+    else if (!r.onboardingOpen) skipped.push({ staffId: id, name: r.name, why: "Tips to barbers are off at their shops, so their tips are paid through payroll" });
     else if (r.progress === "done") skipped.push({ staffId: id, name: r.name, why: "Already done" });
     else if (r.progress === "verifying") skipped.push({ staffId: id, name: r.name, why: "Finished; Stripe is verifying" });
     else if (r.invite && now.getTime() - r.invite.lastSentAt.getTime() < RESEND_GAP_MS) skipped.push({ staffId: id, name: r.name, why: "Invited a few minutes ago" });
@@ -276,7 +281,8 @@ export async function stopOnboardingReminders(actor: Actor, staffId: string, all
 /**
  * Reminders, from the notifications cron: to everyone invited who isn't done, every few days (the
  * brand's setting) up to the brand's limit, 9 AM to 7 PM. Someone done, gone or no longer on the
- * payroll side stops getting them; someone Stripe is verifying waits.
+ * payroll side stops getting them; someone Stripe is verifying waits, and so does anyone whose shops
+ * all have tips to barbers off (they pick up again when it's back on).
  */
 export async function onboardingReminderCron(now = new Date(), limit = 300) {
   const out = { sent: 0, stopped: 0, waiting: 0 };
@@ -289,11 +295,12 @@ export async function onboardingReminderCron(now = new Date(), limit = 300) {
     .limit(limit);
   if (!due.length) return out;
   const ids = due.map((d) => d.staffId);
-  const [people, accounts, contacts, waiting] = await Promise.all([
+  const [people, accounts, contacts, waiting, open] = await Promise.all([
     db.select({ id: staff.id, active: staff.active, kind: staff.kind }).from(staff).where(inArray(staff.id, ids)),
     db.select().from(staffPayoutAccounts).where(inArray(staffPayoutAccounts.staffId, ids)),
     contactsOf(ids),
     waitingForSetup(ids),
+    payoutOnboardingFor(ids),
   ]);
   const who = new Map(people.map((p) => [p.id, p]));
   const acct = new Map(accounts.map((a) => [a.staffId, a]));
@@ -314,7 +321,7 @@ export async function onboardingReminderCron(now = new Date(), limit = 300) {
       await stop(inv.staffId);
       continue;
     }
-    if (progress === "verifying") {
+    if (progress === "verifying" || !open.has(inv.staffId)) {
       out.waiting++;
       continue;
     }

@@ -1,14 +1,16 @@
 import type { Metadata } from "next";
+import { flags } from "@/lib/flags";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 
 export const metadata: Metadata = { title: "Set up your Ray'z tip payouts", robots: { index: false } };
 
 /**
  * Where payout setup invites and reminders point. It carries nothing and reads nothing: it opens the
- * Ray'z Staff app on its banking screen, or My banking on the web, both behind sign-in.
+ * Ray'z Staff app on its banking screen, or My banking on the web, both behind sign-in, where the
+ * per-shop tips-to-barbers switch decides whether setup is offered.
  */
 export default function Page() {
-  if (!stripePayoutsOn())
+  if (!stripePayoutsOn() || !flags.tipToBarber())
     return (
       <main className="mx-auto max-w-md px-4 py-16">
         <div className="rounded-xl bg-white p-6 ring-1 ring-zinc-200">
@@ -24,7 +26,7 @@ export default function Page() {
         <h1 className="text-xl font-bold">Set up your Ray&rsquo;z tip payouts</h1>
         <p className="mt-2 text-sm text-zinc-600">
           Everyone sets up a new Stripe payout account under Ray&rsquo;z, even if you had one with Squire. It takes about 5 minutes: your ID, the bank account for standard payouts,
-          and a debit card if you want instant payouts. Stripe collects them on its own secure page; Ray&rsquo;z never sees your bank or card numbers.
+          and a debit card if you want instant payouts. Stripe collects them in its own secure forms inside the app; Ray&rsquo;z never sees your bank or card numbers, and there&rsquo;s no separate Stripe login.
         </p>
         <p className="mt-2 text-sm text-zinc-600">Tips approved for you before you finish wait for you, and go out on their own as soon as you&rsquo;re done.</p>
         <p className="mt-2 text-sm text-zinc-600">

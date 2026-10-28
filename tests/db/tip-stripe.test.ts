@@ -515,6 +515,25 @@ describe("recipient accounts and no 1099s for employees (their tips are W-2 wage
     });
   });
 
+  it("a brand setting saved as Express, full or hosted still makes a recipient account with no dashboard; barbers never get a Stripe login link", async () => {
+    const [{ staffPayouts: was }] = await m.db.db.select({ staffPayouts: s().brandSettings.staffPayouts }).from(s().brandSettings);
+    await m.db.db.update(s().brandSettings).set({ staffPayouts: { ...was, dashboard: "express", serviceAgreement: "full", onboarding: "hosted" } });
+    onTestFinished(async () => void (await m.db.db.update(s().brandSettings).set({ staffPayouts: was })));
+    const { staffId } = await person("rock-island", "Mercedez");
+    fakeStripe(true);
+    calls.length = 0;
+    await accounts.ensureStaffAccount(staffId, actor);
+    expect(calls.find((c) => c.op === "account")!.params).toMatchObject({ controller: { stripe_dashboard: { type: "none" } }, tos_acceptance: { service_agreement: "recipient" } });
+    expect(accounts.staffAccountParams({ email: null }, staffId)).toMatchObject({ controller: { stripe_dashboard: { type: "none" }, fees: { payer: "application" } } });
+    expect(accounts).not.toHaveProperty("staffDashboardUrl");
+
+    const ctx = { staff: { id: staffId }, actor } as unknown as Parameters<typeof import("@/server/staff-api/money").dashboardLink>[0];
+    const money = await import("@/server/staff-api/money");
+    await expect(money.dashboardLink(ctx)).rejects.toMatchObject({ code: "conflict", details: { reason: "no_stripe_dashboard" } });
+    await m.db.db.update(s().staffPayoutAccounts).set({ detailsSubmitted: true }).where(eq(s().staffPayoutAccounts.staffId, staffId));
+    await expect(money.dashboardLink(ctx)).rejects.toThrow(accounts.NO_STRIPE_DASHBOARD);
+  });
+
   it("an account Stripe says pays its own fees has its payouts held, not sent; the Dashboard exclusions list every real account", async () => {
     const { shop, staffId } = await person("moline", "Sara");
     const acct = "acct_fake_sara";

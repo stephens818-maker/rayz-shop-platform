@@ -5,6 +5,7 @@ import { ThemeController, ThemeSwitch } from "@/components/theme";
 import { Toaster } from "@/components/toast";
 import { Logo } from "@/components/ui";
 import { STRIPE_PAYOUT_PAGES, navFor, reportsFor } from "@/domain/navigation";
+import { flags } from "@/lib/flags";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { groupReports } from "@/domain/report-groups";
 import { GO_TO } from "@/domain/shortcuts";
@@ -40,7 +41,7 @@ export default async function AdminLayout({
   const address = here
     ? [here.address, here.city].filter(Boolean).join(", ")
     : "";
-  const sections = navFor(ctx.permissions, { hide: stripePayoutsOn() ? [] : STRIPE_PAYOUT_PAGES });
+  const sections = navFor(ctx.permissions, { hide: stripePayoutsOn() && flags.tipToBarber() ? [] : STRIPE_PAYOUT_PAGES });
   const hrefs = new Set(sections.flatMap((s) => s.items.map((i) => i.href)));
   const reports = groupReports(reportsFor(ctx.permissions)).flatMap((g) => g.reports.map((r) => ({ label: r.label, href: r.href, group: g.label })));
   const findClients = ctx.staff.kind !== "shop";

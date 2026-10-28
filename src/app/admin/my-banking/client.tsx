@@ -77,7 +77,19 @@ export function PayoutChoice(p: {
   );
 }
 
-export function StripeSetup({ status, simulator, hasDestination }: { status: BankingStatus; simulator: boolean; hasDestination: boolean }) {
+export function StripeSetup({
+  status,
+  simulator,
+  hasDestination,
+  canSetup,
+  manageHint,
+}: {
+  status: BankingStatus;
+  simulator: boolean;
+  hasDestination: boolean;
+  canSetup: boolean;
+  manageHint: string;
+}) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -93,12 +105,12 @@ export function StripeSetup({ status, simulator, hasDestination }: { status: Ban
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2">
-        {status !== "ready" && (
+        {status !== "ready" && canSetup && (
           <Button size="sm" disabled={pending} onClick={() => go(startStripeSetupAction)}>
             {setupLabel}
           </Button>
         )}
-        {status !== "not_set_up" && (
+        {status !== "not_set_up" && simulator && (
           <Button size="sm" variant="secondary" disabled={pending} onClick={() => go(changeDestinationAction)}>
             {hasDestination ? "Change my card or bank" : "Add a card or bank"}
           </Button>
@@ -109,9 +121,10 @@ export function StripeSetup({ status, simulator, hasDestination }: { status: Ban
           </Button>
         )}
       </div>
+      {status !== "not_set_up" && !simulator && <p className="text-xs text-zinc-500">{manageHint}</p>}
       {simulator && (
         <p className="text-xs text-zinc-500">
-          Simulator: setup finishes at once with Stripe&rsquo;s test Visa debit card, and changing switches between it and a test bank account. With Stripe keys these open Stripe&rsquo;s own pages.
+          Simulator: setup finishes at once with Stripe&rsquo;s test Visa debit card, and changing switches between it and a test bank account. With Stripe keys, setup runs in the staff app with Stripe&rsquo;s page as the fallback.
         </p>
       )}
       {error && <Notice tone="red">{error}</Notice>}

@@ -41,6 +41,9 @@ import {
   currentInstantFeeTerms,
   depositConsentView,
   externalAccountsView,
+  NO_STRIPE_DASHBOARD,
+  PAYOUT_ONBOARDING_OFF,
+  payoutOnboardingOpen,
   refreshStaffAccount,
   staffAccount,
   staffAccountState,
@@ -54,7 +57,7 @@ export const metadata: Metadata = { title: "My banking" };
 
 const EXPLAIN: Record<BankingStatus, string> = {
   not_set_up:
-    "Add your own debit card or bank account on Stripe's secure page to have your tips paid by Stripe.",
+    "Add your own debit card or bank account in the staff app (Stripe's secure forms) to have your tips paid by Stripe.",
   pending_verification:
     "Stripe has your details and is checking them. That usually takes minutes, sometimes a day or two. Your tips keep adding up and are paid once it's done.",
   ready: "Stripe can pay your tips to the account below.",
@@ -142,6 +145,7 @@ export default async function MyBankingPage({
     waitingByStaff,
     cfg,
     consent,
+    onboardingOpen,
   ] = await Promise.all([
     shopTipConfigs(shopRows.map((s) => s.id)),
     staffAccount(me),
@@ -150,7 +154,9 @@ export default async function MyBankingPage({
     waitingForSetup([me]),
     staffPayoutConfig(),
     depositConsentView(me),
+    payoutOnboardingOpen(me),
   ]);
+  const canSetup = onboardingOpen || !!acct?.detailsSubmitted;
   const feeTerms = currentInstantFeeTerms();
   const waiting = waitingByStaff.get(me);
   const status = staffAccountState(acct);
@@ -203,7 +209,10 @@ export default async function MyBankingPage({
           Stripe can pay you.
         </Notice>
       )}
-      {status === "not_set_up" && paidByStripe && (
+      {status === "not_set_up" && !canSetup && policy.methods.includes("stripe") && (
+        <Notice tone="blue">{PAYOUT_ONBOARDING_OFF}</Notice>
+      )}
+      {status === "not_set_up" && paidByStripe && canSetup && (
         <Notice tone="blue">
           Everyone sets up a new Stripe payout account under Ray&rsquo;z, even
           if you had one with Squire. It takes about 5 minutes.
@@ -313,6 +322,8 @@ export default async function MyBankingPage({
               status={status}
               simulator={simulator}
               hasDestination={!!dest}
+              canSetup={canSetup}
+              manageHint={NO_STRIPE_DASHBOARD}
             />
           </div>
         </Card>

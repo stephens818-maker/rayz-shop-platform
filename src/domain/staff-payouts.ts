@@ -16,14 +16,20 @@ import type { InstantFeeRate } from "./tips";
 
 // ───────────────────────────── Settings ─────────────────────────────
 
-/** Who sees a Stripe Dashboard for the barber's account: none (embedded components in the app) or Stripe Express. */
-export const ACCOUNT_DASHBOARDS = ["none", "express"] as const;
+/**
+ * Every barber gets a Connect recipient account (ST-I9, Oct 28): controller.stripe_dashboard.type
+ * "none", so no Stripe Dashboard login (never Express), set up with Stripe's embedded components in
+ * the app, the platform paying Stripe's fees so 1099 tax reporting stays off. These are fixed, not
+ * choices: a stored "express", "full" or "hosted" from before reads as the fixed value. Stripe's
+ * hosted page (an Account Link) stays only as the fallback where the embedded component can't load.
+ */
+export const ACCOUNT_DASHBOARDS = ["none"] as const;
 export type AccountDashboard = (typeof ACCOUNT_DASHBOARDS)[number];
-/** Stripe's service agreement: recipient (receives transfers only, no card payments) or full. */
-export const SERVICE_AGREEMENTS = ["recipient", "full"] as const;
+/** Stripe's recipient service agreement: receives transfers only, no card payments. */
+export const SERVICE_AGREEMENTS = ["recipient"] as const;
 export type ServiceAgreement = (typeof SERVICE_AGREEMENTS)[number];
-/** Onboarding inside the app (Stripe's embedded component) or on Stripe's hosted page (an Account Link). */
-export const ONBOARDING_MODES = ["embedded", "hosted"] as const;
+/** Onboarding inside the app with Stripe's embedded component, with Stripe's hosted page as the fallback. */
+export const ONBOARDING_MODES = ["embedded"] as const;
 export type OnboardingMode = (typeof ONBOARDING_MODES)[number];
 /** Tips of a barber who can't be paid directly: owed, then paid through payroll at the pay period cutoff; or held until their account is active. */
 export const OWED_VIA = ["payroll", "hold"] as const;
@@ -38,6 +44,13 @@ export type ReversalRule = (typeof REVERSAL_RULES)[number];
  */
 export const AFTER_PAYOUT_RULES = ["shop_cost"] as const;
 export type AfterPayoutRule = (typeof AFTER_PAYOUT_RULES)[number];
+/**
+ * A refund (or lost dispute) bigger than the sale's portion of the charge, once its tip is with the
+ * barber: tips are never clawed back, so the tip part is either the platform's loss, logged
+ * (platform), or the shop's, taken from its next transfers (shop). Confirm with Charles.
+ */
+export const TIP_REFUND_OVERFLOW = ["platform", "shop"] as const;
+export type TipRefundOverflow = (typeof TIP_REFUND_OVERFLOW)[number];
 /** Which day a tip belongs to: the sale's business date, or the payment's (a tip added after the sale). */
 export const TIP_DATE_RULES = ["sale_date", "payment_date"] as const;
 export type TipDateRule = (typeof TIP_DATE_RULES)[number];
@@ -56,6 +69,8 @@ export interface StaffPayoutSettings {
   /** A full refund within this many days of the sale takes the tip back; later, the shop absorbs it. */
   reversalWindowDays: number;
   afterPayoutRefunds: AfterPayoutRule;
+  /** Who carries the tip part of a refund or lost dispute the shop's transfer can't cover. Confirm with Charles. */
+  tipRefundOverflow: TipRefundOverflow;
   tipDate: TipDateRule;
   taxForms: TaxFormFiling;
   /** The month (1 to 12) the yearly tax form check comes due, before Stripe files for the year just ended. */
@@ -77,6 +92,7 @@ export const DEFAULT_STAFF_PAYOUT_SETTINGS: StaffPayoutSettings = {
   reversalRule: "never",
   reversalWindowDays: 7,
   afterPayoutRefunds: "shop_cost",
+  tipRefundOverflow: "platform",
   tipDate: "sale_date",
   taxForms: "will_not_file",
   taxCheckMonth: 1,
@@ -98,6 +114,7 @@ export function staffPayoutSettings(raw: unknown): StaffPayoutSettings {
     reversalRule: pick(REVERSAL_RULES, r.reversalRule, d.reversalRule),
     reversalWindowDays: int(r.reversalWindowDays, REVERSAL_WINDOW_DAYS.min, REVERSAL_WINDOW_DAYS.max, d.reversalWindowDays),
     afterPayoutRefunds: pick(AFTER_PAYOUT_RULES, r.afterPayoutRefunds, d.afterPayoutRefunds),
+    tipRefundOverflow: pick(TIP_REFUND_OVERFLOW, r.tipRefundOverflow, d.tipRefundOverflow),
     tipDate: pick(TIP_DATE_RULES, r.tipDate, d.tipDate),
     taxForms: pick(TAX_FORM_FILING, r.taxForms, d.taxForms),
     taxCheckMonth: int(r.taxCheckMonth, 1, 12, d.taxCheckMonth),
@@ -106,9 +123,13 @@ export function staffPayoutSettings(raw: unknown): StaffPayoutSettings {
   };
 }
 
-export const DASHBOARD_LABEL: Record<AccountDashboard, string> = { none: "None: everything in the Ray'z app", express: "Stripe Express dashboard" };
-export const SERVICE_AGREEMENT_LABEL: Record<ServiceAgreement, string> = { recipient: "Recipient (receives tips only)", full: "Full" };
-export const ONBOARDING_LABEL: Record<OnboardingMode, string> = { embedded: "In the app (embedded), with Stripe's page as the fallback", hosted: "Stripe's hosted page" };
+export const DASHBOARD_LABEL: Record<AccountDashboard, string> = { none: "None: no Stripe login, everything in the Ray'z app" };
+export const SERVICE_AGREEMENT_LABEL: Record<ServiceAgreement, string> = { recipient: "Recipient (receives tips only)" };
+export const ONBOARDING_LABEL: Record<OnboardingMode, string> = { embedded: "In the app (embedded), with Stripe's page as the fallback" };
+export const TIP_REFUND_OVERFLOW_LABEL: Record<TipRefundOverflow, string> = {
+  platform: "The platform absorbs it, logged as a platform loss",
+  shop: "The shop: taken from its next transfers",
+};
 export const OWED_VIA_LABEL: Record<OwedVia, string> = {
   payroll: "Owed, then paid through payroll at the pay period cutoff",
   hold: "Held until their Stripe account is active",

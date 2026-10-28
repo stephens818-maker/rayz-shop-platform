@@ -599,6 +599,36 @@ describe("tips, earnings, payouts and banking", () => {
     expect(stored.some((v) => /^\d{8,}$/.test(v))).toBe(false);
   });
 
+  it("offers payout setup only where tips to barbers are on: the brand flag and the shop's kill switch both hide it; a finished account can still be updated", async () => {
+    const t = await login("makenna@rayz.test");
+    await m.db.db.delete(S().staffPayoutAccounts).where(eq(S().staffPayoutAccounts.staffId, ids.makenna));
+    expect((await call("GET", "banking", { token: t.accessToken })).json.payoutOnboarding).toEqual({ available: true, reason: null });
+
+    const mine = (await m.db.db.select({ shopId: S().staffShops.shopId }).from(S().staffShops).where(eq(S().staffShops.staffId, ids.makenna))).map((r) => r.shopId);
+    await m.db.db.update(S().shops).set({ tipToBarber: false }).where(m.drizzle.inArray(S().shops.id, mine));
+    onTestFinished(async () => void (await m.db.db.update(S().shops).set({ tipToBarber: true }).where(m.drizzle.inArray(S().shops.id, mine))));
+    const off = (await call("GET", "banking", { token: t.accessToken })).json;
+    expect(off.payoutOnboarding).toEqual({ available: false, reason: expect.stringMatching(/tips to barbers are turned off/) });
+    for (const p of ["banking/onboarding-link", "banking/account-session"]) {
+      const r = await call("POST", p, { token: t.accessToken });
+      expect(r.status, p).toBe(403);
+      expect(r.json.error.details, p).toEqual({ reason: "tip_to_barber_off" });
+    }
+    expect(await m.db.db.select().from(S().staffPayoutAccounts).where(eq(S().staffPayoutAccounts.staffId, ids.makenna))).toEqual([]);
+
+    await m.db.db.update(S().shops).set({ tipToBarber: true }).where(m.drizzle.inArray(S().shops.id, mine));
+    process.env.FEATURE_TIP_TO_BARBER = "false";
+    onTestFinished(() => void delete process.env.FEATURE_TIP_TO_BARBER);
+    expect((await call("GET", "banking", { token: t.accessToken })).json.payoutOnboarding.available).toBe(false);
+    expect((await call("POST", "banking/onboarding-link", { token: t.accessToken })).status).toBe(403);
+
+    delete process.env.FEATURE_TIP_TO_BARBER;
+    expect((await call("POST", "banking/onboarding-link", { token: t.accessToken })).json.banking.onboarding.step).toBe("done");
+    process.env.FEATURE_TIP_TO_BARBER = "false";
+    const kept = await call("POST", "banking/onboarding-link", { token: t.accessToken });
+    expect(kept.status, JSON.stringify(kept.json)).toBe(200);
+  });
+
   it("agrees to and withdraws from Stripe tip deposits with the wording shown (ST-C17); tips on the paycheck isn't offered by default", async () => {
     const t = await login("makenna@rayz.test");
     const before = (await call("GET", "banking", { token: t.accessToken })).json;
