@@ -9,9 +9,9 @@ import { parseSquireCommissions, squireCentiHours, squireCents, type SquireStaff
 const staff: SquireStaff[] = [
   { id: "a", label: "Alex", first: "Alex", last: "Barber", squireName: "Alexander B", atShop: true },
   { id: "b", label: "Blake", first: "Blake", last: "Cutter", squireName: null, atShop: true },
-  { id: "c", label: "Casey", first: "Casey", last: "Fade", squireName: null, atShop: false },
-  { id: "d", label: "Drew S", first: "Drew", last: "Shears", squireName: null, atShop: true },
-  { id: "e", label: "Drew T", first: "Drew", last: "Trim", squireName: null, atShop: true },
+  { id: "c", label: "Quinn", first: "Quinn", last: "Fade", squireName: null, atShop: false },
+  { id: "d", label: "Rowan S", first: "Rowan", last: "Shears", squireName: null, atShop: true },
+  { id: "e", label: "Rowan T", first: "Rowan", last: "Trim", squireName: null, atShop: true },
 ];
 
 const HEAD = "Name,Hours Worked,Personnel ID,Card,Cash,GC Used,GC Bought,Card Fees (on Total),Commission Splits Fee,Total,Commission %,Due to Barbers,Squire Tips,POS Tips,Gift Card Tips,Tips,Total to Barber,Tax,Due to Shop";
@@ -20,15 +20,15 @@ const row = (name: string, hours: string, total: string, tips: string, tax: stri
 const report = [
   "Commissions report",
   HEAD,
-  row("Alexander B", "69.53", "$3,665.23", "$955.00", "$109.96"),
+  row("Alexander B", "61.50", "$3,456.78", "$812.34", "$98.76"),
   row("Blake Cutter", "41.25", "1,200.00", "120.50", "36.00"),
   row("Morgan Gone", "0", "0", "0", "0"),
-  row("Casey", "0", "0", "0", "0"),
-  "Totals,110.78,,,,,,,,4865.23,,,,,,1075.50,,145.96,",
+  row("Quinn", "0", "0", "0", "0"),
+  "Totals,102.75,,,,,,,,4656.78,,,,,,932.84,,134.76,",
   "",
   "Products",
   HEAD,
-  row("Alexander B", "69.53", "70.98", "0", "7.10"),
+  row("Alexander B", "61.50", "70.98", "0", "7.10"),
   row("Unassigned sales", "0", "45.00", "0", "4.50"),
 ].join("\n");
 
@@ -39,7 +39,7 @@ describe("Squire Commissions report import", () => {
     expect(squireCents("-")).toBe(0);
     expect(squireCents("")).toBe(0);
     expect(squireCents("abc")).toBeNull();
-    expect(squireCentiHours("69.53")).toBe(6953);
+    expect(squireCentiHours("61.53")).toBe(6153);
     expect(squireCentiHours("69:30")).toBe(6950);
     expect(squireCentiHours("x")).toBeNull();
   });
@@ -48,10 +48,10 @@ describe("Squire Commissions report import", () => {
     const r = parseSquireCommissions(report, { staff });
     expect(r.errors).toEqual([]);
     expect(r.rows).toEqual([
-      { staffId: "a", squireName: "Alexander B", workedCenti: 6953, otCenti: 0, ptoCenti: 0, trainingCenti: 0, serviceCents: 366523, productCents: 7098, tipsCents: 95500, salesTaxCents: 11706 },
+      { staffId: "a", squireName: "Alexander B", workedCenti: 6150, otCenti: 0, ptoCenti: 0, trainingCenti: 0, serviceCents: 345678, productCents: 7098, tipsCents: 81234, salesTaxCents: 10586 },
       { staffId: "b", squireName: "Blake Cutter", workedCenti: 4125, otCenti: 0, ptoCenti: 0, trainingCenti: 0, serviceCents: 120000, productCents: 0, tipsCents: 12050, salesTaxCents: 3600 },
     ]);
-    expect(r.totals).toEqual({ workedCenti: 11078, serviceCents: 486523, productCents: 7098, tipsCents: 107550, salesTaxCents: 15306, unassignedServiceCents: 0, unassignedProductCents: 4500 });
+    expect(r.totals).toEqual({ workedCenti: 10275, serviceCents: 465678, productCents: 7098, tipsCents: 93284, salesTaxCents: 14186, unassignedServiceCents: 0, unassignedProductCents: 4500 });
     expect(r.notes).toEqual(["Morgan Gone: no figures on the service report, and no match here; left out."]);
   });
 
@@ -59,8 +59,8 @@ describe("Squire Commissions report import", () => {
     const r = parseSquireCommissions([HEAD, row("Alex Barber", "10", "100", "0", "0"), row("blake", "5", "50", "0", "0")].join("\n"), { staff });
     expect(r.errors).toEqual([]);
     expect(r.rows.map((x) => x.staffId)).toEqual(["a", "b"]);
-    const amb = parseSquireCommissions([HEAD, row("Drew", "10", "100", "0", "0")].join("\n"), { staff });
-    expect(amb.errors).toEqual([expect.stringMatching(/Line 2: "Drew" matches more than one person by first name at this shop \(Drew S, Drew T\)/)]);
+    const amb = parseSquireCommissions([HEAD, row("Rowan", "10", "100", "0", "0")].join("\n"), { staff });
+    expect(amb.errors).toEqual([expect.stringMatching(/Line 2: "Rowan" matches more than one person by first name at this shop \(Rowan S, Rowan T\)/)]);
     expect(parseSquireCommissions([HEAD, row("Morgan Gone", "10", "100", "0", "0")].join("\n"), { staff }).errors).toEqual([expect.stringMatching(/no one here matches "Morgan Gone"/)]);
   });
 
