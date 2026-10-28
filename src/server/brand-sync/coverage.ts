@@ -144,6 +144,8 @@ export const TABLES: Record<string, Coverage> = {
   payroll_squire_inputs: is("record", "One person's figures from that report"),
   payroll_rates: is("person", "One person's pay rates"),
   payroll_runs: REC,
+  platform_loss_recoveries: PAY,
+  platform_losses: PAY,
   po_receipt_lines: REC,
   po_receipts: REC,
   products: sync(["product"], "Column by column"),
