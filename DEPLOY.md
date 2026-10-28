@@ -413,6 +413,11 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
     - **Mark sent** (Reports → Payroll → iSolved export) now locks an approved period that isn't locked yet. Approve and lock still works as before.
     - `/api/staff/v1/me/earnings` adds `taxNote` (additive).
     - Launch checklist, done: the CPA approved the manual tip-reporting process (Stripe-paid card tips go into payroll through the per-period export and the iSolved upload). The CPA suggested it (Charles, Oct 22).
+60. iSolved's Payroll Run Schedule as the official pay periods (Charles, Oct 28; migration `core_0149_pay_schedule`). It's additive, and nobody's access changes.
+    - The migration adds `pay_schedule_periods` with iSolved's 243 periods from `drizzle/seed/isolved-pay-calendar.csv`: pay groups B–G and LeClaire through 12/25/2027, and Dubuque through 10/2/2027. It also adds `pay_groups.schedule_synced_at`. A check constraint and an overlap trigger keep each group's periods 14 days, Sun–Sat and non-overlapping.
+    - The first time payroll opens after the deploy, every pay group takes the schedule. Its period dates get iSolved's numbers, run (due) dates and check dates, with the 12/13/2026 holiday shift (due Tue 12/29, check Thu 12/31, still 2026 period 27). Utica, Kimberly, Silvis and Coralville get codes D–G if they have none. Locked periods keep their dates. Check Payroll → Setup → **iSolved pay schedule** and **Pay period dates** against iSolved.
+    - A period after a pay group's schedule ends is flagged on the Payroll Report, not blocked. Before Dubuque's period starting 10/3/2027, extend its schedule there (an admin with Run payroll), then move any holiday dates once iSolved posts them.
+    - The next free migration is `core_0150`.
 
 ## Launch day: every surface at once, at the pilot shop
 

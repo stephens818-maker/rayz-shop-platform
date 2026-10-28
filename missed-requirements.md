@@ -1243,6 +1243,18 @@ Tests: `tests/db/payroll-detail-send.test.ts`; gross only in `tests/db/my-earnin
 - [x] 5. Card tips go to barbers through Stripe, and card sales to the shop's connected account, both unchanged. Tip totals stay in the iSolved file's `E_Cash Tips Recd_Dollars` column.
 - [x] **Launch checklist:** CPA to confirm manual tip-reporting process (Stripe-paid card tips reported via the iSolved upload). Done: the CPA approved it and suggested it (Charles, Oct 22, 11:09 PM CT, relayed by the Rayz App builder).
 
+## 60. iSolved's Payroll Run Schedule as the official pay periods (Charles, Oct 28)
+
+Tests: `tests/isolved-pay-calendar.test.ts` (the file's validation) and `tests/db/pay-schedule.test.ts`.
+
+- [x] The 243 periods of `drizzle/seed/isolved-pay-calendar.csv` are seed data (migration `core_0149_pay_schedule`, `pay_schedule_periods`), loaded as each pay group's official pay periods: iSolved's number, run (due) date and check date, written to its pay period dates.
+- [x] B Rock Island, C Moline, D Utica, E Kimberly, F Silvis, G Coralville and LeClaire share one calendar, from 2026 period 23 (10/18–10/31, check 11/6) through 2027 period 26. Dubuque has the same dates numbered its own way, through the period ending 10/2/2027. Codes D–G are taken from the file.
+- [x] The holiday shift: 2026 period 27 runs Tue 12/29 and pays Thu 12/31, and it stays 2026's period 27.
+- [x] The payroll date-range presets and defaults (this and last pay period, the picker by number) are these periods.
+- [x] Validation: every period is 14 days, Sun–Sat, with no gaps or overlaps per group. This is checked in a test, by a check constraint and by an overlap trigger.
+- [x] Periods past the end of the file: flagged on the Payroll Report, and extended by an admin on Payroll setup (at most 27 at a time, audited).
+- [ ] **Ask Charles:** LeClaire's and Dubuque's iSolved pay group codes (the file shows none).
+
 ## Deferred by decision
 
 - I10 is decided: separate charges and transfers (section 5), with tips to barbers' recipient accounts on (`FEATURE_TIP_TO_BARBER`, the CPA approved it on 2026-10-28), turned off per shop with the brand setting `tip_to_barber` (section 50). Live tip transfers also need `MONEY_MOVEMENT_LIVE`.

@@ -180,7 +180,7 @@ Ray'z Inc. is one legal entity (one FEIN). In iSolved each shop is its own pay g
 | Field | Meaning |
 | --- | --- |
 | Label | How the pay group is named on screen and in the file name. Defaults to the shop name. |
-| iSolved pay group code | iSolved's letter code for the pay group (B is Rock Island, C is Moline), 1 to 4 letters or digits, one shop per code. Shown on the Payroll Report and usable in file names. New pay groups get B and C by shop name; the rest are entered on Payroll → Setup. |
+| iSolved pay group code | iSolved's letter code for the pay group (B is Rock Island, C is Moline), 1 to 4 letters or digits, one shop per code. Shown on the Payroll Report and usable in file names. New pay groups get B and C by shop name, and D–G from iSolved's schedule; the rest (LeClaire, Dubuque) are entered on Payroll → Setup. |
 | Legal entity | The FEIN it belongs to, for §3.2. Default "Ray'z Inc." |
 | Export tab | The workbook tab whose layout and formatting the file copies (§6.2). |
 | Anchor start, anchor number | A known period's first Sunday and its number |
@@ -189,16 +189,22 @@ Ray'z Inc. is one legal entity (one FEIN). In iSolved each shop is its own pay g
 | Submit-by offset | Days from the period's last day to iSolved's submission deadline (4 = the Wednesday after). 0 up to the check offset. |
 | Numbers reset yearly | The first check date in a new year is period 1 |
 
-Current calendars (verified in iSolved, read-only):
+Current calendars (iSolved's Payroll Run Schedule, `drizzle/seed/isolved-pay-calendar.csv`, 243 periods):
 
 | Pay groups | Calendar |
 | --- | --- |
-| Rock Island, Moline, Utica, Kimberly, Silvis, Coralville, LeClaire | Bi-weekly, Sun–Sat, due in iSolved the following Wednesday, check the following Friday. Period 21 was 9/20–10/3/2026 (check 10/9); period 22 is 10/4–10/17 (due 10/21, check 10/23); period 23 is 10/18–10/31 (due 11/4, check 11/6). |
-| Dubuque | Its own numbering. Period 01 was 10/4–10/17/2026 (check 10/23). Open: iSolved now gives 10/4–10/17 as period 22; until that's confirmed for Dubuque, its numbering is unchanged. |
+| B Rock Island, C Moline, D Utica, E Kimberly, F Silvis, G Coralville, LeClaire | Bi-weekly, Sun–Sat, run (due in iSolved) the following Wednesday, check the following Friday. Scheduled from 2026 period 23 (10/18–10/31, due 11/4, check 11/6) through 2027 period 26 (12/12–12/25/2027, check 12/31). Period 22 was 10/4–10/17 (check 10/23). |
+| Dubuque | The same dates with its own numbering: period 1 is 10/4–10/17/2026 (check 10/23), so 10/18–10/31 is its period 2. Scheduled only through period 20 of 2027 (9/19–10/2/2027). |
+
+One holiday shift: 2026 period 27 (12/13–12/26; Dubuque's 6) runs Tue 12/29 and pays Thu 12/31 instead of Wed 12/30 and Fri 1/1.
+
+**iSolved's schedule** (`pay_schedule_periods`, migration `core_0149`) is the official list of pay periods. Each pay group is matched to its schedule group by the shop's name (Le Claire is LeClaire), or else by its code. The first time payroll looks after a schedule row is added, the pay group takes it: each period's number, run date (the submit-by) and check date go into `pay_period_dates`. A shift off the offsets keeps its reason ("iSolved schedule: …"), and a locked period keeps its dates. A pay group with no code gets the file's (D–G). If a calendar doesn't number the periods as the schedule does, it's realigned: to the brand's calendar when that matches, or else to the schedule's first period. A pay group with locked periods on other dates is left as it is, and that's audited. Every period in the schedule is 14 days, Sunday to Saturday, with no gaps or overlaps per group. A check constraint and an overlap trigger enforce this, and `tests/isolved-pay-calendar.test.ts` checks the file.
+
+**Past the end of the schedule.** A period after a pay group's last scheduled one follows the calendar's pattern and is flagged on the Payroll Report (`past_schedule`, §8; it doesn't block). On Payroll → Setup → iSolved pay schedule, someone with `payroll.run` extends the pay groups picked through a date. Periods are added at most 27 at a time, on each group's offsets, numbered on and reset in January, and audited as `payroll.schedule_extended`. Holidays aren't known ahead, so a moved date is set on Pay period dates once iSolved posts it. Dubuque runs out first, after 10/2/2027.
 
 The brand's default calendar (new pay groups start on it, and so do the brand-wide pay periods) is iSolved's: anchored on Sunday 10/4/2026 as period 22, 14 days, submit-by +4, check +6, numbers reset yearly. It's a Payroll setup setting. The OT workweek is always Sunday to Saturday (§3.2), so a bi-weekly period is exactly two workweeks.
 
-Because the 12/13–12/26 period's check falls on 1/1/2027, that's period 1 of 2027. Calendars can be edited on Payroll → Setup; once a pay group has locked periods, its calendar can be renumbered but not moved to different dates.
+By the offsets alone, the 12/13–12/26 period's check would fall on 1/1/2027 and make it period 1 of 2027. iSolved moved that check to 12/31, so it's 2026 period 27, and the stored date keeps it that way (numbers follow the check date actually paid). Calendars can be edited on Payroll → Setup; once a pay group has locked periods, its calendar can be renumbered but not moved to different dates.
 
 **Stored period dates.** Each period's check date and submit-by date are on record in `pay_period_dates`, per pay group: the periods from about four months back to six months ahead are written from the calendar the first time payroll looks, and again when a calendar changes. On Payroll → Setup → Pay period dates, someone with `payroll.run` can move a period's dates (a holiday, or iSolved's calendar says otherwise) with a reason. The move applies to every pay group with that period and is audited (`payroll.period_dates`). The submit-by date can't be before the period's last day, the check can't be before the submit-by date, and the check is at most 31 days after the end. Dates equal to the calendar's offsets clear the reason. A locked period keeps its dates: the lock records the check date. Period numbers follow the check date actually paid, so a New Year's Day check moved into December makes that period the last of the old year.
 
@@ -335,6 +341,7 @@ Anomalies never block the lock. They list what a person should look at before ap
 | `hours_source` | PTO or training time entries left unpaid because those hours are entered by a manager (§11) |
 | `cross_source_ot` | Someone with hours at a shop on the platform and a shop on Squire data, for the same legal entity. Weekly OT spans both and Squire's report has only the period's total, so the O.T. hours are typed (§1.2) |
 | `rollout_source` | A shop that books here with its period on Squire data, or one still booking on Squire with its period from here (§1.2) |
+| `past_schedule` | An open shop's pay period starts after the end of its pay group's iSolved schedule, so its number and check date are the calendar's pattern; extend the schedule on Payroll setup (§4) |
 
 The time clock's flags cover shops not yet locked; a locked shop is history.
 
