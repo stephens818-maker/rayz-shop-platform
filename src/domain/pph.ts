@@ -12,6 +12,12 @@
  *
  * With no worked hours it's N/A (null), never $0 or infinite. A total over several people, shops or
  * days is their sales (or tickets) added up over their hours added up, never an average.
+ *
+ * Shown beside them, product sales per client (Charles): product sales before tax over the unique
+ * clients served on completed tickets in the period. A client with a profile counts once however
+ * often they came and whoever cut them; a walk-in (a ticket with no client on it) counts once per
+ * ticket. So a shop's or the brand's clients are the distinct clients across its barbers, not their
+ * counts added up. With no clients it's N/A.
  * Pure: no database, no clock.
  */
 import { LocalDate, addDays, diffDays, formatDate } from "@/lib/time";
@@ -77,6 +83,27 @@ export const addUp = (xs: readonly PphInput[]): PphInput => ({
 export const pphOf = (p: Pick<Pph, "servicePph" | "productPph" | "totalPph" | "clientsPerHour">, m: PphRank) =>
   m === "service" ? p.servicePph : m === "product" ? p.productPph : m === "clients" ? p.clientsPerHour : p.totalPph;
 
+// ───────────────────────────── Product sales per client ─────────────────────────────
+
+export const PER_CLIENT_LABEL = "Product sales per client";
+export const UNIQUE_CLIENTS_LABEL = "Unique clients";
+
+/** Product sales (in cents) over unique clients, to the whole cent; null with no clients. */
+export const perClientCents = (productCents: number, clients: number): number | null => (clients > 0 ? Math.round(productCents / clients) : null);
+
+/** How many distinct clients across several groups' clients: one seen in two groups is one. */
+export function uniqueClients(groups: Iterable<ReadonlySet<string>>): number {
+  const all = new Set<string>();
+  for (const g of groups) for (const c of g) all.add(c);
+  return all.size;
+}
+
+/** What a PPH report ranks by: the four above, or product sales per client. */
+export const REPORT_RANKS = [...PPH_RANKS, "perClient"] as const;
+export type ReportRank = (typeof REPORT_RANKS)[number];
+export const REPORT_RANK_LABEL: Record<ReportRank, string> = { ...RANK_LABEL, perClient: PER_CLIENT_LABEL };
+export const parseReportRank = (v: unknown): ReportRank => (REPORT_RANKS.includes(v as ReportRank) ? (v as ReportRank) : "service");
+
 /** "$84.20" or N/A. */
 export const pphText = (v: number | null, money: (x: number) => string) => (v === null ? NA : money(v));
 /** "2.35" or N/A. */
@@ -130,19 +157,24 @@ export function rankPph<T>(items: readonly T[], value: (x: T) => number | null, 
 /** PPHs equal to the cent (or clients per hour, or dollars, to the hundredth) tie. */
 const same = (a: number, b: number) => Math.abs(a - b) < 0.005;
 
-/** Where each ranked figure sits among a PPH table's figures: worked hours, service and product sales, service tickets, then service PPH, clients per hour, product PPH and total PPH. */
-export const FIGURES = 8;
-const RANK_AT: Record<PphRank, number> = { service: 4, clients: 5, product: 6, total: 7 };
+/**
+ * Where each ranked figure sits among a PPH table's figures: worked hours, service and product sales,
+ * service tickets, then service PPH, clients per hour, product PPH and total PPH, then unique clients
+ * and product sales per client.
+ */
+export const FIGURES = 10;
+const RANK_AT: Record<ReportRank, number> = { service: 4, clients: 5, product: 6, total: 7, perClient: 9 };
 
 /**
  * Sortable headings for a PPH table whose figures follow `before` other columns: clicking a PPH (or
- * clients per hour) heading ranks by it, highest first, and clicking the one ranked by flips the order.
+ * clients per hour, or product sales per client) heading ranks by it, highest first, and clicking the
+ * one ranked by flips the order.
  */
-export function pphSort(before: number, rank: PphRank, order: PphOrder) {
-  const at = (k: PphRank) => before + RANK_AT[k];
+export function pphSort(before: number, rank: ReportRank, order: PphOrder) {
+  const at = (k: ReportRank) => before + RANK_AT[k];
   return {
     sortBy: Array.from({ length: before + FIGURES }, (_, j) => {
-      const k = PPH_RANKS.find((x) => at(x) === j);
+      const k = REPORT_RANKS.find((x) => at(x) === j);
       return k ? { rank: k, order: k === rank && order === "high" ? "low" : "high" } : null;
     }),
     sorted: { column: at(rank), dir: order === "high" ? ("desc" as const) : ("asc" as const) },

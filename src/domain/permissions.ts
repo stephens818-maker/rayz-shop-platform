@@ -725,7 +725,7 @@ export const REPORTS = [
     key: "pph",
     label: "Productivity Per Hour (PPH)",
     href: "/admin/reports/pph",
-    hint: "Service, product and total sales per clocked worked hour (before tax and tips) per barber, location and the brand, for any dates or pay period, ranked, with a trend.",
+    hint: "Service, product and total sales per clocked worked hour (before tax and tips), and product sales per unique client, per barber, location and the brand, for any dates or pay period, ranked, with a trend.",
   },
   {
     key: "commission_payout",

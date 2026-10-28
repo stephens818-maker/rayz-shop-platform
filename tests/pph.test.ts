@@ -4,8 +4,11 @@ import { DEFAULT_PAYROLL_SETTINGS, EXPORT_COLUMNS, assemble, computeLine, export
 import {
   CLIENTS_LABEL,
   NA,
+  PER_CLIENT_LABEL,
   PPH_RANKS,
   RANK_LABEL,
+  REPORT_RANKS,
+  REPORT_RANK_LABEL,
   addUp,
   clientCountsOf,
   clientKey,
@@ -15,6 +18,8 @@ import {
   parsePphRank,
   parsePphOrder,
   parsePphTrend,
+  parseReportRank,
+  perClientCents,
   pph,
   pphCents,
   pphOf,
@@ -22,6 +27,7 @@ import {
   pphText,
   rankPph,
   trendBuckets,
+  uniqueClients,
   workedHoursOf,
 } from "@/domain/pph";
 import { withoutMoney } from "@/domain/report-money";
@@ -200,10 +206,29 @@ describe("PPH sorting", () => {
   it("re-ranks by a PPH or clients per hour heading, highest first, and flips the order on the one ranked by", () => {
     const s = pphSort(2, "service", "high");
     expect(s.sorted).toEqual({ column: 6, dir: "desc" });
-    expect(s.sortBy).toEqual([null, null, null, null, null, null, { rank: "service", order: "low" }, { rank: "clients", order: "high" }, { rank: "product", order: "high" }, { rank: "total", order: "high" }]);
+    expect(s.sortBy).toEqual([null, null, null, null, null, null, { rank: "service", order: "low" }, { rank: "clients", order: "high" }, { rank: "product", order: "high" }, { rank: "total", order: "high" }, null, { rank: "perClient", order: "high" }]);
     expect(pphSort(3, "total", "low")).toMatchObject({ sorted: { column: 10, dir: "asc" }, sortBy: expect.arrayContaining([{ rank: "total", order: "high" }]) });
     expect(pphSort(3, "clients", "high")).toMatchObject({ sorted: { column: 8, dir: "desc" } });
     expect(pphSort(3, "clients", "high").sortBy[8]).toEqual({ rank: "clients", order: "low" });
+    expect(pphSort(2, "perClient", "low")).toMatchObject({ sorted: { column: 11, dir: "asc" } });
+  });
+});
+
+describe("product sales per client", () => {
+  it("is product sales over unique clients, to the cent, N/A with none", () => {
+    expect([perClientCents(10_000, 3), perClientCents(0, 4), perClientCents(-500, 2), perClientCents(2_500, 0)]).toEqual([3_333, 0, -250, null]);
+    expect(PER_CLIENT_LABEL).toBe("Product sales per client");
+  });
+
+  it("counts a client once across groups, each walk-in ticket on its own", () => {
+    expect(uniqueClients([new Set(["c:1", "t:1"]), new Set(["c:1", "t:2"]), new Set()])).toBe(3);
+    expect(uniqueClients([])).toBe(0);
+  });
+
+  it("is a report rank after the four PPH ranks", () => {
+    expect(REPORT_RANKS).toEqual(["service", "clients", "product", "total", "perClient"]);
+    expect([parseReportRank("perClient"), parseReportRank("clients"), parseReportRank("nope")]).toEqual(["perClient", "clients", "service"]);
+    expect(REPORT_RANK_LABEL.perClient).toBe(PER_CLIENT_LABEL);
   });
 });
 

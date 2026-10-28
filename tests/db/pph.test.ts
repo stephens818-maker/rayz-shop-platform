@@ -146,11 +146,12 @@ describe("the PPH report", () => {
       ["Clients per hour", "0.29"],
       ["Product PPH", "$1.79"],
       ["Total PPH", "$45.36"],
+      ["Product sales per client", "$5.00"],
       ["Worked hours", "28"],
     ]);
     expect(d.stats[0].hint).toContain("PPH, the default: service sales per worked hour · brand $46.06");
     expect(d.stats[1].hint).toBe("8 completed service tickets per worked hour · brand 0.27 (+0.02)");
-    expect(d.stats[4].hint).toBe("1 with sales but no worked hours: N/A");
+    expect(d.stats[5].hint).toBe("1 with sales but no worked hours: N/A");
     expect(d.notes?.join(" ")).toContain("Productivity Per Hour (PPH)");
   });
 
@@ -165,7 +166,7 @@ describe("the PPH report", () => {
     ]);
     expect(b.columns[col(b, "Clients per hour")].kind).toBe("decimal");
     expect(b.sorted).toEqual({ column: col(b, "Clients per hour"), dir: "desc" });
-    expect(d.options?.find((o) => o.param === "rank")?.choices.map((c) => c.label)).toEqual(["Service PPH", "Clients per hour", "Product PPH", "Total PPH"]);
+    expect(d.options?.find((o) => o.param === "rank")?.choices.map((c) => c.label)).toEqual(["Service PPH", "Clients per hour", "Product PPH", "Total PPH", "Product sales per client"]);
   });
 
   it("counts Squire-era tickets on the days they were sold, over a pay period", async () => {
@@ -175,7 +176,8 @@ describe("the PPH report", () => {
       [1, label[ids.makenna]],
       [2, label[barberB]],
     ]);
-    expect(b.rows[0].slice(2)).toEqual([24, 100_800, 5_000, 7, 4_200, 0.29, 208, 4_408]);
+    // Nine unique clients: the product-only and partly refunded tickets count, the refunded and voided ones don't.
+    expect(b.rows[0].slice(2)).toEqual([24, 100_800, 5_000, 7, 4_200, 0.29, 208, 4_408, 9, 556]);
   });
 
   it("ranks by product or total PPH, lowest first when asked", async () => {
@@ -222,6 +224,7 @@ describe("the PPH report", () => {
       ["trend_pph", "money"],
       ["trend_clients", "number"],
       ["trend_total", "money"],
+      ["trend_per_client", "money"],
     ]);
     expect(d.charts?.find((c) => c.id === "trend_clients")?.series.map((x) => x.values)).toEqual([
       [0.29, null],
@@ -282,7 +285,7 @@ describe("other places", () => {
     const p = d.pph!;
     expect([p.centi.day, p.service.day, p.centi.wtd, p.service.wtd, p.product.wtd]).toEqual([800, 24_000, 2_800, 122_000, 5_000]);
     expect([p.clients.day, p.clients.wtd]).toEqual([2, 8]);
-    expect(p.brand?.wtd).toEqual({ centi: 3_300, service: 152_000, product: 7_500, clients: 9 });
+    expect(p.brand?.wtd).toEqual({ centi: 3_300, service: 152_000, product: 7_500, clients: 9, served: 11 });
     expect(p.byShop).toEqual([]);
     expect(p.byBarber.map((b) => b.staffId)).toEqual([...[ids.makenna, barberB].sort((a, b) => label[a].localeCompare(label[b])), barberC]);
     expect(p.ownOnly).toBe(false);
