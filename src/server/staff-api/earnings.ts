@@ -612,7 +612,7 @@ function perClientOut(lines: readonly Line[], see: Sees, clients: number) {
 }
 
 /** The training line with its hours left out for someone who may see pay but not their hours. */
-const seenTraining = (t: TrainingLine, hours: boolean) => (hours ? t : { ...t, hours: null, paidAsOvertimeHours: null });
+const seenTraining = (t: TrainingLine, hours: boolean) => (hours ? t : { ...t, hours: null, paidAsOvertimeHours: null, overtimeShareHours: null });
 
 function shopHours(l: Line | undefined) {
   const h = hoursOf(l ? [l] : []);

@@ -14,7 +14,7 @@ export const LATE_TIP_COPY = "Came in after that pay period closed, so it's paid
 export const SHOP_COVERS_REFUND_COPY = "Refunded to the client after it reached you. The shop covers it; your pay isn't reduced.";
 export const LATE_DECLARATION_COPY = "Declared after that pay period closed, so it's paid in this one.";
 export const TRAINING_LABEL = "Training: your training hours at your training rate. Paid on top of hourly or commission pay, never part of the greater-of.";
-export const TRAINING_OT_COPY = "Training on top of your clocked hours counts toward the 40 hours for overtime.";
+export const TRAINING_OT_COPY = "Your training hours are on top of your clocked hours, and they count toward the 40 hours a week for overtime, at every shop added up.";
 export const TRAINING_NO_OT_COPY = "Training doesn't count toward overtime.";
 export const REFUNDED_AFTER_EXPORT_COPY = "Refunded to the client after that pay period was sent to payroll. The shop covers it: your pay isn't reduced and nothing is taken back.";
 
@@ -95,6 +95,8 @@ export type PeriodPay = ReturnType<typeof periodPay>;
  * at the training rate, outside the greater-of and part of wagesCents. rateCents is null when it
  * differs between their shops or changed during the period. paidAsOvertimeHours: training on top of
  * clocked hours that went over the 40 at a shop where they clocked less, paid as OT hours instead.
+ * overtimeShareHours: of their OT hours, training's share (each week's OT by the hours that counted
+ * toward the 40), and overtimeShareCents what the estimated OT pay has for it.
  */
 export function trainingLine(lines: readonly Line[], o: { countsTowardOt: boolean }) {
   const pays = lines.map(employeePay);
@@ -107,6 +109,8 @@ export function trainingLine(lines: readonly Line[], o: { countsTowardOt: boolea
     payCents: sum(pays, (p) => p.trainingPayCents),
     inGreaterOf: false as const,
     paidAsOvertimeHours: r2(sum(lines, (l) => l.otFromTraining ?? 0)),
+    overtimeShareHours: r2(sum(lines, (l) => l.trainingOtHours ?? 0)),
+    overtimeShareCents: sum(lines, (l) => Math.round((l.trainingOtPay ?? 0) * 100)),
     countsTowardOt: o.countsTowardOt,
     otNote: o.countsTowardOt ? TRAINING_OT_COPY : TRAINING_NO_OT_COPY,
   };
