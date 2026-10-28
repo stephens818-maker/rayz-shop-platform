@@ -33,7 +33,7 @@ export function RangeNotices({ r }: { r: PayrollRange }) {
       )}
       {r.hidden > 0 && (
         <Notice tone="blue">
-          Approve and lock covers every shop on this pay period ({r.full?.blocks.length}). {r.hidden === 1 ? "1 isn't" : `${r.hidden} aren't`} shown: show all of them to approve.
+          Approve and lock covers every shop on this pay period ({r.full?.blocks.length}). {r.hidden === 1 ? "1 isn't" : `${r.hidden} aren't`} shown here; approving approves them too.
         </Notice>
       )}
     </div>

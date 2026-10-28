@@ -139,7 +139,7 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
           </>
         }
         actions={
-          official && full && full.locked === "none" && canApprove && r.hidden === 0 ? (
+          official && full && full.locked === "none" && canApprove ? (
             <ApprovalControls
               start={full.start}
               end={full.end}

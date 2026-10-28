@@ -59,7 +59,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<Pay
   const [approval, trail, preparers] = official && full ? await Promise.all([approvalOf(full), payrollTrail(full.start, full.end), preparersOf(full.start, full.end)]) : [null, [], []];
   const selfPrepared = !ctx.isOwner && preparers.some((p) => p.staffId === ctx.actor.staffId);
   const status = full ? approvalStatus(full, approval) : "draft";
-  const canApprove = can(ctx, "payroll.approve") && ctx.brandWide && official && r.hidden === 0;
+  const canApprove = can(ctx, "payroll.approve") && ctx.brandWide && official;
   const canExport = can(ctx, reportExport("payroll_report")) && official;
   const canFiles = (can(ctx, "payroll.export") || can(ctx, "payroll.run")) && official;
   const drill = can(ctx, "payroll.run") || can(ctx, "payroll.approve");

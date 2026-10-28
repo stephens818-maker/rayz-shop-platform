@@ -662,7 +662,7 @@ function partialWeekAnomalies(slices: readonly Slice[], partial: ReviewInfo["par
         staffId,
         shopId: here[0]?.shopId ?? null,
         kind: "partial_workweek",
-        message: `${name(staffId)}: the week of ${formatDate(w.weekStart, "MMM d")} is only partly in this range (${formatDate(w.from, "MMM d")} – ${formatDate(w.to, "MMM d")}). Its overtime is worked out over the whole Sunday–Saturday week: ${fmtHours(centi(weekOt))} OT hours that week, ${fmtHours(centi(inRange))} of them on days in the range${at ? ` (${at})` : ""}.`,
+        message: `${name(staffId)}: the week of ${formatDate(w.weekStart, "MMM d")} is only partly in this range (${formatDate(w.from, "MMM d")} – ${formatDate(w.to, "MMM d")}). Its overtime is worked out over the whole Sunday–Saturday week: ${fmtHours(centi(weekOt))} of overtime that week, ${fmtHours(centi(inRange))} of it on days in the range${at ? ` (${at})` : ""}.`,
       });
     }
   }
