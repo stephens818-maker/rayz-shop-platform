@@ -42,7 +42,7 @@ export interface CalendarPeriod {
   submitBy: LocalDate;
   /** The check or submit-by date was moved by hand from the calendar's offsets. */
   datesMoved: boolean;
-  /** Starts after the end of the pay group's iSolved schedule: approve and lock wait until an admin extends it. */
+  /** Starts after the end of the pay group's iSolved schedule: its number and dates are the pattern's, flagged until an admin extends the schedule. */
   beyondSchedule: boolean;
   startsAt: Date;
   /** Exclusive: local midnight after `end`. */

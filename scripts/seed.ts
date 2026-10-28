@@ -56,6 +56,8 @@ async function main() {
     location_group_shops, location_groups, staff_group_members, staff_groups, staff_schedules, staff_shops, staff_access_shops, staff, roles, shop_closures, shop_hours,
     job_tasks, location_daily_stats, shop_payouts, shop_payment_accounts, shops, regions, owner_entities, brand_settings
     RESTART IDENTITY CASCADE`);
+  // iSolved's schedule is migration data and stays; periods an admin added past its end are demo data.
+  await db.delete(t.paySchedulePeriods).where(eq(t.paySchedulePeriods.source, "admin"));
 
   const roleRows = await db.insert(t.roles).values(ROLE_TEMPLATES.map(templateRow)).returning();
   const roleId = (key: string) => roleRows.find((r) => r.key === key)!.id;

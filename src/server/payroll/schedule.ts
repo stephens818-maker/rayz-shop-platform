@@ -4,7 +4,9 @@ import { payGroups, payPeriodDates, payrollRuns, paySchedulePeriods, shops } fro
 import { periodStarting, sameCalendar, sameDates, type PayCalendar } from "@/domain/payroll/calendar";
 import { MAX_EXTENSION_PERIODS, extendSchedule, scheduleKey, scheduleProblems, type ScheduleRow } from "@/domain/payroll/pay-schedule";
 import { diffDays, formatDate, isValidLocalDate, type LocalDate } from "@/lib/time";
+import type { PayrollSettings } from "@/domain/payroll/calc";
 import { audit, type Actor } from "../audit";
+import { settingAt } from "../brand-sync/settings";
 import { groupCalendar, resyncPeriodDates } from "./period-dates";
 
 /** Who writes iSolved's schedule into the pay groups' period dates when it's loaded or extended. */
@@ -111,7 +113,11 @@ async function syncGroup(groupId: string, key: string, code: string | null): Pro
     const cur = groupCalendar(g);
     if (all.length && misaligned(cur, all).length) {
       const first = all[0];
-      const next: PayCalendar = { anchorStart: first.start, anchorNumber: first.number, periodDays: 14, numberResetsYearly: true, ...usualOffsets(all) };
+      const own: PayCalendar = { anchorStart: first.start, anchorNumber: first.number, periodDays: 14, numberResetsYearly: true, ...usualOffsets(all) };
+      // The brand's calendar when it numbers them as iSolved does, so the shop stays on it with the others.
+      const brand = (await settingAt<PayrollSettings>("payroll", null, tx)).calendar;
+      const { dates: _d, scheduledThrough: _t, ...brandRule } = brand;
+      const next = !misaligned(brandRule, all).length && brandRule.checkOffsetDays === own.checkOffsetDays && brandRule.submitOffsetDays === own.submitOffsetDays ? brandRule : own;
       const [hasRun] = await tx.select({ id: payrollRuns.id }).from(payrollRuns).where(eq(payrollRuns.payGroupId, g.id)).limit(1);
       // A locked period's dates are part of the record: only its numbering may follow the schedule.
       if (hasRun && !sameDates(cur, next)) unaligned = misaligned(cur, all).length;

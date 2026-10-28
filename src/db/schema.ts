@@ -3687,7 +3687,8 @@ export const paySchedulePeriods = pgTable(
     note: text("note"),
     /** isolved: read from iSolved's schedule; admin: added past its end in Payroll setup. */
     source: text("source").notNull().default("isolved"),
-    addedBy: uuid("added_by").references(() => staff.id),
+    /** No foreign key to staff: the demo seed truncates staff with CASCADE, which would empty iSolved's schedule. */
+    addedBy: uuid("added_by"),
     createdAt: ts("created_at").notNull().defaultNow(),
   },
   (t) => [

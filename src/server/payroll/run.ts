@@ -124,7 +124,7 @@ export interface BlockView extends ShopBlock {
   /** The shop's work state: its wage-hour rules, and the state its hours are withheld for. */
   workState: string | null;
   period: CalendarPeriod;
-  /** The last day of the pay group's iSolved schedule, or null when it has none. */
+  /** The last day of the pay group's iSolved schedule, or null when it has none. Periods after it are flagged (past_schedule). */
   scheduledThrough: LocalDate | null;
   locked: { at: string; by: string | null } | null;
   /** Locked shops: the hash of the inputs of record as approved, and what's changed in the live data since. */
@@ -726,6 +726,7 @@ export async function buildPayroll(
       ...stateAnomalies(blocks, end, await missedMealsIn(platformShops, start, end)),
       ...crossSourceOt(blocks, (id) => groupOf.get(id)?.legalEntity ?? ""),
       ...(rollout.active ? await rolloutSourceAnomalies(blocks) : []),
+      ...pastScheduleAnomalies(blocks),
     ],
     byEntityState: byEntityState(blocks),
     finalPays,
@@ -1000,6 +1001,18 @@ async function rolloutSourceAnomalies(blocks: readonly BlockView[]): Promise<Ano
       out.push({ staffId: null, shopId: b.shopId, kind: "rollout_source", message: `${b.shop} still books on Squire, but its payroll for this period comes from here, so tickets rung up in Squire aren't in it. Check the Rollout page.` });
   }
   return out;
+}
+
+/** Open shops whose pay period starts after the end of their pay group's iSolved schedule: its number and dates are the calendar's pattern, not iSolved's yet. */
+function pastScheduleAnomalies(blocks: readonly BlockView[]): Anomaly[] {
+  return blocks
+    .filter((b) => !b.locked && b.period.beyondSchedule && b.scheduledThrough)
+    .map((b) => ({
+      staffId: null,
+      shopId: b.shopId,
+      kind: "past_schedule" as const,
+      message: `${b.shop}: this period is past the end of iSolved's pay schedule for ${b.payGroup} (its last scheduled period ends ${formatDate(b.scheduledThrough!, "EEE MMM d, yyyy")}), so its number and check date follow the calendar's pattern. Check them against iSolved's Payroll Run Schedule and extend the schedule on Payroll setup.`,
+    }));
 }
 
 /** I10: the card surcharge and loyalty rewards in the commission base, when the brand counts them. */
@@ -1527,21 +1540,9 @@ export function approvalStatus(view: Pick<PayrollView, "locked">, a: Pick<Approv
   return a.current ? "approved" : "stale";
 }
 
-/** Open shops whose pay period starts after the end of their pay group's iSolved schedule. */
-const pastSchedule = (view: Pick<PayrollView, "blocks">) => view.blocks.filter((b) => !b.locked && b.period.beyondSchedule);
-
-/** Why these dates can't be approved or locked: iSolved hasn't scheduled the period yet. */
-export function beyondScheduleMessage(blocks: readonly Pick<BlockView, "shop" | "scheduledThrough">[]): string {
-  const by = new Map<string, string[]>();
-  for (const b of blocks) by.set(b.scheduledThrough ?? "", [...(by.get(b.scheduledThrough ?? "") ?? []), b.shop]);
-  const parts = [...by].map(([through, shops]) => `${listed(shops, 4, ", ")} (its last scheduled period ends ${formatDate(through, "EEE MMM d, yyyy")})`);
-  return `Past the end of iSolved's pay schedule for ${parts.join("; ")}. Extend the schedule on Payroll setup once iSolved has the period, then approve and lock.`;
-}
-
 /** Why the period can't be approved or locked right now, in a line, or null. */
 export function approvalBlocked(view: PayrollView): string | null {
   if (view.lockOverlaps.length) return "These dates overlap a locked run";
-  if (pastSchedule(view).length) return `Past the end of iSolved's pay schedule for ${pastSchedule(view).map((b) => b.shop).join(", ")}`;
   if (view.mismatches.length) return `${view.mismatches.length} total${view.mismatches.length === 1 ? " doesn't" : "s don't"} reconcile`;
   if (view.squireMissing.length) return `Squire's report isn't imported for ${view.squireMissing.map((x) => x.shop).join(", ")}`;
   if (view.settings.hoursFromClock && view.hoursOpen.length) return `Hours aren't locked on the time clock at ${view.hoursOpen.length} shop${view.hoursOpen.length === 1 ? "" : "s"}`;
@@ -1563,7 +1564,6 @@ function gate(view: PayrollView | null, start: LocalDate, end: LocalDate): Refus
             ? "These dates are already locked."
             : "This pay period is already locked.",
     };
-  if (pastSchedule(view).length) return { error: beyondScheduleMessage(pastSchedule(view)) };
   if (view.mismatches.length) return { error: "Totals don't reconcile, so the period can't be approved or locked.", mismatches: view.mismatches };
   if (view.squireMissing.length) return { error: squireMissingMessage(view.squireMissing) };
   if (view.settings.hoursFromClock && view.hoursOpen.length) return { error: hoursOpenMessage(view.hoursOpen) };

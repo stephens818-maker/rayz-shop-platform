@@ -115,7 +115,7 @@ export default async function PayrollSetupPage() {
       <Card>
         <CardHeader
           title="iSolved pay schedule"
-          subtitle="The official pay periods from iSolved's Payroll Run Schedule: each one's number, due (run) date and check date, written into the pay period dates below. A period after the end of a pay group's schedule can't be approved or locked until it's extended here, once iSolved has scheduled it."
+          subtitle="The official pay periods from iSolved's Payroll Run Schedule: each one's number, due (run) date and check date, written into the pay period dates below. After the end of a pay group's schedule its periods follow the calendar's pattern and the Payroll Report flags them; extend the schedule here once iSolved has scheduled them."
         />
         <div className="overflow-x-auto">
           <PayScheduleTable

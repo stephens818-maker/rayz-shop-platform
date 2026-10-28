@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS "pay_schedule_periods" (
 	"check_date" date NOT NULL,
 	"note" text,
 	"source" text DEFAULT 'isolved' NOT NULL,
-	"added_by" uuid REFERENCES "staff"("id"),
+	"added_by" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "pay_schedule_periods_uq" UNIQUE("group_key", "period_start"),
 	CONSTRAINT "pay_schedule_periods_shape" CHECK ("period_end" = "period_start" + 13 AND extract(dow from "period_start") = 0 AND "run_date" >= "period_end" AND "check_date" >= "run_date" AND "check_date" <= "period_end" + 31 AND "period_number" >= 1),
