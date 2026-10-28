@@ -150,6 +150,31 @@ export default async function Page({ searchParams }: { searchParams: Promise<Pay
                     </a>
                   </>
                 )}
+                {canExport && (
+                  <>
+                    <span className="ml-2 text-zinc-500" title="Per employee: hours, OT, training, commission, the greater-of top-up, tips paid via Stripe, declared cash tips and totals. Separate from the iSolved files.">
+                      Payroll detail (CSV):
+                    </span>
+                    {blocks.length > 1 && (
+                      <a className="rounded-lg px-3 py-1.5 font-medium ring-1 ring-zinc-300 hover:bg-zinc-50" href={`${HREF}/detail?${q({})}`} data-testid="payroll-detail-all">
+                        All shops
+                      </a>
+                    )}
+                    {blocks.map((b) => (
+                      <a
+                        key={b.shopId}
+                        className="rounded-lg px-3 py-1.5 font-medium ring-1 ring-zinc-300 hover:bg-zinc-50"
+                        href={`${HREF}/detail?${new URLSearchParams({ period: periodKey(view.start, view.end), shop: b.shopId })}`}
+                        data-testid="payroll-detail-shop"
+                      >
+                        {b.shop}
+                      </a>
+                    ))}
+                    {(view.mismatches.length > 0 || view.tips.mismatches.length > 0) && (
+                      <span className="text-xs text-red-700">Downloads once the totals reconcile to $0.00.</span>
+                    )}
+                  </>
+                )}
                 {canFiles &&
                   (filesReady ? (
                     <>

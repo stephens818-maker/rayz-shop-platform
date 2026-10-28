@@ -63,6 +63,8 @@ function describe(r: Trail[number], names: Map<string, string>): string {
       return `Removed the adjustment to ${who}'s ${str(d.field)}`;
     case "payroll.late_commission":
       return `Added late commission for ${who}: ${fmtMoney(Number(d.amountCents ?? 0) / 100)}${d.reason ? ` (${str(d.reason)})` : ""}`;
+    case "payroll.detail_file":
+      return `Downloaded the payroll detail file${d.status ? ` (${str(d.status)})` : ""}`;
     case "payroll.isolved_sent":
       return "Marked the iSolved file sent";
     case "payroll.isolved_unsent":
