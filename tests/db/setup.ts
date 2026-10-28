@@ -16,6 +16,7 @@ export async function loadModules() {
     loyalty: await import("@/server/loyalty"),
     importer: await import("@/server/importer"),
     customers: await import("@/server/customers"),
+    consentEvents: await import("@/server/consent-events"),
     auth: await import("@/server/auth/customer"),
     rateLimit: await import("@/server/rate-limit"),
     importErrors: await import("@/lib/import-errors"),

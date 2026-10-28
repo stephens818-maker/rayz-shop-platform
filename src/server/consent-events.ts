@@ -54,6 +54,36 @@ export async function recordConsentChange(tx: DBorTx, who: Who, before: Partial<
   await recordConsent(tx, who, consentDiff(before, after), ctx);
 }
 
+/**
+ * The flags a client explicitly turned off: the last word on record for that channel is a no (theirs,
+ * staff noting it, or an import), or the number replied STOP. A flag that's off because nobody ever
+ * asked isn't here. A later yes from a booking form, a staff edit or an import never lifts these; only
+ * the client's own choice in the app or account page (setConsent) or START does.
+ */
+export async function explicitOptOuts(tx: DBorTx, c: { id: string; phone: string | null }): Promise<Set<keyof ConsentFlags>> {
+  const [last, stop] = await Promise.all([
+    tx
+      .selectDistinctOn([consentEvents.channel], { channel: consentEvents.channel, action: consentEvents.action })
+      .from(consentEvents)
+      .where(eq(consentEvents.customerId, c.id))
+      .orderBy(consentEvents.channel, desc(consentEvents.createdAt)),
+    c.phone ? tx.query.contactOptOuts.findFirst({ where: and(eq(contactOptOuts.phone, c.phone), eq(contactOptOuts.channel, "sms")) }) : null,
+  ]);
+  const out = new Set<keyof ConsentFlags>(last.filter((e) => e.action === "revoked").map((e) => CONSENT_COLUMN[e.channel]));
+  if (stop) {
+    out.add("smsOptIn");
+    out.add("smsMarketingOptIn");
+  }
+  return out;
+}
+
+/** The wanted flags, less any yes that would lift one of the client's explicit opt-outs. */
+export function withoutLiftedOptOuts<T extends Partial<ConsentFlags>>(wanted: T, current: Partial<ConsentFlags>, optedOut: ReadonlySet<keyof ConsentFlags>): T {
+  const out = { ...wanted };
+  for (const k of Object.keys(out) as (keyof ConsentFlags)[]) if (out[k] === true && !current[k] && optedOut.has(k)) delete out[k];
+  return out;
+}
+
 const MARKETING_KIND_BY_CHANNEL: Record<"sms" | "email" | "push", string[]> = { sms: ["marketing", "fill_offer", "rebook_nudge"], email: ["marketing"], push: ["marketing"] };
 const queueChannel = (c: ConsentChannel) => (c.startsWith("sms") ? "sms" : c.startsWith("email") ? "email" : "push") as "sms" | "email" | "push";
 

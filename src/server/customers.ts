@@ -22,7 +22,7 @@ import { goalOf, rewardExpiry } from "@/domain/loyalty";
 import { normalizeEmail, normalizePhone } from "@/lib/phone";
 import { CONSENT_MARKERS } from "@/domain/consent-texts";
 import { Actor, audit } from "./audit";
-import { ConsentContext, recordConsentChange } from "./consent-events";
+import { ConsentContext, explicitOptOuts, recordConsentChange, withoutLiftedOptOuts } from "./consent-events";
 import { realClient } from "./demo-clients";
 import { AppError, notFound } from "./errors";
 import { getLoyaltyConfig, lockAccount } from "./loyalty";
@@ -133,14 +133,17 @@ export async function findOrCreateCustomer(
   await lockIdentity(tx, [phone, email]);
   const found = phone || email ? await matchCustomer(tx, { firstName, lastName, phone, email }) : null;
   const m = opts.guest && found && !found.customer.unverifiedGuestAt ? await guestRecordFor(tx, firstName, phone, email) : found;
+  // A web guest beside a profile that said no is the same person: their earlier no holds for the guest record too.
+  const wanted = { smsOptIn: input.smsOptIn, emailOptIn: input.emailOptIn };
+  const consent = found && (wanted.smsOptIn || wanted.emailOptIn) ? withoutLiftedOptOuts(wanted, (m ?? found).customer, await explicitOptOuts(tx, found.customer)) : wanted;
   if (m) {
     const existing = m.customer;
     const patch: Partial<typeof customers.$inferInsert> = {};
     if (!existing.email && email) patch.email = email;
     if (!existing.phone && phone) patch.phone = phone;
     if (!existing.lastName && lastName) patch.lastName = lastName;
-    if (input.smsOptIn !== undefined && input.smsOptIn !== existing.smsOptIn) patch.smsOptIn = input.smsOptIn;
-    if (input.emailOptIn !== undefined && input.emailOptIn !== existing.emailOptIn) patch.emailOptIn = input.emailOptIn;
+    if (consent.smsOptIn !== undefined && consent.smsOptIn !== existing.smsOptIn) patch.smsOptIn = consent.smsOptIn;
+    if (consent.emailOptIn !== undefined && consent.emailOptIn !== existing.emailOptIn) patch.emailOptIn = consent.emailOptIn;
     if (!existing.homeShopId && homeShopId) patch.homeShopId = homeShopId;
     if (input.ageConfirmed && !existing.ageConfirmedAt) patch.ageConfirmedAt = new Date();
     if (Object.keys(patch).length) await tx.update(customers).set(patch).where(eq(customers.id, existing.id));
@@ -156,8 +159,8 @@ export async function findOrCreateCustomer(
       phone,
       email,
       homeShopId,
-      smsOptIn: input.smsOptIn ?? (!!phone && !!opts.smsOptInIfNew),
-      emailOptIn: input.emailOptIn ?? false,
+      smsOptIn: consent.smsOptIn ?? (!!phone && !!opts.smsOptInIfNew),
+      emailOptIn: consent.emailOptIn ?? false,
       unverifiedGuestAt: opts.guest ? new Date() : null,
       ageConfirmedAt: input.ageConfirmed ? new Date() : null,
     })

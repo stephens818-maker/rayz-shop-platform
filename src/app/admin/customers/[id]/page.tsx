@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { explicitOptOuts } from "@/server/consent-events";
 import { appointments, clientPhotos, customerSquireIds, customerTags, customers, loyaltyLedger, messageThreads, products as productsTable, sales, shopProducts, shops, staff } from "@/db/schema";
 import { ClientBadges } from "@/components/client-badges";
 import { Badge, Card, CardHeader, PageHeader, Stat, StarBadge, StatusBadge, Table, Td, Th } from "@/components/ui";
@@ -373,6 +374,7 @@ export default async function CustomerPage({
                 })),
               )}
               usualBarber={usual}
+              optedOut={await explicitOptOuts(db, c).then((o) => ({ sms: o.has("smsOptIn"), email: o.has("emailOptIn") }))}
             />
           ) : (
             <NotesEditor

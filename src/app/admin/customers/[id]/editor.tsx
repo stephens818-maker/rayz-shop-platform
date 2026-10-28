@@ -158,9 +158,12 @@ export function CustomerEditor({
   shops,
   barbers,
   usualBarber,
+  optedOut = { sms: false, email: false },
 }: {
   id: string;
   initial: P;
+  /** The client said no themselves (or replied STOP): only they can opt back in. */
+  optedOut?: { sms: boolean; email: boolean };
   /** Fields seen in full, as they are on file. */
   values: Record<string, string>;
   fields: ShownField[];
@@ -244,11 +247,14 @@ export function CustomerEditor({
         {prot.shown.filter((f) => f.key === "notes" && !notHere.includes(f)).map((f) => prot.field({ ...f, label: "Profile note (pinned, every location)" }, id, revealable.includes(f.key)))}
         <ContactWarning text={prot.entries().notes} />
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={p.smsOptIn} onChange={(e) => setP({ ...p, smsOptIn: e.target.checked })} /> Texts
+          <input type="checkbox" checked={p.smsOptIn} disabled={optedOut.sms && !initial.smsOptIn} onChange={(e) => setP({ ...p, smsOptIn: e.target.checked })} /> Texts
         </label>
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={p.emailOptIn} onChange={(e) => setP({ ...p, emailOptIn: e.target.checked })} /> Emails
+          <input type="checkbox" checked={p.emailOptIn} disabled={optedOut.email && !initial.emailOptIn} onChange={(e) => setP({ ...p, emailOptIn: e.target.checked })} /> Emails
         </label>
+        {((optedOut.sms && !initial.smsOptIn) || (optedOut.email && !initial.emailOptIn)) && (
+          <p className="text-xs text-zinc-500">The client opted out. Only they can opt back in: by texting START, or in the app or their account.</p>
+        )}
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={p.allowOtherShop} onChange={(e) => setP({ ...p, allowOtherShop: e.target.checked })} /> OK to move to another shop when their barber calls in
         </label>

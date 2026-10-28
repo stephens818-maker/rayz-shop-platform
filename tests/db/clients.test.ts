@@ -410,6 +410,37 @@ describe("one client record, matched the same way everywhere", () => {
     expect(fresh).toMatchObject({ smsOptIn: false, emailOptIn: false });
   });
 
+  it("a later yes never overwrites a client's own no; only their verified choice or START does (CU-21, CU-22, CU-23)", async () => {
+    const phone = nextPhone();
+    const c = await m.customers.findOrCreateCustomer({ firstName: "Odette", phone, smsOptIn: true }, null);
+    await m.customers.findOrCreateCustomer({ firstName: "Odette", phone, smsOptIn: false }, null);
+    // Books again with the box ticked, as staff, and as a web guest: still opted out, guest record included.
+    await m.customers.findOrCreateCustomer({ firstName: "Odette", phone, smsOptIn: true }, null);
+    const guest = await m.customers.findOrCreateCustomer({ firstName: "Odette", phone, smsOptIn: true }, null, m.db.db, { guest: true, consent: { source: "web" } });
+    expect(guest.id).not.toBe(c.id);
+    expect(guest.smsOptIn).toBe(false);
+    const row = () => m.db.db.query.customers.findFirst({ where: eq(m.schema.customers.id, c.id) });
+    expect((await row())!.smsOptIn).toBe(false);
+    expect([...(await m.consentEvents.explicitOptOuts(m.db.db, c))]).toContain("smsOptIn");
+
+    // Someone who was never asked says yes by ticking the box: that's the affirmative act.
+    const asked = await m.customers.findOrCreateCustomer({ firstName: "Ivo", phone: nextPhone() }, null);
+    await m.customers.findOrCreateCustomer({ firstName: "Ivo", phone: asked.phone, smsOptIn: true }, null);
+    expect((await m.db.db.query.customers.findFirst({ where: eq(m.schema.customers.id, asked.id) }))!.smsOptIn).toBe(true);
+
+    // A STOP on the number holds even with no revoke on this record.
+    const stopped = await m.customers.findOrCreateCustomer({ firstName: "Sten", phone: nextPhone() }, null);
+    await m.db.db.insert(m.schema.contactOptOuts).values({ phone: stopped.phone!, channel: "sms", source: "reply" });
+    await m.customers.findOrCreateCustomer({ firstName: "Sten", phone: stopped.phone, smsOptIn: true }, null);
+    expect((await m.db.db.query.customers.findFirst({ where: eq(m.schema.customers.id, stopped.id) }))!.smsOptIn).toBe(false);
+
+    // The client's own choice in their account, with the wording they saw, opts them back in.
+    const version = (await m.consentEvents.consentState(c.id)).channels.find((x) => x.channel === "sms_transactional")!.textVersion;
+    await m.consentEvents.setConsent(c.id, [{ channel: "sms_transactional", granted: true, textVersion: version }], { source: "web" });
+    expect((await row())!.smsOptIn).toBe(true);
+    expect([...(await m.consentEvents.explicitOptOuts(m.db.db, c))]).not.toContain("smsOptIn");
+  });
+
   it("signing in on a shared phone asks for a name and never lists who's on the number (review P1#15, C21)", async () => {
     process.env.AUTH_DEV_CODES = "true";
     const phone = nextPhone();

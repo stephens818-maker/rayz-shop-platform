@@ -32,7 +32,7 @@ import { SHOP_TZ, localDateOf } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { roleByKey } from "./auth/access";
 import { EffectiveService, shopCatalog } from "./catalog";
-import { ConsentContext, recordConsentChange } from "./consent-events";
+import { ConsentContext, explicitOptOuts, recordConsentChange } from "./consent-events";
 import { Customer, matchCustomer, mergeNotes } from "./customers";
 import { isDoubleBookingError } from "./errors";
 import { getLoyaltyConfig, lockAccount } from "./loyalty";
@@ -721,10 +721,11 @@ async function importClient(c: Row, r: Record<string, string>): Promise<Outcome>
         homeShopId: shop?.id ?? ex.homeShopId,
         preferredStaffId: preferredStaffId ?? ex.preferredStaffId,
       });
-      // A yes from Squire never overrides a choice the client made here since.
+      // A yes from Squire never overrides a choice the client made here since, or any explicit no on file.
       const ownChoice = sms || mail ? await chosenHere(c.tx, ex.id) : new Set<string>();
-      if (sms !== undefined && !(sms && ownChoice.has("sms_transactional"))) patch.smsOptIn = sms;
-      if (mail !== undefined && !(mail && ownChoice.has("email"))) patch.emailOptIn = mail;
+      const optedOut = sms || mail ? await explicitOptOuts(c.tx, ex) : new Set<string>();
+      if (sms !== undefined && !(sms && (ownChoice.has("sms_transactional") || (!ex.smsOptIn && optedOut.has("smsOptIn"))))) patch.smsOptIn = sms;
+      if (mail !== undefined && !(mail && (ownChoice.has("email") || (!ex.emailOptIn && optedOut.has("emailOptIn"))))) patch.emailOptIn = mail;
     } else {
       // Another record for the same person: fill gaps only, and an explicit "no" from any record wins.
       Object.assign(patch, {

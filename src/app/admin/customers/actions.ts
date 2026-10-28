@@ -12,7 +12,7 @@ import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import { StaffContext, authorize, can, requireStaff } from "@/server/auth/staff";
 import { contactClient } from "@/server/client-contact";
-import { recordConsentChange, staffConsentContext } from "@/server/consent-events";
+import { explicitOptOuts, recordConsentChange, staffConsentContext, withoutLiftedOptOuts } from "@/server/consent-events";
 import { searchClients } from "@/server/client-search";
 import { deleteSearch, saveSearch } from "@/server/saved-searches";
 import { ClientPolicy, clientPolicy, entered, shownField } from "@/server/client-privacy";
@@ -109,6 +109,8 @@ export async function updateCustomerAction(id: string, raw: z.input<typeof Profi
       if (v) customFields[f.id] = v;
       else delete customFields[f.id];
     }
+    // Staff can record a yes for a client who was never asked, but not undo a client's own no.
+    const consent: { smsOptIn: boolean; emailOptIn: boolean } = { ...{ smsOptIn: before.smsOptIn, emailOptIn: before.emailOptIn }, ...withoutLiftedOptOuts({ smsOptIn: p.smsOptIn, emailOptIn: p.emailOptIn }, before, await explicitOptOuts(db, before)) };
     const values = {
       firstName: p.firstName,
       lastName: entered(policy, "last_name", before.lastName, p.lastName),
@@ -118,8 +120,8 @@ export async function updateCustomerAction(id: string, raw: z.input<typeof Profi
       birthday: entered(policy, "birthday", before.birthday, p.birthday),
       notes: entered(policy, "notes", before.notes, p.notes),
       customFields,
-      smsOptIn: p.smsOptIn,
-      emailOptIn: p.emailOptIn,
+      smsOptIn: consent.smsOptIn,
+      emailOptIn: consent.emailOptIn,
       ...(p.allowOtherShop === undefined ? {} : { allowOtherShop: p.allowOtherShop }),
       homeShopId: p.homeShopId,
       preferredStaffId,
