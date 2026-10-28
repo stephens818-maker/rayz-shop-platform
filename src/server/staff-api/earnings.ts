@@ -21,7 +21,7 @@ import { employeeFeeCents, receivedCents } from "@/domain/tips";
 import { SHOP_TZ, addDays, diffDays, endOfLocalDay, isValidLocalDate, localDateOf, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { workShopIds } from "@/server/auth/access";
 import { AppError, forbidden } from "@/server/errors";
-import { approvalOf, buildPayroll, employeeDays, ensurePayGroups, type PayrollView } from "@/server/payroll/run";
+import { approvalOf, buildPayroll, dayFigures, ensurePayGroups, lockedRunsOver, type DayFigures, type PayrollView } from "@/server/payroll/run";
 import { PAID, rows, uuids } from "@/server/report-sql";
 import { notSquireEra } from "@/server/squire-era";
 import { staffAccount } from "@/server/tips/accounts";
@@ -38,10 +38,11 @@ import { payoutSetup, sees, type Sees } from "./pay";
  * nothing here takes a staff id. Amounts are integer cents.
  *
  * Pay comes from their line of the Payroll Report (buildPayroll, the run the iSolved file is made
- * from; a locked period is its approved snapshot), through employeePay, so the greater-of and every
- * total are worked out once, on the server, the way payroll works them out. Days add up to the
- * period: hours and sales are read as the report reads them (employeeDays), tips from the tip
- * ledger the report's TIPS reconciles to.
+ * from), through periodPay, so the greater-of and every total are worked out once, on the server,
+ * the way payroll works them out. Days add up to the period: hours and sales are read as the report
+ * reads them, tips from the tip ledger the report's TIPS reconciles to (dayFigures). A locked or
+ * exported period is what its lock kept: the approved lines, days and workweeks, never worked out
+ * again from the live data.
  *
  * A pay period's id is its start date. period=current is the one holding today.
  */
@@ -407,9 +408,10 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
   const per = earningsPeriod(cals, q, today);
   const shopIds = per.cals.map((c) => c.shop.id);
   const view = await buildPayroll(per.start, per.end, { clockChecks: false });
-  const [state, ledger, declared, covered, setup] = await Promise.all([
+  const [state, ledger, days, declared, covered, setup] = await Promise.all([
     periodStates([per], today, new Map([[per.start, view]])).then((m) => m.get(per.start)!),
     see.tips ? myLedger(me, shopIds, { from: per.start, to: per.end }) : [],
+    see.tips ? myDays(me, shopIds, per.start, per.end, today) : [],
     see.tips ? currentDeclarationsOf(me, shopIds, per.start, per.end) : [],
     see.tips ? shopCoveredRefunds(me, shopIds, per.start, per.end) : [],
     payoutSetup(ctx),
@@ -420,7 +422,8 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
     const block = view?.blocks.find((b) => b.shopId === c.shop.id);
     const line = block?.lines.find((l) => l.staffId === me);
     const pay = line ? employeePay(line) : null;
-    const t = tendersOf(ledger.filter((r) => r.shopId === c.shop.id));
+    const here = days.filter((d) => d.shopId === c.shop.id);
+    const t = { card: sum(here, (d) => d.cardTipsCents), cash: sum(here, (d) => d.cashTipsCents), giftCard: sum(here, (d) => d.giftCardTipsCents) };
     const tipsCents = pay?.tipsCents ?? 0;
     const declaredCents = pay?.declaredCashTipsCents ?? 0;
     const m = methodOf.get(c.shop.id);
@@ -447,6 +450,7 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
         source: block?.source ?? "platform",
         squireImported: block?.source === "squire" && !!block.squireImport,
         locked: !!block?.locked,
+        fromLock: !!block?.locked,
         pay: see.wages ? pay : null,
         hours: see.hours ? shopHours(line) : null,
         reconciliation: reconciliationOf(see, block, line),
@@ -520,52 +524,78 @@ function neighbours(cals: readonly ShopCalendar[], p: MyPeriod, today: LocalDate
 
 // ───────────────────────────── GET /me/earnings/days ─────────────────────────────
 
+type MyDay = DayFigures & { fromLock: boolean };
+
+/**
+ * Their days at these shops: for a shop's locked pay period, the days its lock kept (never worked out
+ * again); otherwise, and for a period locked before locks kept days, dayFigures on the live data.
+ */
+async function myDays(me: string, shopIds: readonly string[], from: LocalDate, to: LocalDate, today: LocalDate): Promise<MyDay[]> {
+  const until = to < today ? to : today;
+  const [runs, live] = await Promise.all([lockedRunsOver(shopIds, from, to), dayFigures(me, shopIds, from, until)]);
+  const kept = runs.filter((r) => r.days);
+  const inKept = (d: DayFigures) => kept.some((r) => r.shopId === d.shopId && d.date >= r.start && d.date <= r.end);
+  return [
+    ...(live.get(me) ?? []).filter((d) => !inKept(d)).map((d) => ({ ...d, fromLock: false })),
+    ...kept.flatMap((r) => (r.days![me] ?? []).filter((d) => d.date >= from && d.date <= to).map((d) => ({ ...d, fromLock: true }))),
+  ].sort((x, y) => x.date.localeCompare(y.date) || x.shopId.localeCompare(y.shopId));
+}
+
+const tipsOfDay = (d: Pick<DayFigures, "cardTipsCents" | "cashTipsCents" | "giftCardTipsCents" | "tipAdjustmentsCents">) => d.cardTipsCents + d.cashTipsCents + d.giftCardTipsCents + d.tipAdjustmentsCents;
+
 /**
  * GET /me/earnings/days?periodId= (or period=, or from/to): each day they worked, sold or were
- * tipped. Hours and sales are read as the Payroll Report reads them and tips come from the tip
- * ledger, so over a pay period the days add up to GET /me/earnings (before a manager's override on
- * the report; locked periods are the approved snapshot, the days the live data).
+ * tipped, every shop of theirs added up. Hours and sales are read as the Payroll Report reads them
+ * and tips come from the tip ledger, so over a pay period the days add up to GET /me/earnings (before
+ * a manager's override on the report). A locked period's days are the ones its lock kept.
  */
 export async function myEarningsDays(ctx: StaffAppContext, q: PeriodQuery, today: LocalDate = todayLocal()) {
   const see = sees(ctx);
   const me = ctx.staff.id;
   const { shops: mine, cals } = await myCalendars(me);
   const span = spanOf(cals, q, today);
-  const ids = mine.map((s) => s.id);
-  const until = span.to < today ? span.to : today;
-  const [worked, ledger, declared] = await Promise.all([
-    see.hours || see.sales ? employeeDays(me, ids, span.from, until) : { hours: [], sales: [] },
-    see.tips ? myLedger(me, ids, { from: span.from, to: span.to }) : [],
-    see.tips ? currentDeclarationsOf(me, ids, span.from, span.to) : [],
+  const [list, state] = await Promise.all([
+    myDays(
+      me,
+      mine.map((s) => s.id),
+      span.from,
+      span.to,
+      today,
+    ),
+    span.period ? periodStates([span.period], today).then((m) => m.get(span.period!.start)!) : null,
   ]);
-  const dates = new Set<LocalDate>([...worked.hours.map((h) => h.date), ...worked.sales.map((s) => s.date), ...ledger.map((r) => r.date), ...declared.map((d) => d.businessDate)]);
-  const days = [...dates].sort().map((date) => {
-    const h = worked.hours.filter((x) => x.date === date);
-    const s = worked.sales.filter((x) => x.date === date);
-    const t = tendersOf(ledger.filter((r) => r.date === date));
-    const dec = sum(
-      declared.filter((d) => d.businessDate === date),
-      (d) => d.amountCents,
-    );
+  const work = see.hours || see.sales;
+  const shown = list.filter(
+    (d) => (work && (d.workedCenti || d.trainingCenti || d.ptoCenti || d.tickets || d.serviceCents || d.productCents)) || (see.tips && (tipsOfDay(d) || d.declaredCashTipsCents)),
+  );
+  const days = [...new Set(shown.map((d) => d.date))].map((date) => {
+    const x = shown.filter((d) => d.date === date);
+    const S = (f: (d: MyDay) => number) => sum(x, f);
+    const dec = S((d) => d.declaredCashTipsCents);
     return {
       date,
-      cardTipsCents: see.tips ? t.card : null,
-      cashTipsCents: see.tips ? t.cash + dec : null,
-      serviceSalesCents: see.sales ? sum(s, (x) => x.serviceCents) : null,
-      productSalesCents: see.sales ? sum(s, (x) => x.productCents) : null,
-      productionHours: see.hours ? r2(sum(h, (x) => x.worked) / 100) : null,
-      trainingHours: see.hours ? r2(sum(h, (x) => x.training) / 100) : null,
-      tickets: sum(s, (x) => x.tickets),
-      giftCardTipsCents: see.tips ? t.giftCard : null,
-      cashOnTicketsCents: see.tips ? t.cash : null,
+      cardTipsCents: see.tips ? S((d) => d.cardTipsCents) : null,
+      cashTipsCents: see.tips ? S((d) => d.cashTipsCents) + dec : null,
+      serviceSalesCents: see.sales ? S((d) => d.serviceCents) : null,
+      productSalesCents: see.sales ? S((d) => d.productCents) : null,
+      productionHours: see.hours ? r2(S((d) => d.workedCenti) / 100) : null,
+      trainingHours: see.hours ? r2(S((d) => d.trainingCenti) / 100) : null,
+      tickets: S((d) => d.tickets),
+      giftCardTipsCents: see.tips ? S((d) => d.giftCardTipsCents) : null,
+      cashOnTicketsCents: see.tips ? S((d) => d.cashTipsCents) : null,
       declaredCashTipsCents: see.tips ? dec : null,
-      tipAdjustmentsCents: see.tips ? t.adjust : null,
-      totalTipsCents: see.tips ? t.card + t.cash + t.giftCard + t.adjust + dec : null,
-      ptoHours: see.hours ? r2(sum(h, (x) => x.pto) / 100) : null,
+      tipAdjustmentsCents: see.tips ? S((d) => d.tipAdjustmentsCents) : null,
+      totalTipsCents: see.tips ? S(tipsOfDay) + dec : null,
+      ptoHours: see.hours ? r2(S((d) => d.ptoCenti) / 100) : null,
+      fromLock: x.every((d) => d.fromLock),
+      shopIds: [...new Set(x.map((d) => d.shopId))],
     };
   });
-  return { from: span.from, to: span.to, periodId: span.period?.id ?? null, days };
+  return { from: span.from, to: span.to, periodId: span.period?.id ?? null, ...periodFlags(state), days };
 }
+
+/** periodStatus and isEstimate for a response about one pay period; both null for a from/to that isn't one. */
+const periodFlags = (s: PeriodState | null) => ({ periodStatus: s?.periodStatus ?? null, isEstimate: s ? s.isEstimate : null });
 
 // ───────────────────────────── GET /me/earnings/tickets ─────────────────────────────
 
@@ -666,7 +696,7 @@ export async function myPayoutsView(ctx: StaffAppContext, q: PeriodQuery, today:
   const { shops: mine, cals } = await myCalendars(me);
   const span = spanOf(cals, q, today);
   const ids = mine.map((s) => s.id);
-  const [ledger, setup, acct, made] = await Promise.all([
+  const [ledger, setup, acct, made, state] = await Promise.all([
     myLedger(me, ids, { from: span.from, to: span.to }),
     payoutSetup(ctx),
     staffAccount(me),
@@ -675,6 +705,7 @@ export async function myPayoutsView(ctx: StaffAppContext, q: PeriodQuery, today:
       .from(tipPayouts)
       .where(and(eq(tipPayouts.staffId, me), eq(tipPayouts.method, "stripe"), gte(tipPayouts.createdAt, startOfLocalDay(span.from)), lte(tipPayouts.createdAt, endOfLocalDay(span.to))))
       .orderBy(desc(tipPayouts.createdAt)),
+    span.period ? periodStates([span.period], today).then((m) => m.get(span.period!.start)!) : null,
   ]);
   const transfers = ledger.flatMap((r) => {
     if (r.kind !== "tip" || !r.transfer || !r.saleId) return [];
@@ -706,6 +737,7 @@ export async function myPayoutsView(ctx: StaffAppContext, q: PeriodQuery, today:
     from: span.from,
     to: span.to,
     periodId: span.period?.id ?? null,
+    ...periodFlags(state),
     bankLast4: acct?.destinationLast4 ?? null,
     tipTransfersEnabled: anyOn,
     payrollCopy: anyOn ? null : payrollCopyOf(setup.shops[0]?.method),

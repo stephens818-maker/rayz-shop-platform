@@ -147,6 +147,16 @@ export async function declaredTipsBetween(shopIds: readonly string[], start: Loc
   return new Map(rows.filter((r) => r.cents).map((r) => [`${r.staffId}|${r.shopId}`, r.cents]));
 }
 
+/** Current declared cash tips by day, per employee (everyone at the shops when staffId is null) and shop, in cents. */
+export async function declaredByDay(staffId: string | null, shopIds: readonly string[], start: LocalDate, end: LocalDate, tx: DBorTx = db) {
+  if (!shopIds.length) return [];
+  return tx
+    .select({ staffId: tipDeclarations.staffId, shopId: tipDeclarations.shopId, date: tipDeclarations.businessDate, cents: sql<number>`sum(${tipDeclarations.amountCents})::int` })
+    .from(tipDeclarations)
+    .where(and(staffId ? eq(tipDeclarations.staffId, staffId) : undefined, inArray(tipDeclarations.shopId, [...shopIds]), gte(tipDeclarations.businessDate, start), lte(tipDeclarations.businessDate, end), current))
+    .groupBy(tipDeclarations.staffId, tipDeclarations.shopId, tipDeclarations.businessDate);
+}
+
 /**
  * Reminders for last month's cash tips: an email on the first day of the window (the 1st, or the
  * first day the cron runs in it) and a last call on the reminder day, to each active employee who

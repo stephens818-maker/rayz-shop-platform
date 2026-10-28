@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, payGroups, payrollApprovals, payrollCommissionAdjustments, payrollEmployers, payrollFinalPays, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, payrollSquireImports, payrollSquireInputs, sales as salesTable, shopHours, shops as shopsTable, staff, timeEntries, timePunches, type PayrollApprovalTotals } from "@/db/schema";
+import { auditLog, payGroups, payrollApprovals, payrollCommissionAdjustments, payrollEmployers, payrollFinalPays, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, payrollSquireImports, payrollSquireInputs, sales as salesTable, shopHours, shops as shopsTable, staff, timeEntries, timePunches, tipLedger, type PayrollApprovalTotals } from "@/db/schema";
 import { calendarProblem, periodOf, periodStarting, periodsAround, sameCalendar, workweeksOf, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
 import {
   OVERRIDABLE,
@@ -43,7 +43,8 @@ import { loadRolloutPlan, type PayrollSource } from "@/server/rollout-plan";
 import { guaranteeTopUps, exportExtras } from "@/domain/compensation";
 import { loadCompensationSettings, payrollPlans, setupRates } from "@/server/compensation";
 import { payrollSalesBetween, unassignedSalesBetween, type PayrollSalesRow } from "@/server/reports";
-import { declaredTipsBetween } from "@/server/tips/declarations";
+import { declaredByDay, declaredTipsBetween } from "@/server/tips/declarations";
+import { syncTipLedger } from "@/server/tips/ledger";
 import { lockPayrollTips, payrollTipSplit } from "@/server/tips/payouts";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { payrollHoursCheck, type PayrollHoursCheck } from "@/server/time-clock";
@@ -166,6 +167,9 @@ interface Snapshot {
   inputsHash?: string;
   /** Absent on periods locked before the rollout: they came from here. */
   source?: PayrollSource;
+  /** Each employee on the shop's lines: their days here (dayFigures) and their workweeks across shops, as at the lock. Absent on periods locked before they were kept. */
+  days?: Record<string, DayFigures[]>;
+  weeks?: Record<string, WeekBreakdown[]>;
 }
 
 /**
@@ -530,7 +534,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
     byEntityState: byEntityState(blocks),
     finalPays,
     ft,
-    weeks: weekBreakdowns(slices, staffIds, weeks, start, runShops, (id) => groupOf.get(id)?.shop ?? "Other shop"),
+    weeks: lockedWeeks(runs, inRun.length) ?? weekBreakdowns(slices, staffIds, weeks, start, runShops, (id) => groupOf.get(id)?.shop ?? "Other shop"),
     locked: runs.length === 0 ? "none" : runs.length === inRun.length ? "all" : "some",
     hoursOpen: hoursCheck.unlocked.map((u) => ({
       shopId: u.shopId,
@@ -565,6 +569,7 @@ function squireFigures(q: typeof payrollSquireInputs.$inferSelect | undefined) {
 
 export interface EmployeeDaySales {
   date: LocalDate;
+  staffId: string;
   shopId: string;
   /** Tickets they're the barber on. */
   tickets: number;
@@ -578,9 +583,9 @@ export interface EmployeeDaySales {
  * by day as the report credits them (payrollSalesBetween with the commission base's extras), in cents.
  * Days at a shop whose payroll for that period comes from Squire are left out: Squire's report has
  * only the period's total. Over a pay period, each figure adds up to the employee's line of the report
- * before a manager's override.
+ * before a manager's override. A null staffId is everyone at the shops.
  */
-export async function employeeDays(staffId: string, shopIds: readonly string[], from: LocalDate, to: LocalDate) {
+export async function employeeDays(staffId: string | null, shopIds: readonly string[], from: LocalDate, to: LocalDate) {
   if (!shopIds.length || from > to) return { hours: [] as DayHours[], sales: [] as EmployeeDaySales[] };
   const [groups, settings, rollout] = await Promise.all([ensurePayGroups(), loadSettings(), loadRolloutPlan()]);
   const groupOf = new Map(groups.map((g) => [g.shopId, g]));
@@ -602,14 +607,95 @@ export async function employeeDays(staffId: string, shopIds: readonly string[], 
   const entries = await db
     .select({ staffId: timeEntries.staffId, shopId: timeEntries.shopId, kind: timeEntries.kind, startsAt: timeEntries.startsAt, endsAt: timeEntries.endsAt })
     .from(timeEntries)
-    .where(and(eq(timeEntries.staffId, staffId), inArray(timeEntries.shopId, ids), lt(timeEntries.startsAt, endOfLocalDay(to)), gt(timeEntries.endsAt, startOfLocalDay(from))));
+    .where(and(staffId ? eq(timeEntries.staffId, staffId) : undefined, inArray(timeEntries.shopId, ids), lt(timeEntries.startsAt, endOfLocalDay(to)), gt(timeEntries.endsAt, startOfLocalDay(from))));
   const hours = dailyHours(entries).filter((d) => d.date >= from && d.date <= to && sourceOn(d.shopId, d.date) === "platform");
   const sales: EmployeeDaySales[] = [];
   for (let d = from; d <= to; d = addDays(d, 1))
-    for (const s of await payrollSalesBetween({ shopIds: ids, staffId }, d, d))
-      if (sourceOn(s.shopId, d) === "platform") sales.push({ date: d, shopId: s.shopId, tickets: s.tickets, serviceCents: s.serviceSalesCents + baseExtra(s, "service", settings), productCents: s.productSalesCents + baseExtra(s, "product", settings) });
+    for (const s of await payrollSalesBetween({ shopIds: ids, ...(staffId ? { staffId } : {}) }, d, d))
+      if (sourceOn(s.shopId, d) === "platform")
+        sales.push({ date: d, staffId: s.staffId, shopId: s.shopId, tickets: s.tickets, serviceCents: s.serviceSalesCents + baseExtra(s, "service", settings), productCents: s.productSalesCents + baseExtra(s, "product", settings) });
   return { hours, sales };
 }
+
+/** One employee's day at one shop, in cents and centi-hours: what GET /me/earnings/days adds up, and what a lock keeps. */
+export interface DayFigures {
+  date: LocalDate;
+  shopId: string;
+  workedCenti: number;
+  trainingCenti: number;
+  ptoCenti: number;
+  tickets: number;
+  serviceCents: number;
+  productCents: number;
+  cardTipsCents: number;
+  cashTipsCents: number;
+  giftCardTipsCents: number;
+  /** Manager adjustments and anything else in the tip ledger that isn't a tender. */
+  tipAdjustmentsCents: number;
+  declaredCashTipsCents: number;
+}
+
+const tenderKey = (method: string) => (method === "card" ? "cardTipsCents" : method === "cash" ? "cashTipsCents" : method === "gift_card" ? "giftCardTipsCents" : "tipAdjustmentsCents");
+
+/**
+ * Each day's figures per employee (all of them at the shops when staffId is null) and shop: hours and
+ * sales as employeeDays reads them, tips from the tip ledger the report's TIPS reconciles to, and the
+ * cash tips declared for the day as payroll counts them. Only days with something on them.
+ */
+export async function dayFigures(staffId: string | null, shopIds: readonly string[], from: LocalDate, to: LocalDate): Promise<Map<string, DayFigures[]>> {
+  const out = new Map<string, Map<string, DayFigures>>();
+  if (!shopIds.length || from > to) return new Map();
+  await syncTipLedger(db, { shopIds });
+  const [worked, ledger, declared] = await Promise.all([
+    employeeDays(staffId, shopIds, from, to),
+    db
+      .select({ staffId: tipLedger.staffId, shopId: tipLedger.shopId, date: tipLedger.businessDate, method: tipLedger.method, cents: sql<number>`sum(${tipLedger.amountCents})::int` })
+      .from(tipLedger)
+      .where(and(staffId ? eq(tipLedger.staffId, staffId) : undefined, inArray(tipLedger.shopId, [...shopIds]), gte(tipLedger.businessDate, from), lte(tipLedger.businessDate, to)))
+      .groupBy(tipLedger.staffId, tipLedger.shopId, tipLedger.businessDate, tipLedger.method),
+    declaredByDay(staffId, shopIds, from, to),
+  ]);
+  const at = (who: string, shopId: string, date: LocalDate) => {
+    const m = out.get(who) ?? new Map<string, DayFigures>();
+    out.set(who, m);
+    const k = `${shopId}|${date}`;
+    const d = m.get(k) ?? { date, shopId, workedCenti: 0, trainingCenti: 0, ptoCenti: 0, tickets: 0, serviceCents: 0, productCents: 0, cardTipsCents: 0, cashTipsCents: 0, giftCardTipsCents: 0, tipAdjustmentsCents: 0, declaredCashTipsCents: 0 };
+    m.set(k, d);
+    return d;
+  };
+  for (const h of worked.hours) {
+    const d = at(h.staffId, h.shopId, h.date);
+    d.workedCenti += h.worked;
+    d.trainingCenti += h.training;
+    d.ptoCenti += h.pto;
+  }
+  for (const s of worked.sales) {
+    const d = at(s.staffId, s.shopId, s.date);
+    d.tickets += s.tickets;
+    d.serviceCents += s.serviceCents;
+    d.productCents += s.productCents;
+  }
+  for (const r of ledger) if (r.cents) at(r.staffId, r.shopId, r.date)[tenderKey(r.method)] += r.cents;
+  for (const r of declared) at(r.staffId, r.shopId, r.date).declaredCashTipsCents += r.cents;
+  return new Map([...out].map(([who, m]) => [who, [...m.values()].sort((a, b) => a.date.localeCompare(b.date) || a.shopId.localeCompare(b.shopId))]));
+}
+
+/** The locked runs of these shops' pay groups that overlap [from, to], with what each kept at the lock. */
+export async function lockedRunsOver(shopIds: readonly string[], from: LocalDate, to: LocalDate) {
+  const groups = (await ensurePayGroups()).filter((g) => shopIds.includes(g.shopId));
+  if (!groups.length) return [];
+  const shopOf = new Map(groups.map((g) => [g.id, g.shopId]));
+  const runs = await db
+    .select({ id: payrollRuns.id, g: payrollRuns.payGroupId, start: payrollRuns.periodStart, end: payrollRuns.periodEnd, lockedAt: payrollRuns.lockedAt, snapshot: payrollRuns.snapshot })
+    .from(payrollRuns)
+    .where(and(inArray(payrollRuns.payGroupId, [...shopOf.keys()]), lte(payrollRuns.periodStart, to), gte(payrollRuns.periodEnd, from)));
+  return runs.map((r) => {
+    const s = r.snapshot as Snapshot;
+    return { id: r.id, shopId: shopOf.get(r.g)!, start: r.start, end: r.end, lockedAt: r.lockedAt, days: s.days ?? null, weeks: s.weeks ?? null, source: s.source ?? "platform" };
+  });
+}
+
+export type LockedRun = Awaited<ReturnType<typeof lockedRunsOver>>[number];
 
 /** Punches at a shop whose payroll for the period comes from Squire don't count: Squire's hours are the record. */
 function withoutSquireDays<T extends TimeEntry>(entries: T[], squireShops: ReadonlySet<string>, start: LocalDate, end: LocalDate): T[] {
@@ -1073,6 +1159,13 @@ function assembleFromBlocks(blocks: readonly ShopBlock[]) {
   return { grand, mismatches: reconcile(blocks, grand) };
 }
 
+/** Once every shop in the period is locked, each employee's workweeks as the lock kept them (null for a period locked before they were). */
+function lockedWeeks(runs: readonly { snapshot: unknown }[], shops: number): Record<string, WeekBreakdown[]> | null {
+  const kept = runs.map((r) => (r.snapshot as Snapshot).weeks);
+  if (runs.length !== shops || kept.some((w) => !w)) return null;
+  return Object.assign({}, ...kept);
+}
+
 function weekBreakdowns(slices: Slice[], staffIds: string[], weeks: LocalDate[], start: LocalDate, runShops: Set<string>, shopName: (id: string) => string): Record<string, WeekBreakdown[]> {
   const out: Record<string, WeekBreakdown[]> = {};
   for (const id of staffIds) {
@@ -1312,6 +1405,8 @@ export async function lockPayroll(start: LocalDate, end: LocalDate, actor: Actor
     periodOf: (shopId, date) => periodOf(groupOf.get(shopId)?.calendar ?? settings.calendar, date).start,
     locked: new Map(lockedRows.map((l) => [sliceKey({ ...l }), l.otCenti])),
   }).filter((s) => s.periodStart === start && runShops.has(s.shopId));
+  const figures = await dayFigures(null, [...runShops], start, end);
+  const kept = <T>(b: (typeof view.blocks)[number], f: (staffId: string) => T) => Object.fromEntries(b.lines.map((l) => [l.staffId, f(l.staffId)]));
 
   return db.transaction(async (tx) => {
     const [still] = await tx.select({ hash: payrollApprovals.figuresHash, revokedAt: payrollApprovals.revokedAt }).from(payrollApprovals).where(eq(payrollApprovals.id, approval.id)).for("update");
@@ -1322,6 +1417,8 @@ export async function lockPayroll(start: LocalDate, end: LocalDate, actor: Actor
         block: { shopId: b.shopId, shop: b.shop, lines: b.lines, totals: b.totals, exportRows: b.exportRows, exportHeaders: b.exportHeaders, exportFrom: b.exportFrom },
         inputsHash: inputsHash(b.lines),
         source: b.source,
+        days: kept(b, (id) => (figures.get(id) ?? []).filter((d) => d.shopId === b.shopId)),
+        weeks: kept(b, (id) => view.weeks[id] ?? []),
       };
       const [run] = await tx
         .insert(payrollRuns)
