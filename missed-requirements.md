@@ -128,6 +128,7 @@ Everything the owner asked for that isn't finished yet, in the order it's being 
 - [x] Effective-dated rates by checkout date from Staff → Compensation, shown as "mixed" when they change inside a period (needs compensation plans on and Payroll using them).
 - [x] iSolved employee number (Key) and iSolved name on Payroll → Setup and the Staff page.
 - [x] Golden tests: all 33 rows, the totals and the iSolved file cell for cell, on anonymized committed fixtures; the real ones stay in a gitignored folder. Tests: `tests/payroll-golden.test.ts`, `tests/db/payroll-approval.test.ts`, `tests/db/payroll-reports.test.ts`.
+- [x] The workbook totals audit (Claude bot, Oct 22): all 112 flagged Locations cells (71 wrong values, the 6 circular totals, 8 wrong ranges right today, 10 summed rates, 22 missing totals, 1 typed label) are checked against the platform's totals, which equal the audit's correct values to the cent for the golden period, along with the shop tabs, the LeClaire G2/G3 links and the absence of a payroll tax column. `tests/payroll-totals-audit.test.ts`, on the anonymized copy in CI and the real data where it's present (never committed). Anonymized write-up in `docs/payroll-workbook-discrepancies.md`.
 - [x] L66, pay day end to end: raw punches at two shops through sign-off, approval, locked hours, Payroll Report approval and lock, each shop's iSolved file cell for cell, and Stripe tip payouts (paid in test mode, held and paid on the paycheck with live keys and the flag off). `tests/db/payday.test.ts`. Run in the sandbox too: the Oct 4–17 period, all 8 shops, locked.
 - [ ] Charles (settings until he answers): rounding (unrounded; a NetComm of $307.605 goes out as 307.6049999999999), file names, PTO and training hours from the time clock or a manager (both), and the earning code for card tips (`E_Cash Tips Recd_Dollars`).
 - [ ] Enter the real Employee Numbers, iSolved names and rates on Payroll → Setup (they're never in the repo).
@@ -1054,6 +1055,17 @@ The iSolved file's columns, headers, order and codes stay exactly as in Charles'
 - [ ] C1 (Needs Charles): regular-rate OT on commission is computed and flagged; the file column is a switch, off.
 - [ ] C3 (Needs Charles and his CPA): card tips off Cash Tips Recd; the column setting is unchanged.
 - [ ] Q11 (training inside clocked hours) and Q15 (loyalty in the commission base).
+
+## 47. Launch day: every surface at the same time (Charles, Oct 28)
+
+The web platform, the iOS and Android customer apps and the Ray'z Staff app go live on the same day at the same time, each complete and tested in the sandbox first. PR #1's launch list has the gate (L67 to L71), and DEPLOY.md has the runbook ("Launch day").
+
+- [x] The runbook: store submission lead times, holding approved builds for release, the launch-time switches and the cutover order.
+- [x] Server-side levers that need no app release: the booking switch (Setup → App switches, app and website), each shop's Online booking switch, minimum versions and the maintenance message in both apps' `/config`.
+- [ ] Charles: the launch date and time, whether all 8 shops leave Squire at that time, and whether the Play Console account is a personal or an organization account (a personal account adds a 14-day closed test).
+- [ ] Mobile: the customer apps submitted to App Review and Google Play at least 3 weeks ahead (5 for a new personal Play account), held for release.
+- [ ] Staff app builder: the same for the Ray'z Staff app, with kiosk mode (ST-I6).
+- [ ] All four surfaces tested together in the sandbox on the builds being released.
 
 ## Deferred by decision
 
