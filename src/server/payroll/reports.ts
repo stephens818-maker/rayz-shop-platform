@@ -6,7 +6,8 @@ import { paidLeaveYear, rulesFor, workStateOf } from "@/domain/wage-hour";
 import { EXPORT_COLUMNS, LOCATIONS_COLUMNS, PAID_TIP_COLUMNS, PAYROLL_TIP_COLUMNS, extraFromOf, inNameOrder, locationSummary, sumColumns, toCents, type Line } from "@/domain/payroll/calc";
 import { FLAG_LABEL, FT_LABEL, PUNCH_LABEL, csv, type PunchType } from "@/domain/time-clock";
 import type { Permission } from "@/domain/permissions";
-import { NA, PPH_LABEL, PPH_MEASURES, linePph, linesPph, pphOf, type Pph } from "@/domain/pph";
+import { NA, PPH_RANKS, RANK_LABEL, linePph, linesPph, pphOf, type Pph } from "@/domain/pph";
+import { blockTickets } from "@/server/service-tickets";
 import type { BarChart } from "@/domain/report-charts";
 import { ABSORPTION_LABEL, TIPS_PAID_STATUS_LABEL, employerTaxIdLabel, tipsPaidStatus, type TipsPaidBuckets, type TipsPaidStatus } from "@/domain/staff-payouts";
 import { Cell, Column, ListRow, ViewCtx, listTable } from "@/domain/report-views";
@@ -1439,6 +1440,7 @@ export async function payrollIsolvedData(i: PayrollReportInput): Promise<ReportD
 // ───────────────────────────── Payroll Report (the Locations tab) ─────────────────────────────
 
 const LOC_KIND: Record<(typeof LOCATIONS_COLUMNS)[number]["kind"], Column["kind"]> = { text: undefined, hours: "decimal", rate: "money", money: "money", ratio: "money", pct: "pct" };
+const pphColumns = () => PPH_RANKS.map((m): Column => ({ label: RANK_LABEL[m], kind: m === "clients" ? "decimal" : "money", sum: false }));
 
 /** Each pay period's Locations tab as tables: a block per shop, then the summary. The Payroll Report page draws the same figures with the workbook's formats. */
 export async function payrollReportData(i: PayrollReportInput): Promise<ReportData> {
@@ -1448,20 +1450,21 @@ export async function payrollReportData(i: PayrollReportInput): Promise<ReportDa
   const { runs, capped } = await runsIn(scope);
   const columns: Column[] = [
     ...LOCATIONS_COLUMNS.map((c) => ({ label: c.header.trim(), kind: LOC_KIND[c.kind], sum: false })),
-    ...PPH_MEASURES.map((m): Column => ({ label: PPH_LABEL[m], kind: "money", sum: false })),
+    ...pphColumns(),
   ];
   const cell = (c: (typeof LOCATIONS_COLUMNS)[number], v: LocationsCell): Cell => (typeof v !== "number" ? v : c.kind === "money" || c.kind === "rate" || c.kind === "ratio" ? toCents(v) : c.kind === "hours" ? h2(v) : v);
-  const pphCells = (p: Pph): Cell[] => PPH_MEASURES.map((m) => {
+  const pphCells = (p: Pph): Cell[] => PPH_RANKS.map((m) => {
     const v = pphOf(p, m);
-    return v === null ? NA : toCents(v);
+    return v === null ? NA : m === "clients" ? Math.round(v * 100) / 100 : toCents(v);
   });
   const tables: ReportData["tables"] = [];
   for (const r of [...runs].reverse()) {
     const blocks = locationBlocks(r.view, r.blocks.map((b) => b.shopId));
+    const tickets = await blockTickets(blocks);
     for (const b of blocks) {
       const rows = [
-        ...b.lines.map((l) => [...locationsRow(l).map((v, j) => cell(LOCATIONS_COLUMNS[j], v)), ...pphCells(linePph(l))]),
-        [...locationsTotals(b.totals).map((v, j) => cell(LOCATIONS_COLUMNS[j], v)), ...pphCells(linesPph(b.lines))],
+        ...b.lines.map((l) => [...locationsRow(l).map((v, j) => cell(LOCATIONS_COLUMNS[j], v)), ...pphCells(linePph(l, tickets))]),
+        [...locationsTotals(b.totals).map((v, j) => cell(LOCATIONS_COLUMNS[j], v)), ...pphCells(linesPph(b.lines, tickets))],
       ];
       tables.push({ id: `loc-${r.key}-${b.shopId}`, title: `${b.shop} · ${r.label}`, columns, rows, rowStyles: rows.map((_, j) => (j === rows.length - 1 ? "total" : undefined)) });
     }
@@ -1470,13 +1473,13 @@ export async function payrollReportData(i: PayrollReportInput): Promise<ReportDa
       id: `summary-${r.key}`,
       title: `Location summary · ${r.label}`,
       subtitle: "Employee Cost is Total Wages (hourly, commission over hourly and product commission). Gross Profit is Service Sales less Employee Cost.",
-      columns: [text("Location"), money("Service Sales"), money("Employee Cost"), money("Gross Profit"), ...PPH_MEASURES.map((m): Column => ({ label: PPH_LABEL[m], kind: "money", sum: false }))],
+      columns: [text("Location"), money("Service Sales"), money("Employee Cost"), money("Gross Profit"), ...pphColumns()],
       rows: [...rows, total].map((x) => [
         x.shop,
         toCents(x.service),
         toCents(x.employeeCost),
         toCents(x.grossProfit),
-        ...pphCells(linesPph(blocks.filter((b) => x.shopId === null || b.shopId === x.shopId).flatMap((b) => b.lines))),
+        ...pphCells(linesPph(blocks.filter((b) => x.shopId === null || b.shopId === x.shopId).flatMap((b) => b.lines), tickets)),
       ]),
       rowStyles: [...rows.map(() => undefined), "total"],
     });
@@ -1497,7 +1500,7 @@ export async function payrollReportData(i: PayrollReportInput): Promise<ReportDa
     notes: [
       ...periodNotes(runs, capped),
       "Every total sums every employee's row. A rate that changed inside the period shows \"mixed\": each sale is paid at the rate in effect on its checkout date, and hours at the wage on the day worked.",
-      "Service, Product and Total PPH are review columns, not in the workbook or the iSolved file: Service$ and Product$ over worked hours (regular plus O.T.; training and PTO aren't production time). A total row is its sales over its hours. N/A means no worked hours.",
+      "Service PPH, Clients per hour, Product PPH and Total PPH (Productivity Per Hour; PPH alone is service PPH) are review columns, not in the workbook or the iSolved file: Service$ and Product$ over worked hours (regular plus O.T.; training and PTO aren't working time), and clients per hour is completed service tickets over the same hours. A total row is its sales (or tickets) over its hours. N/A means no worked hours.",
     ],
   };
 }

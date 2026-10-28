@@ -5,7 +5,8 @@ import { formatPayHours } from "@/lib/hours";
 import { COLUMN_LABEL, EXPORT_COLUMNS, FT_BASIS_LABEL, HOUR_COLUMNS, TRAINING_RATE_SOURCE, fmtHours, fmtMoney, type Line, type Totals } from "@/domain/payroll/calc";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { reportView } from "@/domain/permissions";
-import { PPH_LABEL, PPH_MEASURES, linePph, linesPph, pphOf, pphText, workedHoursOf } from "@/domain/pph";
+import { type ClientCounts, type Pph, type PphRank, PPH_RANKS, RANK_LABEL, clientKey, clientsText, linePph, linesPph, pphOf, pphText, workedHoursOf } from "@/domain/pph";
+import { blockTickets } from "@/server/service-tickets";
 import { can, guardPage } from "@/server/auth/staff";
 import { approvalBlocked, approvalOf, approvalStatus, buildPayroll, hoursOpenMessage, squireMissingMessage, payrollTrail, periodChoices, periodKey, preparersOf, RECORD_LABEL, SELF_APPROVAL, type ApprovalStatus, type PeriodChoice, type ApprovalView, type BlockView, type PayrollView } from "@/server/payroll/run";
 import { ApprovalControls } from "./approval";
@@ -23,21 +24,22 @@ const cell = (k: string, v: number) => (HOUR_COLUMNS.has(k) ? hrs(v) : fmtMoney(
 const fileCell = (k: string, v: number) => (HOUR_COLUMNS.has(k) ? formatPayHours(v, { style: "decimal" }) : fmtMoney(v));
 
 const pphCell = (v: number | null) => pphText(v, fmtMoney);
+const rankCell = (p: Pph, m: PphRank) => (m === "clients" ? clientsText(p.clientsPerHour) : pphCell(pphOf(p, m)));
 
 type Col = {
-  key: (keyof Line & string) | "servicePph" | "productPph" | "totalPph";
+  key: (keyof Line & string) | `${PphRank}Pph`;
   label: string;
-  fmt: (l: Line) => string;
-  total?: (t: Totals, b: BlockView) => string;
+  fmt: (l: Line, tickets: ClientCounts) => string;
+  total?: (t: Totals, b: BlockView, tickets: ClientCounts) => string;
   extra?: boolean;
   onlyIf?: (b: BlockView) => boolean;
 };
-/** Review only: never in the workbook or the iSolved file. Totals are the block's sales over its worked hours. */
-const PPH_COLS: Col[] = PPH_MEASURES.map((m) => ({
+/** Review only: never in the workbook or the iSolved file. Totals are the block's sales (or tickets) over its worked hours. */
+const PPH_COLS: Col[] = PPH_RANKS.map((m) => ({
   key: `${m}Pph` as const,
-  label: PPH_LABEL[m],
-  fmt: (l: Line) => pphCell(pphOf(linePph(l), m)),
-  total: (_: Totals, b: BlockView) => pphCell(pphOf(linesPph(b.lines), m)),
+  label: RANK_LABEL[m],
+  fmt: (l: Line, tickets: ClientCounts) => rankCell(linePph(l, tickets), m),
+  total: (_: Totals, b: BlockView, tickets: ClientCounts) => rankCell(linesPph(b.lines, tickets), m),
   extra: true,
 }));
 const COLS: Col[] = [
@@ -108,7 +110,9 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
   const current = choices.findIndex((c) => c.current);
   const chosen = choices.find((c) => c.key === sp.period) ?? choices[current + 1] ?? choices[0];
   const view = chosen ? await buildPayroll(chosen.start, chosen.end) : null;
-  const [approval, trail, preparers] = view ? await Promise.all([approvalOf(view), payrollTrail(view.start, view.end), preparersOf(view.start, view.end)]) : [null, [], []];
+  const [approval, trail, preparers, tickets] = view
+    ? await Promise.all([approvalOf(view), payrollTrail(view.start, view.end), preparersOf(view.start, view.end), blockTickets(view.blocks)])
+    : [null, [], [], new Map<string, number>()];
   const selfPrepared = !ctx.isOwner && preparers.some((p) => p.staffId === ctx.actor.staffId);
   const status = view ? approvalStatus(view, approval) : "draft";
   const canRun = can(ctx, "payroll.run");
@@ -175,6 +179,7 @@ export default async function PayrollReportPage({ searchParams }: { searchParams
           trail={trail}
           preparers={preparers}
           earlier={choices.filter((c) => c.start < view.start && c.lockedGroups > 0).slice(0, 6)}
+          tickets={tickets}
         />
       )}
     </div>
@@ -200,6 +205,7 @@ function Report({
   trail,
   preparers,
   earlier,
+  tickets,
 }: {
   view: PayrollView;
   canRun: boolean;
@@ -209,6 +215,7 @@ function Report({
   trail: Awaited<ReturnType<typeof payrollTrail>>;
   preparers: readonly { staffId: string; label: string }[];
   earlier: readonly PeriodChoice[];
+  tickets: ClientCounts;
 }) {
   const filesReady = status === "approved" || status === "locked";
   return (
@@ -257,7 +264,7 @@ function Report({
 
       <TipCheckNotice view={view} />
 
-      <Locations view={view} />
+      <Locations view={view} tickets={tickets} />
 
       <EntityStates view={view} />
 
@@ -288,6 +295,7 @@ function Report({
           b={b}
           view={view}
           canRun={canRun}
+          tickets={tickets}
           downloadable={canFiles && filesReady}
           earlier={earlier.filter((c) => c.groups.some((g) => g.id === b.payGroupId)).map((c) => ({ start: c.start, label: `${formatDate(c.start, "MMM d")} – ${formatDate(c.end, "MMM d, yyyy")}` }))}
         />
@@ -433,12 +441,12 @@ function TipCheckNotice({ view }: { view: PayrollView }) {
   );
 }
 
-function Locations({ view }: { view: PayrollView }) {
+function Locations({ view, tickets }: { view: PayrollView; tickets: ClientCounts }) {
   return (
     <Card>
       <CardHeader
         title="Locations"
-        subtitle="Employee Cost is labor cost: Total Wages plus O.T. Pay and Training Pay. Every number is a sum of the shop blocks below. PPH (review only, never in the iSolved file) is sales over worked hours."
+        subtitle="Employee Cost is labor cost: Total Wages plus O.T. Pay and Training Pay. Every number is a sum of the shop blocks below. Productivity Per Hour (PPH; review only, never in the iSolved file) is sales over worked hours, and clients per hour completed service tickets over the same hours."
       />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -452,17 +460,17 @@ function Locations({ view }: { view: PayrollView }) {
               <th className="px-3 py-2 text-right">Employee Cost</th>
               <th className="px-3 py-2 text-right">Gross Profit</th>
               <th className="px-3 py-2 text-right">Cost % of Sales</th>
-              {PPH_MEASURES.map((m) => (
+              {PPH_RANKS.map((m) => (
                 <th key={m} className="bg-sky-50 px-3 py-2 text-right text-sky-800">
-                  {PPH_LABEL[m]}
+                  {RANK_LABEL[m]}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {[
-              ...view.blocks.map((b) => ({ name: b.shop, t: b.totals, locked: !!b.locked, pph: linesPph(b.lines) })),
-              { name: "Total", t: view.grand, locked: false, pph: linesPph(view.blocks.flatMap((b) => b.lines)) },
+              ...view.blocks.map((b) => ({ name: b.shop, t: b.totals, locked: !!b.locked, pph: linesPph(b.lines, tickets) })),
+              { name: "Total", t: view.grand, locked: false, pph: linesPph(view.blocks.flatMap((b) => b.lines), tickets) },
             ].map((r) => (
               <tr key={r.name} className={cx("border-t border-zinc-100", r.name === "Total" && "bg-zinc-50 font-semibold")}>
                 <td className="px-3 py-1.5">
@@ -475,9 +483,9 @@ function Locations({ view }: { view: PayrollView }) {
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.t.laborCost)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.t.grossProfit)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{pct(r.t.service ? r.t.laborCost / r.t.service : null)}</td>
-                {PPH_MEASURES.map((m) => (
+                {PPH_RANKS.map((m) => (
                   <td key={m} className="bg-sky-50/40 px-3 py-1.5 text-right tabular-nums">
-                    {pphCell(pphOf(r.pph, m))}
+                    {rankCell(r.pph, m)}
                   </td>
                 ))}
               </tr>
@@ -527,7 +535,21 @@ function EntityStates({ view }: { view: PayrollView }) {
   );
 }
 
-function ShopBlockCard({ b, view, canRun, downloadable, earlier }: { b: BlockView; view: PayrollView; canRun: boolean; downloadable: boolean; earlier: { start: string; label: string }[] }) {
+function ShopBlockCard({
+  b,
+  view,
+  canRun,
+  tickets,
+  downloadable,
+  earlier,
+}: {
+  b: BlockView;
+  view: PayrollView;
+  canRun: boolean;
+  tickets: ClientCounts;
+  downloadable: boolean;
+  earlier: { start: string; label: string }[];
+}) {
   const s = view.settings;
   return (
     <Card>
@@ -592,7 +614,7 @@ function ShopBlockCard({ b, view, canRun, downloadable, earlier }: { b: BlockVie
                     </td>
                     {colsFor(b).map((c) => (
                       <td key={c.key} className={cx("px-2 py-1.5 text-right tabular-nums", c.extra && "bg-sky-50/40", l.overridden.includes(c.key as never) && "bg-amber-50")}>
-                        {c.fmt(l)}
+                        {c.fmt(l, tickets)}
                       </td>
                     ))}
                   </tr>
@@ -601,7 +623,7 @@ function ShopBlockCard({ b, view, canRun, downloadable, earlier }: { b: BlockVie
                   <td className="sticky left-0 bg-zinc-50 px-2 py-1.5">Total</td>
                   {colsFor(b).map((c) => (
                     <td key={c.key} className="px-2 py-1.5 text-right tabular-nums">
-                      {c.total?.(b.totals, b) ?? ""}
+                      {c.total?.(b.totals, b, tickets) ?? ""}
                     </td>
                   ))}
                 </tr>
@@ -658,8 +680,10 @@ function ShopBlockCard({ b, view, canRun, downloadable, earlier }: { b: BlockVie
                       before tax and tips).
                     </p>
                     <p className="text-xs text-zinc-500">
-                      <span className="font-medium">PPH</span> (review only): {fmtMoney(l.service)} service ÷ {hrsH(workedHoursOf(l))} worked = {pphCell(linePph(l).servicePph)} an hour · product{" "}
-                      {pphCell(linePph(l).productPph)} · total {pphCell(linePph(l).totalPph)}.{workedHoursOf(l) > 0 ? "" : " N/A: no worked hours here this period."}
+                      <span className="font-medium">PPH</span> (Productivity Per Hour, review only): {fmtMoney(l.service)} service ÷ {hrsH(workedHoursOf(l))} worked ={" "}
+                      {pphCell(linePph(l).servicePph)} an hour · {tickets.get(clientKey(l.staffId, b.shopId)) ?? 0} completed service tickets ÷ the same hours ={" "}
+                      {clientsText(linePph(l, tickets).clientsPerHour)} clients per hour · product {pphCell(linePph(l).productPph)} · total {pphCell(linePph(l).totalPph)}.
+                      {workedHoursOf(l) > 0 ? "" : " N/A: no worked hours here this period."}
                     </p>
                   </div>
                   <div className="space-y-2">
