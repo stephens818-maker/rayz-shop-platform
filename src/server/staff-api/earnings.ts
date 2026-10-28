@@ -379,6 +379,11 @@ function reconciliationOf(see: Sees, block: ShopBlock | undefined, line: Line | 
   return { matches: isolved.every((x) => x.matches), isolved, adjustedOnReport: line?.overridden ?? [] };
 }
 
+/**
+ * Their Chicago workweeks (Sunday to Saturday) touching the period, with the hours at every shop they
+ * worked added up, as payroll counts overtime; each shop's part, and which pay period each part is
+ * paid in. OT hours are payroll's; the dollars are an estimate until iSolved applies the 1.5x.
+ */
 function weeksOf(view: PayrollView | null, staffId: string, p: MyPeriod) {
   return (view?.weeks[staffId] ?? []).map((w) => {
     const prod = r2(sum(w.slices, (s) => s.worked));
@@ -388,6 +393,8 @@ function weeksOf(view: PayrollView | null, staffId: string, p: MyPeriod) {
     const partial = w.weekStart < p.start || weekEnd > p.end;
     const byPeriod = new Map<LocalDate, (typeof w.slices)[number][]>();
     for (const s of w.slices) byPeriod.set(s.periodStart, [...(byPeriod.get(s.periodStart) ?? []), s]);
+    const byShop = new Map<string, (typeof w.slices)[number][]>();
+    for (const s of w.slices) byShop.set(s.shopId, [...(byShop.get(s.shopId) ?? []), s]);
     return {
       weekStart: w.weekStart,
       weekEnd,
@@ -396,9 +403,19 @@ function weeksOf(view: PayrollView | null, staffId: string, p: MyPeriod) {
       trainingHours: train,
       regularHours: r2(prod + train - ot),
       otHours: ot,
+      /** Hours that count toward the overtime threshold, every shop added up. */
+      basisHours: w.basis,
       partial,
+      otIsEstimate: ot > 0,
       otLabelCode: partial ? ("partial_week" as const) : ot > 0 ? ("ot_estimated" as const) : null,
       otLabel: partial ? PARTIAL_WEEK_OT_LABEL : ot > 0 ? OT_PAY_LABEL : null,
+      shops: [...byShop].map(([shopId, list]) => ({
+        shopId,
+        shopName: list[0].shop,
+        productionHours: r2(sum(list, (s) => s.worked)),
+        trainingHours: r2(sum(list, (s) => s.training)),
+        otHours: r2(sum(list, (s) => s.ot)),
+      })),
       postings: [...byPeriod].map(([periodId, list]) => {
         const pw = r2(sum(list, (s) => s.worked));
         const pt = r2(sum(list, (s) => s.training));
