@@ -438,10 +438,8 @@ describe("shop workspaces never show another shop's records", () => {
     const render = async () => textOf(await layout({ children: null }), new Set());
     await as("moline");
     const desk = await render();
-    expect(desk).toContain("Moline");
-    expect(desk).toContain("3002 Ave of Cities");
-    expect(desk).toContain("Shop workspace");
-    expect(desk).toContain("shared shop login");
+    expect(desk).toContain("Moline desk");
+    for (const tab of ["Front desk", "Calendar", "Checkout", "Clients", "Time clock"]) expect(desk).toContain(tab);
     for (const other of ["Coralville", "Kimberly", "Rock Island", "Dubuque"]) expect(desk).not.toContain(other);
     await as("regional");
     const regional = await render();

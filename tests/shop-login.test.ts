@@ -1,15 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { SHOP_LOGIN_CAPS, SHOP_LOGIN_CONTACT_FIELDS, cleanShopLoginCap, shopLoginLevel } from "@/domain/client-privacy";
 import { drawerTimeline, moveProblem, movesOut, openingProblem } from "@/domain/drawer";
+import { FRONT_DESK_TABS, deskStep, frontDeskMore, frontDeskTabs } from "@/domain/front-desk";
 import { PAGE_ACCESS, navFor, pageAllowed } from "@/domain/navigation";
+import { blockedBecause } from "@/domain/permission-areas";
 import {
   Permission,
   ROLE_TEMPLATES,
+  SHOP_LOGIN_BRAND_GRANTED,
   SHOP_LOGIN_NEVER,
   SHOP_SETTING_FIELDS,
   editableShopParts,
   effectiveAccess,
   sharedLoginAccess,
+  shopLoginBrandGrants,
+  shopLoginGrantDenied,
   shopSettingsDenied,
   templateFor,
 } from "@/domain/permissions";
@@ -78,6 +83,86 @@ describe("shop login: the Shop Login role and its hard caps", () => {
       expect(shopLoginLevel("hidden", f, "full")).toBe("hidden");
     }
     expect(shopLoginLevel("hidden", "notes", "full")).toBe("full");
+  });
+});
+
+describe("shop login: the front desk's POS, with brand-level settings left to the brand", () => {
+  const BRAND_PAGES = [
+    "/admin/settings",
+    "/admin/services",
+    "/admin/staff",
+    "/admin/permissions",
+    "/admin/payroll/report",
+    "/admin/tips/settings",
+    "/admin/campaign-center",
+    "/admin/brand-defaults",
+    "/admin/sync-status",
+    "/admin/import",
+  ] as const;
+  const FRONT_DESK = ["/admin/calendar", "/admin/checkout/[saleId]", "/admin/sales", "/admin/customers", "/admin/clock/kiosk", "/admin/campaign-center/openings", "/admin/reports"] as const;
+  const allowed = (perms: ReadonlySet<Permission>, page: string) => pageAllowed(perms, page as keyof typeof PAGE_ACCESS);
+
+  it("the Shop Login role opens the front desk and none of the brand's pages", () => {
+    const desk = sharedLoginAccess(effectiveAccess(role("shop_login"), {}, null, "one")).permissions;
+    for (const page of FRONT_DESK) expect(allowed(desk, page), page).toBe(true);
+    for (const page of BRAND_PAGES) expect(allowed(desk, page), page).toBe(false);
+    expect(role("shop_login").permissions.filter((p) => SHOP_LOGIN_BRAND_GRANTED.has(p as Permission))).toEqual([]);
+  });
+
+  it("a generous role or override doesn't turn a shop login into an admin console", () => {
+    for (const k of ["shop_manager", "brand_admin", "brand_owner"]) {
+      const overrides = Object.fromEntries([...SHOP_LOGIN_BRAND_GRANTED, "settings.brand", "permissions.manage", "payroll.run", "catalog.manage"].map((p) => [p, true]));
+      const desk = sharedLoginAccess(effectiveAccess(role(k), overrides, null, "one")).permissions;
+      for (const p of SHOP_LOGIN_BRAND_GRANTED) expect(desk.has(p), `${k} ${p}`).toBe(false);
+      for (const page of BRAND_PAGES.filter((x) => x !== "/admin/staff")) expect(allowed(desk, page), `${k} ${page}`).toBe(false);
+      for (const p of ["staff.manage", "permissions.manage", "compensation.edit", "payroll.run", "settings.brand"] as const) expect(desk.has(p), `${k} ${p}`).toBe(false);
+      expect(desk.has("checkout.any")).toBe(true);
+    }
+  });
+
+  it("the brand can allow one brand-controlled permission for one shop login", () => {
+    const overrides = { "settings.shop_hours": true, "settings.shop": false } as const;
+    const grants = shopLoginBrandGrants(overrides);
+    expect([...grants]).toEqual(["settings.shop_hours"]);
+    const desk = sharedLoginAccess(effectiveAccess(role("shop_login"), overrides, null, "one"), grants).permissions;
+    expect(desk.has("settings.shop_hours")).toBe(true);
+    expect(desk.has("settings.shop")).toBe(false);
+    expect(allowed(desk, "/admin/settings")).toBe(true);
+    expect(sharedLoginAccess(effectiveAccess(role("shop_manager"), {}, null, "one")).permissions.has("settings.shop_hours")).toBe(false);
+  });
+
+  it("only someone with access to all shops can allow or take back a brand-controlled permission on a shop login", () => {
+    const one = { scope: "one" as const };
+    const all = { scope: "all" as const };
+    expect(shopLoginGrantDenied(all, {}, { "settings.shop_hours": true })).toBeNull();
+    expect(shopLoginGrantDenied(one, {}, { "settings.shop_hours": true })).toMatch(/set by the brand/);
+    expect(shopLoginGrantDenied(one, { "settings.shop_hours": true }, {})).toMatch(/set by the brand/);
+    expect(shopLoginGrantDenied(one, { "settings.shop_hours": true }, { "settings.shop_hours": true, "calendar.manage": false })).toBeNull();
+    expect(shopLoginGrantDenied(one, {}, { "settings.shop_hours": false })).toBeNull();
+  });
+
+  it("the permissions screen says why a shop login doesn't have a brand-controlled permission", () => {
+    const c = { held: new Set<Permission>(), scope: "one" as const, brandLevel: false, shopLogin: true, ownerMismatch: false };
+    expect(blockedBecause("settings.shop_hours", c)).toMatch(/set by the brand/);
+    expect(blockedBecause("settings.shop_hours", { ...c, shopLogin: false })).toBeNull();
+    expect(blockedBecause("sales.refund", c)).toMatch(/never for a shared shop login/);
+  });
+
+  it("the tabs follow what the login can open, and the rest is under More", () => {
+    const desk = sharedLoginAccess(effectiveAccess(role("shop_login"), {}, null, "one")).permissions;
+    expect(frontDeskTabs(desk).map((t) => t.label)).toEqual(FRONT_DESK_TABS.map((t) => t.label));
+    expect(frontDeskTabs(new Set<Permission>(["timeclock.kiosk"])).map((t) => t.href)).toEqual(["/admin", "/admin/calendar", "/admin/customers", "/admin/clock/kiosk"]);
+    const more = frontDeskMore(navFor(desk));
+    expect(more.map((i) => i.href)).toContain("/admin/drawer");
+    expect(more.map((i) => i.href)).not.toContain("/admin/calendar");
+  });
+
+  it("today's clients go to check-in, then to checkout", () => {
+    expect(deskStep("booked")).toBe("check_in");
+    expect(deskStep("confirmed")).toBe("check_in");
+    expect(deskStep("checked_in")).toBe("check_out");
+    expect(deskStep("in_service")).toBe("check_out");
+    for (const s of ["completed", "cancelled", "no_show"]) expect(deskStep(s)).toBeNull();
   });
 });
 

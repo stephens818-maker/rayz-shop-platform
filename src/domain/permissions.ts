@@ -1549,7 +1549,7 @@ export const SHOP_LOGIN_NEVER: ReadonlySet<Permission> = new Set<Permission>([
  * integrations are the brand's, sent to shops through brand sync. A shop login's role never gives it
  * these; the brand (someone with access to all shops) can allow one for one login with a per-login
  * override (shopLoginGrantDenied). Pay, payroll, roles and sign-in are in SHOP_LOGIN_NEVER, and
- * brand-only permissions never work at one shop.
+ * owner-only and brand-only permissions never reach a shop login, whatever its role.
  */
 export const SHOP_LOGIN_BRAND_GRANTED: ReadonlySet<Permission> = new Set<Permission>([
   "settings.shop",
@@ -1589,9 +1589,11 @@ export function shopLoginGrantDenied(caller: Pick<Grantor, "scope">, before: Ove
 export const trimLimits = (limits: MoneyLimits, perms: ReadonlySet<Permission>): MoneyLimits =>
   Object.fromEntries(MONEY_LIMITS.map((l) => [l.key, l.perms.some((p) => perms.has(p)) ? limits[l.key] : 0])) as MoneyLimits;
 
-/** What a shop login can do: never SHOP_LOGIN_NEVER, and brand-controlled permissions only where the brand allowed them for it. */
+/** What a shop login can do: never SHOP_LOGIN_NEVER, owner-only or brand-only, and brand-controlled permissions only where the brand allowed them for it. */
 export const sharedLoginAccess = <A extends Access>(a: A, brandGrants: ReadonlySet<Permission> = new Set()): A => {
-  const permissions = new Set([...a.permissions].filter((p) => !SHOP_LOGIN_NEVER.has(p) && (!SHOP_LOGIN_BRAND_GRANTED.has(p) || brandGrants.has(p))));
+  const permissions = new Set(
+    [...a.permissions].filter((p) => !SHOP_LOGIN_NEVER.has(p) && !OWNER_ONLY.has(p) && !BRAND_ONLY.has(p) && (!SHOP_LOGIN_BRAND_GRANTED.has(p) || brandGrants.has(p))),
+  );
   return { ...a, isOwner: false, permissions, limits: trimLimits(a.limits, permissions) };
 };
 
