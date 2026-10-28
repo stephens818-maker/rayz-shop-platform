@@ -444,6 +444,12 @@ export async function bulkSync(who: Who, action: BulkAction, cells: CellRef[], n
  * what changed, if the brand value or any shop's value it touched has changed since. `within`: as a
  * savepoint in the caller's transaction (undoing a catalog upload).
  */
+/** Whether a sync batch ran and hasn't been undone, so it can be. */
+export async function syncBatchUndoable(batchId: string, tx: DBorTx = db): Promise<boolean> {
+  const [b] = await tx.select({ status: brandSyncBatches.status, kind: brandSyncBatches.kind }).from(brandSyncBatches).where(eq(brandSyncBatches.id, batchId));
+  return b?.status === "applied" && b.kind !== "rollback";
+}
+
 export async function rollbackSync(who: Who, batchId: string, now = new Date(), within?: DBorTx) {
   let done: ChangeRow[] = [];
   const result = await (within ?? db).transaction(async (tx) => {

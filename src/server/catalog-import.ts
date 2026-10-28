@@ -3,12 +3,12 @@ import ExcelJS from "exceljs";
 import Papa from "papaparse";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { ImportRowError, brandSyncBatches, importRuns, products, services, shopProducts, shopServices, shops } from "@/db/schema";
+import { ImportRowError, importRuns, products, services, shopProducts, shopServices, shops } from "@/db/schema";
 import { Catalog, PlannedRow, ShopRef, UploadMode, UploadPlan, exportRows, parseUpload, planUpload } from "@/domain/catalog-import";
 import { slugify } from "@/lib/ids";
 import { Actor, audit } from "./audit";
 import { ProductInput, ServiceInput } from "./brand-sync/adapters/catalog";
-import { RawChange, commitBrandChange, rollbackSync } from "./brand-sync/engine";
+import { RawChange, commitBrandChange, rollbackSync, syncBatchUndoable } from "./brand-sync/engine";
 import { AppError, notFound } from "./errors";
 import { postMovements, setOnHand } from "./inventory/ledger";
 
@@ -240,8 +240,7 @@ export async function rollbackCatalogUpload(input: { runId: string; actor: Actor
     if (outside.length) throw new AppError("forbidden", "That upload changed shops outside your access");
 
     if (run.syncBatchId) {
-      const [b] = await tx.select({ status: brandSyncBatches.status }).from(brandSyncBatches).where(eq(brandSyncBatches.id, run.syncBatchId));
-      if (b?.status === "applied") await rollbackSync({ actor: input.actor, ctx: null }, run.syncBatchId, now, tx);
+      if (await syncBatchUndoable(run.syncBatchId, tx)) await rollbackSync({ actor: input.actor, ctx: null }, run.syncBatchId, now, tx);
     }
 
     const table = { products, services, shop_products: shopProducts, shop_services: shopServices } as const;
