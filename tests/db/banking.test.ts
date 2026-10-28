@@ -35,7 +35,8 @@ const audits = async (action: string, entityId?: string) =>
   m.db.db
     .select()
     .from(m.schema.auditLog)
-    .where(entityId ? m.drizzle.and(eq(m.schema.auditLog.action, action), eq(m.schema.auditLog.entityId, entityId)) : eq(m.schema.auditLog.action, action));
+    .where(entityId ? m.drizzle.and(eq(m.schema.auditLog.action, action), eq(m.schema.auditLog.entityId, entityId)) : eq(m.schema.auditLog.action, action))
+    .orderBy(m.schema.auditLog.at);
 
 async function draft(name: string, slug: string, staffId: string, days: number[], extra: Record<string, unknown> = {}) {
   const { wizardOptions } = await import("@/server/location-admin");
@@ -254,7 +255,7 @@ describe("refunds follow the account the payment settled in, whatever the shop u
     ]);
   });
 
-  it("a connected-account payment still reverses its transfer after the shop moves to the brand's account", async () => {
+  it("a connected-account payment still reverses its shop transfer after the shop moves to the brand's account", async () => {
     await signInAs(ids.owner);
     const moline = await shopBySlug("moline");
     const t = await ticket(moline.id);
@@ -267,7 +268,10 @@ describe("refunds follow the account the payment settled in, whatever the shop u
       expect(await paymentFor(after.sale.id)).toMatchObject({ settlement: "platform", stripeAccountId: null });
       await m.checkout.refundSale({ saleId: t.sale.id, items: [], tipCents: 200, refundCardFee: false, reason: "Tip typo", restock: false, actor });
       expect(m.processor.simulatorLedger().refunds.filter((x) => x.paymentIntentId === pay.stripePaymentIntentId)).toEqual([
-        expect.objectContaining({ amountCents: 200, reverseTransfer: true }),
+        expect.objectContaining({ amountCents: 200, reverseTransfer: false }),
+      ]);
+      expect(await m.db.db.select().from(m.schema.paymentTransferReversals).where(eq(m.schema.paymentTransferReversals.paymentId, pay.id))).toEqual([
+        expect.objectContaining({ kind: "refund", amountCents: 200, status: "sent" }),
       ]);
     } finally {
       await setup.setPaymentsModeAction(moline.id, "connected");

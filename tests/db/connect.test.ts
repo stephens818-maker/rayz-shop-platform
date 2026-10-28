@@ -1,6 +1,7 @@
 /**
  * Stripe Connect (I10): one platform account, one connected account per shop. Card charges are
- * destination charges to the shop where the service happened, refunds pull the transfer back,
+ * separate charges and transfers: charged on the platform, then the shop's portion is transferred to
+ * the shop where the service happened, and refunds reverse that transfer,
  * shops that aren't onboarded can't take cards, the location setup wizard onboards each shop, and
  * the Shop P&L report ties each shop's card money to its own account, grouped by owner.
  */
@@ -36,6 +37,7 @@ const account = async (shopId: string) => (await m.db.db.query.shopPaymentAccoun
 const staffId = async (email: string) => (await m.db.db.query.staff.findFirst({ where: eq(m.schema.staff.email, email) }))!.id;
 const credit = { method: "card" as const, paymentMethodId: "pm_card_visa", entryMode: "keyed" as const };
 const reader = { method: "card" as const, paymentMethodId: "pm_card_visa", entryMode: "terminal" as const };
+const reversals = (paymentId: string) => m.db.db.select().from(m.schema.paymentTransferReversals).where(eq(m.schema.paymentTransferReversals.paymentId, paymentId));
 
 async function ticket(slug: string) {
   const s = await shop(slug);
@@ -63,8 +65,8 @@ describe("seeded shops", () => {
   });
 });
 
-describe("destination charges", () => {
-  it("a card charge settles to the shop's own account, with the processing fee as the application fee", async () => {
+describe("separate charges and transfers", () => {
+  it("a card charge is the platform's, and the shop's own account gets the charge less the processing fee", async () => {
     const t = await ticket("moline");
     const r = await m.checkout.finalizeSale({ saleId: t.sale.id, lines: t.lines, tipCents: 500, tender: credit, actor });
     const [pay] = await m.db.db.select().from(m.schema.payments).where(eq(m.schema.payments.saleId, t.sale.id));
@@ -73,9 +75,13 @@ describe("destination charges", () => {
     expect(pay.amountCents).toBe(r.totals.primaryChargeCents);
     expect(pay.stripeAccountId).toBe(a.stripeAccountId);
     expect(pay.applicationFeeCents).toBe(fee);
-    expect(pay.stripeTransferId).toMatch(/^sim_tr_/);
+    expect(pay).toMatchObject({ chargeType: "separate", transferGroup: `sale_${t.sale.id}`, stripeTransferId: null });
     const intent = m.processor.simulatorLedger().intents.find((i) => i.id === pay.stripePaymentIntentId)!;
-    expect(intent.destination).toEqual({ accountId: a.stripeAccountId, applicationFeeCents: fee });
+    expect(intent.transferGroup).toBe(`sale_${t.sale.id}`);
+    const transfers = await m.db.db.select().from(m.schema.paymentTransfers).where(eq(m.schema.paymentTransfers.paymentId, pay.id));
+    expect(transfers).toEqual([
+      expect.objectContaining({ kind: "shop", status: "sent", destinationAccount: a.stripeAccountId, amountCents: pay.amountCents - fee, stripeTransferId: expect.stringMatching(/^sim_tr_/) }),
+    ]);
   });
 
   it("the card reader uses the in-person rate", async () => {
@@ -98,21 +104,24 @@ describe("destination charges", () => {
     expect(pays.find((p) => p.saleId === b.sale.id)!.stripeAccountId).toBe((await account(b.shop.id))!.stripeAccountId);
   });
 
-  it("refunds pull the money back from the shop's account; the processing fee isn't returned", async () => {
+  it("refunds reverse the shop's transfer, not the charge's; the processing fee isn't returned", async () => {
     const t = await ticket("moline");
     await m.checkout.finalizeSale({ saleId: t.sale.id, lines: t.lines, tipCents: 300, tender: credit, actor });
     const [pay] = await m.db.db.select().from(m.schema.payments).where(eq(m.schema.payments.saleId, t.sale.id));
     await m.checkout.refundSale({ saleId: t.sale.id, items: [], tipCents: 300, refundCardFee: false, reason: "Tip typo", restock: false, actor });
     const ref = m.processor.simulatorLedger().refunds.filter((x) => x.paymentIntentId === pay.stripePaymentIntentId);
-    expect(ref).toEqual([expect.objectContaining({ amountCents: 300, reverseTransfer: true })]);
+    expect(ref).toEqual([expect.objectContaining({ amountCents: 300, reverseTransfer: false })]);
+    expect(await reversals(pay.id)).toEqual([expect.objectContaining({ kind: "refund", amountCents: 300, uncoveredCents: 0, status: "sent" })]);
 
     const v = await ticket("moline");
     await m.checkout.finalizeSale({ saleId: v.sale.id, lines: v.lines, tipCents: 0, tender: credit, actor });
     const [vp] = await m.db.db.select().from(m.schema.payments).where(eq(m.schema.payments.saleId, v.sale.id));
     await m.checkout.voidSale(v.sale.id, "Rang up the wrong client", actor);
     expect(m.processor.simulatorLedger().refunds.filter((x) => x.paymentIntentId === vp.stripePaymentIntentId)).toEqual([
-      expect.objectContaining({ amountCents: vp.amountCents, reverseTransfer: true }),
+      expect.objectContaining({ amountCents: vp.amountCents, reverseTransfer: false }),
     ]);
+    // The whole shop transfer comes back; the processing fee it never had is the platform's.
+    expect(await reversals(vp.id)).toEqual([expect.objectContaining({ kind: "refund", amountCents: vp.amountCents - vp.applicationFeeCents, uncoveredCents: vp.applicationFeeCents, status: "sent" })]);
   });
 
   it("a shop that isn't onboarded can't take cards, but cash still works", async () => {
