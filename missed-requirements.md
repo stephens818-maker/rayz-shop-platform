@@ -1177,15 +1177,16 @@ The plan's P0 cases must all pass in the sandbox before the pilot. Status by cas
 - [ ] **Ask Charles and the CPA:** when training on top of clocked hours takes a week past 40, the overtime comes out of regular hours as any overtime does, so the hourly side of the greater-of drops by those hours. Keep that, or take the overtime from training first?
 - [ ] **Ask Charles:** My Earnings shows only the shops someone works at. Should it also show another shop where they have hours in the period, such as a day of training there? It's on the Payroll Report and in the iSolved file either way.
 
-## 55. PPH, production per hour (Charles, Oct 28)
+## 55. PPH, Productivity Per Hour (Charles, Oct 28)
 
-- [x] Service PPH = service sales before tax and tips, net of discounts and refunds ÷ clocked worked hours (regular plus overtime, not training or PTO). Product PPH and total PPH over the same hours. Totals are sales over hours, never an average (`tests/pph.test.ts`).
+- [x] Named "Productivity Per Hour (PPH)" everywhere it shows. Service PPH, the default = service sales before tax and tips, net of discounts and refunds ÷ clocked worked hours (regular plus overtime, not training or PTO). Product PPH and total PPH over the same hours. Totals are sales over hours, never an average (`tests/pph.test.ts`).
+- [x] Clients per hour alongside it: completed service tickets ÷ the same hours, to the hundredth. Paid or partly refunded tickets with a service on them that wasn't refunded, credited to the ticket's barber; $0 comp services count, fully refunded, voided and product-only tickets don't. It's a column, a rank, a stat and a trend chart on the report, a review column on the Payroll Report (kept in the lock's snapshot), a Morning Dashboard row and column, and `clients` and `clientsPerHour` on `/me/earnings`.
 - [x] Zero hours is N/A everywhere: not ranked, listed last.
-- [x] The PPH report: per barber, per location and for the brand, over any range or pay period, ranked by any of the three (ties share a rank), highest or lowest first, sortable from the PPH headings, with a daily, weekly, monthly or pay-period trend. Barbers see only their own (`core_0145`, `tests/db/pph.test.ts`).
-- [x] Payroll Report: three review columns on the blocks, the Locations view and the drill-down. They're never in the iSolved file or the workbook download, and they match the report over the pay period.
+- [x] The PPH report: per barber, per location and for the brand, over any range or pay period, ranked by any of the four (ties share a rank), highest or lowest first, sortable from the PPH headings, with a daily, weekly, monthly or pay-period trend. Barbers see only their own (`core_0145`, `tests/db/pph.test.ts`).
+- [x] Payroll Report: four review columns on the blocks, the Locations view and the drill-down. They're never in the iSolved file or the workbook download, and they match the report over the pay period.
 - [x] Morning Dashboard email: day and week to date, per location, against the brand and per barber.
 - [x] Staff app My Earnings: `pph`, own only, top level and per shop.
-- [ ] **Ask Charles:** Squire-era tickets count toward PPH on the days they were sold, though payroll leaves them out. Keep that? And should a commission base with the card fee or loyalty added (I10) also count in PPH, as the Payroll Report's Service$ does?
+- [ ] **Ask Charles:** Squire-era tickets count toward PPH on the days they were sold, though payroll leaves them out. Keep that? And should a commission base with the card fee or loyalty added (I10) also count in PPH, as the Payroll Report's Service$ does? For clients per hour: is a ticket the right unit (a family ticket counts once), and should a $0 comp service count as a client (it does now)?
 
 ## Deferred by decision
 
