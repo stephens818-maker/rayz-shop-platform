@@ -24,6 +24,7 @@ import { type ClientCounts, clientCountsOf, linesPph, perClientCents, uniqueClie
 import { appPayoutStatus, appTransferStatus } from "@/domain/staff-payouts";
 import { employeeFeeCents, receivedCents } from "@/domain/tips";
 import { SHOP_TZ, addDays, diffDays, endOfLocalDay, isValidLocalDate, localDateOf, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
+import { wholeWorkweeks } from "@/domain/report-range";
 import { workShopIds } from "@/server/auth/access";
 import { audit } from "@/server/audit";
 import { AppError, forbidden } from "@/server/errors";
@@ -56,6 +57,8 @@ import { payoutSetup, sees, type Sees } from "./pay";
 
 /** Longest from/to for days, tickets and payouts: each day is its own read of the report's sales. */
 export const MAX_RANGE_DAYS = 31;
+/** Longest from/to for GET /me/earnings: one payroll read over the range (a quarter). */
+export const MAX_EARNINGS_RANGE_DAYS = 92;
 
 type MyShop = { id: string; name: string };
 type ShopCalendar = { shop: MyShop; groupId: string; calendar: PayCalendar };
@@ -132,15 +135,33 @@ function rangeOf(q: PeriodQuery): { from: LocalDate; to: LocalDate } | null {
   return { from: q.from, to: q.to };
 }
 
-/** /me/earnings: pay is worked out per pay period, so a from/to has to be exactly one. */
-function earningsPeriod(cals: readonly ShopCalendar[], q: PeriodQuery, today: LocalDate): MyPeriod {
+/**
+ * /me/earnings: a pay period (period, periodId, or a from/to that is exactly one), or any from/to up
+ * to MAX_EARNINGS_RANGE_DAYS at every shop of theirs (`range` true: no period number or check date).
+ */
+function earningsPeriod(cals: readonly ShopCalendar[], q: PeriodQuery, today: LocalDate): { per: MyPeriod; range: boolean } {
   const id = periodIdOf(q);
   const range = rangeOf(q);
-  if (!range) return periodById(cals, id ?? "current", today, q.periodId !== undefined ? "periodId" : "period");
+  if (!range) return { per: periodById(cals, id ?? "current", today, q.periodId !== undefined ? "periodId" : "period"), range: false };
   const p = periodAt(cals, range.from);
-  if (!p || p.end !== range.to)
-    throw bad("Pay is worked out per pay period: send period=current, period=<id> or periodId=<id> (or a from/to that is exactly one pay period). GET /me/earnings/days covers any range.", "from");
-  return p;
+  if (p && p.end === range.to) return { per: p, range: false };
+  if (diffDays(range.to, range.from) >= MAX_EARNINGS_RANGE_DAYS) throw bad(`from/to covers at most ${MAX_EARNINGS_RANGE_DAYS} days (GET /me/earnings/days for days, GET /me/pay-periods for pay periods)`, "to");
+  if (!cals.length) throw new AppError("not_found", "You aren't on a shop's pay calendar", { field: "from" });
+  return { per: { id: range.from, start: range.from, end: range.to, number: 0, checkDate: range.to, cals: [...cals] }, range: true };
+}
+
+/** A from/to that isn't a pay period: locked once every shop of theirs is locked at exactly these dates (a run of whole workweeks), an estimate otherwise. */
+function rangeState(view: PayrollView | null): PeriodState {
+  const locked = !!view?.blocks.length && view.locked === "all";
+  return {
+    periodStatus: locked ? "locked" : "draft",
+    payrollStatus: "not_yet_processed",
+    exportStatus: locked ? "approved" : "draft",
+    isEstimate: !locked,
+    snapshotId: null,
+    computedAt: new Date().toISOString(),
+    sentAt: null,
+  };
 }
 
 /** Days, tickets and payouts: a pay period, or any from/to up to MAX_RANGE_DAYS. Nothing sent: the current period. */
@@ -455,11 +476,13 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
   const see = sees(ctx);
   const me = ctx.staff.id;
   const { cals } = await myCalendars(me);
-  const per = earningsPeriod(cals, q, today);
+  const { per, range } = earningsPeriod(cals, q, today);
   const shopIds = per.cals.map((c) => c.shop.id);
-  const view = await buildPayroll(per.start, per.end, { clockChecks: false });
+  const view = !range
+    ? await buildPayroll(per.start, per.end, { clockChecks: false })
+    : await buildPayroll(per.start, per.end, { clockChecks: false, ...(wholeWorkweeks(per.start, per.end) ? { weeks: { shopIds } } : { review: { shopIds } }) });
   const [state, ledger, days, declared, covered, setup] = await Promise.all([
-    periodStates([per], today, new Map([[per.start, view]])).then((m) => m.get(per.start)!),
+    range ? rangeState(view) : periodStates([per], today, new Map([[per.start, view]])).then((m) => m.get(per.start)!),
     see.tips ? myLedger(me, shopIds, { from: per.start, to: per.end }) : [],
     see.tips ? myDays(me, shopIds, per.start, per.end, today) : [],
     see.tips ? currentDeclarationsOf(me, shopIds, per.start, per.end) : [],
@@ -520,18 +543,20 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
   const tipsOf = (k: "cardTipsCents" | "cashTipsCents" | "giftCardTipsCents" | "cashOnTicketsCents" | "declaredCashTipsCents" | "tipAdjustmentsCents" | "totalTipsCents") =>
     see.tips ? sum(slices, (s) => s.out[k] ?? 0) : null;
   const wages = see.wages;
-  const nav = neighbours(cals, per, today);
+  const nav = range ? { previous: null, next: null } : neighbours(cals, per, today);
 
   return {
     from: per.start,
     to: per.end,
-    period: { id: per.id, start: per.start, end: per.end, number: per.number, checkDate: per.checkDate },
+    timezone: SHOP_TZ,
+    period: range ? null : { id: per.id, start: per.start, end: per.end, number: per.number, checkDate: per.checkDate },
+    range: range ? { kind: view?.kind ?? "review", wholeWorkweeks: wholeWorkweeks(per.start, per.end), partialWeeks: view?.review?.partialWeeks ?? [], excluded: (view?.excluded ?? []).map((x) => ({ shopId: x.shopId, shopName: x.shop, reason: x.reason })) } : null,
     previousPeriodId: nav.previous,
     nextPeriodId: nav.next,
     sees: see,
     grossLabel: GROSS_LABEL,
     isEstimate: state.isEstimate,
-    periods: [{ id: per.id, start: per.start, end: per.end, periodStatus: state.periodStatus, payrollStatus: state.payrollStatus, isEstimate: state.isEstimate, snapshotId: state.snapshotId, computedAt: state.computedAt }],
+    periods: range ? [] : [{ id: per.id, start: per.start, end: per.end, periodStatus: state.periodStatus, payrollStatus: state.payrollStatus, isEstimate: state.isEstimate, snapshotId: state.snapshotId, computedAt: state.computedAt }],
     periodStatus: state.periodStatus,
     payrollStatus: state.payrollStatus,
     exportStatus: state.exportStatus,
@@ -723,15 +748,18 @@ interface TicketRow {
  * and the card tip's transfer status and its payout's status, each in its own field. Clients by
  * first name only.
  */
-export async function myEarningsTickets(ctx: StaffAppContext, q: { periodId: string; date: string }, today: LocalDate = todayLocal()) {
+export async function myEarningsTickets(ctx: StaffAppContext, q: { periodId?: string; from?: string; to?: string; date: string }, today: LocalDate = todayLocal()) {
   const see = sees(ctx);
   if (!see.tips && !see.sales) throw forbidden("You don't have permission to see tips or sales");
   const me = ctx.staff.id;
   const { shops: mine, cals } = await myCalendars(me);
-  const per = periodById(cals, periodIdOf({ periodId: q.periodId })!, today, "periodId");
-  if (!isValidLocalDate(q.date) || q.date < per.start || q.date > per.end) throw bad(`date is a Chicago calendar day in that pay period, ${per.start} to ${per.end}`, "date");
+  if (q.periodId === undefined && q.from === undefined && q.to === undefined) throw bad("Send periodId, or from and to", "periodId");
+  const span = spanOf(cals, { periodId: q.periodId, from: q.from, to: q.to }, today);
+  const per = span.period;
+  if (!isValidLocalDate(q.date) || q.date < span.from || q.date > span.to)
+    throw bad(`date is a Chicago calendar day in ${per ? "that pay period" : "from/to"}, ${span.from} to ${span.to}`, "date");
   const date = q.date;
-  const ids = per.cals.map((c) => c.shop.id);
+  const ids = (per?.cals ?? cals).map((c) => c.shop.id);
   const name = new Map(mine.map((s) => [s.id, s.name]));
   const list = ids.length
     ? await rows<TicketRow>(sql`
@@ -753,7 +781,7 @@ export async function myEarningsTickets(ctx: StaffAppContext, q: { periodId: str
     see.tips ? myLedger(me, ids, { saleIds: list.map((t) => t.saleId) }) : [],
     payoutSetup(ctx),
     see.tips ? shopCoveredRefunds(me, ids, date, date) : [],
-    periodStates([per], today).then((m) => m.get(per.start)!),
+    per ? periodStates([per], today).then((m) => m.get(per.start)!) : null,
   ]);
   const routes = await tipRoutesOf(setup);
   const tickets = list.map((t) => {
@@ -788,7 +816,7 @@ export async function myEarningsTickets(ctx: StaffAppContext, q: { periodId: str
       postedDate: late?.date ?? null,
     };
   });
-  return { periodId: per.id, date, timezone: SHOP_TZ, ...periodFlags(state), tickets, refunds: covered };
+  return { periodId: per?.id ?? null, from: span.from, to: span.to, date, timezone: SHOP_TZ, ...periodFlags(state), tickets, refunds: covered };
 }
 
 /** A client on an employee's screen: their first name only, whatever was typed into the field. */
