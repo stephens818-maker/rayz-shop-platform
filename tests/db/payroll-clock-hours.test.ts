@@ -134,7 +134,7 @@ describe("hours come from the time clock", () => {
     expect(page.text).toContain("/admin/timesheets?period=");
   });
 
-  it("flags hours on a Sunday at a shop closed Sundays (G-23); they count in the workweek that starts that Sunday", async () => {
+  it("flags hours on a Sunday at a shop closed Sundays (G-11); they count in the workweek that starts that Sunday", async () => {
     const mk = await staffBy("makenna@rayz.test");
     const cv = await shop("coralville");
     const p = period(14);
