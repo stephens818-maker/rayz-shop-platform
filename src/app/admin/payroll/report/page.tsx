@@ -278,7 +278,7 @@ function Report({
   );
 }
 
-const AMBER = new Set(["owner_case", "netcomm_gap", "below_punches", "sales_without_hours", "sales_day_without_hours", "timesheet_not_approved", "hours_not_locked", "hours_not_from_clock", "cross_source_ot", "rollout_source"]);
+const AMBER = new Set(["owner_case", "netcomm_gap", "below_punches", "sales_without_hours", "sales_day_without_hours", "timesheet_not_approved", "hours_not_locked", "hours_not_from_clock", "cross_source_ot", "rollout_source", "sunday_punch"]);
 
 function SquireGate({ view }: { view: PayrollView }) {
   if (!view.squireMissing.length || view.locked === "all") return null;

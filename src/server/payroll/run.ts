@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { auditLog, payGroups, payrollApprovals, payrollCommissionAdjustments, payrollEmployers, payrollFinalPays, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, payrollSquireImports, payrollSquireInputs, sales as salesTable, shops as shopsTable, staff, timeEntries, timePunches, type PayrollApprovalTotals } from "@/db/schema";
+import { auditLog, payGroups, payrollApprovals, payrollCommissionAdjustments, payrollEmployers, payrollFinalPays, payrollLockedOt, payrollOverrides, payrollProfiles, payrollRates, payrollRuns, payrollSquireImports, payrollSquireInputs, sales as salesTable, shopHours, shops as shopsTable, staff, timeEntries, timePunches, type PayrollApprovalTotals } from "@/db/schema";
 import { calendarProblem, periodOf, periodStarting, periodsAround, sameCalendar, workweeksOf, type CalendarPeriod, type PayCalendar } from "@/domain/payroll/calendar";
 import {
   OVERRIDABLE,
@@ -34,7 +34,7 @@ import {
 } from "@/domain/payroll/calc";
 import { minimumWageCents, minimumWageShortfallCents, rulesFor } from "@/domain/wage-hour";
 import { dailyHours, overtimeSlices, sliceKey, weekStartOf, type DayHours, type Slice, type TimeEntry } from "@/domain/payroll/overtime";
-import { addDays, endOfLocalDay, formatDate, localDateOf, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
+import { addDays, endOfLocalDay, formatDate, localDateOf, startOfLocalDay, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
 import { loadStaffAccess } from "@/server/auth/access";
 import { AppError } from "@/server/errors";
@@ -476,7 +476,12 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
   });
   const grandAndCheck = runs.length ? assembleFromBlocks(blocks) : { grand: live.grand, mismatches: live.mismatches };
   const openShops = o.clockChecks === false ? [] : blocks.filter((b) => !b.locked && b.source === "platform").map((b) => b.shopId);
-  const [hoursCheck, serviceDays, typed] = await Promise.all([payrollHoursCheck(openShops, start, end), serviceDaysIn(openShops, start, end), typedHoursIn(openShops, start, end)]);
+  const [hoursCheck, serviceDays, typed, sundayOpen] = await Promise.all([
+    payrollHoursCheck(openShops, start, end),
+    serviceDaysIn(openShops, start, end),
+    typedHoursIn(openShops, start, end),
+    openOnSunday(openShops),
+  ]);
   const shopName = (id: string) => groupOf.get(id)?.shop ?? "Other shop";
   const finalPays = finalPaysOf(finals, finalInputs, person);
   const tips = await checkPayrollTips(withFinalRows(blocks.filter((b) => b.source === "platform"), finals), start, end);
@@ -514,7 +519,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
       ...anomalies(blocks, settings).filter((a) => a.kind !== "late_tip_refund" || !flaggedAfterExport.has(`${a.staffId}|${a.shopId}`)),
       ...refundedAfterExport,
       ...sourceFlags.filter((a) => !blocks.find((b) => b.shopId === a.shopId)?.locked),
-      ...clockAnomalies(blocks, settings, hoursCheck, days, serviceDays, typed, start, end),
+      ...clockAnomalies(blocks, settings, hoursCheck, days, serviceDays, typed, start, end, { checked: new Set(openShops), open: sundayOpen }),
       ...lockAnomalies(blocks),
       ...finalPayAnomalies(finalPays),
       ...(await lateTipsIn(blocks, start, end)),
@@ -697,8 +702,8 @@ const listed = (xs: string[], max = 3, sep = "; ") => `${xs.slice(0, max).join(s
 /**
  * The time clock's side of the report (Charles: the hours come from the clock): missed punches,
  * timesheets no manager has approved, hours not locked (when that doesn't already block the lock),
- * service sales on a day with no hours at that shop, and hours typed in or imported instead of clocked.
- * Shops already locked are history and aren't checked.
+ * service sales on a day with no hours at that shop, hours typed in or imported instead of clocked, and
+ * hours on a Sunday at a shop that's closed Sundays. Shops already locked are history and aren't checked.
  */
 function clockAnomalies(
   blocks: readonly BlockView[],
@@ -709,6 +714,7 @@ function clockAnomalies(
   typed: Map<string, number>,
   start: LocalDate,
   end: LocalDate,
+  sunday: { checked: ReadonlySet<string>; open: ReadonlySet<string> },
 ): Anomaly[] {
   const out: Anomaly[] = [];
   const open = blocks.filter((b) => !b.locked);
@@ -765,7 +771,24 @@ function clockAnomalies(
         message: `${l.name} (${shopOf.get(k.split("|")[1])}): ${fmtHours(centiHours / 100)} typed in or imported, not from the time clock.`,
       });
     }
+  const sundays = days.filter((d) => d.date >= start && d.date <= end && d.worked > 0 && weekdayOf(d.date) === 0 && sunday.checked.has(d.shopId) && !sunday.open.has(d.shopId));
+  for (const [k, list] of byKey(sundays)) {
+    const l = lineOf.get(k);
+    out.push({
+      staffId: list[0].staffId,
+      shopId: list[0].shopId,
+      kind: "sunday_punch",
+      message: `${l?.name ?? "An employee"} (${shopOf.get(list[0].shopId)}): hours on ${plural(list.length, "Sunday")}, when the shop is normally closed: ${listed(list.map((d) => `${day(d.date)} (${fmtHours(d.worked / 100)})`))}. They're paid, and count toward OT in the workweek that starts that Sunday. Check the punches are right.`,
+    });
+  }
   return out;
+}
+
+/** Shops whose weekly hours include Sunday: hours worked there on a Sunday aren't unusual. */
+async function openOnSunday(shopIds: readonly string[]): Promise<Set<string>> {
+  if (!shopIds.length) return new Set();
+  const rows = await db.select({ shopId: shopHours.shopId }).from(shopHours).where(and(inArray(shopHours.shopId, [...shopIds]), eq(shopHours.weekday, 0)));
+  return new Set(rows.map((r) => r.shopId));
 }
 
 /** Tickets imported from Squire into a locked period after its lock. They never reach payroll, but a re-export should know. */

@@ -134,6 +134,27 @@ describe("hours come from the time clock", () => {
     expect(page.text).toContain("/admin/timesheets?period=");
   });
 
+  it("flags hours on a Sunday at a shop closed Sundays (G-23); they count in the workweek that starts that Sunday", async () => {
+    const mk = await staffBy("makenna@rayz.test");
+    const cv = await shop("coralville");
+    const p = period(14);
+    const sunday = [...Array(14).keys()].map((i) => m.time.addDays(p.start, i)).find((d) => m.time.weekdayOf(d) === 0)!;
+    await punchAt(mk, cv.id, "in", at(sunday, 10 * 60));
+    await punchAt(mk, cv.id, "out", at(sunday, 14 * 60));
+    const sundayFlags = async () => (await run.buildPayroll(p.start, p.end))!.anomalies.filter((a) => a.kind === "sunday_punch" && a.shopId === cv.id);
+    const [flag] = await sundayFlags();
+    expect(flag).toMatchObject({ staffId: mk.id });
+    expect(flag.message).toContain(`hours on 1 Sunday, when the shop is normally closed: ${m.time.formatDate(sunday, "EEE MMM d")} (4h)`);
+    expect(flag.message).toContain("count toward OT in the workweek that starts that Sunday");
+
+    await m.db.db.insert(S().shopHours).values({ shopId: cv.id, weekday: 0, openMin: 10 * 60, closeMin: 14 * 60 });
+    try {
+      expect(await sundayFlags()).toEqual([]);
+    } finally {
+      await m.db.db.delete(S().shopHours).where(m.drizzle.and(eq(S().shopHours.shopId, cv.id), eq(S().shopHours.weekday, 0)));
+    }
+  });
+
   it("leaves the clock checks out of an employee's own pay", async () => {
     const v = (await run.buildPayroll(period(12).start, period(12).end, { clockChecks: false }))!;
     expect(v.hoursOpen).toEqual([]);
