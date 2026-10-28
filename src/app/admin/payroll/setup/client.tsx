@@ -42,7 +42,7 @@ export function SettingsForm({ initial, memoRequired }: { initial: PayrollSettin
     <div className="space-y-3">
       <Check
         label="Training hours on top of clocked hours count toward the weekly 40 for overtime (C2)"
-        hint="On by default: under the FLSA training is generally hours worked, pending Charles and the CPA (Q11). Training inside the same person's clocked time is already in their hours and is never counted twice. Training pay itself is always training hours × the training rate, outside the greater-of, and in labor cost."
+        hint="On: Charles says training hours are on top of clocked production hours (Q11), so production plus training over 40 in a Sun–Sat week is overtime, across every shop, shared out to the shops by their hours with training counted. This treats training as hours worked under the FLSA, which the CPA still needs to confirm; turn it off only on the CPA's advice. Training inside the same person's clocked time is already in their hours and is never counted twice. Training pay is training hours × the training rate, outside the greater-of; it and training's share of O.T. Pay are the Training Cost inside labor cost."
         checked={v.trainingCountsTowardOt}
         onChange={(x) => setV({ ...v, trainingCountsTowardOt: x })}
       />

@@ -33,7 +33,7 @@ import {
   type Totals,
 } from "@/domain/payroll/calc";
 import { minimumWageCents, minimumWageShortfallCents, rulesFor } from "@/domain/wage-hour";
-import { dailyHours, overtimeSlices, sliceKey, weekStartOf, type DayHours, type Slice, type TimeEntry } from "@/domain/payroll/overtime";
+import { dailyHours, overtimeSlices, sliceKey, trainingOtCenti, weekStartOf, type DayHours, type Slice, type TimeEntry } from "@/domain/payroll/overtime";
 import { addDays, endOfLocalDay, formatDate, localDateOf, startOfLocalDay, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
 import { audit, type Actor } from "@/server/audit";
 import { loadStaffAccess } from "@/server/auth/access";
@@ -301,15 +301,16 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
     locked,
   });
   const mine = slices.filter((s) => s.periodStart === start && runShops.has(s.shopId) && s.weekStart >= weeks[0] && s.weekStart <= weeks[weeks.length - 1]);
-  const hours = new Map<string, { worked: number; training: number; trainingOverlap: number; pto: number; ot: number }>();
+  const hours = new Map<string, { worked: number; training: number; trainingOverlap: number; pto: number; ot: number; trainingOt: number }>();
   for (const s of mine) {
     const k = `${s.staffId}|${s.shopId}`;
-    const h = hours.get(k) ?? { worked: 0, training: 0, trainingOverlap: 0, pto: 0, ot: 0 };
+    const h = hours.get(k) ?? { worked: 0, training: 0, trainingOverlap: 0, pto: 0, ot: 0, trainingOt: 0 };
     h.worked += s.worked;
     h.training += s.training;
     h.trainingOverlap += s.trainingOverlap;
     h.pto += s.pto;
     h.ot += s.ot;
+    h.trainingOt += trainingOtCenti(s, settings);
     hours.set(k, h);
   }
 
@@ -365,7 +366,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
     const pr = profile.get(staffId);
     const r = rateOf(staffId, shopId);
     const plan = plans?.rateFor(staffId, shopId) ?? null;
-    const h = hours.get(k) ?? { worked: 0, training: 0, trainingOverlap: 0, pto: 0, ot: 0 };
+    const h = hours.get(k) ?? { worked: 0, training: 0, trainingOverlap: 0, pto: 0, ot: 0, trainingOt: 0 };
     for (const [kind, on] of [["training", settings.trainingSource], ["pto", settings.ptoSource]] as const) {
       if (on !== "manager" || !h[kind]) continue;
       sourceFlags.push({
@@ -420,6 +421,7 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
           ptoHours: settings.ptoSource === "manager" ? 0 : centi(h.pto),
           trainingHours: settings.trainingSource === "manager" ? 0 : centi(h.training),
           ...(h.trainingOverlap && settings.trainingSource !== "manager" ? { trainingOverlapHours: centi(h.trainingOverlap) } : {}),
+          ...(settings.trainingSource !== "manager" ? { trainingOtHours: centi(h.trainingOt) } : {}),
           serviceSales: ((s?.serviceSalesCents ?? 0) + baseExtra(s, "service", settings)) / 100,
           productSales: ((s?.productSalesCents ?? 0) + baseExtra(s, "product", settings)) / 100,
           tips: tipsCents / 100,

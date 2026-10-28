@@ -71,6 +71,14 @@ const COLS: Col[] = [
     onlyIf: (b) => b.lines.some((l) => l.guaranteeTopUp),
   },
   { key: "laborCost", label: COLUMN_LABEL.laborCost, fmt: (l) => fmtMoney(l.laborCost), total: (t) => fmtMoney(t.laborCost), extra: true },
+  {
+    key: "trainingCost",
+    label: `${COLUMN_LABEL.trainingCost} (in Labor Cost)`,
+    fmt: (l) => fmtMoney(l.trainingCost ?? 0),
+    total: (t) => fmtMoney(t.trainingCost ?? 0),
+    extra: true,
+    onlyIf: (b) => b.lines.some((l) => l.trainingCost),
+  },
   { key: "tipsOutside", label: COLUMN_LABEL.tipsOutside, fmt: (l) => fmtMoney(l.tipsOutside), total: (t) => fmtMoney(t.tipsOutside), extra: true },
   { key: "tipsInPayroll", label: COLUMN_LABEL.tipsInPayroll, fmt: (l) => fmtMoney(l.tipsInPayroll), total: (t) => fmtMoney(t.tipsInPayroll), extra: true },
   { key: "tipsPaidOut", label: COLUMN_LABEL.tipsPaidOut, fmt: (l) => fmtMoney(l.tipsPaidOut), total: (t) => fmtMoney(t.tipsPaidOut), extra: true },
@@ -444,7 +452,7 @@ function Locations({ view, tickets }: { view: PayrollView; tickets: ClientCounts
     <Card>
       <CardHeader
         title="Locations"
-        subtitle="Employee Cost is labor cost: Total Wages plus O.T. Pay and Training Pay. Every number is a sum of the shop blocks below. Productivity Per Hour (PPH; review only, never in the iSolved file) is sales over worked hours, and clients per hour completed service tickets over the same hours."
+        subtitle="Employee Cost is labor cost: Total Wages plus O.T. Pay and Training Pay. Training Cost is the part of it training adds: Training Pay plus training's share of O.T. Pay. Every number is a sum of the shop blocks below. Productivity Per Hour (PPH; review only, never in the iSolved file) is sales over worked hours, and clients per hour completed service tickets over the same hours."
       />
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -456,6 +464,7 @@ function Locations({ view, tickets }: { view: PayrollView; tickets: ClientCounts
               <th className="px-3 py-2 text-right">O.T. Pay</th>
               <th className="px-3 py-2 text-right">Training Pay</th>
               <th className="px-3 py-2 text-right">Employee Cost</th>
+              <th className="px-3 py-2 text-right">Training Cost</th>
               <th className="px-3 py-2 text-right">Gross Profit</th>
               <th className="px-3 py-2 text-right">Cost % of Sales</th>
               {PPH_RANKS.map((m) => (
@@ -479,6 +488,7 @@ function Locations({ view, tickets }: { view: PayrollView; tickets: ClientCounts
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.t.otPay)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.t.trainingPay)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.t.laborCost)}</td>
+                <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.t.trainingCost ?? 0)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{fmtMoney(r.t.grossProfit)}</td>
                 <td className="px-3 py-1.5 text-right tabular-nums">{pct(r.t.service ? r.t.laborCost / r.t.service : null)}</td>
                 {PPH_RANKS.map((m) => (
@@ -664,9 +674,16 @@ function ShopBlockCard({
                       {l.otFromTraining ? ` · ${hrsH(l.otFromTraining)} more went over the 40 here and is paid as O.T. hours` : ""}
                       {l.trainingHours > 0 &&
                         (s.trainingCountsTowardOt
-                          ? ` · ${hrsH(l.trainingHours - (l.input.trainingOverlapHours ?? 0))} of it counts toward the weekly 40 (on top of clocked hours, C2)`
-                          : " · training doesn't count toward the weekly 40 (C2 off, Q11)")}
+                          ? ` · ${hrsH(l.trainingHours - (l.input.trainingOverlapHours ?? 0))} of it counts toward the weekly 40 (on top of clocked hours, Charles, Q11)`
+                          : " · training doesn't count toward the weekly 40 (turned off on Payroll setup; Charles counts it, Q11)")}
                     </p>
+                    {l.trainingCost !== undefined && (l.trainingPay > 0 || l.trainingOtPay > 0) && (
+                      <p>
+                        <span className="font-medium">Training cost</span> = Training Pay {fmtMoney(l.trainingPay)} + its share of O.T. Pay {fmtMoney(l.trainingOtPay)} ({s.otMultiplier} × {fmtMoney(l.wage)} ×{" "}
+                        {hrs(l.trainingOtHours)} of the {hrs(l.otHours)} OT hours, each week&apos;s OT shared by the hours that counted toward the 40) = <strong>{fmtMoney(l.trainingCost)}</strong>, inside the labor
+                        cost above, not added to it.
+                      </p>
+                    )}
                     {view.ft[l.staffId] && (
                       <p>
                         <span className="font-medium">{view.ft[l.staffId].fullTime ? "Full time" : "Part time"}</span>: averaged {hrsH(view.ft[l.staffId].averageHours)}/week over the last{" "}

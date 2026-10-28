@@ -113,7 +113,7 @@ const trainingBasis = (d: Pick<DayHours, "training" | "trainingOverlap">, o: Pic
 export interface OtOptions {
   /** Weekly threshold in centi-hours. 4000 = 40 hours. */
   thresholdCenti: number;
-  /** C2: training hours on top of clocked hours count toward the weekly 40 (and carry OT share). Configurable until Charles answers Q11. */
+  /** C2: training hours on top of clocked hours count toward the weekly 40 (and carry OT share). On: Charles, Q11; the CPA to confirm training is hours worked. */
   trainingCountsTowardOt: boolean;
   /** Which legal entity (FEIN) a shop belongs to; hours only add up within one. */
   entityOf: (shopId: string) => string;
@@ -147,6 +147,10 @@ export interface Slice {
 }
 
 export const sliceKey = (s: Pick<Slice, "staffId" | "shopId" | "periodStart" | "weekStart">) => `${s.staffId}|${s.shopId}|${s.periodStart}|${s.weekStart}`;
+
+/** Training's share of a slice's OT, in (fractional) centi-hours: its OT × the training on top of clocked hours ÷ its basis (C2). */
+export const trainingOtCenti = (s: Pick<Slice, "ot" | "basis" | "training" | "trainingOverlap">, o: Pick<OtOptions, "trainingCountsTowardOt">) =>
+  o.trainingCountsTowardOt && s.ot > 0 && s.basis > 0 ? Math.min(s.ot, (s.ot * Math.max(0, s.training - s.trainingOverlap)) / s.basis) : 0;
 
 /** Shares `total` out by `weights` in whole units, largest remainder first, ties to the earlier one. */
 export function largestRemainder(total: number, weights: readonly number[]): number[] {

@@ -17,7 +17,12 @@ export interface PayrollSettings {
   dailyOtHours: number | null;
   /** For the report's OT Pay. iSolved computes the real (blended) OT itself. */
   otMultiplier: number;
-  /** C2: training hours on top of clocked hours count toward the weekly 40; training inside clocked time is already there. Configurable until Charles answers Q11. */
+  /**
+   * C2: training hours on top of clocked hours count toward the weekly 40 and carry their share of the
+   * OT; training inside clocked time is already there. On (Charles, Q11: training is on top of clocked
+   * production hours). It rests on training being hours worked under the FLSA, the CPA's to confirm, so
+   * it stays a setting.
+   */
   trainingCountsTowardOt: boolean;
   /** 2-decimal half-up on export values. Off: the workbook's values go out unrounded (pending Charles). */
   roundExport2dp: boolean;
@@ -353,6 +358,12 @@ export interface LineInput {
   trainingHours: number;
   /** Of the training hours, those inside the employee's clocked worked time (C2): counted toward OT once, as worked hours. */
   trainingOverlapHours?: number;
+  /**
+   * Of the OT hours, training's share (C2): each workweek's OT here × the training on top of clocked
+   * hours ÷ all the hours counted toward the 40 here. Without it (hours typed or from Squire), the
+   * period's figures here give it.
+   */
+  trainingOtHours?: number;
   serviceSales: number;
   productSales: number;
   tips: number;
@@ -470,6 +481,12 @@ export interface Line {
   trainingRate?: number;
   /** U = training rate × S: its own pay, outside the greater-of. */
   trainingPay: number;
+  /** Of Q, training's share (C2), never less than otFromTraining. */
+  trainingOtHours: number;
+  /** Of T, training's share: the OT multiplier × C × trainingOtHours. Already in T, so in V once. */
+  trainingOtPay: number;
+  /** What training costs: U + trainingOtPay. Inside V, never added to it. */
+  trainingCost: number;
   /** The guaranteed minimum's top-up: 0 unless compensation plans are on and set one. */
   guaranteeTopUp: number;
   /** Of M and N, commission owed for earlier, locked periods (I2). */
@@ -485,7 +502,7 @@ export interface Line {
   overridden: Overridable[];
 }
 
-const ov = (i: LineInput, k: Overridable, v: number) => i.overrides?.[k]?.value ?? v;
+const ov = (i: Pick<LineInput, "overrides">, k: Overridable, v: number) => i.overrides?.[k]?.value ?? v;
 
 /** C6: an adjustment can add hours or overtime but never take away what the punches show. Fix the punches instead. */
 export const belowPunches = (i: LineInput, k: "workedHours" | "otHours") => {
@@ -495,6 +512,17 @@ export const belowPunches = (i: LineInput, k: "workedHours" | "otHours") => {
 
 /** Training is paid at its own rate, never the greater-of's: hourly pay and commission don't change with it. */
 export const trainingRateOf = (i: Pick<LineInput, "trainingRate" | "hourlyRate" | "zeroHourlyPay">) => i.trainingRate ?? (i.zeroHourlyPay ? 0 : i.hourlyRate);
+
+/** Training on top of clocked hours (C2): the training hours less any inside the same person's clocked time. */
+export const trainingOnTop = (i: Pick<LineInput, "trainingHours" | "trainingOverlapHours" | "overrides">, s: Pick<PayrollSettings, "trainingCountsTowardOt">) =>
+  s.trainingCountsTowardOt ? Math.max(0, ov(i, "trainingHours", i.trainingHours) - (i.trainingOverlapHours ?? 0)) : 0;
+
+function trainingOtShare(i: LineInput, s: PayrollSettings, worked: number, otHours: number, otFromTraining: number): number {
+  if (!s.trainingCountsTowardOt || otHours <= 0) return 0;
+  const onTop = trainingOnTop(i, s);
+  const share = i.trainingOtHours ?? (worked + onTop > 0 ? (otHours * onTop) / (worked + onTop) : 0);
+  return Math.min(otHours, Math.max(otFromTraining, share));
+}
 
 export function computeLine(i: LineInput, s: PayrollSettings): Line {
   const worked = Math.max(i.workedHours, ov(i, "workedHours", i.workedHours));
@@ -528,6 +556,8 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
   const tipsPaidOutStripe = between(i.tipsPaidByStripe, tipsPaidOut);
   const trainingRate = trainingRateOf(i);
   const trainingPay = trainingRate * trainingHours;
+  const trainingOtHours = trainingOtShare(i, s, worked, otHours, otFromTraining);
+  const trainingOtPay = s.otMultiplier * payWage * trainingOtHours;
   const guaranteeTopUp = i.guaranteeTopUp ?? 0;
   const chargedTips = Math.min(tips, Math.max(0, i.chargedTips ?? 0));
   const tipsOutside = tips - tipsInPayroll;
@@ -572,6 +602,9 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
     otPay,
     trainingRate,
     trainingPay,
+    trainingOtHours,
+    trainingOtPay,
+    trainingCost: trainingPay + trainingOtPay,
     guaranteeTopUp,
     lateCommission,
     otPremiumOwed,
@@ -587,15 +620,16 @@ export function computeLine(i: LineInput, s: PayrollSettings): Line {
  * as well as on the wage iSolved pays it at. Per employee across every shop of the period: the
  * commission above hourly pay (I when positive, L and any guarantee top-up) over all hours worked,
  * the equal-per-hour allocation 778.120 allows, times (OT multiplier − 1) × each line's OT hours.
+ * With C2 on, training on top of clocked hours is hours worked too, so it's in the hours.
  * Equal per hour, a week's share of the commission follows its hours, so the period's figure is the
  * sum of its weeks'. By `${staffId}|${shopId}`.
  */
-export function regularRateAdjustments(lines: readonly Line[], s: Pick<PayrollSettings, "otMultiplier">): Map<string, number> {
+export function regularRateAdjustments(lines: readonly Line[], s: Pick<PayrollSettings, "otMultiplier"> & Partial<Pick<PayrollSettings, "trainingCountsTowardOt">>): Map<string, number> {
   const by = new Map<string, { extra: number; hours: number; lines: Line[] }>();
   for (const l of lines) {
     const p = by.get(l.staffId) ?? { extra: 0, hours: 0, lines: [] };
     p.extra += Math.max(0, l.serviceTotal) + l.productTotal + (l.guaranteeTopUp ?? 0);
-    p.hours += l.hours + l.otHours;
+    p.hours += l.hours + l.otHours + (s.trainingCountsTowardOt ? Math.max(0, l.trainingHours - (l.input.trainingOverlapHours ?? 0)) : 0);
     p.lines.push(l);
     by.set(l.staffId, p);
   }
@@ -636,6 +670,9 @@ export const SUMMED = [
   "trainingHours",
   "otPay",
   "trainingPay",
+  "trainingOtHours",
+  "trainingOtPay",
+  "trainingCost",
   "guaranteeTopUp",
   "otPremiumAdj",
   "laborCost",
@@ -674,13 +711,16 @@ export const COLUMN_LABEL: Record<Summed | "wage" | "grossPerHour" | "servicePct
   trainingHours: "Training Hours",
   otPay: "O.T. Pay",
   trainingPay: "Training Pay",
+  trainingOtHours: "Training O.T. HRS",
+  trainingOtPay: "Training O.T. Pay",
+  trainingCost: "Training Cost",
   guaranteeTopUp: "Guarantee top-up",
   otPremiumAdj: "O.T. premium adj.",
   laborCost: "Labor Cost",
 };
 
 /** Hours columns; the rest are dollars. */
-export const HOUR_COLUMNS: ReadonlySet<string> = new Set(["hours", "ptoHours", "otHours", "trainingHours"]);
+export const HOUR_COLUMNS: ReadonlySet<string> = new Set(["hours", "ptoHours", "otHours", "trainingHours", "trainingOtHours"]);
 
 export function totalsOf(rows: readonly Pick<Line, Summed>[]): Totals {
   const t = Object.fromEntries(SUMMED.map((k) => [k, rows.reduce((a, r) => a + (r[k] ?? 0), 0)])) as Record<Summed, number>;
@@ -1042,8 +1082,8 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
   const out: Mismatch[] = [];
   for (const b of blocks) {
     for (const k of SUMMED) {
-      const sum = b.lines.reduce((a, l) => a + l[k], 0);
-      if (!sameToTheCent(b.totals[k], sum)) out.push({ shopId: b.shopId, column: COLUMN_LABEL[k], check: "rows", report: b.totals[k], other: sum, detail: `${b.shop}: total isn't the sum of its rows` });
+      const sum = b.lines.reduce((a, l) => a + (l[k] ?? 0), 0);
+      if (!sameToTheCent(b.totals[k] ?? 0, sum)) out.push({ shopId: b.shopId, column: COLUMN_LABEL[k], check: "rows", report: b.totals[k] ?? 0, other: sum, detail: `${b.shop}: total isn't the sum of its rows` });
     }
     const from = extraFromOf(b);
     const cardSplit = from.includes("cardTipsOutside");
@@ -1066,6 +1106,21 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
       const parts = priced.reduce((a, l) => a + l.totalWages + l.otPay + l.trainingPay + l.guaranteeTopUp + (l.otPremiumOwed ?? 0), 0);
       if (!sameToTheCent(cost, parts))
         out.push({ shopId: b.shopId, column: COLUMN_LABEL.laborCost, check: "rows", report: cost, other: parts, detail: `${b.shop}: Labor Cost isn't Total Wages + O.T. Pay + Training Pay (+ top-ups and the OT premium owed)` });
+      // A line locked before training cost was split out has neither, so it adds 0 to both.
+      const training = priced.reduce((a, l) => a + (l.trainingCost ?? 0), 0);
+      const trainingParts = priced.reduce((a, l) => a + (l.trainingCost === undefined ? 0 : l.trainingPay + l.trainingOtPay), 0);
+      if (!sameToTheCent(training, trainingParts))
+        out.push({ shopId: b.shopId, column: COLUMN_LABEL.trainingCost, check: "rows", report: training, other: trainingParts, detail: `${b.shop}: Training Cost isn't Training Pay + its share of O.T. Pay` });
+      const over = priced.filter((l) => l.trainingOtHours > l.otHours + 1e-9 || l.trainingOtPay > l.otPay + 0.005);
+      if (over.length)
+        out.push({
+          shopId: b.shopId,
+          column: COLUMN_LABEL.trainingOtPay,
+          check: "rows",
+          report: over.reduce((a, l) => a + l.trainingOtPay, 0),
+          other: over.reduce((a, l) => a + l.otPay, 0),
+          detail: `${b.shop}: training's share of overtime is more than the overtime (${over.map((l) => l.name).join(", ")})`,
+        });
     }
     const exported = (k: ExtraFrom) => {
       const i = from.indexOf(k);
@@ -1099,8 +1154,8 @@ export function reconcile(blocks: readonly ShopBlock[], grand: Totals): Mismatch
       out.push({ shopId: b.shopId, column: COLUMN_LABEL.tips, check: "rows", report: b.totals.tips, other: b.totals.tipsInPayroll + b.totals.tipsOutside, detail: `${b.shop}: tips paid separately and in payroll don't add up to TIPS` });
     if (b.exportRows.length !== b.lines.length) out.push({ shopId: b.shopId, column: "Rows", check: "export", report: b.lines.length, other: b.exportRows.length, detail: `${b.shop}: the export has a different number of rows` });
   }
-  for (const k of ["service", "laborCost", "otPay", "trainingPay", "totalWages", "hours", "otHours", "tips", "netComm", "declaredCashTips"] as const) {
-    const sum = blocks.reduce((a, b) => a + b.totals[k], 0);
+  for (const k of ["service", "laborCost", "otPay", "trainingPay", "trainingCost", "totalWages", "hours", "otHours", "tips", "netComm", "declaredCashTips"] as const) {
+    const sum = blocks.reduce((a, b) => a + (b.totals[k] ?? 0), 0);
     if (!sameToTheCent(grand[k], sum)) out.push({ shopId: null, column: COLUMN_LABEL[k], check: "locations", report: grand[k], other: sum, detail: "Locations total isn't the sum of the shops" });
   }
   return out;
@@ -1225,10 +1280,15 @@ export function anomalies(blocks: readonly ShopBlock[], s: PayrollSettings): Ano
           staffId: l.staffId,
           shopId: b.shopId,
           kind: "training_in_hours",
-          message: `${who}: ${fmtHours(overlap)} of training falls inside their clocked hours, so it's paid as both worked and training time. It counts toward overtime once. Fix the training entry if it's the same time.`,
+          message: `${who}: ${fmtHours(overlap)} of training falls inside their clocked hours, so it's paid as both worked and training time. Training is on top of clocked hours (Charles, Q11), so this is most likely the same time entered twice: fix the training entry. It counts toward overtime once.`,
         });
       else if (l.trainingHours > 0 && !s.trainingCountsTowardOt)
-        out.push({ staffId: l.staffId, shopId: b.shopId, kind: "training_in_hours", message: `${who}: ${fmtHours(l.trainingHours)} training, left out of the weekly 40 (training toward overtime is off, Q11).` });
+        out.push({
+          staffId: l.staffId,
+          shopId: b.shopId,
+          kind: "training_in_hours",
+          message: `${who}: ${fmtHours(l.trainingHours)} training, left out of the weekly 40 because training toward overtime is turned off on Payroll setup. Charles counts it (Q11); turn it off only on the CPA's advice.`,
+        });
       if (l.trainingHours > 0 && l.input.trainingRateSource === "hourly")
         out.push({
           staffId: l.staffId,
