@@ -33,11 +33,13 @@ export async function addTrainingRate(staffId: string, v: TrainingRateVersion, a
   return row;
 }
 
-/** Only a version that hasn't started yet can be withdrawn; the database refuses the rest too. */
+/** Only a version that hasn't started yet, and no locked pay period used, can be withdrawn; the database refuses the rest too. */
 export async function deleteTrainingRate(staffId: string, versionId: string, actor: Actor, now = new Date()) {
   const [row] = await db.select().from(staffTrainingRates).where(and(eq(staffTrainingRates.id, versionId), eq(staffTrainingRates.staffId, staffId)));
   if (!row) throw notFound("Training rate");
   if (row.effectiveFrom <= todayLocal(now)) throw new AppError("bad_request", "This training rate has already started, so it stays in the history. Add a new one to change it.");
+  const locked = await lockedThrough();
+  if (locked && row.effectiveFrom <= locked) throw new AppError("bad_request", `A locked pay period (through ${locked}) used this training rate, so it stays in the history.`);
   await db.delete(staffTrainingRates).where(eq(staffTrainingRates.id, versionId));
   await audit(actor, "payroll.training_rate_delete", "staff", staffId, { versionId, effectiveFrom: row.effectiveFrom, rateCents: row.rateCents });
 }

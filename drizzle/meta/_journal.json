@@ -1009,6 +1009,13 @@
       "when": 1796631840000,
       "tag": "core_0143_staff_training_rates",
       "breakpoints": true
+    },
+    {
+      "idx": 144,
+      "version": "7",
+      "when": 1796633640000,
+      "tag": "core_0144_training_rate_lock_guard",
+      "breakpoints": true
     }
   ]
 }

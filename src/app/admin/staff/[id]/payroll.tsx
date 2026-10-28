@@ -97,7 +97,7 @@ export function TrainingRateCard({ staffId, versions, today, lockedThrough, canE
                   <td className="py-1">{formatDate(v.effectiveFrom, "MMM d, yyyy")}</td>
                   <td className="py-1 text-right tabular-nums">{formatCents(v.rateCents)}</td>
                   <td className="py-1 text-right">
-                    {canEdit && v.effectiveFrom > today && (
+                    {canEdit && v.effectiveFrom > today && (!lockedThrough || v.effectiveFrom > lockedThrough) && (
                       <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => deleteTrainingRateAction({ staffId, versionId: v.id }), undefined, "Training rate deleted")}>
                         Delete
                       </Button>
