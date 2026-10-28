@@ -83,6 +83,7 @@ Either way, the reload wipes everything in the database, including anything type
 - **The sign-in page** lists the demo logins, with one-click sign-in.
 - **A banner** on every page says it's a demo.
 - **The build** loads the sample data into an empty database.
+- **Two-step sign-in** isn't required, for privileged roles or for My Earnings in the staff app. Set `ENFORCE_STAFF_MFA=1` to require it anyway. In production both are always required.
 
 Never set `DEMO_MODE` on a deployment with real clients. It can't run there: with `APP_ENV=production`, a live Stripe key (`sk_live_…`), or a real `NOTIFICATIONS_*` provider (`twilio`, `resend`, `postmark`, `expo`), the build (`scripts/deploy-db.ts`) and the server (`src/instrumentation.ts`) stop with "DEMO_MODE=true can't run in production".
 
