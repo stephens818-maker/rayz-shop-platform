@@ -133,6 +133,9 @@ describe("a barber at two shops sees only their own, both shops together", () =>
     expect(part(shop.coralville)).toMatchObject({ productionHours: 6 });
     expect(part(shop.moline).otHours + part(shop.coralville).otHours).toBe(6);
     expect(e).toMatchObject({ otIsEstimate: true, otDisclosure: expect.stringMatching(/^Estimated/) });
+    expect(e.taxNote).toMatch(/^Gross amounts only\. Taxes are withheld through payroll/);
+    const keys = JSON.stringify(e).match(/"[A-Za-z]+":/g) ?? [];
+    expect(keys.filter((k) => /withh|deduct|net(pay|earn|cents)|^"taxe?s?(?!Note)[A-Z"]/i.test(k))).toEqual([]);
   });
 
   it("tickets at either shop of the period, clients by first name only; never the other barber's", async () => {
