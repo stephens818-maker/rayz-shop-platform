@@ -334,7 +334,7 @@ export function simulatedIntent(paymentIntentId: string) {
 }
 
 /**
- * Refunds the charge on the platform, never with reverse_transfer: the refund is taken back from the
+ * Refunds the charge on the platform, never with reverse_transfer. The refund is taken back from the
  * shop's transfer afterwards (settlement.ts), for the refunded amount, never from a tip. A destination
  * charge from before separate charges has its shop transfer in payment_transfers too (core_0150).
  */

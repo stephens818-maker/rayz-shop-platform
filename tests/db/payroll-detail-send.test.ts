@@ -183,7 +183,7 @@ describe("the payroll detail and reconciliation file", () => {
     expect(f.cents(total, "Gross pay")).toBe(all);
   });
 
-  it("card tips paid via Stripe are the period's paid Stripe payouts, as the iSolved tip check has them", async () => {
+  it("card tips paid via Stripe are the tip transfers plus the period's paid Stripe payouts, as the iSolved tip check has them", async () => {
     const view = (await run.payrollRunView(fx.start, fx.end, [fx.moline], { clockChecks: false }))!;
     const f = await file(`${period()}&shop=${fx.moline}`);
     const b = view.blocks.find((x) => x.shopId === fx.moline)!;
@@ -191,8 +191,8 @@ describe("the payroll detail and reconciliation file", () => {
       const name = b.lines.find((l) => l.staffId === r.staffId)?.name;
       if (!name) continue;
       const row = f.body.find((x) => x[2] === name)!;
-      const paid = r.payouts.filter((p) => p.method === "stripe" && p.status === "paid").reduce((s, p) => s + p.tipsCents + p.adjustCents, 0);
-      expect(f.cents(row, "Card tips paid via Stripe")).toBe(paid);
+      expect(r.transferredCents).toBe(r.tipTransfers.filter((t) => t.status !== "failed" && t.status !== "cancelled").reduce((s, t) => s + t.cents, 0));
+      expect(f.cents(row, "Card tips paid via Stripe")).toBe(r.transferredCents + r.otherStripeCents);
     }
   });
 
