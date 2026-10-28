@@ -1044,6 +1044,13 @@
       "when": 1796640840000,
       "tag": "core_0148_payroll_ranges",
       "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1796642640000,
+      "tag": "core_0149_pay_schedule",
+      "breakpoints": true
     }
   ]
 }

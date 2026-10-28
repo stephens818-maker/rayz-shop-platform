@@ -3624,6 +3624,8 @@ export const payGroups = pgTable(
     checkOffsetDays: integer("check_offset_days").notNull().default(6),
     submitOffsetDays: integer("submit_offset_days").notNull().default(4),
     numberResetsYearly: boolean("number_resets_yearly").notNull().default(true),
+    /** The newest iSolved schedule row (`pay_schedule_periods.created_at`) already written to this group's period dates. */
+    scheduleSyncedAt: ts("schedule_synced_at"),
     updatedAt: ts("updated_at").notNull().defaultNow(),
   },
   (t) => [
@@ -3659,6 +3661,44 @@ export const payPeriodDates = pgTable(
     unique("pay_period_dates_uq").on(t.payGroupId, t.periodStart),
     check("pay_period_dates_order", sql`${t.periodEnd} >= ${t.periodStart} and ${t.submitBy} >= ${t.periodEnd} and ${t.checkDate} >= ${t.submitBy}`),
     check("pay_period_dates_reason_len", sql`${t.reason} is null or char_length(${t.reason}) <= 200`),
+  ],
+);
+
+/**
+ * iSolved's Payroll Run Schedule: each pay group's official pay periods as iSolved shows them (number,
+ * run date, check date), seeded from `drizzle/seed/isolved-pay-calendar.csv` and extended by an admin
+ * past its end. Keyed by the letters of the shop's name, since pay groups are made when payroll first
+ * opens. A trigger refuses overlapping periods within a group.
+ */
+export const paySchedulePeriods = pgTable(
+  "pay_schedule_periods",
+  {
+    id: id(),
+    /** As iSolved shows it, e.g. "B - Rock Island" or "Dubuque". */
+    isolvedGroup: text("isolved_group").notNull(),
+    /** The shop's name as letters only (rockisland, leclaire). */
+    groupKey: text("group_key").notNull(),
+    isolvedCode: text("isolved_code"),
+    periodNumber: integer("period_number").notNull(),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    periodEnd: date("period_end", { mode: "string" }).notNull(),
+    runDate: date("run_date", { mode: "string" }).notNull(),
+    checkDate: date("check_date", { mode: "string" }).notNull(),
+    note: text("note"),
+    /** isolved: read from iSolved's schedule; admin: added past its end in Payroll setup. */
+    source: text("source").notNull().default("isolved"),
+    addedBy: uuid("added_by").references(() => staff.id),
+    createdAt: ts("created_at").notNull().defaultNow(),
+  },
+  (t) => [
+    unique("pay_schedule_periods_uq").on(t.groupKey, t.periodStart),
+    check(
+      "pay_schedule_periods_shape",
+      sql`${t.periodEnd} = ${t.periodStart} + 13 and extract(dow from ${t.periodStart}) = 0 and ${t.runDate} >= ${t.periodEnd} and ${t.checkDate} >= ${t.runDate} and ${t.checkDate} <= ${t.periodEnd} + 31 and ${t.periodNumber} >= 1`,
+    ),
+    check("pay_schedule_periods_source", sql`${t.source} in ('isolved', 'admin')`),
+    check("pay_schedule_periods_code", sql`${t.isolvedCode} is null or ${t.isolvedCode} ~ '^[A-Z0-9]{1,4}$'`),
+    check("pay_schedule_periods_note_len", sql`${t.note} is null or char_length(${t.note}) <= 300`),
   ],
 );
 

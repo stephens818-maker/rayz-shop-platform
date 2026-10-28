@@ -126,6 +126,7 @@ export const TABLES: Record<string, Coverage> = {
   owner_entities: is("structure", "Who owns which shops"),
   pay_groups: is("shop", "A shop's iSolved pay group, its code and export tab"),
   pay_period_dates: is("shop", "A shop's pay periods' check and iSolved submit-by dates"),
+  pay_schedule_periods: is("shop", "A shop's pay periods as iSolved's Payroll Run Schedule has them"),
   pay_questions: REC,
   payments: PAY,
   payment_transfer_reversals: PAY,
