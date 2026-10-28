@@ -210,7 +210,7 @@ There are two screens over the same figures.
 
 **Reports → Payroll → Payroll Report** (`/admin/reports/payroll/report`) is Charles's workbook's Locations tab. It needs the report's permission, which is brand-only like every payroll report (Brand Owner, Brand Admin and Bookkeeper have it by default; migration `core_0128` grants it), and "See pay rates and labor cost".
 
-- **Pay period and location chips.** Shops are in the order set in Payroll setup (default Utica, Moline, Kimberly, Rock Island, Silvis, Coralville, LeClaire). Names match on letters only, so "Le Claire" is LeClaire.
+- **Dates and shops.** The standard date ranges, a pay period picked by number on each pay group's calendar (Dubuque's own), or custom dates (whole days in America/Chicago), with the shop picker; every shop the person can see by default, on their last range. Only a full pay period of a pay group is official: approve and lock (covering every shop on that period, shown or not), adjustments and the iSolved files. Any other dates are a review labelled "Not an official pay period": no approval, lock, adjustments or files (the download routes answer 409), no Squire-sourced shops, and each Sun–Sat workweek's OT still worked out over the whole week, with a week only partly in the dates flagged (`partial_workweek`). Shops are in the order set in Payroll setup (default Utica, Moline, Kimberly, Rock Island, Silvis, Coralville, LeClaire). Names match on letters only, so "Le Claire" is LeClaire.
 - **One block per shop.** It has a title row (Utica FFFF00, Rock Island 00B0F0, Silvis 92D050) and the 19 columns A to S with the workbook's headers. The download keeps "Hourly Total " and "Training  Hours" exactly. Then a row per employee, a totals row and Gross Profit = ΣService$ − ΣTotal Wages. Money is shown in Excel's Accounting style, with negatives in parentheses and zero as "-". Service% and Prod% are `0%`. Total % of Gross is `0%` per row and `0.00%` in totals. "—" stands in for `#DIV/0!`.
 - **Totals sum every row.** The workbook's ranges skip employees at five shops (§8 of Charles's spec). Rates aren't totalled; Gross /Hr and Total % of Gross come from the totals.
 - **Adjusted cells** are highlighted, with the reason on hover. **"mixed"** replaces a rate that changed inside the period (§11).
@@ -224,7 +224,7 @@ There are two screens over the same figures.
 
 **Payroll → Report** (`payroll.run` or `payroll.approve`) is the working screen, with the same approval controls and audit trail plus:
 
-- **Period chips** for recent and upcoming periods, with each pay group's period number and check date.
+- **The same dates and shops** as the report above, with each pay group's period number and check date under the title on an official period. Links from before (`period=<start>_<end>`) still open that period.
 - **When hours are due**: the period number, iSolved's submit-by date and the check date under the title, with a red notice once the submit-by date has passed and the period isn't locked (amber on the day). Each shop block shows its iSolved pay group code.
 - **Reconciliation gate** (§7) at the top: either the list of mismatches or a green "every total is the sum of its rows".
 - **Locations view:** per shop, Service Sales, Total Wages, O.T. Pay, Training Pay, Employee Cost (= Labor Cost), Training Cost (inside it), Gross Profit and Cost %, plus a total row.

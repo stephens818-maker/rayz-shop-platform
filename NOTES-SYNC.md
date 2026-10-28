@@ -832,6 +832,14 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-10-28: core, a date range on every report (Charles), for the Rayz App builder and the mobile agent
+
+- **Web only; no API change.** `/api/staff/v1` and `/api/v1` are unchanged: `/me/earnings` still takes a pay period. The staff app doesn't need a range picker for this.
+- **Every report, the Payroll Report and the dashboard** take the same ranges, combined with the shop picker (one, several, a group or all): today, yesterday, this week, last week, this pay period, last pay period, a pay period picked by number on each pay group's calendar (Dubuque's own), month to date, last month, quarter to date, year to date, and custom start and end dates. Dates are whole days in America/Chicago. "This pay period" and "Last pay period" follow the calendar of the shops picked (the brand's when they differ).
+- **Payroll Report:** approve and lock, adjustments and the iSolved and tips-paid files work only on a full pay period of a pay group. Any other dates are a review marked "Not an official pay period", with OT still worked out per whole Sun–Sat workweek and partial weeks flagged (`partial_workweek`). The download routes answer 409 with that message off a full period.
+- **Remembered:** each person's last range per report (and on the dashboard) in `staff_report_ranges`, migration `core_0147_report_ranges` (additive). The next free number is `core_0148`.
+- **Exports and emails:** report CSVs open with a Report / Date range / Shops / Time zone heading, then a blank line, then the table as before. Files made for importing (the QuickBooks journal, the card payments CSV) and the iSolved files and Locations workbook are unchanged. PDFs and scheduled report emails show the range and the time zone.
+
 ### 2026-10-28: core, training toward overtime (Charles, Q11), for the Rayz App builder and the mobile agent
 
 - **Charles answered Q11:** training hours are on top of clocked production hours. Production + training over 40 in a Chicago Sun–Sat workweek is overtime, every shop added up; each shop's share counts its training. OT goes in `E_Overtime 1.5_Hours` (format unchanged; iSolved applies the rate), and training is still training hours × the flat training rate, outside the greater-of. 38 production + 4 training = 2 OT hours (36 regular, 2 OT, 4 training). It rests on training being hours worked under the FLSA, which the CPA still needs to confirm, so C2 stays a setting.

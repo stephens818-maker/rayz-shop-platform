@@ -396,6 +396,11 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
     - A period approved but not locked before the deploy shows its approval as stale (its figures change): approve it again before locking. Locked periods keep what their lock kept.
     - No retroactive correction. The workbook's missed OT (docs/payroll-workbook-discrepancies.md §16) was resolved by Charles outside the platform; nothing is owed or adjusted here.
     - The next free migration is `core_0147`.
+57. A date range on every report (Charles, Oct 28; migration `core_0147_report_ranges`, which adds the `staff_report_ranges` table, each person's last range per report). Nobody's access changes.
+    - Every report, the Payroll Report and the dashboard get the same range chips, a pay period picker by number per pay calendar, and custom dates (whole days in America/Chicago), with the shop picker.
+    - **The Payroll Report now opens on every shop** the person can see, on their last range (the last pay period the first time). Approve and lock show only on a full pay period, and still cover every shop on it. Any other dates are a review marked "Not an official pay period", with no approve, lock, adjustments or files. The iSolved, tips-paid and per-group downloads answer 409 off a full pay period.
+    - Report CSVs now open with a three-line heading (report, dates, shops, time zone). Anyone who loads a report CSV into a spreadsheet macro should skip those lines. The QuickBooks journal, the card payments CSV, the iSolved files and the Locations workbook are unchanged.
+    - The next free migration is `core_0148`.
 
 ## Launch day: every surface at once, at the pilot shop
 

@@ -1207,6 +1207,20 @@ The plan's P0 cases must all pass in the sandbox before the pilot. Status by cas
 - [ ] **Ask the CPA:** is training hours worked under the FLSA? Everything above rests on it.
 - [x] Past periods: Charles settled the shortfall with the affected barbers himself (Oct 28). No retroactive correction on the platform; the go-forward rule is unchanged.
 
+## 57. A date range on every report, especially payroll (Charles, Oct 28)
+
+- [x] Every report has the same ranges, in this order: today, yesterday, this week, last week, this pay period, last pay period, month to date, last month, quarter to date, year to date. A report's own ranges come after them (`tests/report-range.test.ts`).
+- [x] A specific pay period picked by number, one list per pay calendar the shops picked are on (Dubuque's is its own), newest first, this year and last.
+- [x] Custom start and end dates, whole days in America/Chicago (swapped when entered backwards), on every report, labelled "Custom range".
+- [x] Combined with the shop picker: one shop, several, a saved group or all shops. "This pay period" and "Last pay period" follow the calendar of the shops picked, the brand's when they differ (`tests/db/report-ranges.test.ts`).
+- [x] Payroll Report: approve and lock, adjustments and the iSolved and tips-paid downloads only on a full pay period of a pay group (approval covers every shop on it, shown or not). Any other dates are review only, labelled "Not an official pay period", with no approve, lock or files; the downloads answer 409.
+- [x] OT on any dates is still worked out per full Sun–Sat workweek. A week only partly in the dates is flagged with the week's OT and the part inside the dates.
+- [x] Dashboard: the stats, PPH and product sales per client follow the range and shops picked, with a tile for the range, the leaderboards ranking it and its days on the sparkline (up to 62). "Up next" and who's in stay on today.
+- [x] Each person's last range is remembered per report and on the dashboard (`core_0147`). Exports and the assistant don't change it.
+- [x] Exports and emails carry the range: CSVs open with the report, dates, shops and time zone; PDFs and scheduled report emails show the range and time zone. Import files (QuickBooks, card payments, iSolved, the Locations workbook) keep their exact layout.
+- [ ] **Ask Charles:** a review of the Payroll Report on dates that aren't a pay period leaves out shops whose payroll came from Squire then (Squire's report is per pay period). Is that right, or should those shops show their Squire totals for any period the dates touch?
+- [ ] **Ask Charles:** should the dashboard keep his last range the next day (it does now, per the request), or go back to today each morning?
+
 ## Deferred by decision
 
 - I10 is decided: separate charges and transfers (section 5), with tips to barbers' recipient accounts on (`FEATURE_TIP_TO_BARBER`, the CPA approved it on 2026-10-28), turned off per shop with the brand setting `tip_to_barber` (section 50). Live tip transfers also need `MONEY_MOVEMENT_LIVE`.
