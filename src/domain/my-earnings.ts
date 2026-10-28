@@ -6,6 +6,7 @@ import { employeePay, type EmployeePay, type GreaterOfCode, type Line } from "@/
  */
 
 export const GROSS_LABEL = "Gross earnings, before taxes and deductions";
+export const TAX_NOTE = "Gross amounts only. Taxes are withheld through payroll, so withholding and net pay aren't shown here.";
 export const OT_PAY_LABEL = "Estimated; final pay calculated in payroll.";
 export const PARTIAL_WEEK_OT_LABEL = "Estimated: full workweek not in range.";
 export const PAYROLL_TIPS_COPY = "Tips paid through payroll.";
