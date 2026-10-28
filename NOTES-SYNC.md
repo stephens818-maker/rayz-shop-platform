@@ -833,6 +833,10 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-10-28: core, the CPA approved the manual tip-reporting process (Charles, Oct 22), for the Rayz App builder
+
+- **Done (launch checklist):** Charles reports (Oct 22, 11:09 PM CT, relayed by the Rayz App builder) that his CPA approved the manual tip-reporting process: card tips paid through Stripe go into payroll through the per-period export and the iSolved upload. The CPA suggested this process. Nothing changes in the code: the per-shop iSolved file's `E_Cash Tips Recd_Dollars` column and the payroll detail CSV stay as they are, and there's still no iSolved integration.
+
 ### 2026-10-28: core, Charles's payroll clarification of Oct 22 (manual iSolved upload, detail CSV, lock on export, gross only), for the Rayz App builder and the mobile agent
 
 - **No iSolved integration, confirmed.** There's no API, SFTP or scheduled push, and there never was: no cron or job touches iSolved. Payroll output stays the per-shop iSolved timecard file, downloaded and uploaded by hand. Its format is unchanged: Key is the Employee Number, then Regular, OT 1.5 hours (no OT dollars), `E_Cash Tips Recd_Dollars`, Comm Sales, Paid Time and Training.

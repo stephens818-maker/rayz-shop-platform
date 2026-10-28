@@ -1241,7 +1241,7 @@ Tests: `tests/db/payroll-detail-send.test.ts`; gross only in `tests/db/my-earnin
 - [x] 3. Lock on export: marking an approved period "Sent to payroll" locks it, and it's audited (`lockedOnSend`). Later changes become flagged adjustments in the next open period.
 - [x] 4. My Earnings is gross only: there are no withholding or net pay fields, and `taxNote` says taxes are withheld through payroll.
 - [x] 5. Card tips go to barbers through Stripe, and card sales to the shop's connected account, both unchanged. Tip totals stay in the iSolved file's `E_Cash Tips Recd_Dollars` column.
-- [ ] **Launch checklist:** CPA to confirm manual tip-reporting process (Stripe-paid card tips reported via the iSolved upload).
+- [x] **Launch checklist:** CPA to confirm manual tip-reporting process (Stripe-paid card tips reported via the iSolved upload). Done: the CPA approved it and suggested it (Charles, Oct 22, 11:09 PM CT, relayed by the Rayz App builder).
 
 ## Deferred by decision
 

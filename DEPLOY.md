@@ -412,7 +412,7 @@ Use a **separate** Vercel project and Neon database (or at least a separate Neon
     - The Payroll Report's Downloads card gains **Payroll detail (CSV)**, for all shops and for each shop. It's refused until the totals reconcile to $0.00 and the tips match the Stripe payouts.
     - **Mark sent** (Reports → Payroll → iSolved export) now locks an approved period that isn't locked yet. Approve and lock still works as before.
     - `/api/staff/v1/me/earnings` adds `taxNote` (additive).
-    - Launch checklist: CPA to confirm manual tip-reporting process (Stripe-paid card tips reported via the iSolved upload).
+    - Launch checklist, done: the CPA approved the manual tip-reporting process (Stripe-paid card tips go into payroll through the per-period export and the iSolved upload). The CPA suggested it (Charles, Oct 22).
 
 ## Launch day: every surface at once, at the pilot shop
 
