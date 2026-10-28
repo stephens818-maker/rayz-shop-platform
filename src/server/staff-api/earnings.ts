@@ -3,10 +3,9 @@ import { and, asc, desc, eq, gte, inArray, isNull, lte, ne, sql } from "drizzle-
 import { db } from "@/db";
 import { payrollApprovals, payrollExportSends, payrollRuns, paymentTransfers, sales, shops, tipAbsorptions, tipLedger, tipPayouts } from "@/db/schema";
 import { periodOf, periodStarting, periodsAround, type PayCalendar } from "@/domain/payroll/calendar";
-import { employeePay, exportRowChecks, paystubLines, toCents, type EmployeePay, type Line, type ShopBlock } from "@/domain/payroll/calc";
+import { employeePay, exportRowChecks, paystubLines, toCents, type Line, type ShopBlock } from "@/domain/payroll/calc";
 import {
   CASH_TIPS_COPY,
-  EXPLANATION,
   GROSS_LABEL,
   LATE_TIP_COPY,
   OT_PAY_LABEL,
@@ -14,8 +13,8 @@ import {
   PAYROLL_TIPS_COPY,
   SHOP_COVERS_REFUND_COPY,
   cashTipReminder,
-  type EarningsCode,
-  type EarningsRule,
+  hoursOf,
+  periodPay,
 } from "@/domain/my-earnings";
 import { appPayoutStatus, appTransferStatus } from "@/domain/staff-payouts";
 import { employeeFeeCents, receivedCents } from "@/domain/tips";
@@ -356,7 +355,6 @@ function lateTips(list: readonly LedgerRow[], start: LocalDate) {
 
 const r2 = (x: number) => Math.round(x * 100) / 100;
 const sum = <T>(xs: readonly T[], f: (x: T) => number) => xs.reduce((a, x) => a + f(x), 0);
-const sameOrNull = <T>(xs: readonly T[]): T | null => (xs.length && xs.every((x) => x === xs[0]) ? xs[0] : null);
 
 /** Their line's columns in the shop's iSolved file against the report, for the parts they may see. */
 function reconciliationOf(see: Sees, block: ShopBlock | undefined, line: Line | undefined) {
@@ -450,20 +448,13 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
         squireImported: block?.source === "squire" && !!block.squireImport,
         locked: !!block?.locked,
         pay: see.wages ? pay : null,
-        hours: see.hours ? hoursOf(line) : null,
+        hours: see.hours ? shopHours(line) : null,
         reconciliation: reconciliationOf(see, block, line),
       },
     };
   });
 
-  const pays = slices.flatMap((s) => (s.pay ? [s.pay] : []));
-  const rules = [...new Set(pays.map((p) => p.appliedRule))];
-  const codes = [...new Set(pays.map((p) => p.explanationCode))];
-  const appliedRule: EarningsRule = rules.length > 1 ? "mixed" : (rules[0] ?? "hourly");
-  const explanationCode: EarningsCode = rules.length > 1 || codes.length > 1 ? "mixed" : (codes[0] ?? "equal");
-  const P = (f: (p: EmployeePay) => number) => sum(pays, f);
-  const lines = slices.flatMap((s) => (s.line ? [s.line] : []));
-  const L = (f: (l: Line) => number) => r2(sum(lines, f));
+  const total = periodPay(slices.flatMap((s) => (s.line ? [s.line] : [])));
   const tipsOf = (k: "cardTipsCents" | "cashTipsCents" | "giftCardTipsCents" | "cashOnTicketsCents" | "declaredCashTipsCents" | "tipAdjustmentsCents" | "totalTipsCents") =>
     see.tips ? sum(slices, (s) => s.out[k] ?? 0) : null;
   const wages = see.wages;
@@ -486,35 +477,10 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
     snapshotId: state.snapshotId,
     computedAt: state.computedAt,
 
-    appliedRule: wages ? appliedRule : null,
-    explanationCode: wages ? explanationCode : null,
-    explanation: wages ? EXPLANATION[explanationCode] : null,
-    topUpCents: wages ? P((p) => p.topUpCents) : null,
-    hourlyPayCents: wages ? P((p) => p.hourlyPayCents) : null,
-    hourlyRateCents: wages ? sameOrNull(pays.map((p) => p.hourlyRateCents)) : null,
-    serviceCommissionCents: wages ? P((p) => p.serviceCommissionCents) : null,
-    productCommissionCents: wages ? P((p) => p.productCommissionCents) : null,
-    commissionCents: wages ? P((p) => p.serviceCommissionCents + p.productCommissionCents) : null,
-    lateCommissionCents: wages ? P((p) => p.lateCommissionCents) : null,
-    commSalesCents: wages ? P((p) => p.commSalesCents) : null,
-    commSalesAdjustmentCents: wages ? P((p) => p.commSalesAdjustmentCents) : null,
-    serviceCommissionRate: wages ? sameOrNull(pays.map((p) => p.serviceCommissionRate)) : null,
-    productCommissionRate: wages ? sameOrNull(pays.map((p) => p.productCommissionRate)) : null,
-    greaterOfCents: wages ? P((p) => p.greaterOfCents) : null,
-    guaranteeTopUpCents: wages ? P((p) => p.guaranteeTopUpCents) : null,
-    otPremiumCents: wages ? P((p) => p.otPremiumCents) : null,
-    wagesCents: wages ? P((p) => p.wagesCents) : null,
-
-    productionHours: see.hours ? L((l) => l.hours + l.otHours) : null,
-    trainingHours: see.hours ? L((l) => l.trainingHours) : null,
-    regularHours: see.hours ? L((l) => l.hours) : null,
-    otHours: see.hours ? L((l) => l.otHours) : null,
-    ptoHours: see.hours ? L((l) => l.ptoHours) : null,
-    trainingRateCents: wages ? sameOrNull(pays.map((p) => p.trainingRateCents)) : null,
-    trainingPayCents: wages ? P((p) => p.trainingPayCents) : null,
-    ptoPayCents: wages ? P((p) => p.ptoPayCents) : null,
-    otEstimatedCents: wages ? P((p) => p.overtimePayCents) : null,
+    ...nulled(total.wages, wages),
+    otIsEstimate: true,
     otDisclosure: OT_PAY_LABEL,
+    ...nulled(total.hours, see.hours),
 
     serviceSalesCents: see.sales ? sum(slices, (s) => s.out.serviceSalesCents ?? 0) : null,
     productSalesCents: see.sales ? sum(slices, (s) => s.out.productSalesCents ?? 0) : null,
@@ -525,7 +491,7 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
     declaredCashTipsCents: tipsOf("declaredCashTipsCents"),
     tipAdjustmentsCents: tipsOf("tipAdjustmentsCents"),
     totalTipsCents: tipsOf("totalTipsCents"),
-    totalCents: wages && see.tips ? P((p) => p.grossCents) : null,
+    totalCents: wages && see.tips ? total.grossCents : null,
 
     workweeks: see.hours ? weeksOf(view, me, per) : [],
     shops: slices.map((s) => s.out),
@@ -537,9 +503,13 @@ export async function myEarnings(ctx: StaffAppContext, q: PeriodQuery, today: Lo
   };
 }
 
-function hoursOf(l: Line | undefined) {
-  return { production: r2((l?.hours ?? 0) + (l?.otHours ?? 0)), regular: l?.hours ?? 0, overtime: l?.otHours ?? 0, training: l?.trainingHours ?? 0, pto: l?.ptoHours ?? 0 };
+function shopHours(l: Line | undefined) {
+  const h = hoursOf(l ? [l] : []);
+  return { production: h.productionHours, regular: h.regularHours, overtime: h.otHours, training: h.trainingHours, pto: h.ptoHours };
 }
+
+/** Every field of `o`, or every one null when they may not see it. */
+const nulled = <T extends Record<string, unknown>>(o: T, on: boolean) => (on ? o : (Object.fromEntries(Object.keys(o).map((k) => [k, null])) as { [K in keyof T]: null }));
 
 /** The ids of the pay periods either side; the next is null while it's still to come. */
 function neighbours(cals: readonly ShopCalendar[], p: MyPeriod, today: LocalDate) {

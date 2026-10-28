@@ -1,11 +1,10 @@
 /**
  * My Earnings' pay, worked out from the Payroll Report's line (employeePay) so the staff app does no
- * pay math, and the statuses the app shows for a card tip's transfer and a Stripe payout.
+ * pay math (every golden row: my-earnings-contract.test.ts), and the statuses the app shows for a card tip's transfer and a Stripe payout.
  */
 import { describe, expect, it } from "vitest";
-import { DEFAULT_PAYROLL_SETTINGS, EXPORT_COLUMNS, computeLine, employeePay, toCents, type LineInput } from "@/domain/payroll/calc";
+import { DEFAULT_PAYROLL_SETTINGS, computeLine, employeePay, toCents, type LineInput } from "@/domain/payroll/calc";
 import { appPayoutStatus, appTransferStatus } from "@/domain/staff-payouts";
-import { FIXTURES, load } from "./payroll-golden-fixtures";
 
 const input = (over: Partial<LineInput> = {}): LineInput => ({
   staffId: "b1",
@@ -28,7 +27,6 @@ const input = (over: Partial<LineInput> = {}): LineInput => ({
   ...over,
 });
 const pay = (over: Partial<LineInput> = {}, s = DEFAULT_PAYROLL_SETTINGS) => employeePay(computeLine(input(over), s));
-const col = (header: string) => EXPORT_COLUMNS.findIndex((c) => c.header === header);
 
 describe("employeePay: the greater-of and every total, from the Payroll Report's line", () => {
   it("hourly higher: 80 h at $14.50 = $1,160.00 against 40% of $2,864.15 = $1,145.66; hourly applies and tops up $14.34", () => {
@@ -81,29 +79,6 @@ describe("employeePay: the greater-of and every total, from the Payroll Report's
     expect(over(2864.15)).toMatchObject({ appliedRule: "hourly", commSalesCents: 50000, commissionOverHourlyCents: 0, greaterOfCents: 116000, commSalesAdjustmentCents: 50000 - 1026 });
     expect(pay().commSalesAdjustmentCents).toBe(0);
   });
-
-  for (const fx of FIXTURES.filter((f) => !f.real))
-    it.skipIf(!fx.present)(`every row of ${fx.name}: regular and OT pay (the row's hours at the rate the app shows) and Comm Sales are the iSolved row to the cent, and the greater-of is the larger side`, () => {
-      const { blocks } = load(fx.dir);
-      let n = 0;
-      for (const b of blocks)
-        for (const l of b.lines) {
-          const p = employeePay(l);
-          const row = b.exportRows.find((r) => r.staffId === l.staffId)!;
-          const where = `${b.shop} ${l.name}`;
-          const rate = p.hourlyRateCents / 100;
-          expect(p.hourlyPayCents, where).toBe(toCents(row.values[col("E_Regular_Hours")] * rate));
-          expect(p.commSalesCents, where).toBe(toCents(row.values[col("E_Comm Sales_Dollars")]));
-          expect(p.overtimePayCents, where).toBe(toCents(row.values[col("E_Overtime 1.5_Hours")] * 1.5 * rate));
-          expect(p.appliedRule, where).toBe(l.serviceTotal > 0 ? "commission" : "hourly");
-          expect(Math.abs(p.greaterOfCents - Math.max(p.hourlyPayCents, p.serviceCommissionCents)), where).toBeLessThanOrEqual(1);
-          expect(p.greaterOfCents + p.productCommissionCents + p.lateCommissionCents + p.commSalesAdjustmentCents, where).toBe(p.hourlyPayCents + p.commSalesCents);
-          if (!l.overridden.includes("netComm")) expect(p.commSalesAdjustmentCents, where).toBe(0);
-          if (!l.overridden.includes("netComm")) expect(Math.abs(p.hourlyPayCents + p.commSalesCents - toCents(l.totalWages)), where).toBeLessThanOrEqual(1);
-          n++;
-        }
-      expect(n).toBeGreaterThan(0);
-    });
 });
 
 describe("the app's transfer and payout statuses", () => {

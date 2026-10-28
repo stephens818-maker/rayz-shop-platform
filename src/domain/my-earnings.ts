@@ -1,4 +1,4 @@
-import type { GreaterOfCode } from "@/domain/payroll/calc";
+import { employeePay, type EmployeePay, type GreaterOfCode, type Line } from "@/domain/payroll/calc";
 
 /**
  * The staff app's My Earnings copy (the Rayz App builder's contract, 2026-10-28). The server sends
@@ -27,3 +27,60 @@ const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ([
 
 /** Where employees declare cash tips: the brand's own deadline (IRS: by the 10th of the next month). */
 export const cashTipReminder = (d: { enabled: boolean; lockDay: number }) => (d.enabled ? `Declare each month's cash tips by the ${ordinal(d.lockDay)} of the next month.` : null);
+
+const r2 = (x: number) => Math.round(x * 100) / 100;
+const sum = <T>(xs: readonly T[], f: (x: T) => number) => xs.reduce((a, x) => a + f(x), 0);
+const sameOrNull = <T>(xs: readonly T[]): T | null => (xs.length && xs.every((x) => x === xs[0]) ? xs[0] : null);
+
+/** Their hours on their lines of the Payroll Report: production is the clock's worked hours, regular the report's B. */
+export function hoursOf(lines: readonly Pick<Line, "hours" | "otHours" | "trainingHours" | "ptoHours">[]) {
+  const L = (f: (l: (typeof lines)[number]) => number) => r2(sum(lines, f));
+  return { productionHours: L((l) => l.hours + l.otHours), regularHours: L((l) => l.hours), otHours: L((l) => l.otHours), trainingHours: L((l) => l.trainingHours), ptoHours: L((l) => l.ptoHours) };
+}
+
+/**
+ * Their pay for one pay period, from their lines of the Payroll Report (one per shop they're on in
+ * it), each through employeePay: what GET /me/earnings sends, and the only place it's worked out.
+ * Overtime pay is an estimate: iSolved works out the final 1.5x from the hours exported.
+ */
+export function periodPay(lines: readonly Line[]) {
+  const pays = lines.map(employeePay);
+  const rules = [...new Set(pays.map((p) => p.appliedRule))];
+  const codes = [...new Set(pays.map((p) => p.explanationCode))];
+  const appliedRule: EarningsRule = rules.length > 1 ? "mixed" : (rules[0] ?? "hourly");
+  const explanationCode: EarningsCode = rules.length > 1 || codes.length > 1 ? "mixed" : (codes[0] ?? "equal");
+  const P = (f: (p: EmployeePay) => number) => sum(pays, f);
+  return {
+    pays,
+    wages: {
+      appliedRule,
+      explanationCode,
+      explanation: EXPLANATION[explanationCode],
+      topUpCents: P((p) => p.topUpCents),
+      hourlyPayCents: P((p) => p.hourlyPayCents),
+      hourlyRateCents: sameOrNull(pays.map((p) => p.hourlyRateCents)),
+      serviceCommissionCents: P((p) => p.serviceCommissionCents),
+      productCommissionCents: P((p) => p.productCommissionCents),
+      commissionCents: P((p) => p.serviceCommissionCents + p.productCommissionCents),
+      lateCommissionCents: P((p) => p.lateCommissionCents),
+      commSalesCents: P((p) => p.commSalesCents),
+      commSalesAdjustmentCents: P((p) => p.commSalesAdjustmentCents),
+      serviceCommissionRate: sameOrNull(pays.map((p) => p.serviceCommissionRate)),
+      productCommissionRate: sameOrNull(pays.map((p) => p.productCommissionRate)),
+      greaterOfCents: P((p) => p.greaterOfCents),
+      guaranteeTopUpCents: P((p) => p.guaranteeTopUpCents),
+      otPremiumCents: P((p) => p.otPremiumCents),
+      wagesCents: P((p) => p.wagesCents),
+      trainingRateCents: sameOrNull(pays.map((p) => p.trainingRateCents)),
+      trainingPayCents: P((p) => p.trainingPayCents),
+      ptoPayCents: P((p) => p.ptoPayCents),
+      otEstimatedCents: P((p) => p.overtimePayCents),
+    },
+    tipsCents: P((p) => p.tipsCents),
+    declaredCashTipsCents: P((p) => p.declaredCashTipsCents),
+    grossCents: P((p) => p.grossCents),
+    hours: hoursOf(lines),
+  };
+}
+
+export type PeriodPay = ReturnType<typeof periodPay>;
