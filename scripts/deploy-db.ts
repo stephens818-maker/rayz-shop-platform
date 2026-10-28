@@ -30,6 +30,7 @@ async function main() {
     run("scripts/seed.ts");
   }
   run("scripts/demo-consent.ts");
+  run("scripts/demo-logins.ts");
 }
 
 main().catch((e) => {

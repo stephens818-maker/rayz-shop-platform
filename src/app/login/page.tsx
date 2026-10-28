@@ -12,6 +12,8 @@ const DEMO_LOGINS: DemoLogin[] = [
   { email: "coralville@rayz.test", who: "Coralville shop login", sees: "the front desk for one shop" },
   { email: "michelle@rayz.test", who: "Michelle, shop manager", sees: "Coralville's tools and reports" },
   { email: "makenna@rayz.test", who: "Makenna, barber", sees: "her own column, clients and sales" },
+  { email: "apprentice.test@rayz.test", who: "Apprentice", sees: "a barber's view with no discounts or refunds" },
+  { email: "bookkeeper.test@rayz.test", who: "Bookkeeper / Accountant", sees: "read-only reports and payroll for every shop" },
 ];
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; blocked?: string }> }) {
