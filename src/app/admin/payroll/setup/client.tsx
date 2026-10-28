@@ -503,11 +503,17 @@ export interface ProfileRow {
   productPct: number;
   trainingRate: number | null;
   shopRates: number;
+  /** The every-shop rates' versions, oldest first: the date each started. */
+  rateVersions: { from: string; hourlyRate: number; servicePct: number; productPct: number }[];
+  /** The last locked pay period's end: a change starts after it. */
+  lockedThrough: string | null;
 }
 
 export function ProfileRowForm({ p }: { p: ProfileRow }) {
   const { pending, error, run } = useAction();
-  const [v, setV] = useState({ ...p, servicePct: Math.round(p.servicePct * 10000) / 100, productPct: Math.round(p.productPct * 10000) / 100 });
+  const [v, setV] = useState({ ...p, servicePct: Math.round(p.servicePct * 10000) / 100, productPct: Math.round(p.productPct * 10000) / 100, ratesFrom: "" });
+  const earlier = p.rateVersions.slice(0, -1);
+  const first = (d: string) => d === "2000-01-01";
   return (
     <tr className="border-t border-zinc-100 align-top">
       <td className="px-2 py-1.5 font-medium">{p.label}</td>
@@ -568,6 +574,22 @@ export function ProfileRowForm({ p }: { p: ProfileRow }) {
         />
       </td>
       <td className="px-2 py-1.5">
+        <Input
+          aria-label="Rates effective from"
+          type="date"
+          title={`The date the hourly, service and product rates start (America/Chicago). Each sale is paid at the rate in effect on its sale date. Blank: change the current rates${p.lockedThrough ? ` (from the day after ${p.lockedThrough}, the last locked pay period)` : ""}.`}
+          value={v.ratesFrom}
+          onChange={(e) => setV({ ...v, ratesFrom: e.target.value })}
+          className="h-8 w-36 text-xs"
+        />
+        {p.rateVersions.length > 0 && (
+          <p className="mt-1 text-[11px] text-zinc-500" data-testid="rate-versions">
+            {first(p.rateVersions[p.rateVersions.length - 1].from) ? "Current rates" : `Since ${p.rateVersions[p.rateVersions.length - 1].from}`}
+            {earlier.length > 0 && ` · before: ${earlier.slice(-2).map((x) => `${first(x.from) ? "first" : x.from} $${x.hourlyRate}/h, ${Math.round(x.servicePct * 10000) / 100}%`).join("; ")}`}
+          </p>
+        )}
+      </td>
+      <td className="px-2 py-1.5">
         <Button
           size="sm"
           variant="secondary"
@@ -587,6 +609,7 @@ export function ProfileRowForm({ p }: { p: ProfileRow }) {
                 servicePct: v.servicePct / 100,
                 productPct: v.productPct / 100,
                 trainingRate: v.trainingRate,
+                ratesFrom: v.ratesFrom || null,
               }),
             )
           }

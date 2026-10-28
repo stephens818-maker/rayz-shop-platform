@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import { Fragment } from "react";
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { Card, CardHeader, Notice, PageHeader } from "@/components/ui";
 import { db } from "@/db";
-import { payPeriodDates, payrollProfiles, payrollRates, payrollRuns, staff } from "@/db/schema";
+import { payPeriodDates, payrollProfiles, payrollRates, payrollRateVersions, payrollRuns, staff } from "@/db/schema";
 import { periodsAround } from "@/domain/payroll/calendar";
 import { todayLocal } from "@/lib/time";
 import type { PayrollHoursStyle } from "@/domain/display";
@@ -28,7 +28,7 @@ export default async function PayrollSetupPage() {
     .leftJoin(payrollProfiles, eq(payrollProfiles.staffId, staff.id))
     .where(and(eq(staff.kind, "person"), eq(staff.active, true)))
     .orderBy(staff.displayLabel);
-  const rates = await db.select().from(payrollRates);
+  const [rates, versions] = await Promise.all([db.select().from(payrollRates), db.select().from(payrollRateVersions).orderBy(payrollRateVersions.effectiveFrom)]);
   const [moved, locked] = await Promise.all([
     db.select({ g: payPeriodDates.payGroupId, s: payPeriodDates.periodStart, reason: payPeriodDates.reason }).from(payPeriodDates).where(isNotNull(payPeriodDates.reason)),
     db.select({ g: payrollRuns.payGroupId, s: payrollRuns.periodStart }).from(payrollRuns),
@@ -44,6 +44,7 @@ export default async function PayrollSetupPage() {
       periodDates.set(k, v);
     }
   }
+  const lockedThrough = locked.length ? ((await db.select({ end: payrollRuns.periodEnd }).from(payrollRuns).orderBy(desc(payrollRuns.periodEnd)).limit(1))[0]?.end ?? null) : null;
 
   return (
     <div className="mx-auto max-w-6xl space-y-4">
@@ -187,6 +188,9 @@ export default async function PayrollSetupPage() {
                 <th className="px-2 py-2" title="Used only until the employee has a training rate on their Staff page, which is effective-dated. Blank: their hourly rate (flagged on the report).">
                   Training rate (fallback)
                 </th>
+                <th className="px-2 py-2" title="Effective-dated: each sale is paid at the rates in effect on its sale date, each day's hours at that day's wage. Never on or before a locked pay period.">
+                  Rates from
+                </th>
                 <th className="px-2 py-2" />
               </tr>
             </thead>
@@ -210,6 +214,8 @@ export default async function PayrollSetupPage() {
                       productPct: r?.productPct ?? 0.15,
                       trainingRate: r?.trainingRate ?? null,
                       shopRates: rates.filter((x) => x.staffId === s.id && x.shopId !== null).length,
+                      rateVersions: versions.filter((x) => x.staffId === s.id && x.shopId === null).map((x) => ({ from: x.effectiveFrom, hourlyRate: x.hourlyRate, servicePct: x.servicePct, productPct: x.productPct })),
+                      lockedThrough,
                     }}
                   />
                 );
