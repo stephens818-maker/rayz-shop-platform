@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { and, asc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appointmentItems, appointments, customers, staff, waitlistEntries } from "@/db/schema";
@@ -12,11 +13,16 @@ import { clientPolicy } from "@/server/client-privacy";
 import { openTickets } from "@/server/combined-checkout";
 import { newSaleAction } from "./checkout/actions";
 import { DeskClientRow } from "./front-desk-row";
+import type { CardPeriod } from "@/domain/pph-card";
+import { DashboardPph } from "./pph-card";
 
 const STATUS: Record<string, string> = { booked: "Booked", confirmed: "Confirmed", checked_in: "Waiting", in_service: "In the chair" };
 
-/** A shop login's home: big buttons for the front desk, today's clients to check in and out, and the checkout queue. */
-export async function FrontDeskHome({ ctx, denied }: { ctx: StaffContext; denied: boolean }) {
+/**
+ * A shop login's home: big buttons for the front desk, today's clients to check in and out, and the
+ * checkout queue, then the shop's PPH card when the login's role has the PPH report (it doesn't by default).
+ */
+export async function FrontDeskHome({ ctx, denied, pphBy }: { ctx: StaffContext; denied: boolean; pphBy: CardPeriod }) {
   const today = todayLocal();
   const shopIds = reportShopIds(ctx);
   const now = new Date();
@@ -139,6 +145,9 @@ export async function FrontDeskHome({ ctx, denied }: { ctx: StaffContext; denied
           </section>
         )}
       </div>
+      <Suspense fallback={null}>
+        <DashboardPph ctx={ctx} rankBy={pphBy} today={today} now={now} />
+      </Suspense>
     </div>
   );
 }

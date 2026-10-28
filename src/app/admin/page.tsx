@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Suspense } from "react";
 import { and, asc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
@@ -64,17 +65,20 @@ import { congratsLine } from "@/domain/milestones";
 import { DismissCongrats } from "./milestones/client";
 import { myRebook } from "@/server/rebook-report";
 import { pctText, ptsLabel } from "@/domain/rebook";
+import { parseCardPeriod } from "@/domain/pph-card";
+import { DashboardPph, PphCardSkeleton } from "./pph-card";
 
 export const metadata: Metadata = { title: "Today" };
 
 export default async function Dashboard({
   searchParams,
 }: {
-  searchParams: Promise<{ denied?: string }>;
+  searchParams: Promise<{ denied?: string; pph?: string }>;
 }) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin");
-  if (ctx.staff.kind === "shop") return <FrontDeskHome ctx={ctx} denied={!!sp.denied} />;
+  const pphBy = parseCardPeriod(sp.pph);
+  if (ctx.staff.kind === "shop") return <FrontDeskHome ctx={ctx} denied={!!sp.denied} pphBy={pphBy} />;
   const today = todayLocal();
   const shopIds = reportShopIds(ctx);
   const ownBook = !can(ctx, "calendar.manage");
@@ -433,6 +437,10 @@ export default async function Dashboard({
           hint={!seesWalkins ? undefined : `${waitlist[0]?.n ?? 0} on waitlist`}
         />
       </div>
+
+      <Suspense fallback={<PphCardSkeleton />}>
+        <DashboardPph ctx={ctx} rankBy={pphBy} today={today} now={now} />
+      </Suspense>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <Card>
