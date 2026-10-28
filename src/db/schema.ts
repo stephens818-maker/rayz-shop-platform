@@ -2230,6 +2230,8 @@ export const paymentTransfers = pgTable(
     /** pending until Stripe has it (retried by the cron), then sent; failed after the last try; cancelled when a refund before it was sent took it all. */
     status: text("status").$type<PaymentTransferStatus>().notNull().default("pending"),
     stripeTransferId: text("stripe_transfer_id"),
+    /** Stripe's idempotency key: {saleId}:shop and {saleId}:tip (saleTransferKeys). Rows from before core_0137 keep sale-transfer-{id}. */
+    idempotencyKey: text("idempotency_key"),
     /** Shop rows only: what refunds and disputes have taken back. */
     reversedCents: integer("reversed_cents").notNull().default(0),
     attempts: integer("attempts").notNull().default(0),
@@ -2246,6 +2248,8 @@ export const paymentTransfers = pgTable(
     check("payment_transfers_sent", sql`(${t.status} = 'sent') = (${t.stripeTransferId} is not null)`),
     check("payment_transfers_reversed", sql`${t.reversedCents} >= 0 and ${t.reversedCents} <= ${t.amountCents}`),
     check("payment_transfers_tips_kept", sql`${t.kind} = 'shop' or ${t.reversedCents} = 0`),
+    check("payment_transfers_idempotency_key", sql`${t.idempotencyKey} is null or char_length(${t.idempotencyKey}) between 1 and 255`),
+    uniqueIndex("payment_transfers_idempotency_uq").on(t.idempotencyKey).where(sql`${t.idempotencyKey} is not null`),
     uniqueIndex("payment_transfers_shop_uq").on(t.paymentId).where(sql`${t.kind} = 'shop'`),
     uniqueIndex("payment_transfers_tip_uq").on(t.paymentId, t.staffId).where(sql`${t.kind} = 'tip'`),
     uniqueIndex("payment_transfers_stripe_uq").on(t.stripeTransferId),
@@ -2298,6 +2302,75 @@ export const paymentTransferReversals = pgTable(
     uniqueIndex("payment_transfer_reversals_dispute_uq").on(t.stripeDisputeId, t.kind).where(sql`${t.stripeDisputeId} is not null`),
     index("payment_transfer_reversals_transfer_idx").on(t.transferId),
     index("payment_transfer_reversals_pending_idx").on(t.createdAt).where(sql`${t.status} = 'pending'`),
+  ],
+);
+
+export type PlatformLossKind = "refund" | "dispute_lost";
+export type PlatformLossBearer = "platform" | "shop";
+
+/**
+ * Tips are never clawed back, so a refund or lost dispute bigger than what's left of the shop's
+ * portion is a platform loss: `cents` in all, of which `tip_cents` was a tip already with the barber
+ * (the rest, the processing fee). `bearer` is who carries the tip part (the brand's
+ * tipRefundOverflow): the platform, or the shop, recovered from its next transfers
+ * (platform_loss_recoveries). The fee part is always the platform's.
+ */
+export const platformLosses = pgTable(
+  "platform_losses",
+  {
+    id: id(),
+    paymentId: uuid("payment_id")
+      .notNull()
+      .references(() => payments.id),
+    saleId: uuid("sale_id")
+      .notNull()
+      .references(() => sales.id),
+    shopId: uuid("shop_id")
+      .notNull()
+      .references(() => shops.id),
+    kind: text("kind").$type<PlatformLossKind>().notNull(),
+    refundId: uuid("refund_id").references(() => refunds.id),
+    stripeDisputeId: text("stripe_dispute_id"),
+    cents: integer("cents").notNull(),
+    tipCents: integer("tip_cents").notNull().default(0),
+    bearer: text("bearer").$type<PlatformLossBearer>().notNull().default("platform"),
+    recoveredCents: integer("recovered_cents").notNull().default(0),
+    businessDate: date("business_date", { mode: "string" }).notNull(),
+    createdAt: createdAt(),
+    updatedAt: ts("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    check("platform_losses_kind", sql`${t.kind} in ('refund', 'dispute_lost')`),
+    check("platform_losses_source", sql`(${t.kind} = 'refund') = (${t.refundId} is not null) and (${t.kind} = 'refund') = (${t.stripeDisputeId} is null)`),
+    check("platform_losses_bearer", sql`${t.bearer} in ('platform', 'shop')`),
+    check("platform_losses_amounts", sql`${t.cents} > 0 and ${t.tipCents} >= 0 and ${t.tipCents} <= ${t.cents}`),
+    check("platform_losses_recovered", sql`${t.recoveredCents} >= 0 and ${t.recoveredCents} <= ${t.tipCents} and (${t.bearer} = 'shop' or ${t.recoveredCents} = 0)`),
+    uniqueIndex("platform_losses_refund_uq").on(t.refundId).where(sql`${t.refundId} is not null`),
+    uniqueIndex("platform_losses_dispute_uq").on(t.stripeDisputeId).where(sql`${t.stripeDisputeId} is not null`),
+    index("platform_losses_payment_idx").on(t.paymentId),
+    index("platform_losses_open_idx").on(t.shopId, t.createdAt).where(sql`${t.bearer} = 'shop' and ${t.recoveredCents} < ${t.tipCents}`),
+    index("platform_losses_date_idx").on(t.businessDate),
+  ],
+);
+
+/** What a shop-borne platform loss took from one of the shop's later transfers; negative when a refund of that sale reopened it. A trigger refuses a tip row. */
+export const platformLossRecoveries = pgTable(
+  "platform_loss_recoveries",
+  {
+    id: id(),
+    lossId: uuid("loss_id")
+      .notNull()
+      .references(() => platformLosses.id),
+    transferId: uuid("transfer_id")
+      .notNull()
+      .references(() => paymentTransfers.id),
+    cents: integer("cents").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    check("platform_loss_recoveries_cents", sql`${t.cents} <> 0`),
+    index("platform_loss_recoveries_loss_idx").on(t.lossId),
+    index("platform_loss_recoveries_transfer_idx").on(t.transferId),
   ],
 );
 

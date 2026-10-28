@@ -187,6 +187,46 @@ describe("SB-C2: a refund of tips already paid", () => {
     expect(v!.mismatches).toEqual([]);
   });
 
+  it("refunded after its period was exported to iSolved: flagged on the Payroll Report (E_Cash Tips Recd_Dollars), never netted negative", async () => {
+    const { shop: sh, b } = await barberAt("utica", 0);
+    const { cur, prev } = await periods();
+    const sale = await tipSale(sh.id, b.id, 1200, noon(m.time.addDays(prev.start, 1)));
+    await tl.syncTipLedger();
+    const prevRun = await run.buildPayroll(prev.start, prev.end);
+    const exported = lineOf(prevRun, sh.id, b.id)!;
+    const [approval] = await m.db.db
+      .insert(s().payrollApprovals)
+      .values({ periodStart: prev.start, periodEnd: prev.end, figuresHash: "test-export", totals: { shops: [], service: 0, employeeCost: 0, grossProfit: 0 } })
+      .returning();
+    onTestFinished(async () => void (await m.db.db.update(s().payrollApprovals).set({ revokedAt: new Date(), revokeReason: "test" }).where(eq(s().payrollApprovals.id, approval.id))));
+    const curBefore = lineOf(await run.buildPayroll(cur.start, cur.end), sh.id, b.id);
+
+    await m.checkout.refundSale({ saleId: sale, items: [], tipCents: 1200, refundCardFee: false, reason: "Tip keyed twice", restock: false, actor });
+    await tl.syncTipLedger();
+
+    const v = await run.buildPayroll(cur.start, cur.end);
+    const flagged = v!.anomalies.filter((a) => a.staffId === b.id && a.shopId === sh.id);
+    expect(flagged).toContainEqual(expect.objectContaining({ kind: "tip_refunded_after_export", message: expect.stringMatching(/\$12\.00 of tips refunded.*E_Cash Tips Recd_Dollars stays as sent.*never go negative/) }));
+    expect(flagged.some((a) => a.kind === "late_tip_refund")).toBe(false);
+    const line = lineOf(v, sh.id, b.id)!;
+    expect(line.tips).toBe(curBefore?.tips ?? 0);
+    expect(line.tips).toBeGreaterThanOrEqual(0);
+    expect(line.tipsOutside).toBeGreaterThanOrEqual(0);
+    expect(lineOf(await run.buildPayroll(prev.start, prev.end), sh.id, b.id)!.tips).toBe(exported.tips);
+  });
+
+  it("refunded on a ticket whose period wasn't exported isn't flagged as after export", async () => {
+    const { shop: sh, b } = await barberAt("utica", 1);
+    const { cur, prev } = await periods();
+    const sale = await tipSale(sh.id, b.id, 300, noon(m.time.addDays(prev.start, 1)));
+    await tl.syncTipLedger();
+    await m.checkout.refundSale({ saleId: sale, items: [], tipCents: 300, refundCardFee: false, reason: "Tip keyed twice", restock: false, actor });
+    const v = await run.buildPayroll(cur.start, cur.end);
+    const flagged = v!.anomalies.filter((a) => a.staffId === b.id && a.shopId === sh.id).map((a) => a.kind);
+    expect(flagged).toContain("late_tip_refund");
+    expect(flagged).not.toContain("tip_refunded_after_export");
+  });
+
   it("is never clawed back (ST-C15): a saved deduct and the any-refund rule still leave the tip with the barber", async () => {
     await setStaffPayouts({ afterPayoutRefunds: "deduct" as never, reversalRule: "any_refund" });
     const { shop: sh, b } = await barberAt("silvis", 1);

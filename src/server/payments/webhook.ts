@@ -75,8 +75,20 @@ export async function platformEvent(event: Stripe.Event) {
     const d = event.data.object as Stripe.Dispute;
     const pi = typeof d.payment_intent === "string" ? d.payment_intent : (d.payment_intent?.id ?? null);
     const p = pi ? await db.query.payments.findFirst({ where: eq(payments.stripePaymentIntentId, pi) }) : null;
-    const back = p?.chargeType === "separate" ? await disputeClosed(p.id, d.id, d.status === "won") : null;
-    await audit(SYSTEM, "stripe.charge.dispute.closed", "payment", p?.id ?? pi ?? d.id, { eventId: event.id, status: d.status, ...(back ? { backToShopCents: back.amountCents } : {}) }, p?.shopId ?? null);
+    const closed = p?.chargeType === "separate" ? await disputeClosed(p.id, d.id, d.status, d.amount) : null;
+    await audit(
+      SYSTEM,
+      "stripe.charge.dispute.closed",
+      "payment",
+      p?.id ?? pi ?? d.id,
+      {
+        eventId: event.id,
+        status: d.status,
+        ...(closed?.won ? { backToShopCents: closed.won.amountCents } : {}),
+        ...(closed?.lost ? { platformLossCents: closed.lost.cents, platformLossTipCents: closed.lost.tipCents } : {}),
+      },
+      p?.shopId ?? null,
+    );
   } else if (event.type === "transfer.reversed") {
     await applyTransferReversed(event.data.object as Stripe.Transfer);
   } else if (event.type.startsWith("payout.") && !event.account) {

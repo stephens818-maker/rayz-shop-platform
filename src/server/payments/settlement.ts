@@ -1,11 +1,23 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db, type DBorTx, type Tx } from "@/db";
-import { paymentTransferReversals, paymentTransfers, payments, refunds, shops, tipLedger, type TransferReversalKind } from "@/db/schema";
-import { saleTransferGroup, shopReversal, splitCharge, type TipRoute } from "@/domain/charge-split";
+import {
+  paymentTransferReversals,
+  paymentTransfers,
+  payments,
+  platformLossRecoveries,
+  platformLosses,
+  refunds,
+  shops,
+  tipLedger,
+  type PlatformLossKind,
+  type TransferReversalKind,
+} from "@/db/schema";
+import { brandAccountOverflow, recoveryFrom, saleTransferGroup, saleTransferKeys, shopReversal, splitCharge, uncoveredParts, type TipRoute } from "@/domain/charge-split";
 import { flags } from "@/lib/flags";
+import { todayLocal } from "@/lib/time";
 import { SYSTEM, audit } from "@/server/audit";
 import { canReceive, issues1099K, staffAccount } from "@/server/tips/accounts";
-import { methodFor } from "@/server/tips/ledger";
+import { methodFor, staffPayoutConfig } from "@/server/tips/ledger";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { createSaleTransfer, directPayoutsAvailable, reverseShopTransfer } from "./money-movement";
 
@@ -22,9 +34,13 @@ import { createSaleTransfer, directPayoutsAvailable, reverseShopTransfer } from 
  * - planRefundReversals and the dispute handlers take a refund or dispute back from the shop's
  *   transfer only, up to what's left of it, never from a tip (the database refuses a reversal of a
  *   tip row). Before the transfer has been tried, it's lowered instead (netted). What the shop's
- *   transfer can't cover is the platform's (uncovered_cents). A won dispute sends it back.
+ *   transfer can't cover (uncovered_cents) is booked as a platform loss (bookLoss) once it's final:
+ *   at the refund, or when a dispute is lost. A won dispute sends what it took back to the shop.
+ * - Who carries a loss's tip part is the brand's tipRefundOverflow: the platform (the default), or
+ *   the shop, recovered from its next transfers in planSaleTransfers. The fee part is the platform's.
  * - settleSale, right after the commit, and settlementCron send what's pending, every Stripe call
- *   idempotent on the row's id, with source_transaction so a transfer waits for the charge's funds.
+ *   idempotent on the row's key ({saleId}:shop, {saleId}:tip), with source_transaction so a transfer
+ *   waits for the charge's funds and the platform's balance never goes negative.
  */
 
 const MAX_ATTEMPTS = 5;
@@ -58,6 +74,9 @@ export async function planSaleTransfers(tx: Tx, saleId: string) {
     .from(payments)
     .where(and(eq(payments.saleId, saleId), eq(payments.method, "card"), eq(payments.chargeType, "separate"), sql`not exists (select 1 from payment_transfers t where t.payment_id = ${payments.id})`));
   let planned = 0;
+  const taken = new Set(
+    (await tx.select({ key: paymentTransfers.idempotencyKey }).from(paymentTransfers).where(eq(paymentTransfers.saleId, saleId))).flatMap((r) => (r.key ? [r.key] : [])),
+  );
   for (const p of cards) {
     if (p.amountCents <= 0) continue;
     const tips = await tx
@@ -75,11 +94,30 @@ export async function planSaleTransfers(tx: Tx, saleId: string) {
       tips: shares,
       tipToBarber: shopOn,
     });
-    const group = p.transferGroup ?? saleTransferGroup(saleId);
+    const group = saleTransferGroup(saleId);
     const base = { paymentId: p.id, saleId, shopId: p.shopId, transferGroup: group };
-    if (connected)
-      await tx.insert(paymentTransfers).values({ ...base, kind: "shop", destinationAccount: p.stripeAccountId!, amountCents: split.shopCents, status: split.shopCents > 0 ? "pending" : "cancelled" });
-    for (const t of split.tipTransfers) await tx.insert(paymentTransfers).values({ ...base, kind: "tip", staffId: t.staffId, destinationAccount: t.accountId, amountCents: t.cents });
+    const rows = [...(connected ? [{ paymentId: p.id, kind: "shop" as const, staffId: null }] : []), ...split.tipTransfers.map((t) => ({ paymentId: p.id, kind: "tip" as const, staffId: t.staffId }))];
+    const keys = saleTransferKeys(saleId, rows, taken);
+    keys.forEach((k) => taken.add(k));
+    const tipKeys = connected ? keys.slice(1) : keys;
+    let recoveredCents = 0;
+    if (connected) {
+      const owed = split.shopCents > 0 ? await shopOwes(tx, p.shopId) : [];
+      const take = recoveryFrom(split.shopCents, owed);
+      recoveredCents = take.reduce((a, x) => a + x.cents, 0);
+      const left = split.shopCents - recoveredCents;
+      const [shopRow] = await tx
+        .insert(paymentTransfers)
+        .values({ ...base, kind: "shop", idempotencyKey: keys[0], destinationAccount: p.stripeAccountId!, amountCents: left, status: left > 0 ? "pending" : "cancelled" })
+        .returning({ id: paymentTransfers.id });
+      for (const x of take) {
+        await tx.insert(platformLossRecoveries).values({ lossId: x.id, transferId: shopRow.id, cents: x.cents });
+        await tx.update(platformLosses).set({ recoveredCents: sql`${platformLosses.recoveredCents} + ${x.cents}`, updatedAt: new Date() }).where(eq(platformLosses.id, x.id));
+      }
+      if (take.length) await audit(SYSTEM, "payment.platform_loss_recovered", "payment", p.id, { saleId, cents: recoveredCents, losses: take }, p.shopId, tx);
+    }
+    for (const [i, t] of split.tipTransfers.entries())
+      await tx.insert(paymentTransfers).values({ ...base, kind: "tip", idempotencyKey: tipKeys[i], staffId: t.staffId, destinationAccount: t.accountId, amountCents: t.cents });
     await audit(
       SYSTEM,
       "payment.transfers_planned",
@@ -88,7 +126,8 @@ export async function planSaleTransfers(tx: Tx, saleId: string) {
       {
         saleId,
         transferGroup: group,
-        shopCents: connected ? split.shopCents : null,
+        shopCents: connected ? split.shopCents - recoveredCents : null,
+        ...(recoveredCents ? { recoveredForLossesCents: recoveredCents } : {}),
         tipsToBarbersCents: split.tipTransfers.reduce((a, t) => a + t.cents, 0),
         tipsWithShopCents: split.tipsWithShopCents,
         tipsOnPlatformCents: split.tipsOnPlatformCents,
@@ -144,6 +183,114 @@ async function takeBack(tx: Tx, t: TransferRow, cents: number, src: { kind: Excl
   return r ?? null;
 }
 
+/** The shop's platform losses it carries and hasn't paid back yet, oldest first, locked. */
+async function shopOwes(tx: Tx, shopId: string) {
+  const rows = await tx
+    .select({ id: platformLosses.id, tip: platformLosses.tipCents, recovered: platformLosses.recoveredCents })
+    .from(platformLosses)
+    .where(and(eq(platformLosses.shopId, shopId), eq(platformLosses.bearer, "shop"), lt(platformLosses.recoveredCents, platformLosses.tipCents)))
+    .orderBy(asc(platformLosses.createdAt), asc(platformLosses.id))
+    .for("update");
+  return rows.map((r) => ({ id: r.id, cents: r.tip - r.recovered }));
+}
+
+const sumOf = (rows: { n: number | null }[]) => Number(rows[0]?.n ?? 0);
+
+/** Tips on this charge already with barbers: tip rows pending or sent. Never taken back. */
+async function tipsToBarbers(tx: Tx, paymentId: string) {
+  return sumOf(
+    await tx
+      .select({ n: sql<number>`coalesce(sum(${paymentTransfers.amountCents}), 0)::int` })
+      .from(paymentTransfers)
+      .where(and(eq(paymentTransfers.paymentId, paymentId), eq(paymentTransfers.kind, "tip"), inArray(paymentTransfers.status, ["pending", "sent"]))),
+  );
+}
+
+/** A refund of a later sale whose transfer paid back earlier losses: the shop owes that again, newest recovery first. */
+async function reopenRecoveries(tx: Tx, t: TransferRow, cents: number) {
+  const net = await tx
+    .select({ lossId: platformLossRecoveries.lossId, n: sql<number>`sum(${platformLossRecoveries.cents})::int` })
+    .from(platformLossRecoveries)
+    .where(eq(platformLossRecoveries.transferId, t.id))
+    .groupBy(platformLossRecoveries.lossId)
+    .having(gt(sql`sum(${platformLossRecoveries.cents})`, 0))
+    .orderBy(desc(sql`max(${platformLossRecoveries.createdAt})`));
+  let left = cents;
+  const reopened: { id: string; cents: number }[] = [];
+  for (const r of net) {
+    if (left <= 0) break;
+    const c = Math.min(left, r.n);
+    await tx.insert(platformLossRecoveries).values({ lossId: r.lossId, transferId: t.id, cents: -c });
+    await tx.update(platformLosses).set({ recoveredCents: sql`${platformLosses.recoveredCents} - ${c}`, updatedAt: new Date() }).where(eq(platformLosses.id, r.lossId));
+    reopened.push({ id: r.lossId, cents: c });
+    left -= c;
+  }
+  if (reopened.length) await audit(SYSTEM, "payment.platform_loss_reopened", "payment", t.paymentId, { paymentTransferId: t.id, losses: reopened }, t.shopId, tx);
+}
+
+type LossPayment = Pick<typeof payments.$inferSelect, "id" | "saleId" | "shopId" | "amountCents" | "settlement" | "stripeAccountId">;
+
+/**
+ * Books what a refund or lost dispute cost the platform: what the shop's transfer couldn't cover
+ * (connected shops, `uncoveredCents` from takeBack) or, at a shop on the brand's account, what came
+ * out of tips already with barbers. A tip transfer is never reversed for it. With tipRefundOverflow
+ * "shop", a connected shop carries the tip part, recovered from its next transfers.
+ */
+async function bookLoss(tx: Tx, p: LossPayment, src: { kind: PlatformLossKind; refundId?: string; disputeId?: string; cents: number; transfer: TransferRow | null; uncoveredCents?: number }) {
+  if (!p.saleId) return null;
+  const toBarbers = await tipsToBarbers(tx, p.id);
+  const [booked] = await tx
+    .select({ cents: sql<number>`coalesce(sum(${platformLosses.cents}), 0)::int`, tips: sql<number>`coalesce(sum(${platformLosses.tipCents}), 0)::int` })
+    .from(platformLosses)
+    .where(eq(platformLosses.paymentId, p.id));
+  let tipCents: number;
+  let feeCents = 0;
+  if (src.transfer) {
+    const recoveredOnTransfer = sumOf(
+      await tx
+        .select({ n: sql<number>`coalesce(sum(${platformLossRecoveries.cents}), 0)::int` })
+        .from(platformLossRecoveries)
+        .where(eq(platformLossRecoveries.transferId, src.transfer.id)),
+    );
+    const parts = uncoveredParts({ uncoveredCents: src.uncoveredCents ?? 0, tipsToBarbersCents: toBarbers, tipLossBookedCents: Number(booked?.tips ?? 0), recoveredOnTransferCents: recoveredOnTransfer });
+    if (parts.reopenCents) await reopenRecoveries(tx, src.transfer, parts.reopenCents);
+    tipCents = parts.tipCents;
+    feeCents = parts.feeCents;
+  } else {
+    const before = await tx
+      .select({ n: sql<number>`coalesce(sum(${refunds.amountCents}), 0)::int` })
+      .from(refunds)
+      .where(and(eq(refunds.paymentId, p.id), eq(refunds.kind, "refund"), src.refundId ? sql`(${refunds.createdAt}, ${refunds.id}) < (select r2.created_at, r2.id from refunds r2 where r2.id = ${src.refundId}::uuid)` : undefined));
+    tipCents = brandAccountOverflow({ amountCents: p.amountCents, tipsToBarbersCents: toBarbers, takenBeforeCents: sumOf(before), cents: src.cents, bookedCents: Number(booked?.cents ?? 0) });
+  }
+  const cents = tipCents + feeCents;
+  if (cents <= 0) return null;
+  const connected = !!src.transfer;
+  const bearer = connected && tipCents > 0 && (await staffPayoutConfig(tx)).tipRefundOverflow === "shop" ? ("shop" as const) : ("platform" as const);
+  const [loss] = await tx
+    .insert(platformLosses)
+    .values({ paymentId: p.id, saleId: p.saleId, shopId: p.shopId, kind: src.kind, refundId: src.refundId ?? null, stripeDisputeId: src.disputeId ?? null, cents, tipCents, bearer, businessDate: todayLocal() })
+    .onConflictDoNothing()
+    .returning();
+  if (loss)
+    await audit(
+      SYSTEM,
+      "payment.platform_loss",
+      "payment",
+      p.id,
+      { kind: src.kind, refundId: src.refundId ?? null, disputeId: src.disputeId ?? null, cents, tipCents, feeCents, bearer, settlement: connected ? "connected" : "brand" },
+      p.shopId,
+      tx,
+    );
+  return loss ?? null;
+}
+
+const lossPayment = async (tx: Tx, paymentId: string): Promise<LossPayment | null> =>
+  (await tx
+    .select({ id: payments.id, saleId: payments.saleId, shopId: payments.shopId, amountCents: payments.amountCents, settlement: payments.settlement, stripeAccountId: payments.stripeAccountId })
+    .from(payments)
+    .where(eq(payments.id, paymentId)))[0] ?? null;
+
 /** Each refund of the sale's separate card charges that hasn't been taken back from the shop's transfer yet. Inside the refund's transaction. */
 export async function planRefundReversals(tx: Tx, saleId: string) {
   const rows = await tx
@@ -157,8 +304,15 @@ export async function planRefundReversals(tx: Tx, saleId: string) {
   for (const r of rows) {
     if (!r.paymentId || r.amountCents <= 0) continue;
     const t = await lockShopTransfer(tx, r.paymentId);
-    if (!t) continue;
-    if (await takeBack(tx, t, r.amountCents, { kind: "refund", refundId: r.id })) n++;
+    const p = await lossPayment(tx, r.paymentId);
+    if (!t) {
+      if (p && p.settlement !== "connected") await bookLoss(tx, p, { kind: "refund", refundId: r.id, cents: r.amountCents, transfer: null });
+      continue;
+    }
+    const back = await takeBack(tx, t, r.amountCents, { kind: "refund", refundId: r.id });
+    if (!back) continue;
+    n++;
+    if (back.uncoveredCents > 0 && p) await bookLoss(tx, p, { kind: "refund", refundId: r.id, cents: r.amountCents, transfer: t, uncoveredCents: back.uncoveredCents });
   }
   return n;
 }
@@ -176,9 +330,34 @@ export async function disputeOpened(paymentId: string, disputeId: string, amount
   return r;
 }
 
-/** charge.dispute.closed as won: what the dispute took from the shop goes back to it. Lost, nothing changes. */
-export async function disputeClosed(paymentId: string, disputeId: string, won: boolean) {
-  if (!won || !DISPUTE_ID.test(disputeId)) return null;
+/**
+ * charge.dispute.closed. Lost: what the shop's transfer couldn't cover is booked as a platform loss
+ * (the tip transfer is never reversed). At a shop on the brand's account, the part past the sale's
+ * portion. Won: what the dispute took from the shop goes back to it.
+ */
+export async function disputeClosed(paymentId: string, disputeId: string, status: string, amountCents = 0) {
+  if (!DISPUTE_ID.test(disputeId)) return null;
+  if (status === "lost") return { lost: await disputeLost(paymentId, disputeId, amountCents) };
+  if (status !== "won") return null;
+  return { won: await disputeWon(paymentId, disputeId) };
+}
+
+async function disputeLost(paymentId: string, disputeId: string, amountCents: number) {
+  return db.transaction(async (tx) => {
+    const p = await lossPayment(tx, paymentId);
+    if (!p) return null;
+    const t = await lockShopTransfer(tx, paymentId);
+    if (!t) return p.settlement === "connected" || !Number.isInteger(amountCents) || amountCents <= 0 ? null : bookLoss(tx, p, { kind: "dispute_lost", disputeId, cents: amountCents, transfer: null });
+    const [d] = await tx
+      .select()
+      .from(paymentTransferReversals)
+      .where(and(eq(paymentTransferReversals.stripeDisputeId, disputeId), eq(paymentTransferReversals.kind, "dispute")));
+    if (!d?.uncoveredCents) return null;
+    return bookLoss(tx, p, { kind: "dispute_lost", disputeId, cents: d.amountCents + d.uncoveredCents, transfer: t, uncoveredCents: d.uncoveredCents });
+  });
+}
+
+async function disputeWon(paymentId: string, disputeId: string) {
   const r = await db.transaction(async (tx) => {
     const t = await lockShopTransfer(tx, paymentId);
     if (!t) return null;
@@ -248,6 +427,7 @@ export async function sendSaleTransfers(f: { saleId?: string; paymentIds?: reado
         if (!p?.chargeId) throw new Error("The charge has no Stripe charge id to transfer from");
         const trId = await createSaleTransfer({
           key: t.id,
+          idempotencyKey: t.idempotencyKey ?? `sale-transfer-${t.id}`,
           kind: t.kind,
           amountCents: t.amountCents,
           destination: t.destinationAccount,
@@ -305,11 +485,13 @@ export async function sendReversals(f: { saleId?: string; paymentId?: string; li
           r.kind === "dispute_won"
             ? await createSaleTransfer({
                 key: r.id,
+                idempotencyKey: `sale-transfer-${r.id}`,
                 kind: "shop",
                 amountCents: r.amountCents,
                 destination: t.destinationAccount,
                 transferGroup: t.transferGroup,
                 sourceTransaction: null,
+                disputeWon: true,
                 description: `Sale ${t.saleId}: dispute won, back to the shop`,
                 metadata,
               })

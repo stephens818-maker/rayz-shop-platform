@@ -500,6 +500,8 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
     ft[id] = ftStatus(id, list, settings);
   }
 
+  const refundedAfterExport = await tipsRefundedAfterExport(blocks, start, end);
+  const flaggedAfterExport = new Set(refundedAfterExport.map((a) => `${a.staffId}|${a.shopId}`));
   return {
     start,
     end,
@@ -509,7 +511,8 @@ export async function buildPayroll(start: LocalDate, end: LocalDate, o: { clockC
     mismatches: [...grandAndCheck.mismatches, ...tipGate],
     tips,
     anomalies: [
-      ...anomalies(blocks, settings),
+      ...anomalies(blocks, settings).filter((a) => a.kind !== "late_tip_refund" || !flaggedAfterExport.has(`${a.staffId}|${a.shopId}`)),
+      ...refundedAfterExport,
       ...sourceFlags.filter((a) => !blocks.find((b) => b.shopId === a.shopId)?.locked),
       ...clockAnomalies(blocks, settings, hoursCheck, days, serviceDays, typed, start, end),
       ...lockAnomalies(blocks),
@@ -864,6 +867,30 @@ async function lateTipsIn(blocks: readonly BlockView[], start: LocalDate, end: L
     shopId: r.shop_id,
     kind: "late_tip" as const,
     message: `${r.label} (${open.find((b) => b.shopId === r.shop_id)?.shop ?? "Other shop"}): ${fmtMoney(r.cents / 100)} of tips on tickets from ${formatDate(r.from, "MMM d")} came in after that pay period was locked, so they're paid in this one.`,
+  }));
+}
+
+/**
+ * Tips refunded in this period on tickets of a pay period already exported to iSolved (locked for
+ * the shop's pay group, or approved). That period's E_Cash Tips Recd_Dollars stays as sent, and
+ * this period's tips are never netted negative for it (the refund is left out of them).
+ */
+async function tipsRefundedAfterExport(blocks: readonly BlockView[], start: LocalDate, end: LocalDate): Promise<Anomaly[]> {
+  const open = blocks.filter((b) => !b.locked);
+  if (!open.length) return [];
+  const rows = await db.execute<{ staff_id: string; shop_id: string; cents: number; from: string; label: string }>(sql`
+    select s.staff_id, r.shop_id, sum(r.tip_cents)::int cents, min(s.business_date)::text "from", st.display_label label
+    from refunds r join sales s on s.id = r.sale_id join staff st on st.id = s.staff_id
+    where r.shop_id in (${sql.join(open.map((b) => sql`${b.shopId}::uuid`), sql`, `)}) and r.kind = 'refund' and r.tip_cents > 0
+      and r.business_date between ${start} and ${end} and s.business_date < ${start} and ${notSquireEra()}
+      and (exists (select 1 from payroll_runs pr join pay_groups pg on pg.id = pr.pay_group_id where pg.shop_id = s.shop_id and s.business_date between pr.period_start and pr.period_end)
+        or exists (select 1 from payroll_approvals pa where pa.revoked_at is null and s.business_date between pa.period_start and pa.period_end))
+    group by 1, 2, 5`);
+  return [...rows].map((r) => ({
+    staffId: r.staff_id,
+    shopId: r.shop_id,
+    kind: "tip_refunded_after_export" as const,
+    message: `${r.label} (${open.find((b) => b.shopId === r.shop_id)?.shop ?? "Other shop"}): ${fmtMoney(r.cents / 100)} of tips refunded on tickets from ${formatDate(r.from, "MMM d")}, a pay period already exported to iSolved. Its E_Cash Tips Recd_Dollars stays as sent, and the refund isn't netted against this period's tips: they never go negative and nothing is taken from their pay. Review before locking.`,
   }));
 }
 

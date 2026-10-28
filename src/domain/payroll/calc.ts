@@ -1051,6 +1051,7 @@ export type AnomalyKind =
   | "training_in_hours"
   | "no_rate"
   | "late_tip_refund"
+  | "tip_refunded_after_export"
   | "late_tip"
   | "final_pay"
   | "final_pay_changed"

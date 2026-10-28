@@ -5,8 +5,8 @@ import { stripe } from "./processor";
 
 /**
  * The one place money moves out of the platform's balance (ST-C11, I10 separate charges and
- * transfers): a sale's transfers to the shop's connected account and to each barber's Express
- * account (createSaleTransfer), taking a refund or dispute back from the shop's transfer
+ * transfers): a sale's transfers to the shop's connected account and to each barber's recipient
+ * account (createSaleTransfer, always with source_transaction), taking a refund or dispute back from the shop's transfer
  * (reverseShopTransfer; a tip transfer is never reversed), and tip payouts to an employee's bank or
  * debit card (platformTipTransfers).
  *
@@ -186,17 +186,23 @@ export const transfersPendingReason = (shopOn = true) =>
 
 /** One transfer of a sale's charge: the shop's portion, or one barber's tip. */
 export interface SaleTransfer {
-  /** The payment_transfers row id. */
+  /** The payment_transfers row id (or, for a won dispute's money back, the reversal's). */
   key: string;
+  /** Stripe's idempotency key: the row's stored key, {saleId}:shop or {saleId}:tip. */
+  idempotencyKey: string;
   kind: "shop" | "tip";
   amountCents: number;
   destination: string;
   transferGroup: string;
-  /** The charge (ch_): the transfer waits for its funds. Null only for a won dispute's money back. */
+  /** The charge (ch_): the transfer waits for its funds, so the platform's balance never goes negative. Null only for a won dispute's money back. */
   sourceTransaction: string | null;
+  /** A won dispute's money back to the shop: Stripe has returned the funds, so there's no charge to wait for. */
+  disputeWon?: boolean;
   description: string;
   metadata: Record<string, string>;
 }
+
+export const NO_SOURCE_TRANSACTION = "A sale's transfer needs its charge (source_transaction) so it waits for the charge's funds";
 
 const simMoveId = (p: string, key: string) => `sim_${p}_${key.replace(/[^A-Za-z0-9]/g, "").slice(0, 24)}`;
 
@@ -210,6 +216,8 @@ function saleClient(kind: SaleTransfer["kind"]): Stripe | null {
 /** Creates one transfer of a sale, idempotent on its row. Returns the transfer id (sim_tr_ in the simulator). */
 export async function createSaleTransfer(t: SaleTransfer): Promise<string> {
   if (!Number.isInteger(t.amountCents) || t.amountCents <= 0) throw new AppError("bad_request", "A transfer must be a positive amount");
+  if (!t.idempotencyKey) throw new AppError("bad_request", "A sale's transfer needs its idempotency key");
+  if (t.disputeWon ? t.kind !== "shop" || t.sourceTransaction : !t.sourceTransaction) throw new AppError("bad_request", NO_SOURCE_TRANSACTION, { reason: "source_transaction" });
   const s = saleClient(t.kind);
   if (!s || t.destination.startsWith("sim_")) return simMoveId("tr", t.key);
   const tr = await s.transfers.create(
@@ -222,7 +230,7 @@ export async function createSaleTransfer(t: SaleTransfer): Promise<string> {
       description: t.description,
       metadata: { ...t.metadata, kind: t.kind },
     },
-    { idempotencyKey: `sale-transfer-${t.key}` },
+    { idempotencyKey: t.idempotencyKey },
   );
   return tr.id;
 }

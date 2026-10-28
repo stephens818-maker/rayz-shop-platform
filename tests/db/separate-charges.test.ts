@@ -133,6 +133,9 @@ async function cardSale(shopId: string, staffId: string, tipCents: number) {
 
 const reversalsOf = (paymentId: string) => m.db.db.select().from(s().paymentTransferReversals).where(eq(s().paymentTransferReversals.paymentId, paymentId));
 const transferRow = async (id: string) => (await m.db.db.query.paymentTransfers.findFirst({ where: eq(s().paymentTransfers.id, id) }))!;
+const lossesOf = (paymentId: string) => m.db.db.select().from(s().platformLosses).where(eq(s().platformLosses.paymentId, paymentId));
+const lossById = async (id: string) => (await m.db.db.query.platformLosses.findFirst({ where: eq(s().platformLosses.id, id) }))!;
+const recoveriesOf = (lossId: string) => m.db.db.select().from(s().platformLossRecoveries).where(eq(s().platformLossRecoveries.lossId, lossId)).orderBy(s().platformLossRecoveries.createdAt);
 
 /** The barber's line in this pay period's iSolved figures. */
 async function payrollLine(shopId: string, staffId: string) {
@@ -161,9 +164,10 @@ describe("FEATURE_TIP_TO_BARBER=false (the brand-wide kill switch)", () => {
         op: "transfer",
         id: shopRow!.stripeTransferId,
         params: expect.objectContaining({ amount: shopRow!.amountCents, destination: acct, transfer_group: `sale_${saleId}`, source_transaction: pay.stripeChargeId }),
-        opts: { idempotencyKey: `sale-transfer-${shopRow!.id}` },
+        opts: { idempotencyKey: `${saleId}:shop` },
       },
     ]);
+    expect(shopRow!.idempotencyKey).toBe(`${saleId}:shop`);
 
     // The tip is with the shop, so no Stripe payout: it goes on the paycheck, and it's in the iSolved figures.
     const b = await tp.buildBatch({ shopId: shop.id, kind: "manual", cutoff: today, actor });
@@ -198,6 +202,10 @@ describe("FEATURE_TIP_TO_BARBER on (the launch default)", () => {
       [acct, shopRow!.amountCents, pay.stripeChargeId, `sale_${saleId}`],
       ["acct_fake_makenna", 1500, pay.stripeChargeId, `sale_${saleId}`],
     ]);
+    // One transfer_group per ticket; Stripe's idempotency keys are {saleId}:shop and {saleId}:tip.
+    expect(moved.map((c) => c.opts?.idempotencyKey)).toEqual([`${saleId}:shop`, `${saleId}:tip`]);
+    expect([shopRow!.idempotencyKey, tipRows[0].idempotencyKey]).toEqual([`${saleId}:shop`, `${saleId}:tip`]);
+    expect(new Set([pay.transferGroup, shopRow!.transferGroup, tipRows[0].transferGroup])).toEqual(new Set([`sale_${saleId}`]));
 
     const b = await tp.buildBatch({ shopId: shop.id, kind: "manual", cutoff: today, actor });
     const [draft] = await m.db.db.select().from(s().tipPayouts).where(and(eq(s().tipPayouts.batchId, b.batchId), eq(s().tipPayouts.staffId, staffId)));
@@ -297,6 +305,15 @@ describe("refunds and disputes: the shop's transfer only, never a tip", () => {
     expect(calls.map((c) => [c.op, c.params.transfer, c.params.amount])).toEqual([["reversal", shopRow!.stripeTransferId, left]]);
     expect(await transferRow(tipRow.id)).toMatchObject({ status: "sent", amountCents: 2000, reversedCents: 0 });
     expect(calls.some((c) => c.params.transfer === tipRow.stripeTransferId)).toBe(false);
+
+    // What the shop's portion couldn't cover is a platform loss: the tip already with the barber, and the fee.
+    const losses = await lossesOf(pay.id);
+    expect(losses).toEqual([expect.objectContaining({ kind: "refund", refundId: rest.refundId, cents: rest.uncoveredCents, tipCents: 2000, bearer: "platform", recoveredCents: 0 })]);
+    expect(rest.uncoveredCents - 2000).toBe(pay.applicationFeeCents);
+    const [logged] = await m.db.db.select().from(s().auditLog).where(and(eq(s().auditLog.action, "payment.platform_loss"), eq(s().auditLog.entityId, pay.id)));
+    expect(logged.details).toMatchObject({ cents: rest.uncoveredCents, tipCents: 2000, feeCents: pay.applicationFeeCents, bearer: "platform" });
+    // The first refund (500) was covered by the shop's portion: no loss for it.
+    expect(losses.some((l) => l.refundId !== rest.refundId)).toBe(false);
   });
 
   it("a dispute takes the disputed amount back from the shop's transfer, and a won dispute sends it back to the shop", async () => {
@@ -321,6 +338,7 @@ describe("refunds and disputes: the shop's transfer only, never a tip", () => {
     expect(calls).toEqual([expect.objectContaining({ op: "transfer", id: won.stripeId })]);
     expect(calls[0].params).toMatchObject({ amount: 2500, destination: acct, transfer_group: shopRow!.transferGroup });
     expect(calls[0].params).not.toHaveProperty("source_transaction");
+    expect(await lossesOf(pay.id)).toEqual([]);
   });
 
   it("a lost dispute leaves the reversal; a dispute on a tip-heavy charge takes only what the shop's transfer has", async () => {
@@ -333,6 +351,89 @@ describe("refunds and disputes: the shop's transfer only, never a tip", () => {
     const rs = await reversalsOf(pay.id);
     expect(rs).toEqual([expect.objectContaining({ kind: "dispute", amountCents: shopRow!.amountCents, uncoveredCents: pay.amountCents - shopRow!.amountCents, status: "sent" })]);
     expect(await transferRow(tipRows[0].id)).toMatchObject({ status: "sent", reversedCents: 0 });
+    // Lost: the part past the shop's portion is a platform loss, the tip transfer untouched. A replayed event books it once.
+    await webhook.platformEvent({ id: "evt_d3", type: "charge.dispute.closed", created: d.created, data: { object: { ...d, status: "lost" } } } as never);
+    expect(await lossesOf(pay.id)).toEqual([
+      expect.objectContaining({ kind: "dispute_lost", stripeDisputeId: "dp_test_lost", refundId: null, cents: pay.amountCents - shopRow!.amountCents, tipCents: 3000, bearer: "platform" }),
+    ]);
+  });
+
+  it("a dispute closed any other way than lost or won (an inquiry closed) books nothing", async () => {
+    const { shop, staffId } = await setup("silvis", "Liv");
+    const { pay } = await cardSale(shop.id, staffId, 3000);
+    const d = { id: "dp_test_warning", object: "dispute", payment_intent: pay.stripePaymentIntentId, amount: pay.amountCents, reason: "fraudulent", created: Math.floor(Date.now() / 1000) };
+    await webhook.platformEvent({ id: "evt_w1", type: "charge.dispute.created", created: d.created, data: { object: { ...d, status: "warning_needs_response" } } } as never);
+    await webhook.platformEvent({ id: "evt_w2", type: "charge.dispute.closed", created: d.created, data: { object: { ...d, status: "warning_closed" } } } as never);
+    expect(await lossesOf(pay.id)).toEqual([]);
+  });
+});
+
+describe("a refund bigger than the sale's portion (the brand's tipRefundOverflow, confirm with Charles)", () => {
+  async function overflowSetting(v: "platform" | "shop") {
+    const [{ staffPayouts: was }] = await m.db.db.select({ staffPayouts: s().brandSettings.staffPayouts }).from(s().brandSettings);
+    await m.db.db.update(s().brandSettings).set({ staffPayouts: { ...was, tipRefundOverflow: v } });
+    onTestFinished(async () => void (await m.db.db.update(s().brandSettings).set({ staffPayouts: was })));
+  }
+
+  it("the shop: the tip part is taken from its next transfers (never the barber's tip), a refund of that later sale reopens it, and the one after takes it again", async () => {
+    await overflowSetting("shop");
+    const { shop, staffId } = await setup("le-claire", "Audra");
+    const jamie = (await setup("le-claire", "Jamie")).staffId;
+    await m.db.db.delete(s().staffPayoutAccounts).where(eq(s().staffPayoutAccounts.staffId, jamie));
+    await barberOnStripe(staffId, "acct_fake_audra");
+    const first = await cardSale(shop.id, staffId, 1500);
+    calls.length = 0;
+    await m.checkout.refundEverything(first.saleId, "Unhappy client", false, actor);
+    expect(calls.some((c) => c.params.transfer === first.tipRows[0].stripeTransferId)).toBe(false);
+    const [loss] = await lossesOf(first.pay.id);
+    expect(loss).toMatchObject({ bearer: "shop", tipCents: 1500, cents: 1500 + first.pay.applicationFeeCents, recoveredCents: 0 });
+
+    const second = await cardSale(shop.id, jamie, 0);
+    const normal = second.pay.amountCents - second.pay.applicationFeeCents;
+    expect(second.shopRow).toMatchObject({ amountCents: normal - 1500, status: "sent" });
+    expect(second.moved).toEqual([expect.objectContaining({ params: expect.objectContaining({ amount: normal - 1500, source_transaction: second.pay.stripeChargeId }) })]);
+    expect((await lossById(loss.id)).recoveredCents).toBe(1500);
+    expect(await recoveriesOf(loss.id)).toEqual([expect.objectContaining({ transferId: second.shopRow!.id, cents: 1500 })]);
+
+    await m.checkout.refundEverything(second.saleId, "Unhappy client", false, actor);
+    expect((await lossById(loss.id)).recoveredCents).toBe(0);
+    expect((await recoveriesOf(loss.id)).map((r) => r.cents)).toEqual([1500, -1500]);
+    // Only the fee of the second sale is a new loss; the 1500 is the shop's again.
+    expect(await lossesOf(second.pay.id)).toEqual([expect.objectContaining({ cents: second.pay.applicationFeeCents, tipCents: 0, bearer: "platform" })]);
+
+    const third = await cardSale(shop.id, jamie, 0);
+    expect(third.shopRow!.amountCents).toBe(third.pay.amountCents - third.pay.applicationFeeCents - 1500);
+    expect((await lossById(loss.id)).recoveredCents).toBe(1500);
+    const refused = (q: Promise<unknown>) => q.then(() => "", (e: Error & { cause?: Error }) => e.cause?.message ?? e.message);
+    expect(await refused(m.db.db.insert(s().platformLossRecoveries).values({ lossId: loss.id, transferId: first.tipRows[0].id, cents: 1 }))).toMatch(/tip transfer is never taken back/);
+  });
+
+  it("the platform (the default): the tip part is logged as the platform's loss and nothing is taken from the shop later", async () => {
+    await overflowSetting("platform");
+    const { shop, staffId } = await setup("le-claire", "Em");
+    await barberOnStripe(staffId, "acct_fake_em");
+    const first = await cardSale(shop.id, staffId, 1200);
+    await m.checkout.refundEverything(first.saleId, "Unhappy client", false, actor);
+    expect(await lossesOf(first.pay.id)).toEqual([expect.objectContaining({ bearer: "platform", tipCents: 1200, recoveredCents: 0 })]);
+    const jamie = (await setup("le-claire", "Jamie")).staffId;
+    const next = await cardSale(shop.id, jamie, 0);
+    expect(next.shopRow!.amountCents).toBe(next.pay.amountCents - next.pay.applicationFeeCents);
+  });
+
+  it("a shop on the brand's account: the sale's portion is on the platform already, and only the part of a refund past it (a tip with the barber) is a loss, always the platform's", async () => {
+    await overflowSetting("shop");
+    const { shop, staffId } = await setup("silvis", "Abigail");
+    await m.db.db.update(s().shops).set({ paymentsMode: "brand" }).where(eq(s().shops.id, shop.id));
+    onTestFinished(async () => void (await m.db.db.update(s().shops).set({ paymentsMode: "connected" }).where(eq(s().shops.id, shop.id))));
+    await barberOnStripe(staffId, "acct_fake_abigail");
+    const { saleId, pay, shopRow, tipRows } = await cardSale(shop.id, staffId, 800);
+    expect(shopRow).toBeUndefined();
+    expect(tipRows).toEqual([expect.objectContaining({ amountCents: 800, status: "sent", idempotencyKey: `${saleId}:tip` })]);
+    await m.checkout.refundSale({ saleId, items: [], tipCents: 500, refundCardFee: false, reason: "Tip typo", restock: false, actor });
+    expect(await lossesOf(pay.id)).toEqual([]);
+    await m.checkout.refundEverything(saleId, "Unhappy client", false, actor);
+    expect(await lossesOf(pay.id)).toEqual([expect.objectContaining({ kind: "refund", cents: 800, tipCents: 800, bearer: "platform" })]);
+    expect(await transferRow(tipRows[0].id)).toMatchObject({ status: "sent", amountCents: 800, reversedCents: 0 });
   });
 });
 
@@ -354,6 +455,17 @@ describe("retries and the database's own guard", () => {
     expect(await transferRow(shopRow!.id)).toMatchObject({ status: "sent", attempts: 3 });
     expect(calls.map((c) => c.op)).toEqual(["transfer", "reversal"]);
     expect((await reversalsOf(shopRow!.paymentId))[0]).toMatchObject({ status: "sent", amountCents: waiting.amountCents });
+  });
+
+  it("a row planned before the {saleId} keys (core_0137) retries with the key it was first sent with, so it can't move twice", async () => {
+    const { shop, staffId } = await setup("utica", "Lindsay");
+    failTransfers = 1;
+    const { shopRow } = await cardSale(shop.id, staffId, 0);
+    expect(shopRow).toMatchObject({ status: "pending", attempts: 1 });
+    await m.db.db.update(s().paymentTransfers).set({ idempotencyKey: null }).where(eq(s().paymentTransfers.id, shopRow!.id));
+    calls.length = 0;
+    await settlement.settlementCron();
+    expect(calls).toEqual([expect.objectContaining({ op: "transfer", opts: { idempotencyKey: `sale-transfer-${shopRow!.id}` } })]);
   });
 
   it("a transfer that never went is lowered instead of reversed (netted)", async () => {

@@ -108,9 +108,9 @@ describe("money movement", () => {
   });
 
   describe("a sale's transfers", () => {
-    const shop = { key: "row-1", kind: "shop" as const, amountCents: 4200, destination: "acct_shop", transferGroup: "sale_1", sourceTransaction: "ch_1", description: "d", metadata: { saleId: "1" } };
+    const shop = { key: "row-1", idempotencyKey: "1:shop", kind: "shop" as const, amountCents: 4200, destination: "acct_shop", transferGroup: "sale_1", sourceTransaction: "ch_1", description: "d", metadata: { saleId: "1" } };
 
-    it("the shop's portion waits for the charge's funds (source_transaction), keyed on its row, even with the switch off and live keys", async () => {
+    it("the shop's portion waits for the charge's funds (source_transaction), keyed {saleId}:shop, even with the switch off and live keys", async () => {
       process.env.STRIPE_SECRET_KEY = "sk_live_x";
       process.env.FEATURE_TIP_TO_BARBER = "false";
       const mm = await import("@/server/payments/money-movement");
@@ -119,16 +119,30 @@ describe("money movement", () => {
         {
           op: "transfer",
           params: expect.objectContaining({ amount: 4200, destination: "acct_shop", transfer_group: "sale_1", source_transaction: "ch_1", metadata: { saleId: "1", kind: "shop" } }),
-          opts: { idempotencyKey: "sale-transfer-row-1" },
+          opts: { idempotencyKey: "1:shop" },
         },
       ]);
+    });
+
+    it("a sale's tip or shop transfer without its charge (source_transaction) is refused before Stripe, so the platform's balance never goes negative; only a won dispute's money back goes without one", async () => {
+      process.env.STRIPE_SECRET_KEY = "sk_test_x";
+      const mm = await import("@/server/payments/money-movement");
+      const tip = { ...shop, key: "row-3", idempotencyKey: "1:tip", kind: "tip" as const, destination: "acct_barber" };
+      for (const t of [{ ...tip, sourceTransaction: null }, { ...shop, sourceTransaction: null }, { ...tip, sourceTransaction: null, disputeWon: true }, { ...shop, disputeWon: true }])
+        await expect(mm.createSaleTransfer(t)).rejects.toMatchObject({ details: { reason: "source_transaction" } });
+      await expect(mm.createSaleTransfer({ ...shop, idempotencyKey: "" })).rejects.toThrow(/idempotency key/);
+      expect(calls).toEqual([]);
+      expect(await mm.createSaleTransfer(tip)).toMatch(/^tr_/);
+      expect(calls[0]).toMatchObject({ params: { source_transaction: "ch_1", destination: "acct_barber" }, opts: { idempotencyKey: "1:tip" } });
+      expect(await mm.createSaleTransfer({ ...shop, key: "rev-9", idempotencyKey: "sale-transfer-rev-9", sourceTransaction: null, disputeWon: true })).toMatch(/^tr_/);
+      expect(calls[1].params).not.toHaveProperty("source_transaction");
     });
 
     it("a tip transfer is refused with FEATURE_TIP_TO_BARBER=false, and live keys need MONEY_MOVEMENT_LIVE too", async () => {
       process.env.STRIPE_SECRET_KEY = "sk_test_x";
       process.env.FEATURE_TIP_TO_BARBER = "false";
       const mm = await import("@/server/payments/money-movement");
-      const tip = { ...shop, key: "row-2", kind: "tip" as const, amountCents: 1000, destination: "acct_barber" };
+      const tip = { ...shop, key: "row-2", idempotencyKey: "1:tip", kind: "tip" as const, amountCents: 1000, destination: "acct_barber" };
       await expect(mm.createSaleTransfer(tip)).rejects.toMatchObject({ details: { reason: "tip_to_barber_off" } });
       delete process.env.FEATURE_TIP_TO_BARBER;
       expect(await mm.createSaleTransfer(tip)).toMatch(/^tr_/);

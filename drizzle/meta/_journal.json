@@ -960,6 +960,13 @@
       "when": 1796617440000,
       "tag": "core_0136_tip_to_barber",
       "breakpoints": true
+    },
+    {
+      "idx": 137,
+      "version": "7",
+      "when": 1796621040000,
+      "tag": "core_0137_platform_losses",
+      "breakpoints": true
     }
   ]
 }

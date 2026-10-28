@@ -1,6 +1,6 @@
 /** I10 separate charges and transfers: how one platform charge divides, and what a refund or dispute takes back from the shop. */
 import { describe, expect, it } from "vitest";
-import { saleTransferGroup, shopReversal, splitCharge } from "@/domain/charge-split";
+import { brandAccountOverflow, recoveryFrom, saleTransferGroup, saleTransferKeys, shopReversal, splitCharge, uncoveredParts } from "@/domain/charge-split";
 
 const tips = [
   { staffId: "jamie", cents: 1500, accountId: "acct_jamie" },
@@ -61,4 +61,47 @@ describe("shopReversal", () => {
 
 it("every payment of a sale shares one transfer_group", () => {
   expect(saleTransferGroup("0b5c")).toBe("sale_0b5c");
+});
+
+describe("saleTransferKeys", () => {
+  const shop = (paymentId: string) => ({ paymentId, kind: "shop" as const, staffId: null });
+  const tip = (paymentId: string, staffId: string) => ({ paymentId, kind: "tip" as const, staffId });
+
+  it("one card, one barber: {saleId}:shop and {saleId}:tip", () => {
+    expect(saleTransferKeys("s1", [shop("p1"), tip("p1", "jamie")])).toEqual(["s1:shop", "s1:tip"]);
+  });
+
+  it("a split ticket's second card and several barbers get longer keys, never the same one", () => {
+    const keys = saleTransferKeys("s1", [shop("p1"), tip("p1", "jamie"), tip("p1", "sara"), shop("p2"), tip("p2", "jamie")]);
+    expect(keys).toEqual(["s1:shop", "s1:tip:jamie", "s1:tip:sara", "s1:shop:p2", "s1:tip:jamie:p2"]);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it("keys already used by the sale (a card added later) are skipped", () => {
+    expect(saleTransferKeys("s1", [shop("p3"), tip("p3", "jamie")], new Set(["s1:shop", "s1:tip"]))).toEqual(["s1:shop:p3", "s1:tip:jamie"]);
+  });
+});
+
+describe("what a refund past the shop's portion was (platform losses)", () => {
+  it("first the tips already with barbers, then losses this transfer paid back, then the fee", () => {
+    expect(uncoveredParts({ uncoveredCents: 2_320, tipsToBarbersCents: 2_000, tipLossBookedCents: 0, recoveredOnTransferCents: 0 })).toEqual({ tipCents: 2_000, reopenCents: 0, feeCents: 320 });
+    expect(uncoveredParts({ uncoveredCents: 2_320, tipsToBarbersCents: 2_000, tipLossBookedCents: 1_500, recoveredOnTransferCents: 0 })).toEqual({ tipCents: 500, reopenCents: 0, feeCents: 1_820 });
+    expect(uncoveredParts({ uncoveredCents: 2_150, tipsToBarbersCents: 0, tipLossBookedCents: 0, recoveredOnTransferCents: 2_000 })).toEqual({ tipCents: 0, reopenCents: 2_000, feeCents: 150 });
+    expect(uncoveredParts({ uncoveredCents: 0, tipsToBarbersCents: 2_000, tipLossBookedCents: 0, recoveredOnTransferCents: 0 })).toEqual({ tipCents: 0, reopenCents: 0, feeCents: 0 });
+  });
+
+  it("a shop on the brand's account: only the part past the charge less tips sent to barbers, never more than those tips", () => {
+    const o = { amountCents: 10_000, tipsToBarbersCents: 2_000, bookedCents: 0 };
+    expect(brandAccountOverflow({ ...o, takenBeforeCents: 0, cents: 8_000 })).toBe(0);
+    expect(brandAccountOverflow({ ...o, takenBeforeCents: 0, cents: 10_000 })).toBe(2_000);
+    expect(brandAccountOverflow({ ...o, takenBeforeCents: 7_000, cents: 2_000 })).toBe(1_000);
+    expect(brandAccountOverflow({ ...o, takenBeforeCents: 9_000, cents: 1_000, bookedCents: 1_000 })).toBe(1_000);
+    expect(brandAccountOverflow({ ...o, tipsToBarbersCents: 0, takenBeforeCents: 0, cents: 10_000 })).toBe(0);
+  });
+
+  it("a shop that carries its losses pays them back from its next transfers, oldest first, never more than the transfer", () => {
+    expect(recoveryFrom(3_000, [{ id: "a", cents: 2_000 }, { id: "b", cents: 2_000 }])).toEqual([{ id: "a", cents: 2_000 }, { id: "b", cents: 1_000 }]);
+    expect(recoveryFrom(0, [{ id: "a", cents: 2_000 }])).toEqual([]);
+    expect(recoveryFrom(5_000, [])).toEqual([]);
+  });
 });
