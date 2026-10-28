@@ -183,11 +183,11 @@ describe("the Payroll Report on any dates", () => {
     const flagged = v!.anomalies.filter((a) => a.kind === "partial_workweek");
     expect(flagged).toHaveLength(1);
     expect(flagged[0]).toMatchObject({ staffId: fx.a, shopId: fx.moline });
-    expect(flagged[0].message).toContain(`${fmtHours(5)} of overtime that week, ${fmtHours(5)} of it on days in the range`);
+    expect(flagged[0].message).toContain(`${fmtHours(5)} of overtime that week, an estimated ${fmtHours(5)} of it on days in the range`);
 
     const before = await run.buildPayroll(fx.start, day(3), { review: { shopIds: [fx.moline] } });
     expect(line(before)).toMatchObject({ otHours: 0 });
-    expect(before!.anomalies.find((a) => a.kind === "partial_workweek")!.message).toContain(`${fmtHours(5)} of overtime that week, ${fmtHours(0)} of it`);
+    expect(before!.anomalies.find((a) => a.kind === "partial_workweek")!.message).toContain(`${fmtHours(5)} of overtime that week, an estimated ${fmtHours(0)} of it`);
 
     const official = await run.buildPayroll(fx.start, fx.end);
     expect(official!.review).toBeNull();
@@ -195,17 +195,17 @@ describe("the Payroll Report on any dates", () => {
   });
 
   it("refuses approve, lock and every download off a full pay period", async () => {
-    for (const r of [await run.approvePayroll(fx.from, fx.to, actor), await run.lockPayroll(fx.from, fx.to, actor), await run.approveAndLock(fx.from, fx.to, actor)]) expect(r).toEqual({ error: run.NOT_OFFICIAL });
+    for (const r of [await run.approvePayroll(fx.from, fx.to, actor), await run.lockPayroll(fx.from, fx.to, actor), await run.approveAndLock(fx.from, fx.to, actor)]) expect(r).toEqual({ error: run.notWholeWeeksMessage(fx.from, fx.to) });
     const download = (await import("@/app/admin/payroll/download/route")).GET;
     const isolved = (await import("@/app/admin/reports/payroll/isolved/file/route")).GET;
     const tipsPaid = (await import("@/app/admin/reports/payroll/tips-paid/file/route")).GET;
-    for (const [route, url] of [
-      [download, `/admin/payroll/download?group=${fx.molineGroup}&start=${fx.from}&end=${fx.to}`],
-      [isolved, `/admin/reports/payroll/isolved/file?start=${fx.from}&end=${fx.to}&shop=${fx.moline}`],
-      [tipsPaid, `/admin/reports/payroll/tips-paid/file?start=${fx.from}&end=${fx.to}&shop=${fx.moline}`],
+    for (const [route, url, text] of [
+      [download, `/admin/payroll/download?group=${fx.molineGroup}&start=${fx.from}&end=${fx.to}`, run.notWholeWeeksMessage(fx.from, fx.to)],
+      [isolved, `/admin/reports/payroll/isolved/file?start=${fx.from}&end=${fx.to}&shop=${fx.moline}`, run.NOT_OFFICIAL],
+      [tipsPaid, `/admin/reports/payroll/tips-paid/file?start=${fx.from}&end=${fx.to}&shop=${fx.moline}`, run.NOT_OFFICIAL],
     ] as const) {
       const r = await get(route as never, url);
-      expect([url, r.status, r.text]).toEqual([url, 409, run.NOT_OFFICIAL]);
+      expect([url, r.status, r.text]).toEqual([url, 409, text]);
     }
     // Dubuque's dates aren't the brand's pay period, so its group can't download the brand's.
     const r = await get(download as never, `/admin/payroll/download?group=${fx.dubuqueGroup}&start=${fx.start}&end=${fx.end}`);

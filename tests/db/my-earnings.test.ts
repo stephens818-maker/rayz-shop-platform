@@ -427,7 +427,7 @@ describe("nobody reads anyone else's earnings", () => {
     const bad = [
       `me/earnings?period=current&periodId=${e.period.id}`,
       "me/earnings?period=last",
-      `me/earnings?from=${today}&to=${today}`,
+      `me/earnings?from=${today}&to=${m.time.addDays(today, 92)}`,
       `me/earnings?from=${e.from}`,
       `me/earnings?period=current&from=${e.from}&to=${e.to}`,
       `me/earnings/days?from=${e.from}&to=${m.time.addDays(e.from, 31)}`,
@@ -450,7 +450,9 @@ describe("nobody reads anyone else's earnings", () => {
       expect(r.status, `${p}: ${r.text}`).toBe(404);
       expect(r.text).toMatch(/me\/pay-periods/);
     }
-    expect((await call("GET", `me/earnings?from=${today}&to=${today}`, { token: tokens.makenna })).text).toMatch(/me\/earnings\/days/);
+    expect((await call("GET", `me/earnings?from=${today}&to=${m.time.addDays(today, 92)}`, { token: tokens.makenna })).text).toMatch(/me\/earnings\/days/);
+    const r = await call("GET", `me/earnings?from=${today}&to=${today}`, { token: tokens.makenna });
+    expect([r.status, r.json.period, r.json.from, r.json.to]).toEqual([200, null, today, today]);
   });
 
   it("no route under /me takes an id for these, and every handler reads the employee from the token", async () => {
