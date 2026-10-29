@@ -84,6 +84,11 @@ describe("Clinton pilot", () => {
     expect(Number(coralville.serviceTaxRate)).toBeCloseTo(0.07);
     expect(Number(coralville.serviceTaxRate)).not.toBeCloseTo(0.1);
 
+    const { shopTipSettings } = await import("@/domain/tips");
+    const tipRows = await m.db.db.select({ slug: m.schema.shops.slug, tipPayouts: m.schema.shops.tipPayouts }).from(m.schema.shops);
+    expect(tipRows.length).toBeGreaterThan(0);
+    for (const row of tipRows) expect(shopTipSettings(row.tipPayouts).defaultMethod, row.slug).toBe("stripe");
+
     const { publicShops } = await import("@/server/public");
     const listed = await publicShops();
     expect(listed.map((s) => s.slug)).not.toContain("clinton");

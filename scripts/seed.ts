@@ -900,8 +900,9 @@ async function seedServiceTimes(o: {
 async function seedTips(o: { today: LocalDate; staffByKey: Map<string, typeof t.staff.$inferSelect>; shopBySlug: Map<string, Shop> }) {
   await syncTipLedger();
   const opening = await recordOpeningTips(addDays(o.today, -2));
-  await db.update(t.shops).set({ tipPayouts: { schedule: "end_of_night", defaultMethod: "cash" } }).where(eq(t.shops.id, o.shopBySlug.get("coralville")!.id));
-  await db.update(t.shops).set({ tipPayouts: { schedule: "daily_delay", cardDelayDays: 2, defaultMethod: "cash" } }).where(eq(t.shops.id, o.shopBySlug.get("moline")!.id));
+  // Stripe at every shop. A shop can still pick cash. Coralville batches at the end of the night; Moline waits for the card to settle.
+  await db.update(t.shops).set({ tipPayouts: { schedule: "end_of_night", defaultMethod: "stripe" } }).where(eq(t.shops.id, o.shopBySlug.get("coralville")!.id));
+  await db.update(t.shops).set({ tipPayouts: { schedule: "daily_delay", cardDelayDays: 2, defaultMethod: "stripe" } }).where(eq(t.shops.id, o.shopBySlug.get("moline")!.id));
   const makenna = o.staffByKey.get("makenna");
   if (makenna)
     await db.insert(t.staffPayoutAccounts).values({

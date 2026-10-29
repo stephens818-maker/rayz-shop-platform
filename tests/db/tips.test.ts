@@ -260,6 +260,8 @@ describe("cash tips from the drawer", () => {
   it("come out of the drawer count, are acknowledged by the employee, and must be settled before close", async () => {
     const { shop: sh, barbers: [b, c] } = await barbers("coralville", ["Delaney", "Jessica"]);
     await m.db.db.update(s().staff).set({ phone: "+13195550177", email: null }).where(eq(s().staff.id, b.id));
+    // Cash from the drawer is a shop choice. The seed default is Stripe.
+    await m.db.db.update(s().shops).set({ tipPayouts: { schedule: "end_of_night", defaultMethod: "cash" } }).where(eq(s().shops.id, sh.id));
     expect(await tl.shopTipConfig(sh.id)).toMatchObject({ schedule: "end_of_night", defaultMethod: "cash" });
     await tipSale(sh.id, b.id, 900, cash);
     await tipSale(sh.id, b.id, 1100, card);
