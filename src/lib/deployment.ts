@@ -32,6 +32,12 @@ export function assertDemoModeAllowed(env: Record<string, string | undefined> = 
   if (why.length) throw new Error(`DEMO_MODE=true can't run in production (${why.join(", ")}). Unset DEMO_MODE, or deploy the demo without production settings.`);
 }
 
+/** Short git sha of this build, or "local" when it isn't a Vercel deploy. */
+export function buildRevision(): string {
+  const sha = process.env.VERCEL_GIT_COMMIT_SHA || process.env.GIT_COMMIT || "";
+  return sha ? sha.slice(0, 7) : "local";
+}
+
 /** The public origin used in links inside texts, emails and calendar invites. */
 export function appBaseUrl(): string {
   if (process.env.APP_BASE_URL) return process.env.APP_BASE_URL.replace(/\/$/, "");

@@ -18,9 +18,12 @@ export function databaseUrl(): string {
 
 function create(): DB {
   const client = postgres(databaseUrl(), {
+    // One connection per warm Vercel instance, so a checkout must not hold it while waiting on Stripe.
     max: process.env.VERCEL ? 1 : 10,
     prepare: !/pooler|pgbouncer/.test(databaseUrl()),
     onnotice: () => {},
+    // A lock wait fails in 5 seconds instead of sitting until the function times out.
+    connection: { lock_timeout: "5s" },
   });
   globalForDb.__rayzSql = client;
   return drizzle(client, { schema });

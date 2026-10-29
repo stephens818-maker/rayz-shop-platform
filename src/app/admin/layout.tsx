@@ -6,6 +6,7 @@ import { Toaster } from "@/components/toast";
 import { Logo } from "@/components/ui";
 import { frontDeskMore, frontDeskTabs } from "@/domain/front-desk";
 import { STRIPE_PAYOUT_PAGES, navFor, reportsFor } from "@/domain/navigation";
+import { buildRevision } from "@/lib/deployment";
 import { flags } from "@/lib/flags";
 import { stripePayoutsOn } from "@/server/tips/payout-model";
 import { groupReports } from "@/domain/report-groups";
@@ -84,6 +85,9 @@ export default async function AdminLayout({
         <main id="main" tabIndex={-1} className="min-w-0 px-3 py-4 focus:outline-none sm:px-5">
           {children}
         </main>
+        <p className="no-print px-3 pb-3 text-[11px] text-zinc-400" data-testid="build-revision">
+          {buildRevision()}
+        </p>
         {extras}
       </div>
     );
@@ -156,6 +160,9 @@ export default async function AdminLayout({
       </aside>
       <main id="main" tabIndex={-1} className="min-w-0 flex-1 px-3 py-4 focus:outline-none sm:px-6 sm:py-6">
         {children}
+        <p className="no-print pt-6 text-[11px] text-zinc-400" data-testid="build-revision">
+          {buildRevision()}
+        </p>
       </main>
       <CommandPalette
         sections={sections}

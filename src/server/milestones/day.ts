@@ -112,6 +112,16 @@ export async function celebrationsAt(
  * away so the shop's live toast and banners show them. Their alert emails go out with the queue.
  */
 export async function checkoutMilestones(saleId: string, now = new Date()) {
+  // A slow anniversary scan must not keep the only Vercel connection, or every admin page waits.
+  await db.execute(sql`select set_config('statement_timeout', '8000', false)`);
+  try {
+    return await checkoutMilestonesInner(saleId, now);
+  } finally {
+    await db.execute(sql`select set_config('statement_timeout', '0', false)`).catch(() => {});
+  }
+}
+
+async function checkoutMilestonesInner(saleId: string, now: Date) {
   const barbers = await rows<{ id: string }>(sql`
     select distinct x id from (
       select coalesce(si.staff_id, s.staff_id) x from sales s left join sale_items si on si.sale_id = s.id where s.id = ${saleId}

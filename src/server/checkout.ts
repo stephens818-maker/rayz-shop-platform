@@ -868,6 +868,51 @@ export async function priceCart(
   };
 }
 
+const PAY_CLAIM_MS = 120_000;
+
+function payClaimOf(pricing: unknown): { attempt: string; at: number } | null {
+  if (!pricing || typeof pricing !== "object") return null;
+  const c = (pricing as { payClaim?: { attempt?: unknown; at?: unknown } }).payClaim;
+  if (!c || typeof c.attempt !== "string" || typeof c.at !== "string") return null;
+  const at = Date.parse(c.at);
+  return Number.isFinite(at) ? { attempt: c.attempt, at } : null;
+}
+
+/**
+ * Mark the open ticket as being paid, then return the connection. The card charge runs after this,
+ * so a slow or stuck Stripe call never holds the only database connection (admin pages stay up).
+ * A second pay sees the claim and stops instead of waiting.
+ */
+async function claimSaleForPay(saleId: string, attempt: string, now: Date) {
+  await db.transaction(async (tx) => {
+    const [locked] = await tx.select().from(sales).where(eq(sales.id, saleId)).for("update");
+    if (!locked || locked.status !== "open")
+      throw new AppError(
+        "conflict",
+        locked?.mergedIntoSaleId ? "This ticket was combined into another one" : "This ticket was already paid",
+      );
+    const claim = payClaimOf(locked.pricing);
+    if (claim && claim.attempt !== attempt && now.getTime() - claim.at < PAY_CLAIM_MS)
+      throw new AppError("conflict", "A payment is already in progress for this ticket. It will finish or free up in a moment.");
+    const base = locked.pricing && typeof locked.pricing === "object" ? locked.pricing : {};
+    await tx.update(sales).set({ pricing: { ...base, payClaim: { attempt, at: now.toISOString() } } }).where(eq(sales.id, saleId));
+  });
+}
+
+async function releasePayClaim(saleId: string, attempt: string) {
+  await db
+    .transaction(async (tx) => {
+      const [locked] = await tx.select({ pricing: sales.pricing, status: sales.status }).from(sales).where(eq(sales.id, saleId)).for("update");
+      if (!locked || locked.status !== "open") return;
+      const claim = payClaimOf(locked.pricing);
+      if (!claim || claim.attempt !== attempt) return;
+      const base = { ...(locked.pricing as Record<string, unknown>) };
+      delete base.payClaim;
+      await tx.update(sales).set({ pricing: base }).where(eq(sales.id, saleId));
+    })
+    .catch(() => {});
+}
+
 export async function finalizeSale(input: FinalizeInput) {
   const now = input.now ?? new Date();
   const pre = await loadCheckoutContext(input.saleId);
@@ -878,6 +923,9 @@ export async function finalizeSale(input: FinalizeInput) {
         ? "This ticket was combined into another one"
         : `Sale is already ${pre.sale.status}`,
     );
+  const future = [pre.appointment?.startsAt, ...pre.family.members.map((m) => m.startsAt)].filter((at): at is Date => !!at && at.getTime() > now.getTime());
+  if (pre.feeChannel !== "deposit" && future.length)
+    throw new AppError("bad_request", "This appointment hasn't started yet. Check it out once the visit has begun.");
   if (input.lines.length === 0)
     throw new AppError("bad_request", "Add at least one item");
   if (!Number.isInteger(input.tipCents) || input.tipCents < 0)
@@ -1073,9 +1121,39 @@ export async function finalizeSale(input: FinalizeInput) {
   // Only this call's own charges are ever compensated. Each attempt gets its own idempotency keys, so a
   // concurrent submit can never be handed (and then refund) the charge that won.
   const attempt = randomUUID();
+  await claimSaleForPay(ctx.sale.id, attempt, now);
   try {
+    // Stripe runs with no transaction open. The claim above stops a second pay from charging too.
+    for (const [i, l] of legs.entries()) {
+      if (l.tender.method !== "card" || l.chargeCents <= 0) continue;
+      l.charge = await chargeCard({
+        paymentMethodId: l.tender.paymentMethodId,
+        amountCents: l.chargeCents,
+        description: `Ray'z ${ctx.shop.name} ticket #${ctx.sale.number}${split ? ` (payment ${i + 1} of ${legs.length})` : ""}`,
+        metadata: {
+          ...input.chargeMetadata,
+          saleId: ctx.sale.id,
+          shop: ctx.shop.slug,
+          cardFeeCents: String(l.feeCents),
+          cardFeeRate: String(cardFee.rate),
+          cardFeeLabel: (cardFee.name?.trim() || "Credit card fee").slice(0, 40),
+          salesTaxCents: String(totals.taxCents),
+          taxRateBps: String(Math.round(ctx.config.taxRates.serviceRate * 10_000)),
+          attempt,
+        },
+        idempotencyKey: split
+          ? `sale-${ctx.sale.id}-${attempt}-${i}`
+          : `sale-${ctx.sale.id}-${attempt}`,
+        destination: l.route?.destination ?? null,
+        transferGroup: saleTransferGroup(ctx.sale.id),
+        statementDescriptorSuffix: l.route?.descriptorSuffix ?? null,
+        customerId: l.tender.stripeCustomerId ?? null,
+        surchargeCents: l.feeCents,
+        onAction: l.tender.onAction ?? "cancel",
+        confirmedIntentId: l.tender.confirmedIntentId ?? null,
+      });
+    }
     await db.transaction(async (tx: Tx) => {
-      // A second submit of this ticket waits here, then sees it paid and stops before charging.
       const [locked] = await tx
         .select()
         .from(sales)
@@ -1088,6 +1166,9 @@ export async function finalizeSale(input: FinalizeInput) {
             ? "This ticket was combined into another one"
             : "This ticket was already paid",
         );
+      const claim = payClaimOf(locked.pricing);
+      if (!claim || claim.attempt !== attempt)
+        throw new AppError("conflict", "A payment is already in progress for this ticket.");
       // Combined or split while this was being priced: the lines charged would no longer match the people on it.
       const ticketPeopleNow = [
         locked.appointmentId,
@@ -1334,38 +1415,6 @@ export async function finalizeSale(input: FinalizeInput) {
           );
       }
 
-      // Everything that can fail on our side has run. Charge last, while still holding the lock; a
-      // declined second card undoes the first (the catch below).
-      for (const [i, l] of legs.entries()) {
-        if (l.tender.method !== "card" || l.chargeCents <= 0) continue;
-        l.charge = await chargeCard({
-          paymentMethodId: l.tender.paymentMethodId,
-          amountCents: l.chargeCents,
-          description: `Ray'z ${ctx.shop.name} ticket #${ctx.sale.number}${split ? ` (payment ${i + 1} of ${legs.length})` : ""}`,
-          metadata: {
-            ...input.chargeMetadata,
-            saleId: ctx.sale.id,
-            shop: ctx.shop.slug,
-            cardFeeCents: String(l.feeCents),
-            cardFeeRate: String(cardFee.rate),
-            cardFeeLabel: (cardFee.name?.trim() || "Credit card fee").slice(0, 40),
-            salesTaxCents: String(totals.taxCents),
-            taxRateBps: String(Math.round(ctx.config.taxRates.serviceRate * 10_000)),
-            attempt,
-          },
-          idempotencyKey: split
-            ? `sale-${ctx.sale.id}-${attempt}-${i}`
-            : `sale-${ctx.sale.id}-${attempt}`,
-          destination: l.route?.destination ?? null,
-          transferGroup: saleTransferGroup(ctx.sale.id),
-          statementDescriptorSuffix: l.route?.descriptorSuffix ?? null,
-          customerId: l.tender.stripeCustomerId ?? null,
-          surchargeCents: l.feeCents,
-          onAction: l.tender.onAction ?? "cancel",
-          confirmedIntentId: l.tender.confirmedIntentId ?? null,
-        });
-      }
-
       if (gift && totals.giftCardAppliedCents > 0) {
         await tx.insert(payments).values({
           saleId: ctx.sale.id,
@@ -1567,6 +1616,7 @@ export async function finalizeSale(input: FinalizeInput) {
       if (!input.handoffId) await (await import("./receipts")).sendStandingReceipt(ctx.sale.id, tx, now);
     });
   } catch (e) {
+    await releasePayClaim(ctx.sale.id, attempt);
     for (const l of legs)
       if (l.charge)
         await compensateCharge(
