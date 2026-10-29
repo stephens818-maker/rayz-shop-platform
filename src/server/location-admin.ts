@@ -44,6 +44,7 @@ import { loadBrandDefaults, noteShopColumnChanges } from "./location-defaults";
 import { overridesFromColumns } from "@/domain/location-defaults";
 import { shopCardFeePolicy, shopFeeState } from "@/domain/card-fee-policy";
 import { brandFeePolicy } from "./payments/card-fee";
+import { brandCalendar } from "./payroll/groups";
 
 /** Adding, opening and retiring locations needs locations.setup, which only people who see every shop can hold. */
 export interface LocationAdmin {
@@ -171,8 +172,9 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
   const looked = d.latitude === null ? await geocodeAddress(d) : null;
   const brand = await loadBrandDefaults();
   const feeBrand = await brandFeePolicy();
-  // A new location takes the brand's surcharge with no setting of its own; under "selected shops" it's off until the brand ticks it.
+  // A new location takes the brand's surcharge only when it applies to every shop and a rate is already entered. Otherwise the rate stays empty until someone enters one.
   const fee = { ...shopCardFeePolicy(feeBrand, null), enabled: feeBrand.enabled && feeBrand.appliesTo === "all" };
+  const feeOn = fee.enabled && (fee.type === "flat" ? fee.flatCents > 0 : fee.rate > 0);
   const pin =
     d.latitude !== null && d.longitude !== null
       ? { latitude: d.latitude, longitude: d.longitude, geocodeSource: d.geocodeSource ?? "manual", geocodedAt: new Date() }
@@ -209,8 +211,8 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
         serviceTaxRate: String(d.serviceTaxRate),
         productTaxRate: String(d.productTaxRate),
         taxRatesVerified: d.taxRatesVerified,
-        cardFeeEnabled: fee.enabled && (fee.type === "flat" ? fee.flatCents > 0 : fee.rate > 0),
-        cardFeeRate: fee.rate > 0 ? fee.rate.toFixed(5) : null,
+        cardFeeEnabled: feeOn,
+        cardFeeRate: feeOn && fee.rate > 0 ? fee.rate.toFixed(5) : null,
         cardFeeAppliesToTip: fee.appliesToTip,
         cardFeeOverride: null,
         cardFeeChangedAt: new Date(),
@@ -246,22 +248,20 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
       if (p.access && people.find((x) => x.id === p.staffId)!.scope !== "all") await tx.insert(staffAccessShops).values({ staffId: p.staffId, shopId: s.id }).onConflictDoNothing();
       if (p.schedule.length) await tx.insert(staffSchedules).values(p.schedule.map((r) => ({ ...r, staffId: p.staffId, shopId: s.id })));
     }
-    if (d.payCalendarFromShopId) {
-      const from = await tx.query.payGroups.findFirst({ where: eq(payGroups.shopId, d.payCalendarFromShopId) });
-      if (from)
-        await tx.insert(payGroups).values({
-          shopId: s.id,
-          label: d.name,
-          legalEntity: from.legalEntity,
-          exportTab: d.name,
-          anchorStart: from.anchorStart,
-          anchorNumber: from.anchorNumber,
-          periodDays: from.periodDays,
-          checkOffsetDays: from.checkOffsetDays,
-          submitOffsetDays: from.submitOffsetDays,
-          numberResetsYearly: from.numberResetsYearly,
-        });
-    }
+    const from = d.payCalendarFromShopId ? await tx.query.payGroups.findFirst({ where: eq(payGroups.shopId, d.payCalendarFromShopId) }) : null;
+    const cal = from ?? (await brandCalendar(tx));
+    await tx.insert(payGroups).values({
+      shopId: s.id,
+      label: d.name,
+      legalEntity: from?.legalEntity,
+      exportTab: d.name,
+      anchorStart: cal.anchorStart,
+      anchorNumber: cal.anchorNumber,
+      periodDays: cal.periodDays,
+      checkOffsetDays: cal.checkOffsetDays,
+      submitOffsetDays: cal.submitOffsetDays,
+      numberResetsYearly: cal.numberResetsYearly,
+    });
     if (d.locationGroupIds.length) await tx.insert(locationGroupShops).values(d.locationGroupIds.map((groupId) => ({ groupId, shopId: s.id }))).onConflictDoNothing();
     const placeholders = d.readers.filter((r) => !r.registrationCode);
     if (placeholders.length)

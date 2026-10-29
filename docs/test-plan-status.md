@@ -82,6 +82,18 @@ The sandbox is the PR's branch alias (see the PR's Sandbox section). Every demo 
 | G-23 | Zone label where times cross DST | Fixed for the repeated fall-back hour; a skipped spring-forward time can't be typed |
 | G-25 | Test the Nov 1 fall-back pay period explicitly | Fixed (PY-OT-04) |
 
+## Clinton, tax and the credit card fee (NS-01–NS-65, TX-01–TX-12)
+
+Oct 29. Sales tax and the credit card fee are set in this platform. They are not imported from Squire (G-34). There is no 3% cap and a new shop's fee is off until a rate is entered.
+
+| Cases | Status | Notes |
+|---|---|---|
+| NS-01, NS-04, NS-05, NS-08, NS-63 | Ready | `tests/db/clinton.test.ts`, `tests/cross-source-ot.test.ts`. Clinton is blank (no phone, hours, tax or fee) with its own pay group on the brand calendar. Sunday is closed in the wizard's default hours. |
+| TX-01, TX-02, TX-04, TX-09, TX-11, TX-12 | Ready | Per-shop rates with history (`card_fee_rates`, `sales_tax_rates`). TX-02's network-cap refusal is withdrawn: a rate up to 100% saves, and 100% is only a typo check. |
+| TX-03 | Ready | An open ticket keeps `sales.pricing.openedRates`. A new ticket uses the current rates. |
+| TX-06, TX-07, TX-08 | Ready as policy | Squire's 3% and 10% are not imported. Sandbox Iowa service tax is a labeled 7% test rate; Illinois service tax is 0. Clinton stays at 0 until someone enters a rate. |
+| NS-02, NS-03, NS-06, NS-07, NS-10–NS-15, NS-20–NS-22, NS-30–NS-65 except NS-63, TX-05 | Not automated | Empty-page walk, Stripe onboarding, the accountant's Iowa rate, opening-date rules, lease and payroll-file cases. Run those in the sandbox. |
+
 ## Open questions
 
 - With exactly 8 columns, tips owed through payroll (the fallback for someone Stripe can't pay yet) sit in `E_Cash Tips Recd_Dollars`, a memo earning iSolved doesn't pay in the check. They're flagged on the Payroll Report, but approve-and-lock still marks them paid. Should that fallback be cash at the desk, or may one paid earning code be added?

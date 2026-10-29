@@ -17,6 +17,8 @@ import { computeDailyStats } from "@/server/rollups";
 import { anniversaryDate } from "@/domain/milestones";
 import { DEFAULT_STAFF_TIME_RULES, SERIES_HORIZON_DAYS, seriesOccurrences, timeOffSpan } from "@/domain/staff-time";
 import { LocalDate, addDays, diffDays, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf, zonedWallTime } from "@/lib/time";
+import { CLINTON_PILOT } from "@/domain/clinton";
+import { DEFAULT_BRAND_CALENDAR } from "@/domain/payroll/calendar";
 import { BARBER_GROUPS, COLORS, DEMO_LOGINS, FIRST_NAMES, LAST_NAMES, LOCATION_GROUPS, MENUS, REGIONS, PRODUCTS, SERVICES, SHOPS, SHOP_DESCRIPTION, STAFF } from "./seed-data";
 
 const DEMO_PASSWORD = process.env.SEED_PASSWORD ?? "rayz2026!";
@@ -99,7 +101,48 @@ async function main() {
     )
     .returning();
   const shopBySlug = new Map(shopRows.map((s) => [s.slug, s]));
-  // As in Squire: Dubuque isn't assigned to the loyalty program.
+  // SANDBOX TEST fee stays on the eight existing shops only. Clinton, and any shop added later, stays off until a rate is entered and the shop is ticked.
+  await db.update(t.brandSettings).set({
+    cardFee: { enabled: true, rate: 0.03, label: "Credit card fee", appliesTo: "selected", shopIds: shopRows.map((s) => s.id) },
+  });
+  const [clinton] = await db
+    .insert(t.shops)
+    .values({
+      slug: CLINTON_PILOT.slug,
+      name: CLINTON_PILOT.name,
+      address: CLINTON_PILOT.address,
+      address2: CLINTON_PILOT.address2,
+      city: CLINTON_PILOT.city,
+      state: CLINTON_PILOT.state,
+      zip: CLINTON_PILOT.zip,
+      phone: CLINTON_PILOT.phone,
+      timezone: CLINTON_PILOT.timezone,
+      description: CLINTON_PILOT.description,
+      ownerEntityId: brandOwner.id,
+      status: "setup",
+      bookingEnabled: false,
+      serviceTaxRate: "0",
+      productTaxRate: "0",
+      taxRatesVerified: false,
+      cardFeeEnabled: false,
+      cardFeeRate: null,
+      paymentsMode: "connected",
+    })
+    .returning();
+  shopBySlug.set(clinton.slug, clinton);
+  const cal = DEFAULT_BRAND_CALENDAR;
+  await db.insert(t.payGroups).values({
+    shopId: clinton.id,
+    label: clinton.name,
+    exportTab: clinton.name,
+    anchorStart: cal.anchorStart,
+    anchorNumber: cal.anchorNumber,
+    periodDays: cal.periodDays,
+    checkOffsetDays: cal.checkOffsetDays,
+    submitOffsetDays: cal.submitOffsetDays,
+    numberResetsYearly: cal.numberResetsYearly,
+  });
+  // As in Squire: Dubuque isn't assigned to the loyalty program. Clinton isn't either until it opens.
   await db.update(t.brandSettings).set({ loyalty: { ...DEFAULT_LOYALTY, shopIds: shopRows.filter((s) => s.slug !== "dubuque").map((s) => s.id) } });
   await db.insert(t.shopHours).values(
     SHOPS.flatMap((s) =>

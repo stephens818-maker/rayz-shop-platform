@@ -2,9 +2,9 @@
 
 Working notes between the three agents on this repo. The newest entry goes at the top of the log.
 
-- The **core agent** (this branch, `cursor/rayz-barbershop-v1-8f0b`, PR #1) updates this file on every push.
-- **Claude's mobile agent** (`bc-645fbcc0-ed66-58c5-a7b9-f578411fa9e1`) owns the customer API, `/api/v1`, and opens PRs into this branch.
-- The **Rayz App builder** (`bc-bdfbbeec-9bcb-540d-a36f-8a63cbccfe47`) builds the Expo customer app and the Ray'z Staff app in the top-level `mobile/` folder. It branched from this branch and has its own draft PR. It doesn't touch platform code and runs against a mock API until the endpoints it needs are live.
+- The **core agent** (this branch, `cursor/rayz-barbershop-v1-8f0b`, PR #1) updates this file on every push. Core owns the platform, including `/api/v1` and `/api/staff/v1`.
+- **Claude's mobile agent** (`bc-645fbcc0-ed66-58c5-a7b9-f578411fa9e1`) is review-only. It no longer owns `/api/v1`.
+- The **Rayz App builder** (`bc-bdfbbeec-9bcb-540d-a36f-8a63cbccfe47`) builds the Expo customer app and the Ray'z Staff app in the top-level `mobile/` folder. It branched from this branch and has its own draft PR. It doesn't touch platform code. Core does not edit `mobile/`.
 
 ## Who owns what
 
@@ -12,23 +12,22 @@ The split, by directory:
 
 | Area | Owner |
 | --- | --- |
-| The platform: everything outside `mobile/` and `src/app/api/v1/**` (admin, booking engine, POS, payroll, time clock, tips, notifications, the server), and the staff app's API, `/api/staff/v1` | core |
-| The customer API, `/api/v1` (details in the rows below) | claude's mobile agent (bc-645fbcc0) |
-| `mobile/`: the Expo customer app and the Ray'z Staff app, their builds and store submissions | the Rayz App builder (bc-bdfbbeec). Neither core nor the mobile agent edits `mobile/` |
+| The platform, including `/api/v1` and `/api/staff/v1` (admin, booking engine, POS, payroll, time clock, tips, notifications, the server) | core |
+| `mobile/`: the Expo customer app and the Ray'z Staff app, their builds and store submissions | the Rayz App builder (bc-bdfbbeec). Core does not edit `mobile/` |
 
 In detail:
 
 | Area | Owner |
 | --- | --- |
-| Everything under `src/app/api/v1/**`, plus `src/server/api.ts`, `src/server/api-schemas.ts` and `src/server/openapi.ts` | mobile (bc-645fbcc0) |
-| Customer auth and OTP: `src/server/auth/customer.ts`, `src/app/api/v1/auth/**` | mobile |
-| Devices and push, consent, account deletion | mobile |
-| Stripe Customer and saved cards (PaymentMethods attached to platform Customers) | mobile |
-| `src/server/importer.ts` (Squire import) | mobile |
-| Mobile workstream C1–C22 and I1–I16, except where noted below | mobile |
+| Everything under `src/app/api/v1/**`, plus `src/server/api.ts`, `src/server/api-schemas.ts` and `src/server/openapi.ts` | core (was mobile bc-645fbcc0; that agent is review-only) |
+| Customer auth and OTP: `src/server/auth/customer.ts`, `src/app/api/v1/auth/**` | core |
+| Devices and push, consent, account deletion | core |
+| Stripe Customer and saved cards (PaymentMethods attached to platform Customers) | core |
+| `src/server/importer.ts` (Squire import) | core |
+| Mobile workstream C1–C22 and I1–I16, the API side | core. The screens in `mobile/` stay with the App builder |
 | Admin back office (`src/app/admin/**`), booking engine (`src/server/booking.ts`, `src/domain/availability.ts`, `src/domain/timing.ts`), POS and checkout, refunds, reports, inventory, permissions and roles, client data protection, notifications back office | core |
 | Card fee config and `computeCardFee` | core (mobile reads only) |
-| I10 Stripe Connect per shop: `stripeAccountId`, hosted onboarding and the `owner_entity_id` hook | mobile (bc-645fbcc0), reassigned 2026-10-26 |
+| I10 Stripe Connect per shop: `stripeAccountId`, hosted onboarding and the `owner_entity_id` hook | core (was reassigned to bc-645fbcc0 on 2026-10-26; that agent is review-only) |
 | I10 separate charges and transfers (Charles, 2026-10-28): `chargeCard` in `processor.ts` and `chargeRoute` in `connect.ts` (the one charge path), `src/server/payments/settlement.ts` and `src/domain/charge-split.ts` (the transfers, reversals and tip routing after the charge), `payment_transfers` and `payment_transfer_reversals` | core. Core changed `chargeCard` and `chargeRoute` at Charles's direction with the I10 approval; mobile and the Rayz App builder call this path and don't keep another (see "I10 separate charges and transfers") |
 | Per-location banking screens around Connect (payments mode, descriptor, Terminal Locations and readers, payouts) and per-shop P&L | core, reading mobile's Connect records |
 | Payroll (`src/domain/payroll/**`, `src/server/payroll/**`, `src/app/admin/payroll/**`) and service times (`src/domain/service-times.ts`, `src/server/service-times*.ts`) | core |
@@ -62,7 +61,7 @@ computeCardFee(
   opts?: { wallet?: boolean },                         // Apple Pay / Google Pay
 ): Promise<{
   feeCents: number;
-  rate: number;          // after clamping to 3%; 0 when no fee
+  rate: number;          // the shop's rate; 0 when no fee. There is no 3% cap.
   basis: "charge_excluding_tip" | "charge_including_tip";
   basisCents: number;    // what the rate was applied to
   waivable: boolean;     // true whenever a fee applies: a surcharge is the shop's option, never required
@@ -911,6 +910,20 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 - My Earnings, PY-RD-01: the report's Total Wages is rounded once, while the paycheck rounds each part. They can differ by 1 cent (the contract test shows it). Keep the report's figure, or round each part there too?
 
 ## Log
+
+### 2026-10-29: core, Clinton is the pilot
+
+Clinton (1320 11th St NW, Suite D, Clinton, IA 52732) is in the demo seed and can be created again from Setup → Open a new location. Possession is November 1, 2026. Opening date, hours, phone and sales tax stay blank. The credit card fee stays off (the sandbox's labeled 3% applies only to the original eight shops). No Squire import. Its own Stripe connected account waits on onboarding. Its own iSolved pay group uses the brand calendar (period 22 starts 2026-10-04), not Dubuque's period 1. Location setup blocks go-live until phone, hours, tax, menu, team and payments are done. If the app is down, take the ticket on paper and the card in Clinton's Stripe Dashboard. `docs/rollout-runbook.md` now pilots Clinton; the other eight shops still switch after one clean Clinton pay period. A barber at Clinton and a Squire shop in one week is flagged `cross_source_ot`.
+
+An open ticket keeps the sales tax and credit card fee it opened with (`sales.pricing.openedRates`). A new ticket uses the rates in effect when it opens. Paying still stores the snapshot the receipt and the refund use.
+
+**Sandbox (already up; a push migrates and does not reseed while shops exist):** https://rayz-shop-platform-git-cursor-rayz-barb-350473-rayz-barber-shop.vercel.app. Staff sign in at `/login`. Password `rayz2026!`. Logins: `owner@rayz.test`, `admin@rayz.test`, `michelle@rayz.test`, `frontdesk@rayz.test`, `makenna@rayz.test`, and `<shop>@rayz.test` (coralville, kimberly, le-claire, moline, rock-island, dubuque, silvis, utica). Time clock PIN `2468`. Clinton appears in that database only after a demo reseed (`DEMO_RESEED=true`), which reloads the sample data. This push does not do that.
+
+**Test plan, where code is involved.** Covered: NS-01, NS-04 (wizard default is closed Sunday; Clinton's own hours are empty), NS-05, NS-08 (fee off, no inherited 3%), NS-11's "not bookable while in setup", NS-50's public list hides a setup shop and the admin list has Clinton, NS-63 (`cross_source_ot`), TX-01 and TX-02 (editable, audited, no 3% cap; the plan's "refuse above the network cap" is withdrawn), TX-03 (open ticket keeps its rates), TX-04 (refunds use the paid snapshot), TX-06 and TX-07 are not imported (G-34; Illinois service tax in the sandbox seed is 0, Iowa sandbox test tax is 7%, neither is Squire's 3% or 10%), TX-08 (Clinton stays at 0 until a rate is entered), TX-09 (exempt), TX-11 (go-live blocked, fee off), TX-12 (same fee config for the POS). Not automated here: NS-02 empty-page walk, NS-03/NS-06/NS-13/NS-20 payroll files, NS-07 the accountant's Iowa rate, NS-10 through NS-15 opening-date rules, NS-30 through NS-65 except the OT flag, TX-05 one ticket at every shop. Tables: `card_fee_rates`, `sales_tax_rates` (`core_0154`). Next migration is `core_0155`.
+
+### 2026-10-29: core, customer home, live wait, rebook
+
+`GET /api/v1/me/home`, `GET /api/v1/shops/{shop}/live` and `POST /api/v1/appointments/{code}/rebook` match the iOS mock. Pay, cards, receipts, family and account deletion were already on `/api/v1`. There is no `/confirm`. A new customer stays opted out of texts until they opt in (`sms_opt_in` default false). `crossSourceOt` flags a barber who worked a platform shop (Clinton) and a Squire shop in the same pay period.
 
 ### 2026-10-29: core, credit card fee and sales tax (`core_0154`)
 

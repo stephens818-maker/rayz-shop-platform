@@ -1,12 +1,18 @@
-# Rollout: one pilot shop, then the rest (per-shop migration and cutover)
+# Rollout: Clinton first, then the other shops
 
-Charles approved this plan (Oct 28):
+Charles approved this plan (Oct 28). On Oct 29 the pilot shop is **Clinton** (1320 11th St NW, Suite D, Clinton, IA 52732).
 
 1. Everything is complete and tested in the sandbox first: the web platform, the customer apps and the Ray'z Staff app.
-2. **One pilot shop** goes live while Squire stays as its backup.
-3. **The other shops** switch after the pilot's first **clean pay period** on Ray'z.
+2. **Clinton** goes live first. It was never on Squire. Nothing is imported, and Squire is not its backup.
+3. **The other eight shops** stay on Squire and switch after Clinton's first **clean pay period** on Ray'z.
 
-While that runs, one pay period can mix shops: the pilot's payroll comes from Ray'z (its time clock and tickets) and the others' from Squire's data. Payroll is still one run, one review, one approval and one set of iSolved files.
+**If the app is down at Clinton,** write the ticket on paper (services, products, sales tax, credit card fee, tip, total) and take the card in the Stripe Dashboard on Clinton's own account, or take cash. Enter the ticket here when the app is back. Do not ring Clinton in Squire.
+
+Clinton starts blank. Possession is November 1, 2026. Opening date, hours, phone and the sales tax rate stay empty until someone enters them. The credit card fee stays off until a rate is entered. It has its own Stripe connected account (none until onboarding finishes) and its own iSolved pay group on the brand calendar (period 22 starts October 4, 2026), not Dubuque's period 1. Location setup blocks go-live until the phone, hours, tax rates, menu, team and card payments are done.
+
+A barber who works Clinton and a shop still on Squire in the same week is flagged **cross-source overtime** on the Payroll Report (step 16). Check their weeks and type the overtime. The platform cannot see the Squire hours.
+
+While that runs, one pay period can mix shops: Clinton's payroll comes from Ray'z (its time clock and tickets) and the others' from Squire's data. Payroll is still one run, one review, one approval and one set of iSolved files.
 
 Most of this is on **Setup → Rollout** (`/admin/rollout`) and **Setup → Squire cutover**. Ray'z never contacts Squire itself. Anything that needs Squire's help goes through Charles. [DEPLOY.md](../DEPLOY.md#launch-day-every-surface-at-once-at-the-pilot-shop) has the launch-day timing for the apps and the domain.
 
@@ -58,7 +64,7 @@ Where each shop books is the **Online booking** column: it changes only on **Squ
 ## While the pilot runs (each day)
 
 12. **Watch the pilot.** Check sign-ins, bookings, punches and payments. Fix missed punches the same day, with a reason. If one surface has a problem, use its switch rather than handing the shop back (DEPLOY "After").
-13. **Squire stays the backup.** Keep the pilot's Squire account until **Squire backup until**. Don't book its clients there. The other shops keep running on Squire as normal.
+13. **Squire stays the backup for a shop that ran on Squire.** Keep that shop's Squire account until **Squire backup until**. Don't book its clients there. The other shops keep running on Squire as normal. Clinton has no Squire account. If Clinton's app is down, use the paper ticket and Clinton's Stripe Dashboard (see the top of this page).
 
 ## Payroll with some shops on Squire (each pay period)
 
@@ -90,7 +96,7 @@ Where each shop books is the **Online booking** column: it changes only on **Squ
 
 ## Rollback (hand back)
 
-21. **Hand back** on **Squire cutover** returns the pilot to Squire with the bookings made here. It also clears the clean-period sign-off, so the second wave can't switch until a new one.
+21. **Hand back** on **Squire cutover** returns a shop that ran on Squire, with the bookings made here. It also clears the clean-period sign-off, so the second wave can't switch until a new one. Hand back does not apply to Clinton: Clinton was never on Squire. Its fallback is the paper ticket and its own Stripe Dashboard.
     - **At a pay period boundary,** if you can: set **Payroll from here starting** to a later pay period (or empty), so the next period comes from Squire data.
     - **In the middle of a period:** keep that period on Ray'z. Import the Squire days' hours on **Payroll → Hours**, with **Hours come from the time clock** off for that run (DEPLOY step 45). On the Payroll Report, type over each person's service sales, product sales and tips to add the Squire days' (from Squire's Commissions report for those days), with a reason. Then set **Payroll from here starting** to the next pay period after the shop comes back.
 
@@ -112,6 +118,7 @@ Where each shop books is the **Online booking** column: it changes only on **Squ
 | Wrong person matched in Squire's report | Squire names on Staff (step 2); nothing saved on any problem (step 15) |
 | Overtime missed for someone at both a Ray'z and a Squire shop | Cross-source overtime flag (step 16) |
 | Tips counted twice in the changeover | The staff payout cutover's last day Squire pays tips (step 5); Squire-data tips all cash tips received (step 16) |
-| The pilot has to go back to Squire | Hand back (step 21), Squire kept until its backup date (step 13) |
+| Clinton's app is down | Paper ticket and Clinton's own Stripe Dashboard (top of this page). Clinton is not handed back to Squire |
+| A shop that ran on Squire has to go back | Hand back (step 21), Squire kept until its backup date (step 13) |
 | The pilot's period looks clean but paychecks were wrong | The owner's note (step 19) |
 | Squire's report can't be filtered by shop | A Shop or Location column (step 15); to confirm with Charles in the sandbox |
