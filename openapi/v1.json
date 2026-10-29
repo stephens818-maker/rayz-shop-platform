@@ -2684,6 +2684,168 @@
         }
       }
     },
+    "/me/home": {
+      "get": {
+        "tags": [
+          "Me"
+        ],
+        "summary": "Home: the next visit, a rebook nudge, loyalty, family and the usual shop's live wait",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomerHome"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sign in required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "426": {
+            "$ref": "#/components/responses/UpgradeRequired"
+          }
+        }
+      }
+    },
+    "/shops/{shop}/live": {
+      "get": {
+        "tags": [
+          "Shops"
+        ],
+        "summary": "Live wait: minutes until a chair, and how many chairs are free. No names.",
+        "parameters": [
+          {
+            "name": "shop",
+            "in": "path",
+            "required": true,
+            "description": "Shop slug (e.g. coralville) or ID",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiveWait"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown shop",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "426": {
+            "$ref": "#/components/responses/UpgradeRequired"
+          }
+        }
+      }
+    },
+    "/appointments/{code}/rebook": {
+      "post": {
+        "tags": [
+          "Booking"
+        ],
+        "summary": "Book the same barber and services again, on the next opening about three weeks out",
+        "description": "The signed-in customer must own the visit or be the child's parent. There is no /confirm. Paying a ticket is POST /me/tickets/{id}/pay.",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "description": "Appointment code",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppointmentEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Sign in required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The shop is not taking app bookings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown appointment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No opening with this barber",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "426": {
+            "$ref": "#/components/responses/UpgradeRequired"
+          }
+        }
+      }
+    },
     "/me/suggested-rebook": {
       "get": {
         "tags": [
@@ -10064,6 +10226,401 @@
         },
         "required": [
           "suggestions"
+        ],
+        "additionalProperties": false
+      },
+      "LiveWait": {
+        "type": "object",
+        "properties": {
+          "waitMinutes": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Estimated wait for a walk-in, in minutes"
+          },
+          "chairsFree": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Barbers not in a visit right now"
+          }
+        },
+        "required": [
+          "waitMinutes",
+          "chairsFree"
+        ],
+        "additionalProperties": false
+      },
+      "CustomerHome": {
+        "type": "object",
+        "properties": {
+          "nextAppointment": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "Unguessable reference used in manage links (/a/{code})"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "booked",
+                      "confirmed",
+                      "checked_in",
+                      "in_service",
+                      "completed",
+                      "cancelled",
+                      "no_show"
+                    ]
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "startsAt": {
+                    "type": "string",
+                    "description": "ISO-8601 instant, e.g. 2026-10-21T15:00:00.000Z"
+                  },
+                  "endsAt": {
+                    "type": "string",
+                    "description": "ISO-8601 instant, e.g. 2026-10-21T15:00:00.000Z"
+                  },
+                  "shop": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "slug": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "address": {
+                        "type": "string"
+                      },
+                      "phone": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "slug",
+                      "name",
+                      "address",
+                      "phone"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "barber": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "slug": {
+                        "type": "string"
+                      },
+                      "displayName": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "slug",
+                      "displayName"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "anyBarber": {
+                    "type": "boolean"
+                  },
+                  "customer": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "firstName": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "firstName"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "serviceId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "service",
+                            "addon"
+                          ]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "priceCents": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991,
+                          "description": "Amount in US cents"
+                        },
+                        "durationMin": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "serviceId",
+                        "kind",
+                        "name",
+                        "priceCents",
+                        "durationMin"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "estimateCents": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991,
+                    "description": "Amount in US cents"
+                  },
+                  "cancelCutoffAt": {
+                    "type": "string",
+                    "description": "ISO-8601 instant, e.g. 2026-10-21T15:00:00.000Z"
+                  },
+                  "canCancel": {
+                    "type": "boolean"
+                  },
+                  "canReschedule": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "id",
+                  "code",
+                  "status",
+                  "source",
+                  "startsAt",
+                  "endsAt",
+                  "shop",
+                  "barber",
+                  "anyBarber",
+                  "customer",
+                  "items",
+                  "estimateCents",
+                  "cancelCutoffAt",
+                  "canCancel",
+                  "canReschedule"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rebook": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "description": "The completed visit to book again. POST /appointments/{code}/rebook"
+                  },
+                  "barberName": {
+                    "type": "string"
+                  },
+                  "serviceName": {
+                    "type": "string"
+                  },
+                  "weeks": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "suggestedDate": {
+                    "type": "string"
+                  },
+                  "shopSlug": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "code",
+                  "barberName",
+                  "serviceName",
+                  "weeks",
+                  "suggestedDate",
+                  "shopSlug"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "loyalty": {
+            "type": "object",
+            "properties": {
+              "progressCents": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "Amount in US cents"
+              },
+              "thresholdCents": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "Amount in US cents"
+              },
+              "rewardCents": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "Amount in US cents"
+              },
+              "availableCents": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "Amount in US cents"
+              },
+              "lifetimeEarnedCents": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991,
+                "description": "Amount in US cents"
+              },
+              "badge": {
+                "type": "null"
+              }
+            },
+            "required": [
+              "progressCents",
+              "thresholdCents",
+              "rewardCents",
+              "availableCents",
+              "lifetimeEarnedCents",
+              "badge"
+            ],
+            "additionalProperties": false
+          },
+          "family": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "guardianId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "firstName": {
+                  "type": "string"
+                },
+                "birthYear": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "smsOptIn": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "guardianId",
+                "firstName",
+                "birthYear",
+                "smsOptIn"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "favoriteShop": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "slug": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "waitMinutes": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "slug",
+                  "name",
+                  "waitMinutes"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "nextAppointment",
+          "rebook",
+          "loyalty",
+          "family",
+          "favoriteShop"
         ],
         "additionalProperties": false
       },

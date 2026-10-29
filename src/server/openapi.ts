@@ -102,6 +102,8 @@ export function openApiDocument(baseUrl: string) {
     LoyaltyLedgerEntry: S.LoyaltyLedgerEntry,
     SuggestedRebook: S.SuggestedRebook,
     SuggestedRebookList: S.SuggestedRebookList,
+    LiveWait: S.LiveWait,
+    CustomerHome: S.CustomerHome,
     AppConfig: S.AppConfig,
     ...FAMILY_OPENAPI.components,
     ...CUSTOMER_BADGES_OPENAPI.components,
@@ -499,6 +501,32 @@ export function openApiDocument(baseUrl: string) {
             { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 50, default: 20 } },
           ],
           responses: { 200: ok("LoyaltyLedger"), 400: err("A cursor that isn't valid") },
+        },
+      },
+      "/me/home": {
+        get: {
+          tags: ["Me"],
+          summary: "Home: the next visit, a rebook nudge, loyalty, family and the usual shop's live wait",
+          security: bearer,
+          responses: { 200: ok("CustomerHome"), 401: err("Sign in required") },
+        },
+      },
+      "/shops/{shop}/live": {
+        get: {
+          tags: ["Shops"],
+          summary: "Live wait: minutes until a chair, and how many chairs are free. No names.",
+          parameters: [shopParam],
+          responses: { 200: ok("LiveWait"), 404: err("Unknown shop") },
+        },
+      },
+      "/appointments/{code}/rebook": {
+        post: {
+          tags: ["Booking"],
+          summary: "Book the same barber and services again, on the next opening about three weeks out",
+          description: "The signed-in customer must own the visit or be the child's parent. There is no /confirm. Paying a ticket is POST /me/tickets/{id}/pay.",
+          security: bearer,
+          parameters: [codeParam],
+          responses: { 201: ok("AppointmentEnvelope"), 401: err("Sign in required"), 403: err("The shop is not taking app bookings"), 404: err("Unknown appointment"), 409: err("No opening with this barber") },
         },
       },
       "/me/suggested-rebook": {

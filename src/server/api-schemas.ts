@@ -582,6 +582,32 @@ export const UpdateMe = z.object({
   birthday: LocalDateStr.nullable().optional().describe("Added in 1.2. Account holders are 13 or older; null clears it"),
 });
 
+export const LiveWait = z.object({
+  waitMinutes: z.number().int().describe("Estimated wait for a walk-in, in minutes"),
+  chairsFree: z.number().int().describe("Barbers not in a visit right now"),
+});
+export const HomeRebook = z.object({
+  code: z.string().describe("The completed visit to book again. POST /appointments/{code}/rebook"),
+  barberName: z.string(),
+  serviceName: z.string(),
+  weeks: z.number().int(),
+  suggestedDate: z.string(),
+  shopSlug: z.string(),
+});
+export const CustomerHome = z.object({
+  nextAppointment: Appointment.nullable(),
+  rebook: HomeRebook.nullable(),
+  loyalty: z.object({
+    progressCents: Cents,
+    thresholdCents: Cents,
+    rewardCents: Cents,
+    availableCents: Cents,
+    lifetimeEarnedCents: Cents,
+    badge: z.null(),
+  }),
+  family: z.array(z.object({ id: z.string().uuid(), guardianId: z.string().uuid(), firstName: z.string(), birthYear: z.number().int().nullable(), smsOptIn: z.boolean() })),
+  favoriteShop: z.object({ slug: z.string(), name: z.string(), waitMinutes: z.number().int() }).nullable(),
+});
 export const Loyalty = z.object({
   enabled: z.boolean(),
   thresholdCents: Cents,

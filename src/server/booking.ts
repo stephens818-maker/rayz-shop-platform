@@ -40,7 +40,7 @@ import { shopClockSettings } from "@/domain/time-clock";
 import { trailingBuffer } from "@/domain/timing";
 import { appointmentCode } from "@/lib/ids";
 import { formatPhone, normalizePhone } from "@/lib/phone";
-import { LocalDate, addDays, endOfLocalDay, existingWallTime, formatTime, localDateOf, minutesToLabel, startOfLocalDay, todayLocal } from "@/lib/time";
+import { LocalDate, addDays, endOfLocalDay, existingWallTime, formatTime, localDateOf, minutesToLabel, startOfLocalDay, todayLocal, toZoned } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { EffectiveService, getShop, resolveStaffRef, servicesByIds, shopBarbers } from "./catalog";
 import { CustomerInput, findOrCreateCustomer } from "./customers";
@@ -971,6 +971,78 @@ export async function seatFromWaitlist(entryId: string, staffId: string, actor: 
   await audit(actor, "waitlist.seat", "waitlist", entryId, { appointmentId: appt.id, staffId }, entry.shopId);
   await queueStaffAlert("waitlist", appt.id, { actorStaffId: actor.staffId, now });
   return appt;
+}
+
+/** The public live wait: how long a walk-in would wait, and how many chairs are free right now. No names. */
+export async function liveWait(shopRef: string, now = new Date()) {
+  const shop = await getShop(shopRef);
+  const barbers = await shopBarbers(shop.id);
+  const ids = barbers.map((b) => b.id);
+  const waitMinutes = await estimateWait(shop.id, ids, now);
+  const busy = ids.length
+    ? await db
+        .select({ staffId: appointments.staffId })
+        .from(appointments)
+        .where(and(inArray(appointments.staffId, ids), inArray(appointments.status, [...ACTIVE_STATUSES]), lt(appointments.startsAt, now), gt(appointments.endsAt, now)))
+    : [];
+  const taken = new Set(busy.map((b) => b.staffId));
+  return { waitMinutes, chairsFree: ids.filter((id) => !taken.has(id)).length };
+}
+
+/**
+ * Book the same shop, barber and services again, about one interval after the visit (or the next
+ * opening with that barber). The signed-in customer must own the visit, or be the child's parent.
+ * A visit already rebooked returns that appointment instead of making another.
+ */
+export async function rebookAppointment(code: string, opts: { customerId: string; actor: Actor; now?: Date }) {
+  const now = opts.now ?? new Date();
+  const [row] = await db
+    .select({ a: appointments, shop: shops, customer: customers })
+    .from(appointments)
+    .innerJoin(shops, eq(shops.id, appointments.shopId))
+    .leftJoin(customers, eq(customers.id, appointments.customerId))
+    .where(eq(appointments.code, code.toUpperCase()));
+  if (!row?.a.customerId || !row.customer) throw notFound("Appointment");
+  const caller = await db.query.customers.findFirst({ where: eq(customers.id, opts.customerId), columns: { id: true, guardianId: true } });
+  const owns = row.a.customerId === opts.customerId || row.customer.guardianId === opts.customerId || (!!caller?.guardianId && caller.guardianId === row.customer.guardianId);
+  if (!owns) throw notFound("Appointment");
+  if (!takesOnlineBookings(row.shop, todayLocal(now))) throw new AppError("forbidden", "This shop isn't taking bookings in the app yet");
+  const already = await db.query.appointments.findFirst({
+    where: and(eq(appointments.rebookedFromId, row.a.id), inArray(appointments.status, ["booked", "confirmed"])),
+    columns: { code: true },
+  });
+  if (already) return getAppointmentByCode(already.code, now);
+  const items = await db.select().from(appointmentItems).where(eq(appointmentItems.appointmentId, row.a.id));
+  const service = items.find((i) => i.kind === "service" && i.serviceId);
+  if (!service?.serviceId) throw new AppError("bad_request", "This visit has no service to book again");
+  const addonIds = items.filter((i) => i.kind === "addon" && i.serviceId).map((i) => i.serviceId!);
+  const from = addDays(localDateOf(new Date(Math.max(row.a.startsAt.getTime(), now.getTime()))), 21);
+  const wanted = toZoned(row.a.startsAt).hour * 60 + toZoned(row.a.startsAt).minute;
+  let best: { startsAt: string; distance: number } | null = null;
+  for (let day = 0; day < 14 && !best; day++) {
+    const date = addDays(from, day);
+    const avail = await getAvailability({ shopRef: row.shop.slug, date, serviceId: service.serviceId, addonIds, barberRef: row.a.staffId, now });
+    for (const slot of avail.slots) {
+      if (!slot.barberIds.includes(row.a.staffId)) continue;
+      const at = new Date(slot.startsAt);
+      const distance = Math.abs(toZoned(at).hour * 60 + toZoned(at).minute - wanted);
+      if (!best || distance < best.distance) best = { startsAt: slot.startsAt, distance };
+    }
+  }
+  if (!best) throw new AppError("conflict", "No openings with this barber in the next two weeks");
+  return createAppointment({
+    shopRef: row.shop.slug,
+    serviceId: service.serviceId,
+    addonIds,
+    barberRef: row.a.staffId,
+    startsAt: best.startsAt,
+    customerId: row.a.customerId,
+    source: "rebook",
+    rebookedFromId: row.a.id,
+    actor: opts.actor,
+    now,
+    consent: { source: "ios" },
+  });
 }
 
 export async function updateWaitlistStatus(entryId: string, status: "notified" | "left" | "done", actor: Actor) {

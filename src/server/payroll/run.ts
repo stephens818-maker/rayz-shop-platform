@@ -962,7 +962,7 @@ function withoutSquireDays<T extends TimeEntry>(entries: T[], squireShops: Reado
  * in the same period: overtime is per workweek across both, and Squire's report has only the
  * period's total, so it can't be worked out here. A manager checks their weeks and types the OT.
  */
-function crossSourceOt(blocks: readonly BlockView[], entityOf: (shopId: string) => string): Anomaly[] {
+export function crossSourceOt(blocks: readonly BlockView[], entityOf: (shopId: string) => string): Anomaly[] {
   const out: Anomaly[] = [];
   const open = blocks.filter((b) => !b.locked);
   const seen = new Map<string, { name: string; platform: string[]; squire: string[]; worked: number }>();
