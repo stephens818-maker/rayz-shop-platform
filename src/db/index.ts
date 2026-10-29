@@ -23,7 +23,8 @@ function create(): DB {
     prepare: !/pooler|pgbouncer/.test(databaseUrl()),
     onnotice: () => {},
     // A lock wait fails in 5 seconds instead of sitting until the function times out.
-    connection: { lock_timeout: "5s" },
+    // postgres.js takes this in milliseconds (the driver's ConnectionParameters type).
+    connection: { lock_timeout: 5_000 },
   });
   globalForDb.__rayzSql = client;
   return drizzle(client, { schema });
