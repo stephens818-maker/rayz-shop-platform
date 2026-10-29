@@ -64,8 +64,7 @@ async function main() {
   const roleRows = await db.insert(t.roles).values(ROLE_TEMPLATES.map(templateRow)).returning();
   const roleId = (key: string) => roleRows.find((r) => r.key === key)!.id;
 
-  // SANDBOX TEST ONLY: 3% so the demo checkout shows a credit card fee. Not a production default and not imported from Squire.
-  // A real brand starts with the fee off (DEFAULT_CARD_FEE_POLICY) until someone enters a rate.
+  // SANDBOX: the same 3% a new shop starts with. Labeled demo rate, not imported from Squire. Sales tax on the shops below is a labeled sample.
   await db.insert(t.brandSettings).values({ id: 1, loyalty: DEFAULT_LOYALTY, staffTime: { ...DEFAULT_STAFF_TIME_RULES }, cardFee: { enabled: true, rate: 0.03, label: "Credit card fee" } });
   const reasonRows = await db.insert(t.blockReasons).values(DEFAULT_BLOCK_REASONS.map((r) => ({ ...r }))).returning();
   const reason = (key: string) => {
@@ -101,10 +100,6 @@ async function main() {
     )
     .returning();
   const shopBySlug = new Map(shopRows.map((s) => [s.slug, s]));
-  // SANDBOX TEST fee stays on the eight existing shops only. Clinton, and any shop added later, stays off until a rate is entered and the shop is ticked.
-  await db.update(t.brandSettings).set({
-    cardFee: { enabled: true, rate: 0.03, label: "Credit card fee", appliesTo: "selected", shopIds: shopRows.map((s) => s.id) },
-  });
   const [clinton] = await db
     .insert(t.shops)
     .values({
@@ -124,12 +119,16 @@ async function main() {
       serviceTaxRate: "0",
       productTaxRate: "0",
       taxRatesVerified: false,
-      cardFeeEnabled: false,
-      cardFeeRate: null,
+      cardFeeEnabled: true,
+      cardFeeRate: "0.03000",
       paymentsMode: "connected",
     })
     .returning();
   shopBySlug.set(clinton.slug, clinton);
+  // Demo shops, including Clinton, are on the selected list at 3%. A shop can be taken off the list or the fee turned off.
+  await db.update(t.brandSettings).set({
+    cardFee: { enabled: true, rate: 0.03, label: "Credit card fee", appliesTo: "selected", shopIds: [...shopRows.map((s) => s.id), clinton.id] },
+  });
   const cal = DEFAULT_BRAND_CALENDAR;
   await db.insert(t.payGroups).values({
     shopId: clinton.id,

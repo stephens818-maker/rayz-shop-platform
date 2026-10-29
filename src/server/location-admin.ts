@@ -2,6 +2,7 @@ import { and, asc, count, desc, eq, gte, inArray, lt, ne, sql } from "drizzle-or
 import { db } from "@/db";
 import {
   appointments,
+  brandSettings,
   cashDrawers,
   locationGroupShops,
   locationGroups,
@@ -172,9 +173,10 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
   const looked = d.latitude === null ? await geocodeAddress(d) : null;
   const brand = await loadBrandDefaults();
   const feeBrand = await brandFeePolicy();
-  // A new location takes the brand's surcharge only when it applies to every shop and a rate is already entered. Otherwise the rate stays empty until someone enters one.
-  const fee = { ...shopCardFeePolicy(feeBrand, null), enabled: feeBrand.enabled && feeBrand.appliesTo === "all" };
-  const feeOn = fee.enabled && (fee.type === "flat" ? fee.flatCents > 0 : fee.rate > 0);
+  // A new shop starts with the credit card fee on. It uses the brand's rate when that rate is already set, otherwise 3%. It can be changed or turned off afterwards. Sales tax stays whatever the draft says (blank until verified).
+  const startingRate = feeBrand.rate > 0 ? feeBrand.rate : 0.03;
+  const fee = { ...shopCardFeePolicy(feeBrand, null), enabled: true, rate: startingRate };
+  const feeOn = fee.type === "flat" ? fee.flatCents > 0 : startingRate > 0;
   const pin =
     d.latitude !== null && d.longitude !== null
       ? { latitude: d.latitude, longitude: d.longitude, geocodeSource: d.geocodeSource ?? "manual", geocodedAt: new Date() }
@@ -212,7 +214,7 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
         productTaxRate: String(d.productTaxRate),
         taxRatesVerified: d.taxRatesVerified,
         cardFeeEnabled: feeOn,
-        cardFeeRate: feeOn && fee.rate > 0 ? fee.rate.toFixed(5) : null,
+        cardFeeRate: feeOn && startingRate > 0 ? startingRate.toFixed(5) : null,
         cardFeeAppliesToTip: fee.appliesToTip,
         cardFeeOverride: null,
         cardFeeChangedAt: new Date(),
@@ -285,7 +287,19 @@ export async function createLocation(m: LocationAdmin, raw: LocationDraftInput) 
       s.id,
       tx,
     );
-    const feeNow = shopFeeState(feeBrand, null, s.id, d.state);
+    if (feeBrand.appliesTo === "selected") {
+      const [stored] = await tx.select({ cardFee: brandSettings.cardFee }).from(brandSettings).where(eq(brandSettings.id, 1));
+      const raw = stored?.cardFee && typeof stored.cardFee === "object" ? (stored.cardFee as Record<string, unknown>) : {};
+      const ids = Array.isArray(raw.shopIds) ? raw.shopIds.map(String) : [];
+      if (!ids.includes(s.id))
+        await tx.update(brandSettings).set({ cardFee: { ...raw, appliesTo: "selected", shopIds: [...ids, s.id] }, updatedAt: new Date() }).where(eq(brandSettings.id, 1));
+    }
+    const feeNow = shopFeeState(
+      feeBrand.appliesTo === "selected" ? { ...feeBrand, shopIds: [...feeBrand.shopIds, s.id] } : feeBrand,
+      null,
+      s.id,
+      d.state,
+    );
     await audit(
       m.actor,
       "card_fee.shop",

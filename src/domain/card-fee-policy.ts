@@ -2,8 +2,9 @@
  * The credit card fee (surcharge) policy: set by the brand, with an optional override per shop.
  *
  * Guardrails that no setting can get around: the fee only ever applies to credit cards (never
- * debit, prepaid, gift cards or cash), and it's off in any state not on the allowlist. There is
- * no built-in rate and no 3% cap. A state ceiling applies only when one is saved.
+ * debit, prepaid, gift cards or cash), and it's off in any state not on the allowlist. New shops
+ * start at 3%. There is no cap. A shop can change the rate or turn the fee off. A state ceiling
+ * applies only when one is saved.
  */
 import { CardFeeConfig, CardFeeRefundRule, CardFeeType, FEE_RATE_SANITY_MAX, describeFee } from "./checkout";
 
@@ -79,13 +80,14 @@ export type CardFeeOverride = Partial<Pick<CardFeePolicy, "enabled" | "type" | "
 };
 export const OVERRIDE_KEYS = ["enabled", "type", "rate", "flatCents", "appliesToTip", "capCents", "minCents", "notice", "label", "cardFeeTaxable", "channels", "funding"] as const;
 
-/** Off until the owner turns it on: a surcharge needs the card networks' notice, signs at the door and counter, a rate at most the shop's card cost, and the CPA's word on sales tax first. */
+/** New shops start at 3%. There is no cap. A shop can change the rate or turn the fee off. */
 export const DEFAULT_FEE_LABEL = "Credit card fee";
+export const DEFAULT_CARD_FEE_RATE = 0.03;
 
 export const DEFAULT_CARD_FEE_POLICY: CardFeePolicy = {
-  enabled: false,
+  enabled: true,
   type: "percent",
-  rate: 0,
+  rate: DEFAULT_CARD_FEE_RATE,
   label: DEFAULT_FEE_LABEL,
   cardFeeTaxable: false,
   flatCents: 0,

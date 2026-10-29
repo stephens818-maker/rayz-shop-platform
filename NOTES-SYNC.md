@@ -74,7 +74,7 @@ computeCardFee(
 - The math is the pure `cardFeeFor(config, funding, amounts, opts)` in `src/domain/checkout.ts`. The POS's `computeCheckout` uses the same function, so the app and the POS can't disagree. `tests/card-fee.test.ts` checks that.
 - Fee config lives on `shops`: `card_fee_enabled`, `card_fee_rate` (numeric, fraction), and `card_fee_applies_to_tip`. Only people with `settings.taxes` change it, under Shop settings.
 - Wallet payments get no fee while `FEATURE_WALLET_FEE` is off (the default; see flags below).
-- **Off by default at the brand (2026-10-28, `core_0152`).** `DEFAULT_CARD_FEE_POLICY.enabled` is `false`, so `reason` is `disabled` until the owner turns the surcharge on under the card fee settings. That waits for Charles to confirm the launch checklist's surcharge items. The sample data (seed) turns it on so the sandbox shows it.
+- **New shops start at 3% (Charles, Oct 26; replaces "off until a rate is entered").** `DEFAULT_CARD_FEE_POLICY` is on at `0.03`. There is no cap. A shop can change the rate or turn the fee off. Turning it on with a rate of 0 is still refused. `core_0152` still wrote `{ enabled: false }` for a brand that had never saved a policy when that migration ran; a saved choice stays. Sales tax stays blank until someone enters a rate. The sandbox seed uses the same 3%, labeled as a demo rate, on every demo shop including Clinton.
 
 ### Feature flags: `src/lib/flags.ts`
 
@@ -901,7 +901,7 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
   - Each shop's real coordinates and network addresses. The seeded ones are approximate.
 - Staff payout onboarding, for Charles to confirm: someone who leaves before finishing Stripe setup is now paid with their last paycheck for open pay periods, and in cash for locked ones (L34, built on offboarding and on making someone inactive). Say if he wants another rule.
 - Compensation, pending Charles: the iSolved earning codes for the optional columns (defaults `E_Service Commission_Dollars`, `E_Product Commission_Dollars`, `R_Regular_Rate` and `E_Guaranteed Minimum_Dollars`, all settings). Also whether the guaranteed minimum counts commission and overtime toward the minimum (it does now; tips don't).
-- My Earnings, for Charles: no role has `compensation.own` to start, so barbers see hours and tips but no pay or greater-of until the brand grants it per person. Should Barber and Apprentice have it by default?
+- My Earnings: Barber, Apprentice and the manager templates have `compensation.own` (`core_0155`). Front desk does not. A barber sees only their own hourly gross, commission and tips (earned, paid out, pending) on `/admin/my-pay`. `/admin/payroll` needs `report.tips_payroll.view`.
 - My Earnings, for Charles:
   - Paid time off shows at their wage (`ptoPayCents`). iSolved pays it at the rate it holds, so it's an estimate.
   - A sale's card tip that Stripe itself reverses shows as `reversed` and is logged, but isn't paid to them again on its own: payroll decides.
@@ -910,6 +910,16 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 - My Earnings, PY-RD-01: the report's Total Wages is rounded once, while the paycheck rounds each part. They can differ by 1 cent (the contract test shows it). Keep the report's figure, or round each part there too?
 
 ## Log
+
+### 2026-10-29: core, checkout hang, own pay, and the 3% card fee
+
+A stuck card charge no longer holds the only database connection. `finalizeSale` claims the ticket, charges Stripe outside the transaction, then records the payment. A second pay within two minutes is refused. The connection uses a 5 second lock timeout. The anniversary scan sets an 8 second statement timeout and clears it. `GET /api/health` returns `{ ok, dbMs, commit }`, and the admin footer shows the same commit.
+
+`/admin/payroll` requires `report.tips_payroll.view`. Barber, Apprentice and the manager templates have `compensation.own` (`core_0155`). Front desk does not. My pay shows that person's hourly gross, commission, and tips earned, paid out and pending.
+
+New shops start with the credit card fee on at 3%, or at the brand's rate when one is already set. When the brand applies the fee only to selected shops, the new shop is added to that list. The fee can be changed or turned off. There is no cap. Sales tax stays blank. Clinton's tax, hours and phone stay blank; its fee is the same 3%. The Clinton paragraph below that says the fee stays off is superseded.
+
+The next migration is `core_0156`.
 
 ### 2026-10-29: core, Clinton is the pilot
 

@@ -1,6 +1,6 @@
 /**
- * Clinton is the pilot shop. The seed and the location wizard both leave it blank: no phone, no
- * hours, no tax rate, no credit card fee, no Squire import, and its own iSolved pay group.
+ * Clinton is the pilot shop. The seed and the location wizard leave phone, hours and sales tax
+ * blank. The credit card fee starts at 3%. No Squire import. Its own iSolved pay group.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -38,10 +38,10 @@ describe("Clinton pilot", () => {
       status: "setup",
       bookingEnabled: false,
       taxRatesVerified: false,
-      cardFeeEnabled: false,
-      cardFeeRate: null,
+      cardFeeEnabled: true,
       paymentsMode: "connected",
     });
+    expect(Number(shop.cardFeeRate)).toBeCloseTo(0.03);
     expect(Number(shop.serviceTaxRate)).toBe(0);
     expect(Number(shop.productTaxRate)).toBe(0);
     expect(shop.description).toMatch(/Never on Squire/);
@@ -75,7 +75,7 @@ describe("Clinton pilot", () => {
     const brand = (await m.db.db.query.brandSettings.findFirst({ where: eq(m.schema.brandSettings.id, 1) }))!;
     const fee = brand.cardFee as { appliesTo?: string; shopIds?: string[]; rate?: number };
     expect(fee.appliesTo).toBe("selected");
-    expect(fee.shopIds ?? []).not.toContain(shop.id);
+    expect(fee.shopIds ?? []).toContain(shop.id);
     expect(fee.rate).toBe(0.03);
 
     const moline = (await m.db.db.query.shops.findFirst({ where: eq(m.schema.shops.slug, "moline") }))!;
@@ -129,12 +129,12 @@ describe("Clinton pilot", () => {
       status: "setup",
       phone: null,
       address2: "Suite D",
-      cardFeeEnabled: false,
-      cardFeeRate: null,
+      cardFeeEnabled: true,
       paymentsMode: "connected",
       taxRatesVerified: false,
       bookingEnabled: false,
     });
+    expect(Number(row.cardFeeRate)).toBeCloseTo(0.03);
     expect(Number(row.serviceTaxRate)).toBe(0);
     expect(Number(row.productTaxRate)).toBe(0);
     const hours = await m.db.db.select().from(m.schema.shopHours).where(m.drizzle.eq(m.schema.shopHours.shopId, made.id));

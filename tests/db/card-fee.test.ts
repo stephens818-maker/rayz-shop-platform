@@ -133,8 +133,9 @@ describe("settings", () => {
     await m.db.db.update(S.brandSettings).set({ cardFee: {} });
     await m.db.db.update(S.shops).set({ cardFeeEnabled: true });
     await m.db.db.update(S.shops).set({ cardFeeOverride: { enabled: true } }).where(m.drizzle.eq(S.shops.id, otherId));
-    expect(await fee.cardFeeConfigFor(shopId, "pos")).toMatchObject({ enabled: false });
-    expect(await fee.computeCardFee(shopId, "credit", { chargeCents: 5000 })).toMatchObject({ feeCents: 0, reason: "disabled" });
+    // An empty saved policy uses the 3% default. core_0152 still records an explicit off when it sees an empty policy.
+    expect(await fee.cardFeeConfigFor(shopId, "pos")).toMatchObject({ enabled: true, rate: 0.03 });
+    expect(await fee.computeCardFee(shopId, "credit", { chargeCents: 5000 })).toMatchObject({ feeCents: 150 });
 
     await migrate();
     expect((await m.db.db.query.brandSettings.findFirst())!.cardFee).toEqual({ enabled: false });
@@ -282,8 +283,9 @@ describe("which shops use it", () => {
     await fee.saveBrandFeePolicy(actor, { appliesTo: "selected", shopIds: [shopId] });
     const slug2 = `${slug}-b`;
     const made2 = await createLocation(admin, draftDefaults({ name: `Fee New ${slug2}`, slug: slug2, address: "2 Main St", city: "Davenport", state: "IA", zip: "52801" }));
-    expect((await fee.cardFeeConfigFor(made2.id, "pos")).enabled).toBe(false);
-    expect((await shopRow(made2.id)).cardFeeEnabled).toBe(false);
+    expect((await fee.cardFeeConfigFor(made2.id, "pos")).enabled).toBe(true);
+    expect(Number((await shopRow(made2.id)).cardFeeRate)).toBe(0.025);
+    expect((await shopRow(made2.id)).cardFeeEnabled).toBe(true);
     await signInAs(null);
   });
 });

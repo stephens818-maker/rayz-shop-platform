@@ -77,13 +77,14 @@ describe("cardFeeFor: fee types, cap and minimum", () => {
 });
 
 describe("the card fee policy", () => {
-  it("is off with no rate until one is entered; debit, prepaid and wallets stay off", () => {
-    expect(brandCardFeePolicy({}).enabled).toBe(false);
-    expect(brandCardFeePolicy(null).enabled).toBe(false);
-    expect(brandCardFeePolicy({}).rate).toBe(0);
+  it("starts at 3% and can be turned off; debit, prepaid and wallets stay off", () => {
+    expect(brandCardFeePolicy({}).enabled).toBe(true);
+    expect(brandCardFeePolicy(null).enabled).toBe(true);
+    expect(brandCardFeePolicy({}).rate).toBe(0.03);
     expect(brandCardFeePolicy({}).label).toBe("Credit card fee");
-    expect(feeConfigFor(brandCardFeePolicy({}), "IA", "pos").enabled).toBe(false);
-    const bare = brandCardFeePolicy({ enabled: true });
+    expect(feeConfigFor(brandCardFeePolicy({}), "IA", "pos").enabled).toBe(true);
+    expect(feeConfigFor(brandCardFeePolicy({ enabled: false }), "IA", "pos").enabled).toBe(false);
+    const bare = brandCardFeePolicy({ enabled: true, rate: 0 });
     expect(policyProblem(bare)).toMatch(/before turning it on/);
     const p = brandCardFeePolicy({ enabled: true, rate: 0.025 });
     expect(p).toMatchObject({
@@ -125,7 +126,7 @@ describe("the card fee policy", () => {
   it("refuses settings that break the rules", () => {
     const p = { ...DEFAULT_CARD_FEE_POLICY, enabled: true, rate: 0.03 };
     expect(policyProblem(p)).toBeNull();
-    expect(policyProblem({ ...DEFAULT_CARD_FEE_POLICY, enabled: true })).toMatch(/before turning it on/);
+    expect(policyProblem({ ...DEFAULT_CARD_FEE_POLICY, enabled: true, rate: 0 })).toMatch(/before turning it on/);
     expect(policyProblem({ ...p, funding: { ...p.funding, debit: true } })).toMatch(/only allowed on credit/);
     expect(policyProblem({ ...p, funding: { ...p.funding, prepaid: true } })).toMatch(/only allowed on credit/);
     expect(policyProblem({ ...p, rate: 0.04 })).toBeNull();
