@@ -34,7 +34,6 @@ export default async function MyPayPage() {
   const ctx = await guardPage("/admin/my-pay");
   if (ctx.staff.kind !== "person") return <Empty title="Shop logins don't have pay">Sign in as yourself to see your pay.</Empty>;
   const settings = await loadCompensationSettings();
-  if (!settings.enabled) return <Empty title="Not turned on">The brand hasn&apos;t turned on compensation fields.</Empty>;
   const me = ctx.staff.id;
   const today = todayLocal();
   const periods = (await periodChoices()).filter((p) => p.current);
@@ -71,7 +70,7 @@ export default async function MyPayPage() {
   const rent = current?.boothRentCents != null && current.boothRentFrequency ? boothRentForDays({ cents: current.boothRentCents, frequency: current.boothRentFrequency }, diffDays(monthEnd(today), monthStart(today)) + 1) : null;
 
   let estimate: { shop: string; l: Line; locked: boolean; stub: PaystubLine[] }[] = [];
-  if (settings.payEstimate && periods.length) {
+  if (periods.length) {
     const seen = new Set<string>();
     for (const p of periods) {
       if (seen.has(p.key)) continue;
@@ -81,17 +80,27 @@ export default async function MyPayPage() {
     }
     estimate = estimate.sort((a, b) => a.shop.localeCompare(b.shop));
   }
-  const gross = estimate.reduce((a, e) => a + e.l.laborCost, 0);
+  const gross = estimate.reduce((a, e) => a + e.l.hourlyTotal, 0);
+  const tipsEarned = estimate.reduce((a, e) => a + e.l.tips, 0);
+  const tipsPaid = estimate.reduce((a, e) => a + e.l.tipsPaidOut, 0);
+  const commission = estimate.reduce((a, e) => a + e.l.commission + e.l.productTotal, 0);
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
-      <PageHeader title="My pay" subtitle="Your own commission and pay plan. Nobody else's pay shows here." />
+      <PageHeader title="My pay" subtitle="Your own hours, commission and tips. Nobody else's pay shows here." />
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Stat label="Hourly gross this period" value={estimate.length ? dollars(gross) : "—"} hint="hours × your rate" />
+        <Stat label="Commission this period" value={estimate.length ? dollars(commission) : "—"} hint="service and product" />
+        <Stat label="Tips earned" value={estimate.length ? dollars(tipsEarned) : "—"} />
+        <Stat label="Tips paid out" value={estimate.length ? dollars(tipsPaid) : "—"} hint={estimate.length ? `${dollars(Math.max(0, tipsEarned - tipsPaid))} pending` : undefined} />
+      </div>
+      {settings.enabled && (
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <Stat label="Service commission this month" value={formatCents(Math.round(month.serviceCommissionCents))} />
         <Stat label="Product commission this month" value={formatCents(Math.round(month.productCommissionCents))} />
         <Stat label="Net service sales this month" value={formatCents(monthNet)} hint="after discounts and refunds" />
-        {settings.payEstimate && <Stat label="Estimated gross pay this period" value={estimate.length ? dollars(gross) : "—"} hint="before tips" />}
       </div>
+      )}
       <Card>
         <CardHeader title="Commission" subtitle="On your sales after discounts and refunds. A refund takes back the commission its sale earned, on the day it's given." />
         <Table>

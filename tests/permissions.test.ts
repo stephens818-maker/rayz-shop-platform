@@ -91,6 +91,11 @@ describe("permission catalog and templates", () => {
     }
     for (const k of ["brand_admin", "franchisee_owner"]) expect(pageAllowed(access(k).permissions, "/admin/tips"), k).toBe(true);
     for (const k of ["regional_manager", "shop_manager", "franchisee_manager", "front_desk", "barber"]) expect(pageAllowed(access(k).permissions, "/admin/tips"), k).toBe(false);
+    for (const k of ["regional_manager", "shop_manager", "front_desk", "barber"] as const)
+      for (const page of ["/admin/payroll", "/admin/payroll/report", "/admin/reports/tip-payouts"] as const)
+        expect(pageAllowed(access(k).permissions, page), `${k} ${page}`).toBe(false);
+    expect(pageAllowed(access("shop_manager", { "report.tips_payroll.view": true }).permissions, "/admin/payroll")).toBe(true);
+    expect(pageAllowed(access("brand_admin").permissions, "/admin/payroll")).toBe(true);
     for (const k of ["regional_manager", "shop_manager", "franchisee_manager"])
       for (const p of ["tips.approve", "payouts.view", "payouts.manage"] as Permission[]) expect(access(k).permissions.has(p), `${k} ${p}`).toBe(false);
     expect(pageAllowed(access("shop_manager", { "tips.approve": true }).permissions, "/admin/tips")).toBe(true);
@@ -423,7 +428,11 @@ describe("navigation follows permissions", () => {
     expect(hrefs).not.toContain("/admin/catalog");
     for (const h of hrefs) expect(pageAllowed(fd, h as keyof typeof PAGE_ACCESS)).toBe(true);
     const barber = navFor(access("barber").permissions).flatMap((s) => s.items.map((i) => i.href));
-    expect(barber).toEqual(["/admin", "/admin/calendar", "/admin/clock", "/admin/my-time", "/admin/my-tips", "/admin/my-banking", "/admin/milestones", "/admin/customers", "/admin/reports", "/admin/timesheets", "/admin/pay-questions"]);
+    expect(barber).toEqual(["/admin", "/admin/calendar", "/admin/clock", "/admin/my-time", "/admin/my-tips", "/admin/my-banking", "/admin/my-pay", "/admin/milestones", "/admin/customers", "/admin/reports", "/admin/timesheets", "/admin/pay-questions"]);
+    expect(pageAllowed(access("barber").permissions, "/admin/my-pay")).toBe(true);
+    expect(pageAllowed(access("apprentice").permissions, "/admin/my-pay")).toBe(true);
+    expect(pageAllowed(access("shop_manager").permissions, "/admin/my-pay")).toBe(true);
+    expect(access("front_desk").permissions.has("compensation.own")).toBe(false);
     expect(hrefs).toContain("/admin/my-time");
     expect(hrefs).toContain("/admin/time-off");
     expect(barber).not.toContain("/admin/time-off");

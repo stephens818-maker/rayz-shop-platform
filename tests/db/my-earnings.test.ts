@@ -211,7 +211,9 @@ describe("My Earnings: their own pay periods, pay, days, tickets and payouts", (
     expect((await get(`me/earnings?period=${ps[1].id}`)).nextPeriodId).toBe(cur[0].id);
   });
 
-  it("without compensation.own (Barber's default) every pay field is null and there's no total; tips still add up and check out against the iSolved row", async () => {
+  it("without compensation.own every pay field is null and there's no total; tips still add up and check out against the iSolved row", async () => {
+    await m.db.db.update(s().staff).set({ permissionOverrides: { "compensation.own": false } }).where(eq(s().staff.id, ids.makenna));
+    onTestFinished(async () => void (await m.db.db.update(s().staff).set({ permissionOverrides: {} }).where(eq(s().staff.id, ids.makenna))));
     const e = await get("me/earnings?period=current");
     expect(e.sees.wages).toBe(false);
     for (const k of ["appliedRule", "explanationCode", "hourlyRateCents", "hourlyPayCents", "serviceCommissionCents", "greaterOfCents", "commSalesCents", "wagesCents", "otEstimatedCents", "ptoPayCents", "totalCents"]) expect(e[k], k).toBeNull();

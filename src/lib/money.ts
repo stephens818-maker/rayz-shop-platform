@@ -18,10 +18,10 @@ export function parseDollars(input: string | number | null | undefined): number 
   return Number.isFinite(n) ? Math.round(n * 100) : NaN;
 }
 
-/** Rate stored as a fraction (0.07 = 7%). */
+/** Rate stored as a fraction (0.07 = 7%). Rounded so 0.07 is "7%", not "7.%". */
 export function formatRate(rate: number): string {
-  const pct = rate * 100;
-  return `${Number.isInteger(pct) ? pct.toFixed(0) : pct.toFixed(3).replace(/0+$/, "")}%`;
+  const pct = Number((rate * 100).toFixed(3));
+  return `${Number.isInteger(pct) ? pct.toFixed(0) : String(pct)}%`;
 }
 
 /** Banker-safe integer rounding of cents × rate (half away from zero). */

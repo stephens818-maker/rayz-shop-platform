@@ -110,6 +110,7 @@ export const PAGE_ACCESS = {
   "/admin/barber-groups": ["barber_groups.manage"],
   "/admin/notifications": ["notifications.view", "notifications.send"],
   "/admin/notifications/simulator": ["notifications.send"],
+  "/admin/payroll": ["report.tips_payroll.view"],
   "/admin/payroll/report": ["payroll.run", "payroll.approve"],
   "/admin/payroll/tips": ["payroll.run", "payroll.approve"],
   "/admin/payroll/hours": ["payroll.run"],

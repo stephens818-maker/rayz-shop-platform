@@ -11,6 +11,7 @@ import { brandDefaults, cleanPartial, columnPatch, effectiveDefaults, overridesF
 import { reminderHours } from "@/domain/staff-notifications";
 import { CONVERSION_EVENTS, trackBookingStep } from "@/lib/conversion-tracking";
 import { jurisdictionGroups, ratePct } from "@/domain/tax-fees";
+import { formatRate } from "@/lib/money";
 import { matchesFilters, parseAppointmentFilters, paymentOf, platformOf } from "@/domain/appointment-report";
 import { ReconcileInput, isReconcilable, notYetPaidOut, unmatched } from "@/domain/payout-reconcile";
 import { IssueCompInput, ledgerLabel, reloadProblem } from "@/domain/gift-cards";
@@ -167,6 +168,10 @@ describe("brand products and taxes vs card fees", () => {
     ]);
     expect(ratePct(0.0825)).toBe("8.25%");
     expect(ratePct(0.07)).toBe("7%");
+    expect(formatRate(0.07)).toBe("7%");
+    expect(formatRate(0.065)).toBe("6.5%");
+    expect(formatRate(0.0825)).toBe("8.25%");
+    expect(formatRate(0)).toBe("0%");
     expect(ratePct(0)).toBe("0%");
   });
 });

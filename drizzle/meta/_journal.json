@@ -1086,6 +1086,13 @@
       "when": 1796642940000,
       "tag": "core_0154_fee_and_tax",
       "breakpoints": true
+    },
+    {
+      "idx": 155,
+      "version": "7",
+      "when": 1796643000000,
+      "tag": "core_0155_barber_own_pay",
+      "breakpoints": true
     }
   ]
 }
