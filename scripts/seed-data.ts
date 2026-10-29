@@ -15,13 +15,18 @@ export interface ShopSeed {
   phone: string | null;
   email: string | null;
   hours: Hours;
-  /** SAMPLE placeholders — confirm with the accountant before go-live (tax_rates_verified=false). */
+  /**
+   * SANDBOX TEST rates so the demo checkout has a tax line. Not a production rate and not imported
+   * from Squire. A new shop starts at 0 until someone enters a rate (tax_rates_verified stays false).
+   */
   serviceTaxRate: string;
   productTaxRate: string;
   note?: string;
 }
 
+/** Sandbox test only. Charles sets each shop's real rate in the new platform. */
 const IA_TAX = { serviceTaxRate: "0.07", productTaxRate: "0.07" };
+/** Sandbox test only. Charles sets each shop's real rate in the new platform. */
 const IL_TAX = { serviceTaxRate: "0", productTaxRate: "0.0875" };
 
 export const SHOPS: ShopSeed[] = [

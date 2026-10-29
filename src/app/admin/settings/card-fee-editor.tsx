@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button, Card, CardHeader, Field, Input, Notice, Select, Textarea } from "@/components/ui";
 import { FEE_CHANNELS, FEE_CHANNEL_LABEL, FEE_NOTICE_MAX, SURCHARGE_BLOCKED_STATES, US_STATES, type CardFeeOverride, type CardFeePolicy, feeConfigFor, stateRule } from "@/domain/card-fee-policy";
-import { MAX_CARD_FEE_RATE, type CardFeeConfig, cardFeeFor, feeDisclosure } from "@/domain/checkout";
+import { type CardFeeConfig, cardFeeFor, feeDisclosure } from "@/domain/checkout";
 import { formatCents } from "@/lib/money";
 import { useSyncSave } from "@/components/brand-sync";
 import { saveShopCardFeeAction } from "./actions";
@@ -20,6 +20,8 @@ type Form = {
   channels: CardFeePolicy["channels"];
   funding: CardFeePolicy["funding"];
   notice: string;
+  label: string;
+  cardFeeTaxable: boolean;
 };
 
 const pct = (r: number) => (r * 100).toFixed(3).replace(/\.?0+$/, "");
@@ -38,6 +40,8 @@ const toForm = (p: CardFeePolicy): Form => ({
   channels: p.channels,
   funding: p.funding,
   notice: p.notice ?? "",
+  label: p.label,
+  cardFeeTaxable: p.cardFeeTaxable,
 });
 
 const fromForm = (f: Form) => ({
@@ -51,6 +55,8 @@ const fromForm = (f: Form) => ({
   channels: f.channels,
   funding: f.funding,
   notice: f.notice.trim() || null,
+  label: f.label.trim().slice(0, 40) || "Credit card fee",
+  cardFeeTaxable: f.cardFeeTaxable,
 });
 
 /** What the fee comes to on a few credit card charges, ignoring the shop's state. */
@@ -60,12 +66,18 @@ function examples(cfg: CardFeeConfig) {
 }
 
 function FeeFields({ f, set, disabled, walletFlag }: { f: Form; set: (f: Form) => void; disabled: boolean; walletFlag: boolean }) {
-  const preview = { ...fromForm(f), maxRate: MAX_CARD_FEE_RATE };
+  const preview = fromForm(f);
   const notice = feeDisclosure(preview);
   return (
     <fieldset disabled={disabled} className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
       <label className="flex items-center gap-2 text-sm sm:col-span-2 lg:col-span-4">
-        <input type="checkbox" checked={f.enabled} onChange={(e) => set({ ...f, enabled: e.target.checked })} /> Add a surcharge to credit card payments
+        <input type="checkbox" checked={f.enabled} onChange={(e) => set({ ...f, enabled: e.target.checked })} /> Add a credit card fee to credit card payments
+      </label>
+      <Field label="Name on the receipt" hint="What the customer sees. Leave it as Credit card fee unless you want another name." className="sm:col-span-2">
+        <Input value={f.label} maxLength={40} onChange={(e) => set({ ...f, label: e.target.value })} />
+      </Field>
+      <label className="flex items-center gap-2 text-sm sm:col-span-2">
+        <input type="checkbox" checked={f.cardFeeTaxable} onChange={(e) => set({ ...f, cardFeeTaxable: e.target.checked })} /> Charge sales tax on this fee (off until the accountant says so; the fee is calculated first)
       </label>
       <Field label="Fee type">
         <Select value={f.type} onChange={(e) => set({ ...f, type: e.target.value as Form["type"] })}>
@@ -75,7 +87,7 @@ function FeeFields({ f, set, disabled, walletFlag }: { f: Form; set: (f: Form) =
         </Select>
       </Field>
       {f.type !== "flat" && (
-        <Field label={`Rate % (max ${MAX_CARD_FEE_RATE * 100})`}>
+        <Field label="Rate %">
           <Input inputMode="decimal" value={f.rate} onChange={(e) => set({ ...f, rate: e.target.value })} />
         </Field>
       )}
@@ -90,7 +102,7 @@ function FeeFields({ f, set, disabled, walletFlag }: { f: Form; set: (f: Form) =
       <Field label="Cap $ (optional)" hint="The most it can be on one charge">
         <Input inputMode="decimal" value={f.cap} placeholder="No cap" onChange={(e) => set({ ...f, cap: e.target.value })} />
       </Field>
-      <Field label="Minimum $ (optional)" hint={`Never more than ${MAX_CARD_FEE_RATE * 100}% of the charge, even with a minimum`}>
+      <Field label="Minimum $ (optional)" hint="Still never more than a state limit you've saved">
         <Input inputMode="decimal" value={f.min} placeholder="No minimum" onChange={(e) => set({ ...f, min: e.target.value })} />
       </Field>
       <div className="sm:col-span-2">
@@ -126,12 +138,12 @@ function FeeFields({ f, set, disabled, walletFlag }: { f: Form; set: (f: Form) =
       <Field
         label="Notice at checkout and on receipts"
         className="sm:col-span-2 lg:col-span-4"
-        hint={`Optional; must say "surcharge". {fee} becomes the rate or amount. Up to ${FEE_NOTICE_MAX} characters.`}
+        hint={`Optional. {fee} becomes the rate or amount. Up to ${FEE_NOTICE_MAX} characters.`}
       >
         <Textarea rows={2} maxLength={FEE_NOTICE_MAX} value={f.notice} placeholder="The built-in notice" onChange={(e) => set({ ...f, notice: e.target.value })} />
       </Field>
       <div className="space-y-1 text-xs text-zinc-600 sm:col-span-2 lg:col-span-4">
-        {notice ? <div>Customers see: &ldquo;{notice}&rdquo;</div> : <div>No surcharge is shown or charged.</div>}
+        {notice ? <div>Customers see: &ldquo;{notice}&rdquo;</div> : <div>No credit card fee is shown or charged.</div>}
         {notice && (
           <div>
             On a credit card:{" "}
@@ -166,22 +178,22 @@ export function BrandCardFeeEditor({ initial, canEdit, walletFlag, shops }: { in
   return (
     <Card>
       <CardHeader
-        title="Credit card surcharge (brand)"
-        subtitle={canEdit ? "The rules at every shop it applies to, unless a shop sets its own. Every change is in the audit log." : "Brand admins change the card surcharge."}
+        title="Credit card fee (brand)"
+        subtitle={canEdit ? "The rules at every shop it applies to, unless a shop sets its own. Every change is in the audit log. It stays off until a rate is entered." : "Brand admins change the credit card fee."}
       />
       <Notice tone="blue">
-        Only credit cards are ever surcharged: Stripe reports each card&apos;s funding type, and debit, prepaid, gift cards and cash never pay it. It never goes over {MAX_CARD_FEE_RATE * 100}% of the
-        charge or a state&apos;s lower limit, and it&apos;s off in any state not ticked below. Confirm card-brand registration and notice rules before turning it on.
+        Only credit cards pay it: Stripe reports each card&apos;s funding type, and debit, prepaid, gift cards and cash never pay it. There is no built-in rate. Enter one before turning it on. A state
+        limit applies only when you save one, and it&apos;s off in any state not ticked below.
       </Notice>
       <FeeFields f={f} set={setF} disabled={!canEdit} walletFlag={walletFlag} />
       <fieldset disabled={!canEdit} className="grid gap-3 border-t border-zinc-100 p-4 sm:grid-cols-2">
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={waiverAllowed} onChange={(e) => setWaiverAllowed(e.target.checked)} /> Staff with permission may waive it on a ticket (reason required)
         </label>
-        <Field label="On a refund" hint="A same-day void always gives the surcharge back">
+        <Field label="On a refund" hint="A same-day void always gives the credit card fee back">
           <Select value={refundRule} onChange={(e) => setRefundRule(e.target.value as CardFeePolicy["refundRule"])}>
             <option value="proportional">Refund its share of what&apos;s refunded</option>
-            <option value="keep">Keep the surcharge</option>
+            <option value="keep">Keep the credit card fee</option>
           </Select>
         </Field>
         {refundRule === "keep" && (
@@ -263,7 +275,7 @@ export function BrandCardFeeEditor({ initial, canEdit, walletFlag, shops }: { in
           </div>
         )}
       </fieldset>
-      {canEdit && <SaveBar pending={pending} msg={msg} onClick={() => save({ label: "Credit card surcharge", changes: [{ type: "card_fee", item: "brand", value: policy() }] })} />}
+      {canEdit && <SaveBar pending={pending} msg={msg} onClick={() => save({ label: "Credit card fee", changes: [{ type: "card_fee", item: "brand", value: policy() }] })} />}
       {dialog}
     </Card>
   );
@@ -304,17 +316,17 @@ export function ShopCardFeeEditor({
   const subtitle = canEdit
     ? "Follow the brand, or set this shop's own fee. Audited."
     : brand.shopsCanEdit
-      ? "Brand admins and shop managers change the card surcharge."
-      : "View only: the brand sets the card surcharge.";
+      ? "Brand admins and shop managers change the credit card fee."
+      : "View only: the brand sets the credit card fee.";
   return (
     <Card>
       <CardHeader
-        title={`Credit card surcharge at ${shopName}`}
+        title={`Credit card fee at ${shopName}`}
         subtitle={subtitle}
         action={
           brandAdmin ? (
             <a href="/admin/card-fee" className="text-xs underline">
-              Brand surcharge and shops
+              Brand credit card fee and shops
             </a>
           ) : undefined
         }
@@ -322,16 +334,16 @@ export function ShopCardFeeEditor({
       <div className="space-y-2 px-4 pt-4">
         {!applied && (
           <Notice tone="red">
-            No surcharge here: the brand doesn&apos;t apply it at {shopName}.{brandAdmin ? " Turn it on under Credit card surcharge → Apply to shops." : ""}
+            No credit card fee here: the brand doesn&apos;t apply it at {shopName}.{brandAdmin ? " Turn it on under Credit card fee → Apply to shops." : ""}
           </Notice>
         )}
-        {!rule.allowed && <Notice tone="red">No surcharge here: {shopState ? `${shopState} isn't` : "the shop has no state, so it isn't"} on the brand&apos;s state list.</Notice>}
-        {rule.allowed && rule.maxRate < MAX_CARD_FEE_RATE && (
+        {!rule.allowed && <Notice tone="red">No credit card fee here: {shopState ? `${shopState} isn't` : "the shop has no state, so it isn't"} on the brand&apos;s state list.</Notice>}
+        {rule.allowed && rule.maxRate != null && (
           <Notice>
-            {shopState} limits the surcharge to {pct(rule.maxRate)}%; a higher rate is charged at that.
+            {shopState} limits the credit card fee to {pct(rule.maxRate)}%; a higher rate is charged at that.
           </Notice>
         )}
-        {rule.allowed && applied && <p className="text-xs text-zinc-600">{live ? `At the counter now: “${live}”` : "No surcharge at the counter."}</p>}
+        {rule.allowed && applied && <p className="text-xs text-zinc-600">{live ? `At the counter now: “${live}”` : "No credit card fee at the counter."}</p>}
       </div>
       <fieldset disabled={!canEdit} className="flex gap-4 px-4 pt-3 text-sm">
         <label className="flex items-center gap-2">
@@ -349,7 +361,7 @@ export function ShopCardFeeEditor({
           Use this shop&apos;s own settings
         </label>
       </fieldset>
-      {own ? <FeeFields f={f} set={setF} disabled={!canEdit} walletFlag={walletFlag} /> : <div className="p-4 text-xs text-zinc-500">Uses the brand&apos;s surcharge settings.</div>}
+      {own ? <FeeFields f={f} set={setF} disabled={!canEdit} walletFlag={walletFlag} /> : <div className="p-4 text-xs text-zinc-500">Uses the brand&apos;s credit card fee.</div>}
       {canEdit && <SaveBar pending={pending} msg={msg} onClick={() => save(() => saveShopCardFeeAction(shopId, own ? (fromForm(f) as CardFeeOverride) : null))} />}
     </Card>
   );

@@ -2,10 +2,10 @@
  * The credit card fee (surcharge) policy: set by the brand, with an optional override per shop.
  *
  * Guardrails that no setting can get around: the fee only ever applies to credit cards (never
- * debit, prepaid, gift cards or cash), it never exceeds MAX_CARD_FEE_RATE of the amount it's on
- * (or a lower state limit), and it's off in any state not on the allowlist.
+ * debit, prepaid, gift cards or cash), and it's off in any state not on the allowlist. There is
+ * no built-in rate and no 3% cap. A state ceiling applies only when one is saved.
  */
-import { CardFeeConfig, CardFeeRefundRule, CardFeeType, MAX_CARD_FEE_RATE, describeFee } from "./checkout";
+import { CardFeeConfig, CardFeeRefundRule, CardFeeType, FEE_RATE_SANITY_MAX, describeFee } from "./checkout";
 
 export const FEE_CHANNELS = ["pos", "app", "deposit", "card_on_file"] as const;
 export type FeeChannel = (typeof FEE_CHANNELS)[number];
@@ -23,8 +23,8 @@ export const US_STATES = [
 
 /** States where we don't surcharge by default; to be confirmed by Charles (state law changes). */
 export const SURCHARGE_BLOCKED_STATES = ["CT", "MA", "ME", "PR"] as const;
-/** States that allow a surcharge but cap it lower than the networks do. */
-export const DEFAULT_STATE_MAX_RATES: Record<string, number> = { CO: 0.02 };
+/** State ceilings start empty. A lower limit is saved here only when Charles enters one. */
+export const DEFAULT_STATE_MAX_RATES: Record<string, number> = {};
 
 /** Which shops the brand's surcharge is used at. A new location is in "all", and not in "selected" until it's ticked. */
 export const FEE_APPLY_TO = ["all", "selected", "none"] as const;
@@ -37,8 +37,12 @@ export const FEE_FLAT_MAX_CENTS = 1000;
 export interface CardFeePolicy {
   enabled: boolean;
   type: CardFeeType;
-  /** Fraction, e.g. 0.03; for type percent or both. */
+  /** Fraction, e.g. 0.03; for type percent or both. 0 means no rate has been entered. */
   rate: number;
+  /** Shown at checkout, on receipts and in the apps. */
+  label: string;
+  /** Sales tax on the fee itself. Off until the CPA says otherwise. The fee is worked out first. */
+  cardFeeTaxable: boolean;
   /** For type flat or both. */
   flatCents: number;
   appliesToTip: boolean;
@@ -69,17 +73,21 @@ export interface CardFeePolicy {
 }
 
 /** What a shop may change. Waivers, refunds, the state rules and which shops use it are the brand's alone. */
-export type CardFeeOverride = Partial<Pick<CardFeePolicy, "enabled" | "type" | "rate" | "flatCents" | "appliesToTip" | "capCents" | "minCents" | "notice">> & {
+export type CardFeeOverride = Partial<Pick<CardFeePolicy, "enabled" | "type" | "rate" | "flatCents" | "appliesToTip" | "capCents" | "minCents" | "notice" | "label" | "cardFeeTaxable">> & {
   channels?: Partial<CardFeePolicy["channels"]>;
   funding?: Partial<CardFeePolicy["funding"]>;
 };
-export const OVERRIDE_KEYS = ["enabled", "type", "rate", "flatCents", "appliesToTip", "capCents", "minCents", "notice", "channels", "funding"] as const;
+export const OVERRIDE_KEYS = ["enabled", "type", "rate", "flatCents", "appliesToTip", "capCents", "minCents", "notice", "label", "cardFeeTaxable", "channels", "funding"] as const;
 
 /** Off until the owner turns it on: a surcharge needs the card networks' notice, signs at the door and counter, a rate at most the shop's card cost, and the CPA's word on sales tax first. */
+export const DEFAULT_FEE_LABEL = "Credit card fee";
+
 export const DEFAULT_CARD_FEE_POLICY: CardFeePolicy = {
   enabled: false,
   type: "percent",
-  rate: 0.03,
+  rate: 0,
+  label: DEFAULT_FEE_LABEL,
+  cardFeeTaxable: false,
   flatCents: 0,
   appliesToTip: false,
   capCents: null,
@@ -112,6 +120,8 @@ function mergeLayer(base: CardFeePolicy, raw: unknown, brand: boolean): CardFeeP
     enabled: bool(raw.enabled, base.enabled),
     type: raw.type === "percent" || raw.type === "flat" || raw.type === "both" ? raw.type : base.type,
     rate: num(raw.rate, base.rate),
+    label: typeof raw.label === "string" && raw.label.trim() ? raw.label.trim().slice(0, 40) : base.label,
+    cardFeeTaxable: bool(raw.cardFeeTaxable, base.cardFeeTaxable),
     flatCents: Math.max(0, Math.round(num(raw.flatCents, base.flatCents))),
     appliesToTip: bool(raw.appliesToTip, base.appliesToTip),
     capCents: "capCents" in raw ? centsOrNull(raw.capCents, base.capCents) : base.capCents,
@@ -132,7 +142,7 @@ function mergeLayer(base: CardFeePolicy, raw: unknown, brand: boolean): CardFeeP
     refundRule: raw.refundRule === "keep" || raw.refundRule === "proportional" ? raw.refundRule : base.refundRule,
     states: Array.isArray(raw.states) ? [...new Set(raw.states.filter((s): s is string => typeof s === "string").map((s) => s.trim().toUpperCase()))].filter((s) => (US_STATES as readonly string[]).includes(s)).sort() : base.states,
     stateMaxRates: isObj(raw.stateMaxRates)
-      ? Object.fromEntries(Object.entries(raw.stateMaxRates).flatMap(([k, v]) => (typeof v === "number" && v >= 0 && v <= MAX_CARD_FEE_RATE ? [[k.toUpperCase(), v]] : [])))
+      ? Object.fromEntries(Object.entries(raw.stateMaxRates).flatMap(([k, v]) => (typeof v === "number" && v >= 0 && v <= FEE_RATE_SANITY_MAX ? [[k.toUpperCase(), v]] : [])))
       : base.stateMaxRates,
     appliesTo: (FEE_APPLY_TO as readonly unknown[]).includes(raw.appliesTo) ? (raw.appliesTo as FeeApplyTo) : base.appliesTo,
     shopIds: Array.isArray(raw.shopIds) ? [...new Set(raw.shopIds.filter((s): s is string => typeof s === "string" && UUID.test(s)).map((s) => s.toLowerCase()))].sort() : base.shopIds,
@@ -164,9 +174,10 @@ export function cleanOverride(brand: CardFeePolicy, raw: unknown): CardFeeOverri
 export const normalState = (s: string | null | undefined) => (s ?? "").trim().toUpperCase();
 
 /** Where the shop is decides whether the fee may apply there at all, and the highest rate. */
-export function stateRule(p: Pick<CardFeePolicy, "states" | "stateMaxRates">, shopState: string | null | undefined): { allowed: boolean; maxRate: number } {
+export function stateRule(p: Pick<CardFeePolicy, "states" | "stateMaxRates">, shopState: string | null | undefined): { allowed: boolean; maxRate: number | null } {
   const st = normalState(shopState);
-  return { allowed: !!st && p.states.includes(st), maxRate: Math.min(MAX_CARD_FEE_RATE, p.stateMaxRates[st] ?? MAX_CARD_FEE_RATE) };
+  const cap = p.stateMaxRates[st];
+  return { allowed: !!st && p.states.includes(st), maxRate: cap == null ? null : cap };
 }
 
 /** The fee config for one charge: this shop's policy on this channel. */
@@ -175,7 +186,8 @@ export function feeConfigFor(p: CardFeePolicy, shopState: string | null | undefi
   return {
     enabled: p.enabled,
     type: p.type,
-    rate: Math.min(p.rate, st.maxRate),
+    rate: st.maxRate == null ? p.rate : Math.min(p.rate, st.maxRate),
+    name: p.label,
     flatCents: p.flatCents,
     appliesToTip: p.appliesToTip,
     capCents: p.capCents,
@@ -193,19 +205,18 @@ export function feeConfigFor(p: CardFeePolicy, shopState: string | null | undefi
 export function policyProblem(p: CardFeePolicy): string | null {
   if (p.funding.debit || p.funding.prepaid) return "Surcharges are only allowed on credit cards. Card network rules and federal law don't allow them on debit or prepaid cards.";
   if (!Number.isFinite(p.rate) || p.rate < 0) return "The rate can't be negative";
-  if (p.rate > MAX_CARD_FEE_RATE) return `The card fee can't exceed ${MAX_CARD_FEE_RATE * 100}%, the card networks' limit`;
+  if (p.rate > FEE_RATE_SANITY_MAX) return "Enter the credit card fee rate as a percent from 0 to 100";
   if (!Number.isInteger(p.flatCents) || p.flatCents < 0 || p.flatCents > FEE_FLAT_MAX_CENTS) return `The flat fee is from $0.00 to $${(FEE_FLAT_MAX_CENTS / 100).toFixed(2)}`;
-  if (p.enabled && p.type !== "flat" && p.rate <= 0) return "Set a rate above 0%, or turn the fee off";
+  if (p.enabled && p.type !== "flat" && p.rate <= 0) return "Enter a credit card fee rate before turning it on";
   if (p.enabled && p.type !== "percent" && p.flatCents <= 0) return "Set a flat amount above $0.00, or choose percent";
   if (p.capCents != null && (!Number.isInteger(p.capCents) || p.capCents <= 0)) return "The cap must be more than $0.00";
   if (p.minCents != null && (!Number.isInteger(p.minCents) || p.minCents <= 0)) return "The minimum must be more than $0.00";
   if (p.capCents != null && p.minCents != null && p.minCents > p.capCents) return "The minimum can't be more than the cap";
   if (p.notice != null && p.notice.length > FEE_NOTICE_MAX) return `The notice is at most ${FEE_NOTICE_MAX} characters`;
-  if (p.notice != null && !/surcharge/i.test(p.notice)) return 'The notice must call it a surcharge (the card networks require the word "surcharge")';
   const bad = p.states.find((s) => !(US_STATES as readonly string[]).includes(s));
   if (bad) return `${bad} isn't a US state code`;
-  const over = Object.entries(p.stateMaxRates).find(([, r]) => !(r >= 0 && r <= MAX_CARD_FEE_RATE));
-  if (over) return `The limit for ${over[0]} must be from 0% to ${MAX_CARD_FEE_RATE * 100}%`;
+  const over = Object.entries(p.stateMaxRates).find(([, r]) => !(r >= 0 && r <= FEE_RATE_SANITY_MAX));
+  if (over) return `The limit for ${over[0]} must be from 0% to 100%`;
   return null;
 }
 

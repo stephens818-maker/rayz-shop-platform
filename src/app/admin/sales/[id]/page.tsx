@@ -245,7 +245,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
                 ))}
               {sale.cardFeeCents > 0 && (
                 <tr className="text-amber-800">
-                  <td>{pricing.cardFee ? feeLabel(pricing.cardFee) : "Credit card surcharge"}</td>
+                  <td>{pricing.cardFee ? feeLabel(pricing.cardFee) : "Credit card fee"}</td>
                   <td className="text-right">{formatCents(sale.cardFeeCents)}</td>
                 </tr>
               )}

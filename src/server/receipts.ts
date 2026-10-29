@@ -119,7 +119,7 @@ export async function receiptData(saleId: string, tx: DBorTx = db, now = new Dat
     subtotalCents: items.reduce((a, i) => a + i.grossCents, 0),
     taxCents: sale.serviceTaxCents + sale.productTaxCents,
     tipCents: sale.tipCents,
-    fee: sale.cardFeeCents > 0 ? { label: pricing.cardFee ? feeLabel(pricing.cardFee) : "Credit card surcharge", cents: sale.cardFeeCents } : null,
+    fee: sale.cardFeeCents > 0 ? { label: pricing.cardFee ? feeLabel(pricing.cardFee) : "Credit card fee", cents: sale.cardFeeCents } : null,
     feeWaivedCents: sale.cardFeeWaivedCents,
     /** The brand's surcharge notice, on any receipt where a surcharge was charged or waived. */
     feeNotice: (sale.cardFeeCents > 0 || sale.cardFeeWaivedCents > 0) && pricing.cardFee ? feeDisclosure(pricing.cardFee) : null,

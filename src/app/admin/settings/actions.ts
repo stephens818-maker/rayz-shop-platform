@@ -136,6 +136,10 @@ export async function saveShopMoneyAction(shopId: string, raw: z.input<typeof Mo
       .update(shops)
       .set({ ...v, serviceTaxRate: v.serviceTaxRate.toFixed(5), productTaxRate: v.productTaxRate.toFixed(5) })
       .where(eq(shops.id, shopId));
+    if (before && (Number(before.serviceTaxRate) !== v.serviceTaxRate || Number(before.productTaxRate) !== v.productTaxRate)) {
+      const { recordSalesTaxRate } = await import("@/server/fee-tax-rates");
+      await recordSalesTaxRate(db, { shopId, serviceRate: v.serviceTaxRate, productRate: v.productTaxRate });
+    }
     await audit(
       ctx.actor,
       "shop.tax_fee",

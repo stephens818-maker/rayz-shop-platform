@@ -100,7 +100,7 @@ describe("digital receipts", () => {
     expect(data.barber).toBe("Michelle");
     expect(data.firstName).toBe("Riley");
     expect(data.tipCents).toBe(600);
-    expect(data.fee?.label).toMatch(/surcharge/);
+    expect(data.fee?.label).toMatch(/credit card fee/i);
     expect(data.tenders).toEqual([{ label: "Visa •••• 4242", cents: data.totalCents }]);
     expect(data.lines).toHaveLength(1);
     expect(data.rebookUrl).toMatch(/^\/book\/coralville\?barber=[a-z0-9-]+&service=/);

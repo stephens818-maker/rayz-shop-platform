@@ -106,7 +106,7 @@ export function journalLines(r: DayRow): [string, number, number, string][] {
   line(A.giftCard, r.gc - r.r_gc, "credit", "Gift cards sold");
   line(A.tax, r.tax - r.r_tax, "credit", "Sales tax collected");
   line(A.tips, r.tips - r.r_tips, "credit", "Tips owed to staff");
-  line(A.surcharge, r.fee - r.r_fee, "credit", "Credit card surcharges, after refunds");
+  line(A.surcharge, r.fee - r.r_fee, "credit", "Credit card fees, after refunds");
   line(A.processing, r.cost, "debit", "Card processing cost");
   line(A.card, r.cost, "credit", "Card processing cost, kept from payouts");
   const gap = out.reduce((a, l) => a + l[1] - l[2], 0);

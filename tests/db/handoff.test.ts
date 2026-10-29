@@ -127,7 +127,7 @@ describe("handing a ticket to the client", () => {
     const sale = await saleRow(saleId);
     expect(sale).toMatchObject({ status: "paid", tipCents: v.tipCents, totalCents: v.creditTotalCents });
     expect(sale.cardFeeCents).toBe(v.creditFeeCents);
-    expect(await H.handoffView(id)).toMatchObject({ status: "paid", dueCents: sale.totalCents, creditFeeCents: sale.cardFeeCents, feeLabel: expect.stringMatching(/surcharge/) });
+    expect(await H.handoffView(id)).toMatchObject({ status: "paid", dueCents: sale.totalCents, creditFeeCents: sale.cardFeeCents, feeLabel: expect.stringMatching(/credit card fee/i) });
     const row = await handoffRow(id);
     expect(row).toMatchObject({ status: "paid", receiptChannel: "sms", receiptTo: null });
     const [job] = await m.db.db.select().from(s().notificationJobs).where(m.drizzle.and(eq(s().notificationJobs.kind, "receipt"), eq(s().notificationJobs.to, "+13195550142")));

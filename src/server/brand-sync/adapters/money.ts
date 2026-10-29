@@ -33,9 +33,9 @@ export const cardFeeAdapter: SyncAdapter<CardFeePolicy, CardFeeValue> = {
   live: true,
   brandPerms: ["settings.card_fee"],
   lockable: true,
-  note: "Which shops the brand applies the surcharge to stays under Setup → Credit card surcharge.",
+  note: "Which shops the brand applies the credit card fee to stays under Setup → Credit card fee.",
   paths: ["/admin/card-fee", "/admin/settings"],
-  items: async () => [{ id: "brand", label: "Credit card surcharge" }],
+  items: async () => [{ id: "brand", label: "Credit card fee" }],
   async brand(tx, ids) {
     return ids.includes("brand") ? new Map([["brand", await brandFeePolicy(tx)]]) : new Map();
   },
@@ -142,6 +142,8 @@ export const taxesAdapter: SyncAdapter<TaxValue, TaxValue> = {
         .update(shops)
         .set({ serviceTaxRate: w.value.serviceRate.toFixed(5), productTaxRate: w.value.productRate.toFixed(5) })
         .where(eq(shops.id, shopId));
+      const { recordSalesTaxRate } = await import("@/server/fee-tax-rates");
+      await recordSalesTaxRate(tx, { shopId, serviceRate: w.value.serviceRate, productRate: w.value.productRate });
       await audit(who.actor, "shop.tax_fee", "shop", shopId, { before: before && { serviceTaxRate: before.s, productTaxRate: before.p }, after: w.value, via: "brand_sync" }, shopId, tx);
     }
   },

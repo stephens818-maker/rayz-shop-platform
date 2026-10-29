@@ -75,10 +75,10 @@ describe("checkout: credit-only card fee", () => {
 
   it("adds the fee only when Stripe reports funding = credit", () => {
     const credit = computeCheckout({ ...base, tender: { method: "card", cardFunding: "credit" } });
-    // fee base = 3300 + 231 tax (tip excluded by default)
-    expect(credit.cardFeeBaseCents).toBe(3531);
-    expect(credit.cardFeeCents).toBe(106);
-    expect(credit.totalCents).toBe(3300 + 231 + 700 + 106);
+    // The fee is on the service (3300), before the 231 tax. The tip is excluded by default.
+    expect(credit.cardFeeBaseCents).toBe(3300);
+    expect(credit.cardFeeCents).toBe(99);
+    expect(credit.totalCents).toBe(3300 + 231 + 700 + 99);
     expect(credit.disclosures.join(" ")).toMatch(/credit card/i);
 
     for (const cardFunding of ["debit", "prepaid", "unknown"] as const) {
@@ -89,7 +89,7 @@ describe("checkout: credit-only card fee", () => {
 
   it("can include the tip in the fee base when configured", () => {
     const t = computeCheckout({ ...base, cardFee: { ...fee, appliesToTip: true }, tender: { method: "card", cardFunding: "credit" } });
-    expect(t.cardFeeCents).toBe(Math.round((3300 + 231 + 700) * 0.03));
+    expect(t.cardFeeCents).toBe(Math.round((3300 + 700) * 0.03));
   });
 
   it("never takes the fee out of the tip, whatever the fee is charged on (ST-C18)", () => {
@@ -104,10 +104,24 @@ describe("checkout: credit-only card fee", () => {
     }
   });
 
-  it("is capped at 3% even if misconfigured", () => {
+  it("charges the rate that was entered, with no built-in cap", () => {
     const t = computeCheckout({ ...base, cardFee: { ...fee, rate: 0.05 }, tender: { method: "card", cardFunding: "credit" } });
-    expect(t.cardFeeRate).toBe(0.03);
-    expect(t.cardFeeCents).toBe(106);
+    expect(t.cardFeeRate).toBe(0.05);
+    expect(t.cardFeeCents).toBe(Math.round(3300 * 0.05));
+  });
+
+  it("can tax the fee after it is worked out, and an exempt line is never taxed", () => {
+    const taxed = computeCheckout({ ...base, tipCents: 0, cardFeeTaxable: true, tender: { method: "card", cardFunding: "credit" } });
+    expect(taxed.cardFeeCents).toBe(99);
+    expect(taxed.serviceTaxCents).toBe(231 + Math.round(99 * 0.07));
+    const exempt = computeCheckout({
+      lines: [{ ...cut, taxCategory: "exempt" }],
+      taxRates: iowa,
+      cardFee: fee,
+      tender: { method: "cash" },
+    });
+    expect(exempt.taxCents).toBe(0);
+    expect(exempt.totalCents).toBe(3300);
   });
 
   it("is off when disabled, but still discloses nothing", () => {
@@ -116,9 +130,9 @@ describe("checkout: credit-only card fee", () => {
     expect(t.disclosures).toHaveLength(0);
   });
 
-  it("only ever describes the fee as a credit card surcharge (review P1#11: no false cash-discount wording)", () => {
+  it("describes the fee as a credit card fee and never as a cash discount", () => {
     const t = computeCheckout({ ...base, cardFee: fee, tender: { method: "card", cardFunding: "credit" } });
-    expect(t.disclosures.join(" ")).toMatch(/surcharge applies to credit card payments only/i);
+    expect(t.disclosures.join(" ")).toMatch(/credit card fee applies to credit card payments only/i);
     expect(t.disclosures.join(" ")).not.toMatch(/discount for cash/i);
   });
 });
@@ -135,8 +149,8 @@ describe("checkout: gift cards", () => {
     expect(t.giftCardAppliedCents).toBe(2000);
     expect(t.primaryBaseCents).toBe(3300 + 231 + 500 - 2000);
     // tip (500) rides on the card but is excluded from the fee base
-    expect(t.cardFeeBaseCents).toBe(t.primaryBaseCents - 500);
-    expect(t.cardFeeCents).toBe(Math.round((t.primaryBaseCents - 500) * 0.03));
+    expect(t.cardFeeBaseCents).toBe(t.primaryBaseCents - t.taxCents - 500);
+    expect(t.cardFeeCents).toBe(Math.round((t.primaryBaseCents - t.taxCents - 500) * 0.03));
   });
 
   it("is limited by the card balance and can cover the whole ticket", () => {

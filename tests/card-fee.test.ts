@@ -13,7 +13,7 @@ describe("cardFeeFor (the calculation behind computeCardFee)", () => {
       basisCents: 3000,
       waivable: true,
       reason: "applies",
-      label: "Credit card surcharge (3%)",
+      label: "Credit card fee (3%)",
     });
     for (const f of ["debit", "prepaid", "unknown", null] as const)
       expect(cardFeeFor(on, f, { chargeCents: 3500 })).toMatchObject({ feeCents: 0, waivable: false, reason: "not_credit" });
@@ -28,9 +28,10 @@ describe("cardFeeFor (the calculation behind computeCardFee)", () => {
     expect(cardFeeFor(on, "credit", { chargeCents: 400, tipCents: 500 })).toMatchObject({ feeCents: 0, reason: "zero_amount" });
   });
 
-  it("caps the rate at 3%, and is off when the shop turns it off", () => {
-    expect(cardFeeFor({ ...on, rate: 0.05 }, "credit", { chargeCents: 10_000 })).toMatchObject({ feeCents: 300, rate: 0.03 });
+  it("charges the rate that was entered, and is off when the shop turns it off", () => {
+    expect(cardFeeFor({ ...on, rate: 0.05 }, "credit", { chargeCents: 10_000 })).toMatchObject({ feeCents: 500, rate: 0.05 });
     expect(cardFeeFor({ ...on, enabled: false }, "credit", { chargeCents: 10_000 })).toMatchObject({ feeCents: 0, reason: "disabled", disclosure: null });
+    expect(cardFeeFor({ ...on, rate: 0 }, "credit", { chargeCents: 10_000 })).toMatchObject({ feeCents: 0, reason: "disabled" });
   });
 
   it("skips wallet payments while the wallet fee is undecided", () => {
@@ -51,7 +52,7 @@ describe("cardFeeFor (the calculation behind computeCardFee)", () => {
         cardFee: cfg,
         tender: { method: "card", cardFunding: "credit" },
       });
-      expect(cardFeeFor(cfg, "credit", { chargeCents: t.primaryBaseCents, tipCents: tip }).feeCents).toBe(t.cardFeeCents);
+      expect(cardFeeFor(cfg, "credit", { chargeCents: t.primaryBaseCents - t.taxCents, tipCents: tip }).feeCents).toBe(t.cardFeeCents);
     }
   });
 });

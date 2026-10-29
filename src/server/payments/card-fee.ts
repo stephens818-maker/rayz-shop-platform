@@ -30,8 +30,8 @@ import { AppError, notFound } from "@/server/errors";
 export type { CardFeeBasis, CardFeeResult, CardFunding } from "@/domain/checkout";
 
 /** The legacy columns alone, for rows that predate the policy (tests and old snapshots). */
-export function shopCardFeeConfig(shop: { cardFeeEnabled: boolean; cardFeeRate: string | number; cardFeeAppliesToTip: boolean }): CardFeeConfig {
-  return { enabled: shop.cardFeeEnabled, rate: Number(shop.cardFeeRate), appliesToTip: shop.cardFeeAppliesToTip };
+export function shopCardFeeConfig(shop: { cardFeeEnabled: boolean; cardFeeRate: string | number | null; cardFeeAppliesToTip: boolean }): CardFeeConfig {
+  return { enabled: shop.cardFeeEnabled, rate: Number(shop.cardFeeRate ?? 0), appliesToTip: shop.cardFeeAppliesToTip };
 }
 
 export async function brandFeePolicy(tx: DBorTx = db): Promise<CardFeePolicy> {
@@ -70,9 +70,11 @@ export async function saleFeeChannel(saleId: string, fallback: FeeChannel, tx: D
 }
 
 /** The fee config for a charge at this shop on this channel. */
-export async function cardFeeConfigFor(shopId: string, channel: FeeChannel, tx: DBorTx = db): Promise<CardFeeConfig> {
+export async function cardFeeConfigFor(shopId: string, channel: FeeChannel, tx: DBorTx = db, at: Date = new Date()): Promise<CardFeeConfig> {
   const p = await shopFeePolicy(shopId, tx);
-  return feeConfigFor(p.policy, p.state, channel);
+  const { getCardFeeRate } = await import("@/server/fee-tax-rates");
+  const dated = await getCardFeeRate(shopId, at, tx);
+  return feeConfigFor(dated == null ? p.policy : { ...p.policy, rate: dated }, p.state, channel);
 }
 
 /**
@@ -165,6 +167,10 @@ export async function saveBrandFeePolicy(actor: Actor, next: Partial<CardFeePoli
     }
     const shopChanges = await commitFeeChange(tx, before, clean, new Map());
     await saveBrandRow(tx, clean);
+    if (clean.rate !== before.rate || clean.label !== before.label) {
+      const { recordCardFeeRate } = await import("@/server/fee-tax-rates");
+      await recordCardFeeRate(tx, { shopId: null, rate: clean.rate, label: clean.label });
+    }
     await audit(actor, "card_fee.brand", "brand_settings", null, { changes: policyDiff(before, clean), after: clean, shopIds: shopChanges.map((c) => c.shopId), shops: shopChanges }, null, tx);
     await auditShops(tx, actor, "brand", shopChanges);
     return clean;
@@ -181,6 +187,12 @@ export async function saveShopFeeOverride(actor: Actor, shopId: string, raw: Car
     const problem = policyProblem(merged);
     if (problem) throw new AppError("bad_request", problem);
     const [c] = await commitFeeChange(tx, cur.brand, cur.brand, new Map([[shopId, next]]));
+    const { recordCardFeeRate } = await import("@/server/fee-tax-rates");
+    if (next && typeof next.rate === "number" && next.rate !== cur.override?.rate) {
+      await recordCardFeeRate(tx, { shopId, rate: next.rate, label: merged.label });
+    } else if (!next && cur.override && typeof cur.override.rate === "number") {
+      await recordCardFeeRate(tx, { shopId, rate: cur.brand.rate, label: cur.brand.label, followsBrand: true });
+    }
     await audit(
       actor,
       "card_fee.shop",

@@ -8,21 +8,21 @@ import { brandFeePolicy, shopFeeRows } from "@/server/payments/card-fee";
 import { BrandCardFeeEditor } from "../settings/card-fee-editor";
 import { FeeShopsCard, ShopFeeTable } from "./client";
 
-export const metadata: Metadata = { title: "Credit card surcharge" };
+export const metadata: Metadata = { title: "Credit card fee" };
 
 export default async function CardFeePage() {
   const ctx = await guardPage("/admin/card-fee");
-  if (!ctx.brandWide) return <Empty title="The brand's surcharge is set with access to all shops" />;
+  if (!ctx.brandWide) return <Empty title="The brand's credit card fee is set with access to all shops" />;
   const brand = await brandFeePolicy();
   const rows = await shopFeeRows(undefined, brand);
   const { appliesTo, shopIds, shopsCanEdit, ...rules } = brand;
   return (
     <div className="mx-auto max-w-5xl space-y-5">
       <PageHeader
-        title="Credit card surcharge"
+        title="Credit card fee"
         subtitle={
           <>
-            The brand&apos;s surcharge, which shops use it, and each shop&apos;s setting. Collected and waived surcharges are in the{" "}
+            The brand&apos;s credit card fee, which shops use it, and each shop&apos;s setting. Collected and waived fees are in the{" "}
             <Link href="/admin/reports/card-fees" className="underline">
               Credit card fees report
             </Link>

@@ -3,7 +3,6 @@
  * server. createLocation (src/server/location-admin.ts) saves it in one transaction.
  */
 import { z } from "zod";
-import { MAX_CARD_FEE_RATE } from "./checkout";
 import { ReceiptBrandingSchema, statementDescriptorProblem } from "./connect";
 import { DEFAULT_SHOP_HANDOFF, ShopHandoffSchema } from "./handoff";
 import { DEFAULT_HOURS, SUPPORTED_TIMEZONE } from "./location-lifecycle";
@@ -107,7 +106,7 @@ export const LocationDraft = z.object({
   taxRatesVerified: z.boolean(),
   /** Ignored: a new location takes the brand's credit card surcharge. Kept so older drafts and API calls still parse. */
   cardFeeEnabled: z.boolean().optional(),
-  cardFeeRate: z.number().min(0).max(MAX_CARD_FEE_RATE, `The card fee can't exceed ${MAX_CARD_FEE_RATE * 100}%`).optional(),
+  cardFeeRate: z.number().min(0).max(1, "Enter the credit card fee rate as a percent from 0 to 100").optional(),
   cardFeeAppliesToTip: z.boolean().optional(),
   tipPresets: z.array(z.number().int().min(0).max(100)).min(1).max(4),
   /** The customer screen at checkout: tip presets (null uses the brand's), tips on the reader, signature, and whose PIN takes the device back. */

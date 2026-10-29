@@ -7738,6 +7738,18 @@
                 "maximum": 9007199254740991,
                 "description": "Amount in US cents"
               },
+              "salesTaxCents": {
+                "description": "Sales tax, the same amount as taxCents. Separate from the credit card fee",
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "taxRateBps": {
+                "description": "The shop's service tax rate in basis points, effective when the ticket was loaded",
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
               "giftCardCents": {
                 "type": "integer",
                 "minimum": -9007199254740991,
@@ -7861,11 +7873,15 @@
                 "properties": {
                   "enabled": {
                     "type": "boolean",
-                    "description": "false when the surcharge is off for this shop, this channel or this state"
+                    "description": "false when the credit card fee is off for this shop, this channel or this state, or no rate has been entered"
+                  },
+                  "label": {
+                    "description": "The name shown to the customer. Default: Credit card fee",
+                    "type": "string"
                   },
                   "rate": {
                     "type": "number",
-                    "description": "Fraction, e.g. 0.03; 0 for a flat fee"
+                    "description": "Fraction entered for this shop. There is no built-in rate. 0 for a flat fee or when none is entered"
                   },
                   "appliesToTip": {
                     "type": "boolean"
@@ -8205,6 +8221,18 @@
                   "string",
                   "null"
                 ]
+              },
+              "salesTaxCents": {
+                "description": "Sales tax on this quote, separate from the credit card fee",
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "taxRateBps": {
+                "description": "Service tax rate in basis points effective at quote time",
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
               },
               "chargeCents": {
                 "type": "integer",

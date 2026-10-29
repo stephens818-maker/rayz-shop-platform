@@ -103,6 +103,10 @@ export interface AppTicket {
   discounts: HandoffView["discounts"];
   servicesCents: number;
   taxCents: number;
+  /** Sales tax, the same amount as taxCents. Kept separate from the credit card fee. */
+  salesTaxCents: number;
+  /** The shop's service tax rate in basis points, effective when the ticket was loaded. */
+  taxRateBps: number;
   giftCardCents: number;
   /** What's left to pay before any card surcharge, the tip chosen so far included. */
   dueCents: number;
@@ -116,6 +120,8 @@ export interface AppTicket {
    */
   cardFee: {
     enabled: boolean;
+    /** The name shown to the customer. */
+    label: string;
     rate: number;
     appliesToTip: boolean;
     walletFee: boolean;
@@ -132,7 +138,8 @@ export interface AppTicket {
 }
 
 async function toAppTicket(v: HandoffView, row: Row): Promise<AppTicket> {
-  const fee = await cardFeeConfigFor(row.shopId, await saleFeeChannel(row.saleId, "app"));
+  const { getSalesTaxRate } = await import("./fee-tax-rates");
+  const [fee, tax] = await Promise.all([cardFeeConfigFor(row.shopId, await saleFeeChannel(row.saleId, "app")), getSalesTaxRate(row.shopId, new Date())]);
   const type = fee.type ?? "percent";
   const wallets = fee.wallets ?? { applePay: false, googlePay: false };
   const on = fee.enabled && !fee.off && ((type !== "flat" && fee.rate > 0) || (type !== "percent" && (fee.flatCents ?? 0) > 0));
@@ -147,6 +154,8 @@ async function toAppTicket(v: HandoffView, row: Row): Promise<AppTicket> {
     discounts: v.discounts,
     servicesCents: v.servicesCents,
     taxCents: v.taxCents,
+    salesTaxCents: v.taxCents,
+    taxRateBps: tax.taxRateBps,
     giftCardCents: v.giftCardCents,
     dueCents: v.dueCents,
     tip: { cents: v.tip.cents, choice: v.tip.choice },
@@ -154,6 +163,7 @@ async function toAppTicket(v: HandoffView, row: Row): Promise<AppTicket> {
     tipBarbers: v.tipBarbers,
     cardFee: {
       enabled: on,
+      label: fee.name?.trim() || "Credit card fee",
       rate: type === "flat" ? 0 : fee.rate,
       appliesToTip: fee.appliesToTip,
       walletFee: flags.walletFee() && (wallets.applePay || wallets.googlePay),
@@ -251,6 +261,10 @@ export interface AppQuote {
   /** applies, not_credit (debit and prepaid), wallet_fee_off (Apple Pay, Google Pay), disabled, channel_off, state_not_allowed, zero_amount, waived. */
   feeReason: string;
   feeLabel: string | null;
+  /** Sales tax on this quote, separate from the credit card fee. */
+  salesTaxCents: number;
+  /** Service tax rate in basis points, effective at quote time. */
+  taxRateBps: number;
   /** What goes on the card. */
   chargeCents: number;
   /** Send back as expectedTotalCents to pay. */
@@ -269,6 +283,8 @@ export async function quoteTicket(customerId: string, id: string, input: TipChoi
   await chooseTip(row.id, input.tipChoice, input.tipCents ?? 0, input.tipByStaff ?? null);
   const { saved, card } = await cardFor(customerId, input.paymentMethodId);
   const { totals: t, fee, fresh } = await priceWith(row, input.paymentMethodId, card);
+  const { getSalesTaxRate } = await import("./fee-tax-rates");
+  const tax = await getSalesTaxRate(row.shopId, new Date());
   return {
     card: { brand: card.brand, last4: card.last4, funding: card.funding, wallet: card.wallet ?? null, saved },
     tipCents: fresh.tipCents ?? 0,
@@ -276,6 +292,8 @@ export async function quoteTicket(customerId: string, id: string, input: TipChoi
     feeCents: t.cardFeeCents,
     feeReason: fee.reason,
     feeLabel: t.cardFeeCents > 0 ? fee.label : null,
+    salesTaxCents: t.taxCents,
+    taxRateBps: tax.taxRateBps,
     chargeCents: t.primaryChargeCents,
     totalCents: t.totalCents,
     disclosures: t.disclosures,

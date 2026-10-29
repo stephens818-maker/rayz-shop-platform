@@ -912,6 +912,17 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-10-29: core, credit card fee and sales tax (`core_0154`)
+
+PR #8's head `1204a10` is merged with `-s ours`. The tree stays on separate charges and transfers. Destination charges and the duplicate customer server were not taken.
+
+The credit card fee and sales tax are entered in this platform. Nothing is imported from Squire, and there is no built-in rate.
+
+1. **Credit card fee.** The label defaults to `Credit card fee` and can be edited (`CardFeePolicy.label`, shown as `name` on the charge). The rate is effective-dated in `card_fee_rates` (`shop_id` null is the brand; `follows_brand` means the shop went back to the brand rate). `getCardFeeRate(shopId, at)` uses the newest shop row at or before `at` that is not `follows_brand`, then the brand row, then `shops.card_fee_rate`, then null. It is off by default. Turning it on with no percent rate is refused: "Enter a credit card fee rate before turning it on". There is no 3% cap. A saved state ceiling is the only ceiling. 100% (`FEE_RATE_SANITY_MAX`) is only a typo guard. `shops_card_fee_cap` is dropped. A new shop's `card_fee_rate` is null, and the fee stays off until a rate exists. The fee is worked out on the card's share of the subtotal before sales tax. `cardFeeTaxable` defaults to false; when on, tax is added to the fee afterward. The sale snapshot stores `salesTaxCents`, `taxRateBps` and `productTaxRateBps`. The PaymentIntent metadata stores `cardFeeRate`, `cardFeeLabel`, `salesTaxCents` and `taxRateBps`.
+2. **Sales tax.** `sales_tax_rates` keeps each shop's service and product rates with `effective_at`. `getSalesTaxRate(shopId, at)` returns `{ serviceRate, productRate, taxRateBps, productTaxRateBps }`. A line with `taxCategory: "exempt"` is not taxed. Gift cards stay untaxed. Checkout reads these resolvers.
+3. **Sandbox seed.** The demo brand and the eight existing shops carry an explicit SANDBOX TEST rate of 3% and labeled sandbox tax rates so the demo checkout has a fee and a tax line. Those numbers are not production rates. Clinton is not in that list.
+4. **Next migration** is `core_0155`.
+
 ### 2026-10-28: core, kiosk-only time clock (launch-blocking) and PR #8 at `958312e`, for the Rayz App builder and claude's mobile agent
 
 In the mobile mock, a barber paired their own phone and clocked in from home. Time clock and payroll are the top priority, so every point below is enforced on the server.

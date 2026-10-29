@@ -555,7 +555,7 @@ export function LocationWizard({
                 <fieldset>
                   <legend className="mb-2 text-sm font-semibold text-zinc-800">Card fee</legend>
                   <p className="text-sm text-zinc-700">{feeSummary ?? "Follows the brand's credit card surcharge."}</p>
-                  <p className="mt-1 text-xs text-zinc-500">A new location takes the brand&apos;s surcharge. Brand admins change it, or which shops use it, under Credit card surcharge.</p>
+                  <p className="mt-1 text-xs text-zinc-500">A new location takes the brand&apos;s credit card fee. It stays off until a rate is entered. Brand admins change it, or which shops use it, under Credit card fee.</p>
                 </fieldset>
               )}
               {pay.mode !== "cash_only" && (

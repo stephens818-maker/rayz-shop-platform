@@ -270,6 +270,12 @@ export async function loadCheckoutContext(saleId: string) {
       : null;
   const feePolicy = await shopFeePolicy(shop.id);
   const feeChannel = await saleFeeChannel(sale.id, "pos");
+  const { getCardFeeRate, getSalesTaxRate } = await import("./fee-tax-rates");
+  const at = new Date();
+  const [datedRate, datedTax] = await Promise.all([getCardFeeRate(shop.id, at), getSalesTaxRate(shop.id, at)]);
+  const policyForFee = datedRate == null ? feePolicy.policy : { ...feePolicy.policy, rate: datedRate };
+  const config = pricingConfig(shop, await loyaltyConfigAt(shop.id), feeConfigFor(policyForFee, feePolicy.state, feeChannel));
+  config.taxRates = { serviceRate: datedTax.serviceRate, productRate: datedTax.productRate };
   return {
     sale,
     shop,
@@ -282,7 +288,7 @@ export async function loadCheckoutContext(saleId: string) {
     groupDeposit,
     feePolicy,
     feeChannel,
-    config: pricingConfig(shop, await loyaltyConfigAt(shop.id), feeConfigFor(feePolicy.policy, feePolicy.state, feeChannel)),
+    config,
     negativeStock: shop.negativeStock,
   };
 }
@@ -763,7 +769,7 @@ export async function priceCart(
   }
 
   const channel: FeeChannel = ctx.feeChannel === "deposit" ? "deposit" : (input.channel ?? "pos");
-  const cardFee = channel === ctx.feeChannel ? ctx.config.cardFee : feeConfigFor(ctx.feePolicy.policy, ctx.feePolicy.state, channel);
+  const cardFee = channel === ctx.feeChannel ? ctx.config.cardFee : feeConfigFor({ ...ctx.feePolicy.policy, rate: ctx.config.cardFee.rate }, ctx.feePolicy.state, channel);
   const waive = input.waiveCardFee ?? null;
   if (waive) {
     if (!input.canWaiveCardFee) throw forbidden("You don't have permission to waive the card surcharge");
@@ -776,6 +782,7 @@ export async function priceCart(
     taxRates: ctx.config.taxRates,
     tipCents: input.tipCents,
     cardFee,
+    cardFeeTaxable: ctx.feePolicy.policy.cardFeeTaxable,
     loyalty: ctx.config.loyalty,
     tender: {
       method: input.tender.method,
@@ -1295,6 +1302,10 @@ export async function finalizeSale(input: FinalizeInput) {
             saleId: ctx.sale.id,
             shop: ctx.shop.slug,
             cardFeeCents: String(l.feeCents),
+            cardFeeRate: String(cardFee.rate),
+            cardFeeLabel: (cardFee.name?.trim() || "Credit card fee").slice(0, 40),
+            salesTaxCents: String(totals.taxCents),
+            taxRateBps: String(Math.round(ctx.config.taxRates.serviceRate * 10_000)),
             attempt,
           },
           idempotencyKey: split
@@ -1418,6 +1429,9 @@ export async function finalizeSale(input: FinalizeInput) {
           pricing: {
             ...ctx.config,
             cardFee,
+            salesTaxCents: totals.taxCents,
+            taxRateBps: Math.round(ctx.config.taxRates.serviceRate * 10_000),
+            productTaxRateBps: Math.round(ctx.config.taxRates.productRate * 10_000),
             feeChannel: channel,
             ...(waivedCents > 0 ? { cardFeeWaived: { cents: waivedCents, reason: input.waiveCardFee!.reason.trim().slice(0, 200) } } : {}),
             discounts: totals.discountBreakdown,

@@ -120,7 +120,7 @@ describe("checkout → reports → loyalty", () => {
 
     const r = await m.checkout.finalizeSale({ saleId: sale.id, lines, tipCents: 700, tender: { method: "card", paymentMethodId: "pm_card_visa", entryMode: "keyed" }, actor });
     expect(r.totals.serviceTaxCents).toBe(Math.round(3300 * 0.07));
-    expect(r.totals.cardFeeCents).toBe(Math.round((3300 + 231) * 0.03));
+    expect(r.totals.cardFeeCents).toBe(Math.round(3300 * 0.03));
     expect(r.totals.tipCents).toBe(700);
     expect(r.rewardsIssued).toBe(1);
 

@@ -62,8 +62,9 @@ async function main() {
   const roleRows = await db.insert(t.roles).values(ROLE_TEMPLATES.map(templateRow)).returning();
   const roleId = (key: string) => roleRows.find((r) => r.key === key)!.id;
 
-  // The sample brand shows the surcharge at work; a real brand starts with it off (DEFAULT_CARD_FEE_POLICY).
-  await db.insert(t.brandSettings).values({ id: 1, loyalty: DEFAULT_LOYALTY, staffTime: { ...DEFAULT_STAFF_TIME_RULES }, cardFee: { enabled: true } });
+  // SANDBOX TEST ONLY: 3% so the demo checkout shows a credit card fee. Not a production default and not imported from Squire.
+  // A real brand starts with the fee off (DEFAULT_CARD_FEE_POLICY) until someone enters a rate.
+  await db.insert(t.brandSettings).values({ id: 1, loyalty: DEFAULT_LOYALTY, staffTime: { ...DEFAULT_STAFF_TIME_RULES }, cardFee: { enabled: true, rate: 0.03, label: "Credit card fee" } });
   const reasonRows = await db.insert(t.blockReasons).values(DEFAULT_BLOCK_REASONS.map((r) => ({ ...r }))).returning();
   const reason = (key: string) => {
     const r = reasonRows.find((x) => x.key === key)!;
@@ -93,6 +94,7 @@ async function main() {
         description: SHOP_DESCRIPTION,
         ownerEntityId: brandOwner.id,
         cardFeeEnabled: true,
+        cardFeeRate: "0.03000", // SANDBOX TEST rate, the same 3% as the brand policy above. Not a column default.
       })),
     )
     .returning();

@@ -170,7 +170,7 @@ describe("paying a ticket in the app (C7, C8)", () => {
     };
     const credit = await quote("pm_card_visa");
     expect(credit).toMatchObject({ feeReason: "applies", card: { funding: "credit", saved: true } });
-    expect(credit.feeCents).toBe(fee(credit.dueCents));
+    expect(credit.feeCents).toBe(fee(credit.dueCents - credit.salesTaxCents));
     expect(credit.totalCents).toBe(credit.dueCents + credit.feeCents);
     expect(await quote("ctoken_sim_visa_debit")).toMatchObject({ feeCents: 0, feeReason: "not_credit" });
     expect(await quote("ctoken_sim_mastercard_prepaid")).toMatchObject({ feeCents: 0, feeReason: "not_credit" });
@@ -181,12 +181,12 @@ describe("paying a ticket in the app (C7, C8)", () => {
     process.env.FEATURE_WALLET_FEE = "true";
     try {
       expect((await quote("ctoken_sim_google_pay")).feeReason).toBe("wallet_fee_off");
-      await cf.saveBrandFeePolicy(actor, { ...DEFAULT_CARD_FEE_POLICY, enabled: true, funding: { ...DEFAULT_CARD_FEE_POLICY.funding, googlePay: true } });
+      await cf.saveBrandFeePolicy(actor, { ...DEFAULT_CARD_FEE_POLICY, enabled: true, rate: 0.03, funding: { ...DEFAULT_CARD_FEE_POLICY.funding, googlePay: true } });
       expect((await quote("ctoken_sim_google_pay")).feeReason).toBe("applies");
       expect((await quote("ctoken_sim_apple_pay")).feeReason).toBe("wallet_fee_off");
     } finally {
       delete process.env.FEATURE_WALLET_FEE;
-      await cf.saveBrandFeePolicy(actor, { ...DEFAULT_CARD_FEE_POLICY, enabled: true });
+      await cf.saveBrandFeePolicy(actor, { ...DEFAULT_CARD_FEE_POLICY, enabled: true, rate: 0.03 });
     }
     const r = await quoteRoute.POST(
       req(`/api/v1/me/tickets/${t.id}/quote`, { method: "POST", headers: await auth(c.id), body: JSON.stringify({ tipChoice: "none", paymentMethodId: "pm_card_amex" }) }),

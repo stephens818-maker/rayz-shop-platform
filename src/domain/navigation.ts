@@ -254,7 +254,7 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
       { href: "/admin/sync-status", label: "Sync status" },
       { href: "/admin/settings", label: "Shop settings" },
       { href: "/admin/taxes", label: "Taxes & card fees" },
-      { href: "/admin/card-fee", label: "Credit card surcharge" },
+      { href: "/admin/card-fee", label: "Credit card fee" },
       { href: "/admin/setup", label: "Location setup" },
       { href: "/admin/booking-times", label: "Booking times" },
       { href: "/admin/checkout-prompts", label: "Checkout prompts" },

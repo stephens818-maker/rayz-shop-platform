@@ -1079,6 +1079,13 @@
       "when": 1796642880000,
       "tag": "core_0153_clock_nonces",
       "breakpoints": true
+    },
+    {
+      "idx": 154,
+      "version": "7",
+      "when": 1796642940000,
+      "tag": "core_0154_fee_and_tax",
+      "breakpoints": true
     }
   ]
 }

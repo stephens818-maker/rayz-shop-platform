@@ -46,8 +46,8 @@ afterAll(async () => {
   await m?.db.closeDb();
 });
 
-/** The seeded brand: the default policy, turned on. */
-const brand = (over: Partial<import("@/domain/card-fee-policy").CardFeePolicy> = {}) => ({ ...policy.DEFAULT_CARD_FEE_POLICY, enabled: true, ...over });
+/** The seeded brand, turned on at a chosen test rate. The default rate is 0, so turning it on needs one. */
+const brand = (over: Partial<import("@/domain/card-fee-policy").CardFeePolicy> = {}) => ({ ...policy.DEFAULT_CARD_FEE_POLICY, enabled: true, rate: 0.03, ...over });
 
 beforeEach(async () => {
   await fee.saveBrandFeePolicy(actor, brand());
@@ -88,11 +88,28 @@ describe("settings", () => {
     expect((await fee.shopFeePolicy(shopId)).policy).toMatchObject({ rate: 0.025, capCents: 500 });
   });
 
-  it("refuses debit, prepaid, more than 3%, and a notice without the word surcharge", async () => {
+  it("refuses debit and prepaid, a rate above 100%, and turning the fee on with no rate", async () => {
     await expect(fee.saveBrandFeePolicy(actor, brand({ funding: { debit: true, prepaid: false, applePay: false, googlePay: false } }))).rejects.toThrow(/only allowed on credit/);
-    await expect(fee.saveBrandFeePolicy(actor, brand({ rate: 0.04 }))).rejects.toThrow(/3%/);
-    await expect(fee.saveBrandFeePolicy(actor, brand({ notice: "Card fee applies" }))).rejects.toThrow(/surcharge/);
-    await expect(fee.saveShopFeeOverride(actor, shopId, { rate: 0.05 })).rejects.toThrow(/3%/);
+    await fee.saveBrandFeePolicy(actor, brand({ rate: 0.04, notice: "Card fee applies" }));
+    expect((await fee.shopFeePolicy(shopId)).policy.rate).toBe(0.04);
+    await expect(fee.saveBrandFeePolicy(actor, brand({ rate: 1.5 }))).rejects.toThrow(/0 to 100/);
+    await expect(fee.saveBrandFeePolicy(actor, brand({ enabled: true, rate: 0 }))).rejects.toThrow(/before turning it on/);
+    await fee.saveShopFeeOverride(actor, shopId, { rate: 0.05 });
+    expect((await fee.shopFeePolicy(shopId)).policy.rate).toBe(0.05);
+  });
+
+  it("keeps the credit card fee and sales tax that were in effect, and a later change does not rewrite them", async () => {
+    const rates = await import("@/server/fee-tax-rates");
+    const jan = new Date("2027-01-15T00:00:00Z");
+    const jun = new Date("2027-06-15T00:00:00Z");
+    await rates.recordCardFeeRate(m.db.db, { shopId, rate: 0.02, label: "Credit card fee", at: jan });
+    await rates.recordCardFeeRate(m.db.db, { shopId, rate: 0.04, label: "Processing fee", at: jun });
+    expect(await rates.getCardFeeRate(shopId, new Date("2027-03-01T00:00:00Z"))).toBe(0.02);
+    expect(await rates.getCardFeeRate(shopId, new Date("2027-07-01T00:00:00Z"))).toBe(0.04);
+    await rates.recordSalesTaxRate(m.db.db, { shopId, serviceRate: 0.01, productRate: 0.02, at: jan });
+    await rates.recordSalesTaxRate(m.db.db, { shopId, serviceRate: 0.06, productRate: 0.07, at: jun });
+    expect(await rates.getSalesTaxRate(shopId, new Date("2027-03-01T00:00:00Z"))).toMatchObject({ serviceRate: 0.01, productRate: 0.02, taxRateBps: 100, productTaxRateBps: 200 });
+    expect(await rates.getSalesTaxRate(shopId, new Date("2027-07-01T00:00:00Z"))).toMatchObject({ serviceRate: 0.06, productRate: 0.07, taxRateBps: 600, productTaxRateBps: 700 });
   });
 
   it("keeps a shop override to what differs, audits it, and the shop follows the brand again on null", async () => {
@@ -273,21 +290,26 @@ describe("which shops use it", () => {
 
 describe("checkout", () => {
   it("records how each card payment's surcharge was worked out", async () => {
-    const { pay, r } = await sell({ tipCents: 300 });
+    const { pay, r, sale } = await sell({ tipCents: 300 });
     expect(r.totals.cardFeeCents).toBeGreaterThan(0);
     expect(pay).toMatchObject({ cardFeeCents: r.totals.cardFeeCents, feeBasis: "charge_excluding_tip", feeReason: "applies", feeChannel: "pos", feeWaived: false, feeWaivedCents: 0, feeFlatCents: 0 });
     expect(Number(pay.feeRate)).toBe(0.03);
-    expect(pay.feeBasisCents).toBe(pay.amountCents - pay.cardFeeCents - 300);
+    // The fee is on the merchandise, before sales tax and before the tip.
+    expect(pay.feeBasisCents).toBe(pay.amountCents - pay.cardFeeCents - 300 - Number(sale.serviceTaxCents) - Number(sale.productTaxCents));
   });
 
   it("works the rate and basis of an old payment back from what was charged (core_0092)", async () => {
     const { readFileSync } = await import("node:fs");
     const { pay } = await sell({ tipCents: 300 });
     const P = m.schema.payments;
-    await m.db.db.update(P).set({ feeRate: "0", feeBasisCents: null }).where(m.drizzle.eq(P.id, pay.id));
+    // core_0092 rebuilds an old charge, whose fee was on the whole card amount except the tip.
+    const basis = 10_000;
+    const tip = 300;
+    const feeCents = 300;
+    await m.db.db.update(P).set({ amountCents: basis + tip + feeCents, tipCents: tip, cardFeeCents: feeCents, feeBasis: "charge_excluding_tip", feeRate: "0", feeBasisCents: null }).where(m.drizzle.eq(P.id, pay.id));
     for (const q of readFileSync("drizzle/core_0092_card_fee_backfill.sql", "utf8").split("--> statement-breakpoint")) await m.db.db.execute(m.drizzle.sql.raw(q));
     const [after] = await m.db.db.select().from(P).where(m.drizzle.eq(P.id, pay.id));
-    expect(after.feeBasisCents).toBe(pay.feeBasisCents);
+    expect(after.feeBasisCents).toBe(basis);
     expect(Number(after.feeRate)).toBeCloseTo(0.03, 3);
   });
 

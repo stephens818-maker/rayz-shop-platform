@@ -13,7 +13,7 @@ export interface CartLine {
   qty: number;
   staffId?: string | null;
   refId?: string | null;
-  /** Which shop rate applies. Defaults by kind: services and add-ons at the service rate, products at the product rate. */
+  /** Which shop rate applies. Defaults by kind: services and add-ons at the service rate, products at the product rate. "exempt" is never taxed. */
   taxCategory?: TaxCategory;
 }
 
@@ -50,7 +50,7 @@ export type CardFeeRefundRule = "proportional" | "keep";
  */
 export interface CardFeeConfig {
   enabled: boolean;
-  /** Fraction, e.g. 0.03. Clamped to MAX_CARD_FEE_RATE (and the shop's state limit). */
+  /** Fraction, e.g. 0.03. There is no built-in cap; a shop's state limit, when one is saved, is the only ceiling. */
   rate: number;
   /** Whether the fee is charged on the tip portion paid by card. */
   appliesToTip: boolean;
@@ -63,8 +63,10 @@ export interface CardFeeConfig {
   minCents?: number | null;
   /** Apple Pay and Google Pay, each on or off. Left out, a wallet pays it only when walletFeeOn. */
   wallets?: { applePay: boolean; googlePay: boolean };
-  /** The highest rate allowed where the shop is; MAX_CARD_FEE_RATE when unset. */
-  maxRate?: number;
+  /** The highest rate allowed where the shop is. Null or left out: no ceiling. */
+  maxRate?: number | null;
+  /** The name shown at checkout and on receipts. Left out: "Credit card fee". */
+  name?: string | null;
   /** Turned off for this charge: the channel isn't one the fee applies to, or the shop's state isn't allowed. */
   off?: "channel_off" | "state_not_allowed";
   /** The brand's own notice; null uses the built-in one. "{fee}" becomes the rate or amount. */
@@ -74,8 +76,8 @@ export interface CardFeeConfig {
   refundRule?: CardFeeRefundRule;
 }
 
-/** The card networks' cap on a credit card surcharge, and the most any state allows. */
-export const MAX_CARD_FEE_RATE = 0.03;
+/** A rate above this is a typo, not a card-network rule. Charles sets the real rate; nothing hardcodes 3%. */
+export const FEE_RATE_SANITY_MAX = 1;
 
 export interface TenderPlan {
   giftCardCents?: number;
@@ -104,6 +106,8 @@ export interface CheckoutInput {
   taxRates: TaxRates;
   tipCents?: number;
   cardFee: CardFeeConfig;
+  /** When true, sales tax is also charged on the credit card fee. Default false, pending the CPA. The fee is worked out first. */
+  cardFeeTaxable?: boolean;
   tender: TenderPlan;
   /** Left out: services only, as before the brand could count products and tips. */
   loyalty?: LoyaltyBasis;
@@ -149,7 +153,10 @@ export interface CheckoutTotals {
 }
 
 const isService = (k: LineKind) => k === "service" || k === "addon";
-const taxBucket = (l: CartLine): TaxCategory | null => (l.kind === "gift_card" ? null : (l.taxCategory ?? (isService(l.kind) ? "service" : "product")));
+const taxBucket = (l: CartLine): "service" | "product" | null => {
+  if (l.kind === "gift_card" || l.taxCategory === "exempt") return null;
+  return l.taxCategory ?? (isService(l.kind) ? "service" : "product");
+};
 
 function eligible(line: CartLine, target: DiscountTarget, refIds?: string[] | null, keys?: string[] | null) {
   if (line.kind === "gift_card") return false;
@@ -181,8 +188,8 @@ export function manualDiscountProblem(d: { type: "percent" | "amount"; value: nu
 
 type FeeShape = Pick<CardFeeConfig, "rate"> & Partial<Pick<CardFeeConfig, "type" | "flatCents" | "maxRate">>;
 
-/** The legal ceiling for one config: the networks' 3%, or lower where the shop's state says so. */
-export const feeMaxRate = (cfg: Pick<CardFeeConfig, "maxRate">) => Math.min(MAX_CARD_FEE_RATE, Math.max(0, cfg.maxRate ?? MAX_CARD_FEE_RATE));
+/** A saved state ceiling, or no ceiling. */
+export const feeMaxRate = (cfg: Pick<CardFeeConfig, "maxRate">) => (cfg.maxRate == null ? Number.POSITIVE_INFINITY : Math.max(0, cfg.maxRate));
 
 function feeParts(cfg: FeeShape) {
   const type = cfg.type ?? "percent";
@@ -197,11 +204,12 @@ export function describeFee(cfg: FeeShape): string {
   return p.type === "flat" ? formatCents(p.flatCents) : p.type === "both" ? `${formatRate(p.rate)} + ${formatCents(p.flatCents)}` : formatRate(p.rate);
 }
 
-export function feeLabel(cfg: FeeShape): string {
-  return `Credit card surcharge (${describeFee(cfg)})`;
+export function feeLabel(cfg: FeeShape & { name?: string | null }): string {
+  const name = cfg.name?.trim() || "Credit card fee";
+  return `${name} (${describeFee(cfg)})`;
 }
 
-export const DEFAULT_FEE_NOTICE = "A {fee} surcharge applies to credit card payments only. It does not exceed our cost of acceptance. No surcharge on debit, prepaid, gift card, or cash.";
+export const DEFAULT_FEE_NOTICE = "A {fee} credit card fee applies to credit card payments only. It does not exceed our cost of acceptance. No fee on debit, prepaid, gift card, or cash.";
 
 /** The notice shown at checkout and printed on receipts: the brand's own wording, or the built-in one. */
 export function feeDisclosure(cfg: Pick<CardFeeConfig, "rate" | "enabled"> & Partial<CardFeeConfig>): string | null {
@@ -333,17 +341,17 @@ export function computeCheckout(input: CheckoutInput): CheckoutTotals {
   const productNetCents = sum((l) => l.kind === "product", (l) => l.netCents);
 
   // Tax is computed on each tax category's net total (one rounding per category), then spread to lines.
-  const serviceTaxCents = applyRate(sum((l) => taxBucket(l) === "service", (l) => l.netCents), input.taxRates.serviceRate);
-  const productTaxCents = applyRate(sum((l) => taxBucket(l) === "product", (l) => l.netCents), input.taxRates.productRate);
+  let serviceTaxCents = applyRate(sum((l) => taxBucket(l) === "service", (l) => l.netCents), input.taxRates.serviceRate);
+  let productTaxCents = applyRate(sum((l) => taxBucket(l) === "product", (l) => l.netCents), input.taxRates.productRate);
   const svcIdx = lines.map((l, i) => (taxBucket(l) === "service" ? i : -1)).filter((i) => i >= 0);
   const prdIdx = lines.map((l, i) => (taxBucket(l) === "product" ? i : -1)).filter((i) => i >= 0);
   allocateProportionally(serviceTaxCents, svcIdx.map((i) => lines[i].netCents)).forEach((t, k) => (lines[svcIdx[k]].taxCents = t));
   allocateProportionally(productTaxCents, prdIdx.map((i) => lines[i].netCents)).forEach((t, k) => (lines[prdIdx[k]].taxCents = t));
 
-  const taxCents = serviceTaxCents + productTaxCents;
+  let taxCents = serviceTaxCents + productTaxCents;
   const discountCents = discountBreakdown.reduce((a, d) => a + d.cents, 0);
   const tipCents = Math.max(0, Math.round(input.tipCents ?? 0));
-  const preFeeTotalCents = serviceNetCents + productNetCents + giftCardSalesCents + taxCents + tipCents;
+  let preFeeTotalCents = serviceNetCents + productNetCents + giftCardSalesCents + taxCents + tipCents;
 
   // Gift cards can't buy gift cards.
   const giftPayable = preFeeTotalCents - giftCardSalesCents;
@@ -357,12 +365,22 @@ export function computeCheckout(input: CheckoutInput): CheckoutTotals {
 
   const cfg = input.cardFee;
   const cardFeeRate = (cfg.type ?? "percent") === "flat" ? 0 : Math.min(Math.max(cfg.rate, 0), feeMaxRate(cfg));
+  // The fee is worked out on the card's share of the subtotal (and the tip, when the shop says so), before sales tax.
+  const preTaxOnCard = Math.max(0, primaryBaseCents - taxCents);
   const fee =
     input.tender.method === "card"
-      ? cardFeeFor(cfg, input.tender.cardFunding, { chargeCents: primaryBaseCents, tipCents }, { wallet: input.tender.cardWallet, walletFeeOn: input.tender.walletFeeOn, waive: input.tender.waiveFee })
+      ? cardFeeFor(cfg, input.tender.cardFunding, { chargeCents: preTaxOnCard, tipCents }, { wallet: input.tender.cardWallet, walletFeeOn: input.tender.walletFeeOn, waive: input.tender.waiveFee })
       : null;
   const cardFeeBaseCents = fee?.reason === "applies" ? fee.basisCents : 0;
   const cardFeeCents = fee?.feeCents ?? 0;
+  let feeTaxCents = 0;
+  if (input.cardFeeTaxable && cardFeeCents > 0) {
+    feeTaxCents = applyRate(cardFeeCents, serviceNetCents > 0 ? input.taxRates.serviceRate : input.taxRates.productRate);
+    if (serviceNetCents > 0) serviceTaxCents += feeTaxCents;
+    else productTaxCents += feeTaxCents;
+    taxCents += feeTaxCents;
+    preFeeTotalCents += feeTaxCents;
+  }
 
   const disclosures: string[] = [];
   const d = feeDisclosure(cfg);
@@ -391,7 +409,7 @@ export function computeCheckout(input: CheckoutInput): CheckoutTotals {
     cardFeeWaivedCents: fee?.waivedCents ?? 0,
     cardFee: fee,
     totalCents: preFeeTotalCents + cardFeeCents,
-    primaryChargeCents: primaryBaseCents + cardFeeCents,
+    primaryChargeCents: primaryBaseCents + feeTaxCents + cardFeeCents,
     loyaltyEligibleCents: !input.loyalty ? serviceNetCents : input.loyalty.on ? loyaltyEligibleCents({ serviceNetCents, productNetCents, tipCents }, input.loyalty) : 0,
     disclosures,
   };
