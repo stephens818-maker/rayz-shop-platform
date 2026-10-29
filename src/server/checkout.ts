@@ -162,6 +162,8 @@ export async function openSaleForAppointment(
     .returning();
   // Checkout charges today's menu price, so the ticket opens with it rather than the booked estimate.
   await appointmentLines(sale.id, appt, tx);
+  const pricing = await stampOpenedRates(sale.id, appt.shopId, tx);
+  sale.pricing = pricing;
   if (appt.status !== "in_service") {
     await tx
       .update(appointments)
@@ -202,7 +204,40 @@ export async function openBlankSale(
       createdBy: actor.staffId ?? null,
     })
     .returning();
-  return sale;
+  const pricing = await stampOpenedRates(sale.id, shopId, db);
+  return { ...sale, pricing };
+}
+
+/** Tax and credit card fee for a shop right now, the same numbers checkout uses. */
+async function ratesForShop(shop: Shop, channel: FeeChannel) {
+  const feePolicy = await shopFeePolicy(shop.id);
+  const { getCardFeeRate, getSalesTaxRate } = await import("./fee-tax-rates");
+  const at = new Date();
+  const [datedRate, datedTax] = await Promise.all([getCardFeeRate(shop.id, at), getSalesTaxRate(shop.id, at)]);
+  const policyForFee = datedRate == null ? feePolicy.policy : { ...feePolicy.policy, rate: datedRate };
+  const config = pricingConfig(shop, await loyaltyConfigAt(shop.id), feeConfigFor(policyForFee, feePolicy.state, channel));
+  config.taxRates = { serviceRate: datedTax.serviceRate, productRate: datedTax.productRate };
+  return config;
+}
+
+/** The rates an open ticket was given when it opened. Absent on tickets opened before this existed. */
+function openedRates(pricing: unknown): { taxRates: { serviceRate: number; productRate: number }; cardFee: CardFeeConfig } | null {
+  if (!pricing || typeof pricing !== "object") return null;
+  const raw = (pricing as { openedRates?: unknown }).openedRates;
+  if (!raw || typeof raw !== "object") return null;
+  const tax = (raw as { taxRates?: { serviceRate?: unknown; productRate?: unknown } }).taxRates;
+  const cardFee = (raw as { cardFee?: CardFeeConfig }).cardFee;
+  if (typeof tax?.serviceRate !== "number" || typeof tax.productRate !== "number" || !cardFee || typeof cardFee.rate !== "number") return null;
+  return { taxRates: { serviceRate: tax.serviceRate, productRate: tax.productRate }, cardFee };
+}
+
+/** Remember the shop's tax and credit card fee on the open ticket so a later settings change doesn't reprice it. */
+async function stampOpenedRates(saleId: string, shopId: string, tx: DBorTx) {
+  const shop = await getShop(shopId);
+  const config = await ratesForShop(shop, "pos");
+  const pricing = { openedRates: { taxRates: config.taxRates, cardFee: config.cardFee } };
+  await tx.update(sales).set({ pricing }).where(eq(sales.id, saleId));
+  return pricing;
 }
 
 export async function loadCheckoutContext(saleId: string) {
@@ -270,12 +305,22 @@ export async function loadCheckoutContext(saleId: string) {
       : null;
   const feePolicy = await shopFeePolicy(shop.id);
   const feeChannel = await saleFeeChannel(sale.id, "pos");
-  const { getCardFeeRate, getSalesTaxRate } = await import("./fee-tax-rates");
-  const at = new Date();
-  const [datedRate, datedTax] = await Promise.all([getCardFeeRate(shop.id, at), getSalesTaxRate(shop.id, at)]);
-  const policyForFee = datedRate == null ? feePolicy.policy : { ...feePolicy.policy, rate: datedRate };
-  const config = pricingConfig(shop, await loyaltyConfigAt(shop.id), feeConfigFor(policyForFee, feePolicy.state, feeChannel));
-  config.taxRates = { serviceRate: datedTax.serviceRate, productRate: datedTax.productRate };
+  const config = await ratesForShop(shop, feeChannel);
+  // An open ticket keeps the tax and the fee rate it opened with (TX-03). Whether this channel
+  // charges the fee is still decided now, so a deposit ticket follows the deposit channel.
+  const opened = sale.status === "open" ? openedRates(sale.pricing) : null;
+  if (opened) {
+    config.taxRates = opened.taxRates;
+    config.cardFee = {
+      ...config.cardFee,
+      enabled: opened.cardFee.enabled,
+      rate: opened.cardFee.rate,
+      name: opened.cardFee.name,
+      appliesToTip: opened.cardFee.appliesToTip,
+      type: opened.cardFee.type,
+      flatCents: opened.cardFee.flatCents,
+    };
+  }
   return {
     sale,
     shop,
