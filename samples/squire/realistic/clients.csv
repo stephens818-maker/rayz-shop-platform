@@ -1,0 +1,200 @@
+Client ID,First Name,Last Name,Phone,Email,Location,Preferred Barber,Client Since,SMS Opt In,Email Marketing,Notes
+SQ-20001,Hunter,O'Brien, 319 555-5000 ,hunter.obrien0@fixture.test,Coralville,Delaney,11/22/2020,Yes,Yes,
+SQ-20002,Nora,Christensen, 563 555-5001 ,nora.christensen1@fixture.test,Kimberly,,6/12/2024,Yes,No,
+SQ-20003,Grant,Zimmerman,3095555002,grant.zimmerman2@fixture.test,Moline,Jilane,4/19/2021,Yes,No,
+SQ-20004,Brooke,Christensen,5635555003,brooke.christensen3@fixture.test,Le Claire,Skylar,10/6/2022,Yes,Yes,"Says ""just a trim"" but wants it short"
+SQ-20005,Cameron,Wright,3195555004,,Coralville,,2/1/2022,No,,"Sensory-friendly: quiet chair, no blow dryer"
+SQ-20006,Kayla,Vogel,563-555-5005,,Le Claire,,1/28/2022,Yes,,
+SQ-20007,Andre,Vogel,563.555.5006, Andre.vogel6@Fixture.TEST ,Le Claire,,2/15/2024,Yes,No,
+SQ-20008,Nathan,Ramirez,1-319-555-5007, Nathan.ramirez7@Fixture.TEST ,Coralville,,6/13/2023,Yes,,
+SQ-20009,Dominic,Brooks,5635555008,dominic.brooks8@fixture.test,Kimberly,,4/24/2022,No,Yes,
+SQ-20010,Andre,Larson,+1 563 555 5009,andre.larson9@fixture.test,Kimberly,Ali,4/30/2025,Yes,Yes,"Usually brings two boys, books back to back"
+SQ-20011,Lucas,Lopez,1-309-555-5010,lucas.lopez10@fixture.test,Rock Island,,3/12/2025,Yes,,
+SQ-20012,Corey,Schroeder, 319 555-5011 ,corey.schroeder11@fixture.test,Coralville,Jessica,8/24/2024,Yes,,
+SQ-20013,Colin,Gonzalez,(563) 555-5012,colin.gonzalez12@fixture.test,Kimberly,Maddie,6/30/2024,Yes,Yes,"Says ""just a trim"" but wants it short"
+SQ-20014,Corey,Peterson,(563) 555-5013,,Le Claire,Skylar,10/29/2023,Yes,,
+SQ-20015,Grant,Larson,309.555.5014,grant.larson14@fixture.test,Rock Island,,3/25/2024,Yes,,"#2 on the sides, scissor top"
+SQ-20016,Derek,Reyes, 309 555-5015 ,,Silvis,,12/17/2022,Yes,,
+SQ-20017,Landon,Yoder,1-319-555-5016,landon.yoder16@fixture.test,Coralville,Makenna,5/24/2025,Yes,,
+SQ-20018,Brian,Nguyen,+1 309 555 5017,,Moline,Sara,5/9/2020,Yes,,
+SQ-20019,Isaac,Nguyen,(563) 555-5018,,Kimberly,Maddie,4/25/2022,Yes,,
+SQ-20020,Jason,Becker,563.555.5019,,Utica,,10/26/2021,Yes,,
+SQ-20021,Dominic,Zimmerman,563-555-5020,dominic.zimmerman20@fixture.test,Utica,Lindsay,3/15/2025,,Yes,
+SQ-20195,,,563-555-4999,,Kimberly,,,,,Deleted profile
+SQ-20022,Eli,Gonzalez,563.555.5021,eli.gonzalez21@fixture.test,Kimberly,Ali,1/5/2024,No,No,
+SQ-20023,Quinn,Johnson, 563 555-5022 ,,Le Claire,,12/19/2024,Yes,,
+SQ-20024,Dylan,Becker,1-563-555-5023,,Le Claire,,4/5/2024,,,"#2 on the sides, scissor top"
+SQ-20025,Ethan,Wagner,563.555.5024, Ethan.wagner24@Fixture.TEST ,Le Claire,,1/23/2023,Yes,Yes,
+SQ-20026,Dylan,Larson,309.555.5025,,Silvis,,6/19/2020,Yes,,"Sensory-friendly: quiet chair, no blow dryer"
+SQ-20027,Mason,Hartman,(319) 555-5026,mason.hartman26@fixture.test,Coralville,Jessica,6/28/2022,,No,"Brings his own clippers guard, #1.5"
+SQ-20028,Trevor,Nguyen,+1 309 555 5027,trevor.nguyen27@fixture.test,Silvis,Amanda,3/23/2023,Yes,No,
+SQ-20029,Aiden,Hoffman,+1 563 555 5028,aiden.hoffman28@fixture.test,Le Claire,,11/1/2020,,,
+SQ-20030,Cody,Keller,319.555.5029,,Coralville,Michelle,11/18/2023,No,,
+SQ-20031,Mason,O'Brien,+1 309 555 5030,mason.obrien30@fixture.test,Moline,Jilane,9/15/2022,Yes,,
+SQ-20032,Quinn,Steiner,1-309-555-5031,quinn.steiner31@fixture.test,Moline,Jilane,10/15/2023,Yes,,
+SQ-20033,Hunter,Johnson,(563) 555-5032,,Utica,,4/21/2024,No,,
+SQ-20034,Shane,Lopez,3095555033, Shane.lopez33@Fixture.TEST ,Silvis,Abigail,8/2/2024,Yes,,"Sensory-friendly: quiet chair, no blow dryer"
+SQ-20035,Nora,Meyer,563-555-5034,nora.meyer34@fixture.test,Le Claire,,5/15/2024,Yes,,"Sensitive skin, no razor"
+SQ-20036,Dylan,Brooks, 563 555-5035 ,dylan.brooks35@fixture.test,Kimberly,,7/13/2021,,,
+SQ-20037,Kevin,Jensen,(309) 555-5036,kevin.jensen36@fixture.test,Moline,Mackenzie,11/22/2024,Yes,No,
+SQ-20038,Dominic,Hoffman, 563 555-5037 ,dominic.hoffman37@fixture.test,Kimberly,Maddie,5/26/2021,Yes,Yes,
+SQ-20039,Corey,Steiner,563-555-5038,,Kimberly,Maddie,1/25/2025,Yes,,
+SQ-20040,Corey,Dietrich,,,Utica,Em,2/27/2024,Yes,,Hard part on the left
+SQ-20041,Noah,Anderson,,noah.anderson40@fixture.test,Rock Island,Taylor B,7/15/2024,,,
+SQ-20041,Noah,Anderson,,noah.anderson40@fixture.test,Rock Island,Taylor B,7/15/2024,,,
+SQ-20042,Carlos,Weber,(309) 555-5039,carlos.weber41@fixture.test,Silvis,Abigail,1/13/2024,Yes,,
+SQ-20043,Corey,Schmidt,309-555-5040,corey.schmidt42@fixture.test,Rock Island,Taylor B,6/3/2021,Yes,Yes,
+SQ-20044,Austin,Gonzalez,309-555-5041,austin.gonzalez43@fixture.test,Moline,,5/4/2021,Yes,,
+SQ-20045,Wesley,Hartman, 563 555-5042 ,wesley.hartman44@fixture.test,Utica,Lindsay,5/6/2023,Yes,,
+SQ-20046,Landon,Walsh,563-555-5043,landon.walsh45@fixture.test,Le Claire,,4/27/2023,Yes,No,"Pays cash, tips well"
+SQ-20047,Derek,Zimmerman,(309) 555-5044,,Rock Island,Mercedez,8/1/2021,Yes,,
+SQ-20048,Brandon,De La Cruz,(563) 555-5045,brandon.delacruz47@fixture.test,Kimberly,Brittany,5/16/2024,Yes,Yes,
+SQ-20049,Marcus,Thompson,3095555046,marcus.thompson48@fixture.test,Silvis,Amanda,5/23/2025,,No,
+SQ-20050,Landon,O'Brien,563.555.5047,landon.obrien49@fixture.test,Le Claire,,7/19/2025,Yes,No,"Line up, beard to #3, taper the neck"
+SQ-20051,Ethan,Garcia,1-309-555-5048, Ethan.garcia50@Fixture.TEST ,Silvis,Abigail,11/23/2022,Yes,Yes,Hard part on the left
+SQ-20052,Ethan,De La Cruz,3095555049,ethan.delacruz51@fixture.test,Rock Island,Mercedez,2/20/2024,,,
+SQ-20053,Cameron,Weber,,cameron.weber52@fixture.test,Kimberly,,8/15/2024,No,,
+SQ-20054,Hunter,Hoffman, 563 555-5050 ,hunter.hoffman53@fixture.test,Utica,,10/20/2020,Yes,,
+SQ-20055,Nora,Reyes, 319 555-5051 ,,Coralville,Delaney,12/14/2022,No,,"Brings his own clippers guard, #1.5"
+SQ-20056,Sean,Wagner,1-309-555-5052,,Silvis,Liv,3/23/2025,Yes,,
+SQ-20057,Caleb,Reyes,319.555.5053,caleb.reyes56@fixture.test,Coralville,Jessica,3/24/2024,Yes,Yes,
+SQ-20058,Adam,Carlson,563-555-5054,adam.carlson57@fixture.test,Le Claire,Audra,9/10/2021,Yes,,
+SQ-20059,Corey,Bauer, 309 555-5055 ,corey.bauer58@fixture.test,Rock Island,Garrett,6/29/2022,Yes,No,
+SQ-20060,Lucas,Vogel,(309) 555-5056,,Moline,Jilane,7/24/2023,Yes,,
+SQ-20061,Hunter,Novak,1-563-555-5057,,Kimberly,,6/27/2020,Yes,,"Line up, beard to #3, taper the neck"
+SQ-20062,Lucas,Christensen, 309 555-5058 ,,Silvis,Abigail,10/12/2023,No,,
+SQ-20063,Dominic,De La Cruz,3095555059,,Rock Island,Taylor B,8/2/2020,,,
+SQ-20064,Luis,Gonzalez, 309 555-5060 ,,Silvis,,8/4/2021,,,
+SQ-20065,Aiden,Garcia,3095555061,aiden.garcia64@fixture.test,Silvis,Amanda,1/30/2024,,Yes,
+SQ-20066,Marcus,Schroeder,1-309-555-5062,,Moline,,8/28/2020,Yes,,
+SQ-20067,Derek,Schroeder,5635555063,,Utica,,3/9/2022,Yes,,
+SQ-20068,Dominic,Weber,309-555-5064,dominic.weber67@fixture.test,Rock Island,Taylor B,12/10/2024,Yes,No,
+SQ-20069,Cameron,Nguyen,(563) 555-5065,cameron.nguyen68@fixture.test,Utica,Kate,12/8/2021,,,
+SQ-20070,Ian,Gonzalez,563-555-5066,,Utica,,1/29/2023,Yes,,
+SQ-20071,Nathan,Yoder,563-555-5067,nathan.yoder70@fixture.test,Utica,Sarah,8/26/2023,Yes,Yes,
+SQ-20072,Ryan,Keller,(319) 555-5068,,Coralville,Delaney,8/4/2021,Yes,,
+SQ-20073,Luis,Brooks,309-555-5069,luis.brooks72@fixture.test,Moline,Jilane,8/5/2020,Yes,Yes,
+SQ-20074,Blake,Vogel,3195555070,,Coralville,Makenna,10/3/2024,Yes,,
+SQ-20075,Wesley,Wagner,319-555-5071,wesley.wagner74@fixture.test,Coralville,Michelle,12/8/2021,,Yes,
+SQ-20076,Seth,Schmidt, 319 555-5072 ,seth.schmidt75@fixture.test,Coralville,,1/9/2024,Yes,Yes,"Brings his own clippers guard, #1.5"
+SQ-20196,Walk,In,,,Coralville,,,,,
+SQ-20077,Isaac,Peterson,319.555.5073, Isaac.peterson76@Fixture.TEST ,Coralville,Jessica,3/30/2024,Yes,Yes,
+SQ-20078,Grant,Carlson,(309) 555-5074,,Moline,,7/19/2022,Yes,,
+SQ-20079,Aaron,Vogel,563.555.5075,,Kimberly,Ali,2/22/2023,Yes,,
+SQ-20080,Ethan,Van Dyke,1-309-555-5076,ethan.vandyke79@fixture.test,Rock Island,Garrett,3/31/2022,Yes,,Likes it short for summer
+SQ-20081,Quinn,Hoffman,5635555077,,Le Claire,,2/2/2021,Yes,,"Line up, beard to #3, taper the neck"
+SQ-20082,Dominic,Gonzalez, 563 555-5078 ,,Utica,,11/27/2020,Yes,,"#2 on the sides, scissor top"
+SQ-20083,Jordan,Lopez,+1 563 555 5079,jordan.lopez82@fixture.test,Kimberly,,6/3/2024,Yes,Yes,"Prefers texts, not calls"
+SQ-20084,Victor,Dietrich,,,Rock Island,Taylor A,11/30/2023,Yes,,
+SQ-20085,Victor,O'Brien,563.555.5080,,Le Claire,Skylar,9/15/2024,Yes,,
+SQ-20086,Luis,Thompson,309-555-5081,,Moline,Mackenzie,9/21/2020,Yes,,
+SQ-20087,Eli,Wagner,5635555082,eli.wagner86@fixture.test,Le Claire,Audra,9/2/2024,Yes,No,
+SQ-20088,Gabriel,Thompson,5635555083,gabriel.thompson87@fixture.test,Utica,Sarah,12/21/2021,Yes,Yes,
+SQ-20089,Jared,Anderson,+1 309 555 5084, Jared.anderson88@Fixture.TEST ,Rock Island,Taylor A,5/21/2023,Yes,No,
+SQ-20090,Logan,Olson,1-319-555-5085,logan.olson89@fixture.test,Coralville,Makenna,3/31/2023,Yes,,
+SQ-20091,Hunter,Larson,(309) 555-5086,,Moline,Jen,6/24/2022,Yes,,"Pays cash, tips well"
+SQ-20092,Cameron,Becker,3095555087,cameron.becker91@fixture.test,Rock Island,Mercedez,12/1/2021,,No,"#2 on the sides, scissor top"
+SQ-20093,Cody,Christensen,5635555088,cody.christensen92@fixture.test,Utica,,10/12/2020,,No,"Says ""just a trim"" but wants it short"
+SQ-20094,Kayla,Christensen, 319 555-5089 ,,Coralville,Makenna,2/16/2022,,,
+SQ-20095,Aiden,Jensen, 309 555-5090 , Aiden.jensen94@Fixture.TEST ,Moline,Jilane,6/5/2021,,Yes,
+SQ-20096,Shane,Peterson,309.555.5091,shane.peterson95@fixture.test,Moline,,11/20/2021,Yes,No,
+SQ-20097,Victor,Klein,563.555.5092,victor.klein96@fixture.test,Utica,,1/29/2024,Yes,Yes,
+SQ-20098,Ethan,Hartman,5635555093,,Kimberly,Olivia A,5/8/2023,Yes,,
+SQ-20099,Lucas,Walsh,1-309-555-5094,lucas.walsh98@fixture.test,Rock Island,Taylor A,4/3/2020,Yes,No,
+SQ-20100,Ethan,Johnson,(563) 555-5095,,Kimberly,,10/26/2022,No,,
+SQ-20101,Brooke,Johnson,309-555-5096,,Silvis,Abigail,3/5/2022,Yes,,
+SQ-20102,Xavier,Johnson,3095555097,xavier.johnson101@fixture.test,Rock Island,Taylor A,8/5/2024,,Yes,
+SQ-20103,Grant,O'Brien,+1 309 555 5098,grant.obrien102@fixture.test,Silvis,Liv,8/20/2021,Yes,No,
+SQ-20104,Nathan,Bauer,(309) 555-5099,nathan.bauer103@fixture.test,Silvis,Liv,3/30/2023,Yes,Yes,
+SQ-20105,Ryan,Zimmerman, 309 555-5100 ,ryan.zimmerman104@fixture.test,Rock Island,Mercedez,2/7/2021,Yes,,
+SQ-20106,Justin,Wright,1-563-555-5101,,Kimberly,Olivia A,1/9/2021,Yes,,
+SQ-20107,Austin,Klein,1-563-555-5102,,Utica,Lindsay,10/3/2024,Yes,,Likes it short for summer
+SQ-20108,Nathan,Vogel, 563 555-5103 , Nathan.vogel107@Fixture.TEST ,Utica,,9/1/2025,Yes,,
+SQ-20109,Corey,Fischer,3095555104,corey.fischer108@fixture.test,Silvis,Amanda,2/19/2025,,Yes,
+SQ-20110,Tyler,Dietrich,(563) 555-5105,tyler.dietrich109@fixture.test,Kimberly,Beth,6/8/2025,Yes,Yes,
+SQ-20111,Wesley,Van Dyke,,wesley.vandyke110@fixture.test,Le Claire,Audra,6/7/2022,Yes,Yes,"Sensitive skin, no razor"
+SQ-20111,Wesley,Van Dyke,,wesley.vandyke110@fixture.test,Le Claire,Audra,6/7/2022,Yes,Yes,"Sensitive skin, no razor"
+SQ-20112,Brandon,O'Brien,1-309-555-5106,,Silvis,Amanda,3/4/2025,Yes,,
+SQ-20113,Lucas,Ramirez,5635555107,lucas.ramirez112@fixture.test,Utica,Lindsay,7/16/2025,Yes,No,
+SQ-20114,Hunter,Garcia,3095555108,,Rock Island,,3/27/2023,Yes,,
+SQ-20115,Cameron,Peterson,+1 563 555 5109,cameron.peterson114@fixture.test,Le Claire,Audra,3/6/2022,No,,Allergic to the lavender shampoo
+SQ-20116,Noah,Ramirez,309.555.5110, Noah.ramirez115@Fixture.TEST ,Moline,,2/9/2022,Yes,,
+SQ-20117,Noah,Yoder, 563 555-5111 ,noah.yoder116@fixture.test,Le Claire,Skylar,7/28/2022,,No,
+SQ-20118,Cody,Reyes, 319 555-5112 ,cody.reyes117@fixture.test,Coralville,Delaney,2/24/2021,Yes,Yes,
+SQ-20119,Brian,Schroeder,,,Coralville,,6/14/2025,Yes,,
+SQ-20120,Caleb,Carlson,(563) 555-5113,caleb.carlson119@fixture.test,Utica,,10/10/2023,Yes,No,
+SQ-20121,Quinn,Reyes,,,Utica,Sarah,4/20/2021,No,,
+SQ-20122,Aiden,Ramirez, 563 555-5114 ,,Le Claire,Audra,6/10/2023,Yes,,
+SQ-20123,Eric,Yoder, 563 555-5115 ,eric.yoder122@fixture.test,Le Claire,Audra,1/29/2024,,No,
+SQ-20124,Trevor,Lopez,5635555116,trevor.lopez123@fixture.test,Utica,,9/2/2022,Yes,,
+SQ-20125,Brian,Klein,563.555.5117,brian.klein124@fixture.test,Kimberly,Sammie,9/3/2023,No,No,
+SQ-20126,Corey,Lopez,1-563-555-5118,,Utica,Kate,6/13/2021,Yes,,
+SQ-20127,Xavier,Fischer,309.555.5119,,Rock Island,Taylor A,12/27/2022,Yes,,
+SQ-20128,Mason,Thompson,1-309-555-5120, Mason.thompson127@Fixture.TEST ,Silvis,,7/4/2025,Yes,Yes,
+SQ-20129,Parker,Walsh,+1 563 555 5121,parker.walsh128@fixture.test,Le Claire,Audra,9/4/2020,Yes,,
+SQ-20130,Justin,Olson,3095555122,,Silvis,Abigail,12/15/2021,Yes,,Likes it short for summer
+SQ-20131,Eli,Bauer,309.555.5123, Eli.bauer130@Fixture.TEST ,Moline,,1/31/2021,Yes,No,
+SQ-20197,,,,,Moline,,,,,
+SQ-20132,Aiden,Meyer,319-555-5124,,Coralville,Michelle,8/14/2020,Yes,,
+SQ-20133,Brandon,Wagner,, Brandon.wagner132@Fixture.TEST ,Utica,Sarah,7/1/2020,Yes,Yes,"Line up, beard to #3, taper the neck"
+SQ-20134,Eric,Klein,563-555-5125,,Le Claire,Skylar,2/4/2022,Yes,,"Says ""just a trim"" but wants it short"
+SQ-20135,Marcus,Reyes,+1 319 555 5126,,Coralville,,9/6/2024,Yes,,
+SQ-20136,Aaron,Yoder,(563) 555-5127, Aaron.yoder135@Fixture.TEST ,Utica,,1/24/2022,,Yes,
+SQ-20137,Jordan,Engel,5635555128,jordan.engel136@fixture.test,Utica,,2/11/2021,Yes,No,
+SQ-20138,Grant,Yoder,563.555.5129,,Kimberly,,5/28/2020,Yes,,
+SQ-20139,Victor,Vogel,(563) 555-5130,victor.vogel138@fixture.test,Utica,Sarah,12/17/2021,No,No,
+SQ-20140,Jason,Zimmerman,563-555-5131,,Kimberly,Maddie,5/30/2025,Yes,,
+SQ-20141,Grant,Christensen,+1 309 555 5132,grant.christensen140@fixture.test,Silvis,,12/27/2021,Yes,No,
+SQ-20142,Xavier,Wagner,563.555.5133,xavier.wagner141@fixture.test,Kimberly,,1/1/2024,Yes,No,
+SQ-20143,Ryan,Carlson,(563) 555-5134,,Kimberly,Maddie,5/6/2023,Yes,,"Line up, beard to #3, taper the neck"
+SQ-20144,Aiden,Steiner,563.555.5135,aiden.steiner143@fixture.test,Utica,Lindsay,6/17/2025,Yes,,"Says ""just a trim"" but wants it short"
+SQ-20145,Andre,Christensen,(309) 555-5136,,Rock Island,,6/28/2024,Yes,,
+SQ-20146,Ethan,Yoder,5635555137,ethan.yoder145@fixture.test,Utica,Lindsay,2/22/2023,Yes,Yes,
+SQ-20147,Spencer,Anderson,+1 309 555 5138, Spencer.anderson146@Fixture.TEST ,Moline,Jilane,11/15/2022,,Yes,
+SQ-20148,Derek,Dietrich,(319) 555-5139,,Coralville,,6/3/2025,Yes,,
+SQ-20149,Connor,Lopez,1-309-555-5140, Connor.lopez148@Fixture.TEST ,Rock Island,,6/9/2025,Yes,Yes,
+SQ-20150,Grant,Bauer,309.555.5141,grant.bauer149@fixture.test,Moline,Jilane,3/16/2023,Yes,No,"Says ""just a trim"" but wants it short"
+SQ-20151,Michael,Hansen,(319) 555-5142,michael.hansen900@fixture.test,Coralville,Makenna,1/7/2024,Yes,Yes,
+SQ-20152,Michael,,3195555142,,Moline,Jilane,2/24/2024,,,
+SQ-20153,Christopher,Duffy, 563 555-5143 ,christopher.duffy901@fixture.test,Kimberly,Ali,11/28/2020,Yes,Yes,
+SQ-20154,Chris,Duffy,3095555144,CHRISTOPHER.DUFFY901@FIXTURE.TEST,Rock Island,,5/27/2022,,,
+SQ-20155,Alex,Moreno,+1 563 555 5145,alexander.moreno902@fixture.test,Le Claire,Audra,11/29/2022,Yes,Yes,
+SQ-20156,Alexander,Moreno,(563) 555-5145,ALEXANDER.MORENO902@FIXTURE.TEST,Silvis,,11/11/2020,,,"Usually brings two boys, books back to back"
+SQ-20157,William,Kowalczyk, 309 555-5146 ,william.kowalczyk903@fixture.test,Moline,Mackenzie,1/5/2024,Yes,Yes,
+SQ-20158,Bill,Kowalczyk,309.555.5146,WILLIAM.KOWALCZYK903@FIXTURE.TEST,Utica,,1/21/2025,No,No,"Pays cash, tips well"
+SQ-20159,Joseph,Russo,3095555147,joseph.russo904@fixture.test,Rock Island,Taylor A,12/13/2020,Yes,Yes,
+SQ-20160,Joseph,,309.555.5147,,Coralville,,3/20/2021,,,"Brings his own clippers guard, #1.5"
+SQ-20161,Anthony,Bianchi,3095555148,anthony.bianchi905@fixture.test,Silvis,Amanda,4/2/2024,Yes,Yes,
+SQ-20162,Tony,Bianchi,1-563-555-5149,ANTHONY.BIANCHI905@FIXTURE.TEST,Kimberly,Sammie,11/17/2024,,,
+SQ-20163,Dan,Ostrowski, 563 555-5150 ,daniel.ostrowski906@fixture.test,Utica,Em,3/25/2022,Yes,Yes,"Sensitive skin, no razor"
+SQ-20164,Daniel,Ostrowski,563-555-5150,DANIEL.OSTROWSKI906@FIXTURE.TEST,Le Claire,Audra,8/19/2025,,,"Sensitive skin, no razor"
+SQ-20165,Jacob,Lindqvist, 319 555-5151 ,jacob.lindqvist907@fixture.test,Coralville,,5/13/2023,Yes,Yes,
+SQ-20166,Jake,Lindqvist,319-555-5151,JACOB.LINDQVIST907@FIXTURE.TEST,Moline,,10/2/2024,No,No,Likes it short for summer
+SQ-20167,Matthew,Sorensen, 563 555-5152 ,matthew.sorensen908@fixture.test,Kimberly,Maddie,7/10/2023,Yes,Yes,
+SQ-20168,Matthew,,1-563-555-5152,,Rock Island,,2/1/2023,,,
+SQ-20169,Nicholas,Papadakis,1-563-555-5153,nicholas.papadakis909@fixture.test,Le Claire,,7/14/2020,Yes,Yes,
+SQ-20170,Nick,Papadakis,309-555-5154,NICHOLAS.PAPADAKIS909@FIXTURE.TEST,Silvis,Abigail,2/28/2021,,,
+SQ-20171,Zach,Holm,309.555.5155,zachary.holm910@fixture.test,Moline,Sara,5/10/2022,Yes,Yes,
+SQ-20172,Zachary,Holm,309.555.5155,ZACHARY.HOLM910@FIXTURE.TEST,Utica,Sarah,1/3/2023,,,
+SQ-20173,Benjamin,Achebe,+1 309 555 5156,benjamin.achebe911@fixture.test,Rock Island,,6/22/2025,Yes,Yes,Hard part on the left
+SQ-20174,Ben,Achebe,+1 309 555 5156,BENJAMIN.ACHEBE911@FIXTURE.TEST,Coralville,,8/10/2023,No,No,
+SQ-20175,Kevin,Brandt,(319) 555-5157,kevin.brandt950@fixture.test,Coralville,Michelle,1/18/2023,Yes,Yes,Likes it short for summer
+SQ-20176,Tyler,Brandt,(319) 555-5157,,Coralville,Makenna,11/1/2023,Yes,,Parent: Kevin
+SQ-20177,Marcus,Freeman,5635555158,marcus.freeman951@fixture.test,Le Claire,Skylar,1/22/2022,Yes,,
+SQ-20178,Jaylen,Freeman,(563) 555-5158,,Le Claire,,8/22/2024,Yes,,Parent: Marcus
+SQ-20179,Nora,Lindgren,+1 309 555 5159,nora.lindgren952@fixture.test,Rock Island,,6/20/2024,No,,
+SQ-20180,Owen,Lindgren, 309 555-5159 ,,Rock Island,Garrett,12/1/2022,Yes,,Parent: Nora
+SQ-20181,Brooke,Kerr,563-555-5160,brooke.kerr953@fixture.test,Utica,Lindsay,4/26/2023,Yes,No,
+SQ-20182,Mason,Kerr,1-563-555-5160,,Utica,Em,7/10/2020,Yes,,Parent: Brooke
+SQ-20183,Derek,Pham,563.555.5161,derek.pham954@fixture.test,Kimberly,Maddie,5/20/2021,Yes,,"Brings his own clippers guard, #1.5"
+SQ-20184,Eli,Pham,(563) 555-5161,,Kimberly,,4/12/2023,Yes,,Parent: Derek
+SQ-20185,Kayla,Sisk,(309) 555-5162,kayla.sisk955@fixture.test,Moline,Sara,7/31/2024,Yes,No,
+SQ-20186,Landon,Sisk,309.555.5162,,Moline,Jen,12/5/2021,No,,Parent: Kayla
+SQ-20187,Chris,Miller,3195555163,chris.miller970@fixture.test,Coralville,Jessica,2/9/2021,No,,
+SQ-20188,Chris,Miller,+1 309 555 5164,,Rock Island,,9/24/2022,Yes,,
+SQ-20189,Ryan,Schultz,563.555.5165,ryan.schultz971@fixture.test,Kimberly,Maddie,5/29/2020,,No,"Says ""just a trim"" but wants it short"
+SQ-20190,Ryan,Schultz, 309 555-5166 ,,Silvis,Amanda,3/11/2023,,,
+SQ-20191,Tyler,Johnson,(563) 555-5167,tyler.johnson972@fixture.test,Le Claire,,7/9/2023,Yes,,
+SQ-20192,Tyler,Johnson,1-563-555-5168,,Utica,Sarah,10/13/2021,Yes,,
+SQ-20193,,Okafor, 563 555-5169 ,,Kimberly,Beth,3/4/2025,Yes,,
+SQ-20194,Hector,Salinas,call the shop,hector.salinas990@fixture.test,Moline,,12/23/2024,,,

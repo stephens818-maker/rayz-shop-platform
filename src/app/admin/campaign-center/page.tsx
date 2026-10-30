@@ -1,0 +1,185 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { Suspense } from "react";
+import { Card, CardHeader, LinkButton, Notice, PageHeader } from "@/components/ui";
+import { CHANNEL_LABEL } from "@/domain/marketing";
+import { hhmmLabel, todayLocal } from "@/lib/time";
+import { can, guardPage, openShops } from "@/server/auth/staff";
+import { couponOptions, listAutomations } from "@/server/marketing/campaigns";
+import { centerKpis } from "@/server/marketing/results";
+import { listSequences } from "@/server/marketing/sequences";
+import { consentColumns } from "@/server/marketing/consent";
+import { loadMarketingSettings } from "@/server/marketing/settings";
+import { AutomationToggles } from "./automation-toggles";
+import { KpiSkeleton, KpiTiles } from "./kpis";
+import { SequenceToggle } from "./sequence-toggle";
+
+export const metadata: Metadata = { title: "Campaign Center" };
+export const dynamic = "force-dynamic";
+
+async function Kpis({ shopIds }: { shopIds: string[] }) {
+  const k = await centerKpis(shopIds);
+  return <KpiTiles funnel={k.funnel} defs={k.definitions} caption={`Last ${k.days} days · ${k.funnel.sent} sent · ${k.funnel.bookings} bookings credited`} />;
+}
+
+export default async function CampaignCenterPage() {
+  const ctx = await guardPage("/admin/campaign-center");
+  const shops = openShops(ctx);
+  const [list, sequences, settings, cols, coupons] = await Promise.all([
+    listAutomations(ctx),
+    listSequences(ctx),
+    loadMarketingSettings(),
+    consentColumns(),
+    couponOptions(todayLocal()),
+  ]);
+  const shopName = new Map(ctx.shops.map((s) => [s.id, s.name]));
+  const mayToggle = can(ctx, "campaign_center.send");
+  const mayCreate = can(ctx, "campaign_center.create");
+  const mayBrand = mayCreate && ctx.brandWide;
+  const coupon = (id: string | null) => coupons.find((c) => c.id === id);
+  return (
+    <div className="mx-auto max-w-6xl space-y-5">
+      <PageHeader
+        title="Campaign Center"
+        subtitle="Automated campaigns and one-off blasts by text, email and app push. Only clients who agreed to marketing get them, never in quiet hours and never more than the brand's limits."
+        actions={
+          <div className="flex gap-2">
+            {can(ctx, "campaign_center.openings") && (
+              <LinkButton variant="secondary" href="/admin/campaign-center/openings">
+                We have openings
+              </LinkButton>
+            )}
+            <LinkButton variant="secondary" href="/admin/reports/campaign-center">
+              Report
+            </LinkButton>
+            {mayCreate && (
+              <LinkButton variant="secondary" href="/admin/campaign-center/sequences/new">
+                New lapsed sequence
+              </LinkButton>
+            )}
+            {mayCreate && <LinkButton href="/admin/campaign-center/blasts/new">New blast</LinkButton>}
+          </div>
+        }
+      />
+      {!cols.sms && !cols.email && !cols.push && (
+        <Notice tone="amber">
+          Clients agree to marketing in the Ray&apos;z app and on the booking page, through the customer API. Until those consent settings are live, nobody has agreed, so campaigns run but nothing marketing goes out.
+        </Notice>
+      )}
+      {!settings.address.trim() && (
+        <Notice tone="amber">
+          Marketing emails need the brand&apos;s postal address (CAN-SPAM).{" "}
+          {mayBrand ? (
+            <Link className="underline" href="/admin/campaign-center/settings">
+              Add it in Campaign Center settings
+            </Link>
+          ) : (
+            "Ask the brand to add it"
+          )}
+          ; until then campaigns go by text and push only.
+        </Notice>
+      )}
+      <Suspense fallback={<KpiSkeleton />}>
+        <Kpis shopIds={shops.map((s) => s.id)} />
+      </Suspense>
+      <Card>
+        <CardHeader
+          title="Lapsed sequences"
+          subtitle="Several messages to the same lapsed client: say a friendly reminder at 2 weeks, a booking link at 3, a coupon at 4 and a bigger one from 6. Each signed by the client's barber with a link to book with them; a client leaves the sequence once they book."
+          action={
+            mayCreate && (
+              <LinkButton size="sm" variant="secondary" className="shrink-0 whitespace-nowrap" href="/admin/campaign-center/sequences/new">
+                New sequence
+              </LinkButton>
+            )
+          }
+        />
+        {sequences.length ? (
+          <ul className="divide-y divide-zinc-100">
+            {sequences.map((q) => (
+              <li key={q.id} className="grid gap-3 px-4 py-3 md:grid-cols-[1fr_auto]" data-testid={`sequence-${q.name}`}>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Link href={`/admin/campaign-center/sequences/${q.id}`} className="font-semibold text-zinc-900 hover:underline">
+                      {q.name}
+                    </Link>
+                    <span className="text-xs text-zinc-500">{q.channels.map((c) => CHANNEL_LABEL[c]).join(" → ")}</span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-1 text-sm text-zinc-600">
+                    {q.steps.map((st, i) => (
+                      <span key={st.id} className="inline-flex items-center gap-1">
+                        {i > 0 && <span className="text-zinc-300">→</span>}
+                        <span className="rounded bg-zinc-100 px-1.5">{st.label}</span>
+                        {coupon(st.promoId) && <span className="rounded bg-violet-50 px-1.5 text-xs text-violet-700">{coupon(st.promoId)!.code}</span>}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="text-xs text-zinc-400">
+                    {q.shopIds.length ? q.shopIds.map((x) => shopName.get(x) ?? "").join(", ") : "Every location"}
+                    {q.audience.staffIds.length ? ` · ${q.audience.staffIds.length} barber${q.audience.staffIds.length === 1 ? "'s" : "s'"} clients` : " · every barber's clients"} · {q.sent30} sent in the last 30 days
+                  </div>
+                </div>
+                <SequenceToggle id={q.id} enabled={q.enabled} disabled={!mayToggle || !q.mayEdit} />
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="px-4 py-3 text-sm text-zinc-500">No lapsed sequences yet.{mayCreate ? " Start one with the four steps above filled in; pick the coupons and switch it on." : ""}</p>
+        )}
+      </Card>
+      <Card>
+        <CardHeader
+          title="Automated campaigns"
+          subtitle={`The brand writes each campaign; each location switches it on and can reword it. Checked every 15 minutes. Quiet hours ${hhmmLabel(settings.quietStart)}–${hhmmLabel(settings.quietEnd)}; at most ${settings.capPerWeek} a week and ${settings.capPerMonth} a month per client.`}
+        />
+        <ul className="divide-y divide-zinc-100">
+          {list.map((a) => (
+            <li key={a.id} className="grid gap-3 px-4 py-3 md:grid-cols-[1fr_auto]" data-testid={`automation-${a.trigger}`}>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link href={`/admin/campaign-center/automations/${a.id}`} className="font-semibold text-zinc-900 hover:underline">
+                    {a.name}
+                  </Link>
+                  <span className="text-xs text-zinc-500">{a.channels.map((c) => CHANNEL_LABEL[c]).join(" → ")}</span>
+                  {coupon(a.promoId) && <span className="rounded bg-violet-50 px-1.5 text-xs text-violet-700">{`${coupon(a.promoId)!.code}: ${coupon(a.promoId)!.summary}`}</span>}
+                </div>
+                <div className="text-sm text-zinc-600">{a.when}</div>
+                <div className="text-xs text-zinc-400">{a.sent30} sent in the last 30 days</div>
+              </div>
+              <AutomationToggles campaignId={a.id} locations={a.locations} disabled={!mayToggle} />
+            </li>
+          ))}
+        </ul>
+      </Card>
+      <div className="grid gap-3 md:grid-cols-3">
+        <Link href="/admin/campaign-center/blasts" className="rounded-xl bg-white p-4 ring-1 ring-zinc-200 hover:ring-zinc-400">
+          <div className="font-semibold">Blasts</div>
+          <div className="text-sm text-zinc-600">Quick updates and promotions to a segment: now, scheduled or repeating, with A/B tests and holdout groups.</div>
+        </Link>
+        <Link href="/admin/campaign-center/calendar" className="rounded-xl bg-white p-4 ring-1 ring-zinc-200 hover:ring-zinc-400">
+          <div className="font-semibold">Calendar</div>
+          <div className="text-sm text-zinc-600">Every blast that went out and every send still to come, repeats included.</div>
+        </Link>
+        <Link href="/admin/campaign-center/templates" className="rounded-xl bg-white p-4 ring-1 ring-zinc-200 hover:ring-zinc-400">
+          <div className="font-semibold">Templates</div>
+          <div className="text-sm text-zinc-600">The brand&apos;s approved wording to start a blast from.</div>
+        </Link>
+        <Link href="/admin/promos" className="rounded-xl bg-white p-4 ring-1 ring-zinc-200 hover:ring-zinc-400">
+          <div className="font-semibold">Coupons</div>
+          <div className="text-sm text-zinc-600">Percent, dollars or a free add-on, with limits. Attach one to a campaign.</div>
+        </Link>
+        {mayBrand ? (
+          <Link href="/admin/campaign-center/settings" className="rounded-xl bg-white p-4 ring-1 ring-zinc-200 hover:ring-zinc-400">
+            <div className="font-semibold">Settings</div>
+            <div className="text-sm text-zinc-600">Quiet hours, frequency limits, the postal address, attribution, costs, the HELP reply.</div>
+          </Link>
+        ) : (
+          <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
+            <div className="font-semibold">Contact lists</div>
+            <div className="text-sm text-zinc-600">You see counts, not contact lists. Only the brand can export campaign contacts.</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

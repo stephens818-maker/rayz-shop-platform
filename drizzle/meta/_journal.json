@@ -1,0 +1,1098 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1792531124880,
+      "tag": "0000_init",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792531125570,
+      "tag": "0001_constraints",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792542656860,
+      "tag": "0002_review_checkout",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792542938919,
+      "tag": "0003_drop_cash_discount",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792543243180,
+      "tag": "0004_redact_otp_outbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792543749430,
+      "tag": "0005_clients",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792543762218,
+      "tag": "0006_client_search",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792546165671,
+      "tag": "0007_appointment_buffer",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792549125740,
+      "tag": "0008_client_ratings",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792551554139,
+      "tag": "0009_permissions_and_catalog",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792555959395,
+      "tag": "0010_location_groups",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1792558539065,
+      "tag": "0011_barber_groups",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1792562038000,
+      "tag": "0012_inventory",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1792566726763,
+      "tag": "0013_shop_workspaces",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1792567762803,
+      "tag": "0014_staff_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1792570246013,
+      "tag": "0015_shop_roles",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1792572097913,
+      "tag": "0016_client_privacy",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792573763304,
+      "tag": "0017_privacy_alert_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792719603509,
+      "tag": "0018_client_entry_rules",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1792721841196,
+      "tag": "0019_slot_timing",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1792724261285,
+      "tag": "core_0020_stripe_connect",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1792726885710,
+      "tag": "core_0021_service_times",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1792728477542,
+      "tag": "core_0022_payroll",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1792734297221,
+      "tag": "core_0023_staff_time",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1792740689981,
+      "tag": "core_0024_block_reasons",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1792743517735,
+      "tag": "core_0025_call_ins",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1792748968867,
+      "tag": "core_0026_append_only",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1792749250844,
+      "tag": "core_0027_locations",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1792752000000,
+      "tag": "core_0028_digest_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1792755600000,
+      "tag": "core_0029_location_banking",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1792759200000,
+      "tag": "core_0030_time_clock",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1792762800000,
+      "tag": "core_0031_clock_live",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1792766400000,
+      "tag": "core_0032_clock_blocks",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1792770000000,
+      "tag": "core_0033_tip_payouts",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1792773600000,
+      "tag": "core_0034_staff_banking",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1792860000000,
+      "tag": "core_0035_scrub_sensitive",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1792946400000,
+      "tag": "core_0036_network_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1793032800000,
+      "tag": "core_0037_handoff",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1793119200000,
+      "tag": "core_0038_digital_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1793205600000,
+      "tag": "core_0039_google_reviews",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1793206500000,
+      "tag": "core_0040_review_visits",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1793210100000,
+      "tag": "core_0041_marketing",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1793296500000,
+      "tag": "core_0042_campaign_center",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1793383200000,
+      "tag": "core_0043_lapsed_campaigns",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1793469600000,
+      "tag": "core_0044_client_search",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1793556000000,
+      "tag": "core_0045_openings",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1793642400000,
+      "tag": "core_0046_morning_dashboard",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1793728800000,
+      "tag": "core_0047_report_builder",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1793815200000,
+      "tag": "core_0048_assistant",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1793901600000,
+      "tag": "core_0049_shop_login",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1793988000000,
+      "tag": "core_0050_brand_level",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1794074400000,
+      "tag": "core_0051_user_admin",
+      "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1794160800000,
+      "tag": "core_0052_client_badges",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1794247200000,
+      "tag": "core_0053_customer_badges",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1794250800000,
+      "tag": "core_0054_family_accounts",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1794254400000,
+      "tag": "core_0055_booking_groups",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1794258000000,
+      "tag": "core_0056_combined_checkout",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1794261600000,
+      "tag": "core_0057_client_notes",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1794265200000,
+      "tag": "core_0058_compensation",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1794268800000,
+      "tag": "core_0059_analytics",
+      "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1794272400000,
+      "tag": "core_0060_location_profile",
+      "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1794276000000,
+      "tag": "core_0061_place_id_check",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1794362400000,
+      "tag": "core_0062_checkout_prompts",
+      "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "7",
+      "when": 1794452400000,
+      "tag": "core_0063_scale",
+      "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1794538800000,
+      "tag": "core_0064_owner_entities",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1794625200000,
+      "tag": "core_0065_campaign_center_v2",
+      "breakpoints": true
+    },
+    {
+      "idx": 66,
+      "version": "7",
+      "when": 1794711600000,
+      "tag": "core_0066_staff_milestones",
+      "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1794798000000,
+      "tag": "core_0067_rebook_rate",
+      "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1794884400000,
+      "tag": "core_0068_loyalty_program",
+      "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1794970800000,
+      "tag": "core_0069_email_design",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1795057200000,
+      "tag": "core_0070_appointments_report",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1795143600000,
+      "tag": "core_0071_staff_booking_options",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1795230000000,
+      "tag": "core_0072_register_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1795316400000,
+      "tag": "core_0073_analytics_saved_views",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1795402800000,
+      "tag": "core_0074_catalog_brand_stock",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1795489200000,
+      "tag": "core_0075_location_defaults",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1795575600000,
+      "tag": "core_0076_schedule_templates",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1795662000000,
+      "tag": "core_0077_payout_reconciliation",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
+      "when": 1795748400000,
+      "tag": "core_0078_memberships",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "7",
+      "when": 1795834800000,
+      "tag": "core_0079_membership_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "7",
+      "when": 1795921200000,
+      "tag": "core_0080_phone_agent",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "7",
+      "when": 1796007600000,
+      "tag": "core_0081_email_delivery",
+      "breakpoints": true
+    },
+    {
+      "idx": 82,
+      "version": "7",
+      "when": 1796094000000,
+      "tag": "core_0082_customer_app",
+      "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "7",
+      "when": 1796180400000,
+      "tag": "core_0083_customer_identity",
+      "breakpoints": true
+    },
+    {
+      "idx": 84,
+      "version": "7",
+      "when": 1796184000000,
+      "tag": "core_0084_account_deletion",
+      "breakpoints": true
+    },
+    {
+      "idx": 85,
+      "version": "7",
+      "when": 1796187600000,
+      "tag": "core_0085_consent_devices",
+      "breakpoints": true
+    },
+    {
+      "idx": 86,
+      "version": "7",
+      "when": 1796191200000,
+      "tag": "core_0086_shop_cutover",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1796194800000,
+      "tag": "core_0087_app_receipts",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
+      "when": 1796198400000,
+      "tag": "core_0088_app_payments",
+      "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1796202000000,
+      "tag": "core_0089_guest_age_secure_clock",
+      "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1796205600000,
+      "tag": "core_0090_customer_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1796209200000,
+      "tag": "core_0091_card_fee_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1796212800000,
+      "tag": "core_0092_card_fee_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1796216400000,
+      "tag": "core_0093_card_fee_shops",
+      "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1796220000000,
+      "tag": "core_0094_brand_sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1796223600000,
+      "tag": "core_0095_roles_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1796227200000,
+      "tag": "core_0096_report_scope_money",
+      "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1796230800000,
+      "tag": "core_0097_dashboard_refunds",
+      "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1796234400000,
+      "tag": "core_0098_pay_reports_brand",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1796238000000,
+      "tag": "core_0099_staff_app",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1796241600000,
+      "tag": "core_0100_staff_tip_stripe",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1796328000000,
+      "tag": "core_0101_staff_onboarding",
+      "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1796414400000,
+      "tag": "core_0102_staff_app_gaps",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1796500800000,
+      "tag": "core_0103_staff_app_invite_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1796504400000,
+      "tag": "core_0104_staff_payout_confirm_scrub",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1796508000000,
+      "tag": "core_0105_tip_payout_periods",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1796594400000,
+      "tag": "core_0106_payroll_export_sends",
+      "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1796594460000,
+      "tag": "core_0107_payroll_export_sends_scrub",
+      "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1796594520000,
+      "tag": "core_0108_staff_payouts",
+      "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1796594580000,
+      "tag": "core_0109_tip_employer_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1796594640000,
+      "tag": "core_0110_payroll_review",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1796594700000,
+      "tag": "core_0111_tip_declarations_scrub",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1796594760000,
+      "tag": "core_0112_staff_login_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1796594820000,
+      "tag": "core_0113_new_sign_in_alerts",
+      "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1796594880000,
+      "tag": "core_0114_tips_never_net_fees",
+      "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "7",
+      "when": 1796594940000,
+      "tag": "core_0115_tip_deposit_consent",
+      "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "7",
+      "when": 1796595000000,
+      "tag": "core_0116_45b_beauty_defaults",
+      "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "7",
+      "when": 1796595060000,
+      "tag": "core_0117_cutover_tie_out",
+      "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "7",
+      "when": 1796595120000,
+      "tag": "core_0118_legal_entities",
+      "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "7",
+      "when": 1796595180000,
+      "tag": "core_0119_paid_leave_report",
+      "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "7",
+      "when": 1796595240000,
+      "tag": "core_0120_no_biometrics",
+      "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "7",
+      "when": 1796595300000,
+      "tag": "core_0121_offline_punches",
+      "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "7",
+      "when": 1796595360000,
+      "tag": "core_0122_demo_shop",
+      "breakpoints": true
+    },
+    {
+      "idx": 123,
+      "version": "7",
+      "when": 1796595420000,
+      "tag": "core_0123_staff_quiet_hours",
+      "breakpoints": true
+    },
+    {
+      "idx": 124,
+      "version": "7",
+      "when": 1796595480000,
+      "tag": "core_0124_pay_questions",
+      "breakpoints": true
+    },
+    {
+      "idx": 125,
+      "version": "7",
+      "when": 1796595540000,
+      "tag": "core_0125_pay_questions_scrub",
+      "breakpoints": true
+    },
+    {
+      "idx": 126,
+      "version": "7",
+      "when": 1796595600000,
+      "tag": "core_0126_brand_display",
+      "breakpoints": true
+    },
+    {
+      "idx": 127,
+      "version": "7",
+      "when": 1796595660000,
+      "tag": "core_0127_time_format",
+      "breakpoints": true
+    },
+    {
+      "idx": 128,
+      "version": "7",
+      "when": 1796595720000,
+      "tag": "core_0128_payroll_approvals",
+      "breakpoints": true
+    },
+    {
+      "idx": 129,
+      "version": "7",
+      "when": 1796599320000,
+      "tag": "core_0129_pay_calendar",
+      "breakpoints": true
+    },
+    {
+      "idx": 130,
+      "version": "7",
+      "when": 1796602920000,
+      "tag": "core_0130_payroll_commission_adjustments",
+      "breakpoints": true
+    },
+    {
+      "idx": 131,
+      "version": "7",
+      "when": 1796602980000,
+      "tag": "core_0131_payroll_final_pay",
+      "breakpoints": true
+    },
+    {
+      "idx": 132,
+      "version": "7",
+      "when": 1796603040000,
+      "tag": "core_0132_aca_report",
+      "breakpoints": true
+    },
+    {
+      "idx": 133,
+      "version": "7",
+      "when": 1796606640000,
+      "tag": "core_0133_push_data",
+      "breakpoints": true
+    },
+    {
+      "idx": 134,
+      "version": "7",
+      "when": 1796610240000,
+      "tag": "core_0134_rollout",
+      "breakpoints": true
+    },
+    {
+      "idx": 135,
+      "version": "7",
+      "when": 1796613840000,
+      "tag": "core_0135_separate_charges",
+      "breakpoints": true
+    },
+    {
+      "idx": 136,
+      "version": "7",
+      "when": 1796617440000,
+      "tag": "core_0136_tip_to_barber",
+      "breakpoints": true
+    },
+    {
+      "idx": 137,
+      "version": "7",
+      "when": 1796621040000,
+      "tag": "core_0137_platform_losses",
+      "breakpoints": true
+    },
+    {
+      "idx": 138,
+      "version": "7",
+      "when": 1796622840000,
+      "tag": "core_0138_tip_payout_controls",
+      "breakpoints": true
+    },
+    {
+      "idx": 139,
+      "version": "7",
+      "when": 1796624640000,
+      "tag": "core_0139_brand_only_tips_apprentice",
+      "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "7",
+      "when": 1796626440000,
+      "tag": "core_0140_catalog_upload_undo",
+      "breakpoints": true
+    },
+    {
+      "idx": 141,
+      "version": "7",
+      "when": 1796628240000,
+      "tag": "core_0141_tip_payout_tracking",
+      "breakpoints": true
+    },
+    {
+      "idx": 142,
+      "version": "7",
+      "when": 1796630040000,
+      "tag": "core_0142_staff_app_mfa",
+      "breakpoints": true
+    },
+    {
+      "idx": 143,
+      "version": "7",
+      "when": 1796631840000,
+      "tag": "core_0143_staff_training_rates",
+      "breakpoints": true
+    },
+    {
+      "idx": 144,
+      "version": "7",
+      "when": 1796633640000,
+      "tag": "core_0144_training_rate_lock_guard",
+      "breakpoints": true
+    },
+    {
+      "idx": 145,
+      "version": "7",
+      "when": 1796635440000,
+      "tag": "core_0145_pph_report",
+      "breakpoints": true
+    },
+    {
+      "idx": 146,
+      "version": "7",
+      "when": 1796637240000,
+      "tag": "core_0146_training_toward_ot",
+      "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "7",
+      "when": 1796639040000,
+      "tag": "core_0147_report_ranges",
+      "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "7",
+      "when": 1796640840000,
+      "tag": "core_0148_payroll_ranges",
+      "breakpoints": true
+    },
+    {
+      "idx": 149,
+      "version": "7",
+      "when": 1796642640000,
+      "tag": "core_0149_pay_schedule",
+      "breakpoints": true
+    },
+    {
+      "idx": 150,
+      "version": "7",
+      "when": 1796642700000,
+      "tag": "core_0150_shop_transfer_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 151,
+      "version": "7",
+      "when": 1796642760000,
+      "tag": "core_0151_consent_wording",
+      "breakpoints": true
+    },
+    {
+      "idx": 152,
+      "version": "7",
+      "when": 1796642820000,
+      "tag": "core_0152_surcharge_off_by_default",
+      "breakpoints": true
+    },
+    {
+      "idx": 153,
+      "version": "7",
+      "when": 1796642880000,
+      "tag": "core_0153_clock_nonces",
+      "breakpoints": true
+    },
+    {
+      "idx": 154,
+      "version": "7",
+      "when": 1796642940000,
+      "tag": "core_0154_fee_and_tax",
+      "breakpoints": true
+    },
+    {
+      "idx": 155,
+      "version": "7",
+      "when": 1796643000000,
+      "tag": "core_0155_barber_own_pay",
+      "breakpoints": true
+    }
+  ]
+}

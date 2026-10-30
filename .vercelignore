@@ -1,0 +1,2 @@
+# The Expo apps build on EAS from their own workspace, never in the platform deploy.
+/mobile

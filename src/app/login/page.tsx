@@ -1,0 +1,39 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { Logo } from "@/components/ui";
+import { showDemoLogins } from "@/lib/deployment";
+import { deviceRequestShops } from "./actions";
+import { DemoLogin, LoginForm } from "./form";
+
+export const metadata: Metadata = { title: "Staff sign in" };
+
+const DEMO_LOGINS: DemoLogin[] = [
+  { email: "owner@rayz.test", who: "Brand owner", sees: "every shop, every report and setting" },
+  { email: "coralville@rayz.test", who: "Coralville shop login", sees: "the front desk for one shop" },
+  { email: "michelle@rayz.test", who: "Michelle, shop manager", sees: "Coralville's tools and reports" },
+  { email: "makenna@rayz.test", who: "Makenna, barber", sees: "her own column, clients and sales" },
+  { email: "apprentice.test@rayz.test", who: "Apprentice", sees: "a barber's view with no discounts or refunds" },
+  { email: "bookkeeper.test@rayz.test", who: "Bookkeeper / Accountant", sees: "read-only reports and payroll for every shop" },
+];
+
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; blocked?: string }> }) {
+  const { next, blocked } = await searchParams;
+  const deviceShops = await deviceRequestShops();
+  const showDemo = showDemoLogins();
+  return (
+    <div className="grid min-h-dvh place-items-center bg-ink-900 px-4 py-10">
+      <div className="w-full max-w-sm">
+        <div className="mb-6 flex justify-center">
+          <Link href="/">
+            <Logo dark />
+          </Link>
+        </div>
+        <div className="rounded-2xl bg-white p-6 shadow-xl">
+          <h1 className="text-lg font-semibold">Staff sign in</h1>
+          <p className="mt-1 text-sm text-zinc-500">Owners, managers and barbers.</p>
+          <LoginForm next={next ?? ""} blocked={blocked ? { deviceShops } : undefined} demo={showDemo ? { password: process.env.SEED_PASSWORD ? null : "rayz2026!", logins: DEMO_LOGINS } : undefined} />
+        </div>
+      </div>
+    </div>
+  );
+}

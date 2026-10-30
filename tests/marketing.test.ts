@@ -1,0 +1,243 @@
+import { describe, expect, it } from "vitest";
+import { formatCents } from "@/lib/money";
+import {
+  DEFAULT_LAPSED_STEPS,
+  EMPTY_SEGMENT,
+  LAPSED_BUCKETS,
+  MARKETING_DEFAULTS,
+  SegmentSchema,
+  SAMPLE_VALUES,
+  STOP_LINE,
+  TRIGGERS,
+  TRIGGER_KEYS,
+  bucketOf,
+  capProblem,
+  daysToBirthday,
+  dedupeKey,
+  defaultTemplates,
+  fill,
+  inQuiet,
+  lapsedBetween,
+  lapsedOver,
+  lastVisitLabel,
+  marketingSettings,
+  milesBetween,
+  nextSendAt,
+  pickChannel,
+  rebookReminderDue,
+  render,
+  roi,
+  segmentProblem,
+  stepDue,
+  stepLabel,
+  stepsProblem,
+  templatesProblem,
+  triggerSettings,
+} from "@/domain/marketing";
+
+const t = (sms: string, extra: Partial<Record<"emailSubject" | "emailBody" | "pushTitle" | "pushBody", string>> = {}) => ({ sms, emailSubject: "", emailBody: "", pushTitle: "", pushBody: "", ...extra });
+
+describe("templates and merge fields", () => {
+  it("fills merge fields and tidies the gaps", () => {
+    expect(fill("{shop}: Hi {first_name}, use {coupon_code} by {expiry}.", SAMPLE_VALUES)).toBe("Ray'z Coralville: Hi Jordan, use MISSYOU-7K2Q9D by Nov 30.");
+    expect(fill("Hi {first_name} !", { first_name: "" })).toBe("Hi there!");
+    expect(fill("Hi {first_name|friend}, see {barber}.", {})).toBe("Hi friend, see your barber.");
+    expect(fill("Hi {first_name|friend}", { first_name: "Sam" })).toBe("Hi Sam");
+    expect(fill("{shop}{day} !", {})).toBe("!");
+  });
+
+  it("texts stay short with the link and opt-out line added, and use real merge fields", () => {
+    expect(templatesProblem(t("{shop}: hi"), ["sms"], { hasCoupon: false })).toBeNull();
+    expect(templatesProblem(t("{shop}: hi {first_name|friend}"), ["sms"], { hasCoupon: false })).toBeNull();
+    expect(templatesProblem(t("hi {first name}"), ["sms"], { hasCoupon: false })).toMatch(/\{first name\} isn't a merge field/);
+    expect(templatesProblem(t("hi {first_name|a{b}"), ["sms"], { hasCoupon: false })).toMatch(/isn't closed/);
+    expect(templatesProblem(t("x".repeat(270)), ["sms"], { hasCoupon: false })).toMatch(/booking link and opt-out line/);
+    expect(templatesProblem(t(`{shop}: hi {nickname}. ${STOP_LINE}`), ["sms"], { hasCoupon: false })).toMatch(/\{nickname\} isn't a merge field/);
+    expect(templatesProblem(t(`{coupon_code} ${STOP_LINE}`), ["sms"], { hasCoupon: false })).toMatch(/pick a coupon/);
+    expect(templatesProblem(t(`${"x".repeat(330)} ${STOP_LINE}`), ["sms"], { hasCoupon: false })).toMatch(/under 320/);
+    expect(templatesProblem(t(`{shop ${STOP_LINE}`), ["sms"], { hasCoupon: false })).toMatch(/isn't closed/);
+    expect(templatesProblem(t(`ok ${STOP_LINE}`), ["sms", "email"], { hasCoupon: false })).toMatch(/Email subject can't be empty/);
+    expect(templatesProblem(t(`ok ${STOP_LINE}`, { emailSubject: "s", emailBody: "b" }), ["sms", "email"], { hasCoupon: false })).toBeNull();
+  });
+
+  it("every default template passes its own checks", () => {
+    for (const k of TRIGGER_KEYS) {
+      const extraFields = Object.keys(TRIGGERS[k].fields ?? {});
+      expect(templatesProblem(defaultTemplates(k, false), ["sms", "email", "push"], { hasCoupon: false, extraFields }), k).toBeNull();
+      expect(templatesProblem(TRIGGERS[k].templates, ["sms", "email", "push"], { hasCoupon: true, extraFields }), k).toBeNull();
+    }
+  });
+
+  it("rendered texts end with the booking link and STOP; emails end with the postal address and unsubscribe link", () => {
+    const r = render(t("{shop}: hi {first_name}", { emailSubject: "Hi {first_name}", emailBody: "Book: {book_link}" }), SAMPLE_VALUES, { brand: "Ray'z Barber Shop", address: "1 Main St", unsubscribeUrl: "https://x/m/T/unsubscribe" });
+    expect(r.sms).toBe(`Ray'z Coralville: hi Jordan https://rayz.example/m/Xy12abCD ${STOP_LINE}`);
+    expect(r.email.subject).toBe("Hi Jordan");
+    expect(r.email.body).toMatch(/Book: https:\/\/rayz\.example\/m\/Xy12abCD[\s\S]*1 Main St[\s\S]*Unsubscribe: https:\/\/x\/m\/T\/unsubscribe$/);
+  });
+});
+
+describe("automated campaigns", () => {
+  it("settings default and clamp to their ranges", () => {
+    expect(triggerSettings("lapsed", {})).toEqual({ days: 42 });
+    expect(triggerSettings("win_back", {})).toEqual({ days: 90 });
+    expect(triggerSettings("lapsed", { days: 5 })).toEqual({ days: 14 });
+    expect(triggerSettings("fill_slow_day", { utilizationPct: "30" })).toEqual({ utilizationPct: 30, maxPerBarber: 20 });
+    expect(triggerSettings("birthday", { daysBefore: 3.6, other: 1 })).toEqual({ daysBefore: 4 });
+  });
+
+  it("days to the next birthday, including Feb 29 in other years", () => {
+    expect(daysToBirthday("1990-02-20", "2028-02-16")).toEqual({ days: 4, year: 2028 });
+    expect(daysToBirthday("1990-02-10", "2028-02-16")).toEqual({ days: 360, year: 2029 });
+    expect(daysToBirthday("2000-02-29", "2027-02-27")).toEqual({ days: 1, year: 2027 });
+  });
+
+  it("rebook reminders a few days before their usual gap, from two visits, for two weeks", () => {
+    expect(rebookReminderDue({ visits: 3, usualDays: 21, sinceDays: 18 }, 3)).toBe(true);
+    expect(rebookReminderDue({ visits: 3, usualDays: 21, sinceDays: 17 }, 3)).toBe(false);
+    expect(rebookReminderDue({ visits: 3, usualDays: 21, sinceDays: 32 }, 3)).toBe(false);
+    expect(rebookReminderDue({ visits: 2, usualDays: 21, sinceDays: 20 }, 3)).toBe(true);
+    expect(rebookReminderDue({ visits: 1, usualDays: 21, sinceDays: 20 }, 3)).toBe(false);
+    expect(rebookReminderDue({ visits: 4, usualDays: 5, sinceDays: 4 }, 3)).toBe(false);
+    expect(rebookReminderDue({ visits: 5, usualDays: 200, sinceDays: 200 }, 3)).toBe(false);
+  });
+
+  it("miles between two locations", () => {
+    expect(milesBetween({ lat: 41.572, lng: -90.518 }, { lat: 41.56, lng: -90.56 })).toBeCloseTo(2.3, 1);
+  });
+
+  it("one send per campaign, client and occasion", () => {
+    expect(dedupeKey("c", "u", "birthday:2028")).toBe("c:u:birthday:2028");
+  });
+});
+
+describe("sending rules", () => {
+  const s = MARKETING_DEFAULTS;
+  it("quiet hours 8 PM to 9 AM by default, wrapping midnight", () => {
+    expect(inQuiet(19 * 60 + 59, s)).toBe(false);
+    expect(inQuiet(20 * 60, s)).toBe(true);
+    expect(inQuiet(3 * 60, s)).toBe(true);
+    expect(inQuiet(9 * 60, s)).toBe(false);
+    expect(inQuiet(13 * 60, { quietStart: "12:00", quietEnd: "14:00" })).toBe(true);
+  });
+
+  it("a message due in quiet hours waits until they end in the location's time zone", () => {
+    const late = new Date("2028-02-17T04:30:00Z"); // 10:30 PM in Chicago, 11:30 PM in New York
+    expect(nextSendAt(late, "America/Chicago", s).toISOString()).toBe("2028-02-17T15:00:00.000Z");
+    expect(nextSendAt(late, "America/New_York", s).toISOString()).toBe("2028-02-17T14:00:00.000Z");
+    const early = new Date("2028-02-17T13:00:00Z"); // 7 AM Chicago
+    expect(nextSendAt(early, "America/Chicago", s).toISOString()).toBe("2028-02-17T15:00:00.000Z");
+    const noon = new Date("2028-02-17T18:00:00Z");
+    expect(nextSendAt(noon, "America/Chicago", s)).toBe(noon);
+  });
+
+  it("frequency caps per week and month", () => {
+    const now = new Date("2028-02-16T12:00:00Z");
+    const ago = (d: number) => new Date(now.getTime() - d * 86_400_000);
+    expect(capProblem([ago(1)], now, s)).toBeNull();
+    expect(capProblem([ago(1), ago(6)], now, s)).toBe("cap_week");
+    expect(capProblem([ago(8), ago(10), ago(12), ago(15), ago(20), ago(29)], now, s)).toBe("cap_month");
+    expect(capProblem([ago(8), ago(10), ago(12), ago(15), ago(20), ago(31)], now, s)).toBeNull();
+  });
+
+  it("each client gets one message, on the first channel in the campaign's order they agreed to", () => {
+    expect(pickChannel(["sms", "email", "push"], { sms: false, email: true, push: true })).toBe("email");
+    expect(pickChannel(["push", "sms"], { sms: true, email: false, push: true })).toBe("push");
+    expect(pickChannel(["sms"], { sms: false, email: true, push: true })).toBeNull();
+  });
+
+  it("ROI is revenue less cost over cost", () => {
+    expect(roi(10_000, 2_000)).toBe(4);
+    expect(roi(500, 0)).toBeNull();
+    expect(formatCents(97.29999999999993)).toBe("$0.97");
+    expect(formatCents(-0.3)).toBe("$0.00");
+    expect(formatCents(150.5, { sign: true })).toBe("+$1.51");
+  });
+
+  it("bad settings fall back field by field", () => {
+    const m = marketingSettings({ quietStart: "25:00", capPerWeek: 3, address: "1 Main" });
+    expect(m).toMatchObject({ quietStart: "20:00", capPerWeek: 3, address: "1 Main", capPerMonth: 6 });
+  });
+});
+
+describe("segments", () => {
+  it("refuses filters on client details the person can't see, and impossible ranges", () => {
+    const all = { birthday: true, ratings: true };
+    expect(segmentProblem({ ...EMPTY_SEGMENT, birthdayMonths: [2] }, { birthday: false, ratings: true })).toMatch(/birthday/);
+    expect(segmentProblem({ ...EMPTY_SEGMENT, minRating: 4 }, { birthday: true, ratings: false })).toMatch(/rating/);
+    expect(segmentProblem({ ...EMPTY_SEGMENT, minVisits: 5, maxVisits: 2 }, all)).toMatch(/fewest visits/);
+    expect(segmentProblem({ ...EMPTY_SEGMENT, minSpendCents: 500, maxSpendCents: 100 }, all)).toMatch(/lowest spend/);
+    expect(segmentProblem({ ...EMPTY_SEGMENT, birthdayMonths: [2], minRating: 4 }, all)).toBeNull();
+  });
+
+  it("a primary-barber filter needs preferred barbers to be visible; recent and any don't", () => {
+    const seg = (barberMatch: "primary" | "recent" | "any") => SegmentSchema.parse({ staffIds: [crypto.randomUUID()], barberMatch });
+    const hidden = { birthday: true, ratings: true, preferredBarber: false };
+    expect(segmentProblem(seg("primary"), hidden)).toMatch(/primary barber/);
+    expect(segmentProblem(seg("recent"), hidden)).toBeNull();
+    expect(segmentProblem(seg("any"), hidden)).toBeNull();
+    expect(segmentProblem(seg("primary"), { ...hidden, preferredBarber: true })).toBeNull();
+    expect(SegmentSchema.parse({}).barberMatch).toBe("any");
+  });
+
+  it("weeks quick filters and between ranges, with nothing booked since", () => {
+    expect(lapsedOver(3)).toEqual({ lastVisitOverDays: 21, lastVisitWithinDays: null, notBooked: true });
+    expect(lapsedBetween(21, 28)).toEqual({ lastVisitOverDays: 21, lastVisitWithinDays: 28, notBooked: true });
+    expect(lastVisitLabel(lapsedOver(1))).toBe("Last visit more than 1 week ago");
+    expect(lastVisitLabel(lapsedOver(12))).toBe("Last visit more than 12 weeks ago");
+    expect(lastVisitLabel(lapsedBetween(21, 28))).toBe("Last visit 3 to 4 weeks ago");
+    expect(lastVisitLabel(lapsedBetween(20, 30))).toBe("Last visit 20 to 30 days ago");
+    expect(lastVisitLabel({ lastVisitOverDays: 45, lastVisitWithinDays: null })).toBe("Last visit more than 45 days ago");
+    expect(lastVisitLabel({ lastVisitOverDays: null, lastVisitWithinDays: null })).toBeNull();
+    const all = { birthday: true, ratings: true };
+    expect(segmentProblem({ ...EMPTY_SEGMENT, ...lapsedBetween(28, 21) }, all)).toMatch(/range is empty/);
+    expect(segmentProblem({ ...EMPTY_SEGMENT, ...lapsedBetween(28, 28) }, all)).toMatch(/range is empty/);
+    expect(segmentProblem({ ...EMPTY_SEGMENT, ...lapsedBetween(21, 28) }, all)).toBeNull();
+  });
+});
+
+describe("lapsed sequences", () => {
+  const steps = [{ afterDays: 14, k: "a" }, { afterDays: 21, k: "b" }, { afterDays: 28, k: "c" }, { afterDays: 42, k: "d" }];
+
+  it("the step due is the latest one reached, until the sequence stops", () => {
+    expect(stepDue(steps, 13, 120)).toBeNull();
+    expect(stepDue(steps, 14, 120)?.k).toBe("a");
+    expect(stepDue(steps, 20, 120)?.k).toBe("a");
+    expect(stepDue(steps, 21, 120)?.k).toBe("b");
+    expect(stepDue(steps, 35, 120)?.k).toBe("c");
+    expect(stepDue(steps, 100, 120)?.k).toBe("d");
+    expect(stepDue(steps, 120, 120)).toBeNull();
+    expect(stepDue([...steps].reverse(), 30, 120)?.k).toBe("c");
+  });
+
+  it("steps are a week apart, at most six, and end before the sequence stops", () => {
+    expect(stepsProblem([], 120)).toMatch(/at least one/);
+    expect(stepsProblem(steps, 120)).toBeNull();
+    expect(stepsProblem([{ afterDays: 14 }, { afterDays: 18 }], 120)).toMatch(/at least a week after/);
+    expect(stepsProblem(Array.from({ length: 7 }, (_, i) => ({ afterDays: 7 + i * 7 })), 120)).toMatch(/At most 6/);
+    expect(stepsProblem(steps, 42)).toMatch(/more than 42 days/);
+    expect(stepLabel(14, false)).toBe("2 weeks");
+    expect(stepLabel(42, true)).toBe("6 weeks+");
+    expect(stepLabel(10, false)).toBe("10 days");
+  });
+
+  it("the default steps: reminder, reminder with a link, coupon, bigger coupon, all signed by the barber", () => {
+    expect(DEFAULT_LAPSED_STEPS.map((s) => s.afterDays)).toEqual([14, 21, 28, 42]);
+    expect(stepsProblem(DEFAULT_LAPSED_STEPS, 120)).toBeNull();
+    DEFAULT_LAPSED_STEPS.forEach((s, i) => {
+      const coupon = i >= 2;
+      expect(templatesProblem(s.templates, ["sms", "email", "push"], { hasCoupon: coupon }), `step ${i + 1}`).toBeNull();
+      expect(s.templates.sms.includes("{coupon_code}"), `step ${i + 1}`).toBe(coupon);
+      expect(s.templates.sms).toMatch(/\{barber\}/);
+    });
+    expect(DEFAULT_LAPSED_STEPS[0].templates.sms).not.toMatch(/\{book_link\}/);
+    expect(DEFAULT_LAPSED_STEPS[1].templates.sms).toMatch(/\{book_link\}/);
+  });
+
+  it("report buckets by weeks since the last visit", () => {
+    expect(bucketOf(13)).toBe(-1);
+    expect(LAPSED_BUCKETS[bucketOf(14)].label).toBe("2–3 wks");
+    expect(LAPSED_BUCKETS[bucketOf(27)].label).toBe("3–4 wks");
+    expect(LAPSED_BUCKETS[bucketOf(55)].label).toBe("6–8 wks");
+    expect(LAPSED_BUCKETS[bucketOf(400)].label).toBe("12+ wks");
+  });
+});

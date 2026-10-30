@@ -1,0 +1,382 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useState, useTransition } from "react";
+import { Button, Card, CardHeader, Field, Input, Notice, Select, Suggestions } from "@/components/ui";
+import { unitsShare } from "@/domain/refunds";
+import { formatCents } from "@/lib/money";
+import { assignRefundLinesAction, reassignAction, refundAction, voidAction } from "../actions";
+import { withStepUp } from "../../step-up";
+import { ApprovalValue, ManagerPin, approvalReady } from "./manager-pin";
+
+export function PrintButton() {
+  return (
+    <Button variant="secondary" className="w-full" onClick={() => window.print()}>
+      Print receipt
+    </Button>
+  );
+}
+
+export interface RefundableItem {
+  id: string;
+  name: string;
+  kind: "service" | "addon" | "product" | "gift_card";
+  qty: number;
+  refundedQty: number;
+  netCents: number;
+  taxCents: number;
+  /** Active gift cards sold on this line, largest balance first. */
+  giftCardBalances: number[];
+  /** On a combined ticket: whose visit the line was, and their barber. */
+  person?: string | null;
+}
+
+const left = (i: RefundableItem) => (i.kind === "gift_card" ? Math.min(i.qty - i.refundedQty, i.giftCardBalances.filter((b) => b > 0).length) : i.qty - i.refundedQty);
+const lineValue = (i: RefundableItem, k: number) =>
+  i.kind === "gift_card" ? i.giftCardBalances.slice(0, k).reduce((a, b) => a + b, 0) : unitsShare(i.netCents, i.qty, i.refundedQty, k) + unitsShare(i.taxCents, i.qty, i.refundedQty, k);
+
+function LinePicker({ items, qty, onChange }: { items: RefundableItem[]; qty: Record<string, number>; onChange: (q: Record<string, number>) => void }) {
+  return (
+    <ul className="divide-y divide-zinc-100 rounded-lg ring-1 ring-zinc-200">
+      {items.map((i) => {
+        const max = left(i);
+        const n = qty[i.id] ?? 0;
+        return (
+          <li key={i.id} className="flex items-center gap-2 px-3 py-2 text-sm">
+            <input
+              type="checkbox"
+              disabled={max === 0}
+              checked={n > 0}
+              onChange={(e) => onChange({ ...qty, [i.id]: e.target.checked ? max : 0 })}
+              aria-label={`Refund ${i.name}`}
+            />
+            <span className={max === 0 ? "flex-1 text-zinc-400 line-through" : "flex-1"}>
+              {i.name}
+              {i.qty > 1 && <span className="text-zinc-500"> × {i.qty}</span>}
+              {i.person && <span className="block text-[11px] text-zinc-500">{i.person}</span>}
+              {i.kind === "gift_card" && max > 0 && <span className="block text-[11px] text-zinc-500">Voids the card; refunds what&apos;s unused</span>}
+            </span>
+            {max > 1 && n > 0 && (
+              <Input className="w-14 py-1" inputMode="numeric" value={String(n)} onChange={(e) => onChange({ ...qty, [i.id]: Math.max(0, Math.min(max, Number(e.target.value) || 0)) })} />
+            )}
+            <span className="w-16 text-right tabular text-zinc-600">{max === 0 ? "refunded" : formatCents(lineValue(i, n || max))}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/**
+ * A refund made in the Stripe dashboard came back with no lines. Until someone says what it was
+ * for, loyalty, gift cards, commission and tip pay stay as they were, and other refunds wait.
+ */
+export function AssignDashboardRefund({
+  saleId,
+  refundId,
+  amountCents,
+  items,
+  tipRemainingCents,
+  cardFeeRemainingCents,
+  feeRefundRule = null,
+  needsPin = false,
+  approvers = [],
+}: {
+  saleId: string;
+  refundId: string;
+  amountCents: number;
+  items: RefundableItem[];
+  tipRemainingCents: number;
+  cardFeeRemainingCents: number;
+  feeRefundRule?: "proportional" | "keep" | null;
+  needsPin?: boolean;
+  approvers?: { id: string; label: string }[];
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [qty, setQty] = useState<Record<string, number>>({});
+  const [tip, setTip] = useState("");
+  const [fee, setFee] = useState(false);
+  const [restock, setRestock] = useState(false);
+  const [approval, setApproval] = useState<ApprovalValue>({ staffId: "", pin: "" });
+  const tipCents = Math.min(tipRemainingCents, Math.round((Number(tip.replace(/[^0-9.]/g, "")) || 0) * 100));
+  const total = items.reduce((a, i) => a + lineValue(i, qty[i.id] ?? 0), 0) + tipCents + (fee ? cardFeeRemainingCents : 0);
+  const short = total < amountCents;
+  const pinOk = approvalReady(true, approval);
+  return (
+    <Card data-testid="assign-refund">
+      <CardHeader title={`Assign a ${formatCents(amountCents)} card refund`} subtitle="It was made in the Stripe dashboard. Pick what it was for; loyalty, gift cards, commission and tip pay change once you do." />
+      <div className="space-y-3 p-4">
+        <LinePicker items={items} qty={qty} onChange={setQty} />
+        {tipRemainingCents > 0 && (
+          <Field label={`Tip it included (up to ${formatCents(tipRemainingCents)})`}>
+            <Input inputMode="decimal" value={tip} placeholder="0.00" onChange={(e) => setTip(e.target.value)} />
+          </Field>
+        )}
+        {cardFeeRemainingCents > 0 && feeRefundRule !== "keep" && (
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={fee} onChange={(e) => setFee(e.target.checked)} /> It included all of the card surcharge ({formatCents(cardFeeRemainingCents)})
+          </label>
+        )}
+        {items.some((i) => i.kind === "product" && (qty[i.id] ?? 0) > 0) && (
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={restock} onChange={(e) => setRestock(e.target.checked)} /> Return products to stock
+          </label>
+        )}
+        <p className="text-xs text-zinc-500" data-testid="assign-total">
+          Picked {formatCents(total)} of {formatCents(amountCents)}.{!short && total > amountCents && " The refund is spread over what you picked."}
+        </p>
+        {needsPin && <ManagerPin approvers={approvers} value={approval} onChange={setApproval} what="assigning this refund" />}
+        {error && <Notice tone="red">{error}</Notice>}
+        <Button
+          className="w-full"
+          disabled={pending || short || (needsPin && !pinOk)}
+          onClick={() =>
+            start(async () => {
+              setError(null);
+              const r = await assignRefundLinesAction(
+                { saleId, refundId, items: Object.entries(qty).filter(([, n]) => n > 0).map(([saleItemId, n]) => ({ saleItemId, qty: n })), tipCents, refundCardFee: fee || "proportional", restock },
+                needsPin ? approval : null,
+              );
+              setApproval((a) => ({ ...a, pin: "" }));
+              if (!r.ok) setError(r.error ?? "Failed");
+              else router.refresh();
+            })
+          }
+        >
+          Assign lines
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+export function SaleActions({
+  saleId,
+  status,
+  items,
+  tipRemainingCents,
+  cardFeeRemainingCents,
+  feeRefundRule = null,
+  imported,
+  reasons = [],
+  refundPin = false,
+  voidPin = false,
+  refundLimitCents = null,
+  voidLimitCents = null,
+  voidCents = 0,
+  approvers = [],
+}: {
+  reasons?: string[];
+  /** Refunds or voids here need a manager's PIN: a shop login, or someone without the permission. */
+  refundPin?: boolean;
+  voidPin?: boolean;
+  /** Their own dollar limits; null is none. Above one, a manager whose limit covers it approves. */
+  refundLimitCents?: number | null;
+  voidLimitCents?: number | null;
+  /** What voiding the ticket gives back. */
+  voidCents?: number;
+  approvers?: { id: string; label: string; limitCents: number | null; refund: boolean; void: boolean }[];
+  saleId: string;
+  status: string;
+  items: RefundableItem[];
+  tipRemainingCents: number;
+  cardFeeRemainingCents: number;
+  /** "keep": the brand keeps the card surcharge on refunds, so none of it is offered back. */
+  feeRefundRule?: "proportional" | "keep" | null;
+  imported: boolean;
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  const [qty, setQty] = useState<Record<string, number>>({});
+  const [tip, setTip] = useState("");
+  const [fee, setFee] = useState(false);
+  const [restock, setRestock] = useState(true);
+  const [approval, setApproval] = useState<ApprovalValue>({ staffId: "", pin: "" });
+  if (!["paid", "partially_refunded"].includes(status)) return null;
+  if (imported) {
+    return (
+      <Card className="p-4 text-sm text-zinc-600">Imported from Squire. Refunds for this ticket happen in Squire; it&apos;s here for history and reports.</Card>
+    );
+  }
+
+  const tipCents = Math.min(tipRemainingCents, Math.round((Number(tip.replace(/[^0-9.]/g, "")) || 0) * 100));
+  const total = items.reduce((a, i) => a + lineValue(i, qty[i.id] ?? 0), 0) + tipCents + (fee ? cardFeeRemainingCents : 0);
+  const picked = Object.entries(qty).filter(([, n]) => n > 0);
+  const over = (limit: number | null, cents: number) => limit !== null && cents > limit;
+  const refundNeedsPin = refundPin || over(refundLimitCents, total);
+  const voidNeedsPin = status === "paid" && (voidPin || over(voidLimitCents, voidCents));
+  const needsPin = (refundNeedsPin && total > 0) || voidNeedsPin;
+  const covers = (a: (typeof approvers)[number], cents: number) => a.limitCents === null || cents <= a.limitCents;
+  const pinApprovers = approvers
+    .filter((a) => (refundNeedsPin && total > 0 && a.refund && covers(a, total)) || (voidNeedsPin && a.void && covers(a, voidCents)))
+    .map((a) => ({ id: a.id, label: a.limitCents === null ? a.label : `${a.label} (up to ${formatCents(a.limitCents)})` }));
+  const pinOk = approvalReady(true, approval);
+  const given = needsPin && pinOk ? approval : null;
+  const pinWhat = refundNeedsPin && total > 0 && voidNeedsPin ? "this refund or void" : voidNeedsPin ? "voiding this ticket" : "this refund";
+  const everything = () => {
+    setQty(Object.fromEntries(items.map((i) => [i.id, left(i)])));
+    setTip((tipRemainingCents / 100).toFixed(2));
+    setFee(cardFeeRemainingCents > 0 && feeRefundRule !== "keep");
+  };
+  const run = (fn: () => Promise<{ ok: boolean; error?: string }>) =>
+    start(async () => {
+      setError(null);
+      const r = await fn();
+      setApproval((a) => ({ ...a, pin: "" }));
+      if (!r.ok) setError(r.error ?? "Failed");
+      else {
+        setQty({});
+        setTip("");
+        setFee(false);
+        router.refresh();
+      }
+    });
+
+  return (
+    <Card>
+      <CardHeader title="Void or refund" subtitle="Voids are same day, before the drawer is closed. Refunds go back to the tender that paid." />
+      <div className="space-y-3 p-4">
+        <div className="flex items-center justify-between text-xs">
+          <span className="font-medium text-zinc-700">What to refund</span>
+          <button className="underline" onClick={everything}>
+            Everything left
+          </button>
+        </div>
+        <LinePicker items={items} qty={qty} onChange={setQty} />
+        {tipRemainingCents > 0 && (
+          <Field label={`Tip to refund (up to ${formatCents(tipRemainingCents)})`}>
+            <Input inputMode="decimal" value={tip} placeholder="0.00" onChange={(e) => setTip(e.target.value)} />
+          </Field>
+        )}
+        {cardFeeRemainingCents > 0 && feeRefundRule === "keep" && (
+          <p className="text-xs text-zinc-500">The card surcharge ({formatCents(cardFeeRemainingCents)}) is kept on refunds, as the brand set. A same-day void still gives it back.</p>
+        )}
+        {cardFeeRemainingCents > 0 && feeRefundRule !== "keep" && (
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={fee} onChange={(e) => setFee(e.target.checked)} /> Refund all of the card surcharge ({formatCents(cardFeeRemainingCents)})
+          </label>
+        )}
+        {cardFeeRemainingCents > 0 && feeRefundRule !== "keep" && !fee && total > 0 && (
+          <p className="text-xs text-zinc-500">Otherwise its share of what you refund goes back with it.</p>
+        )}
+        {items.some((i) => i.kind === "product" && (qty[i.id] ?? 0) > 0) && (
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={restock} onChange={(e) => setRestock(e.target.checked)} /> Return products to stock
+          </label>
+        )}
+        <Field label="Reason (required)">
+          <Input list="refund-reasons" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Rang up wrong service" />
+          <Suggestions id="refund-reasons" items={reasons} />
+        </Field>
+        {(refundLimitCents !== null && refundLimitCents > 0 && !refundPin) || (voidLimitCents !== null && voidLimitCents > 0 && !voidPin) ? (
+          <p className="text-xs text-zinc-500" data-testid="refund-limit">
+            Your limit: {formatCents(refundLimitCents ?? voidLimitCents ?? 0)} per refund or void. Above it, a manager whose limit covers it approves.
+          </p>
+        ) : null}
+        {needsPin && <ManagerPin approvers={pinApprovers} value={approval} onChange={setApproval} what={pinWhat} />}
+        {error && <Notice tone="red">{error}</Notice>}
+        <div className="grid grid-cols-2 gap-2">
+          {status === "paid" && (
+            <Button variant="danger" disabled={pending || !reason || (voidNeedsPin && !pinOk)} onClick={() => confirm("Void this whole ticket?") && run(() => voidAction(saleId, reason, voidNeedsPin ? given : null))}>
+              Void ticket
+            </Button>
+          )}
+          <Button
+            variant="secondary"
+            disabled={pending || !reason || total <= 0 || (refundNeedsPin && !pinOk)}
+            onClick={() =>
+              run(() =>
+                withStepUp(() =>
+                  refundAction({ saleId, items: picked.map(([saleItemId, n]) => ({ saleItemId, qty: n })), tipCents, refundCardFee: fee || "proportional", reason, restock }, refundNeedsPin ? given : null),
+                ),
+              )
+            }
+            className={status !== "paid" ? "col-span-2" : ""}
+          >
+            Refund {total > 0 ? formatCents(total) : ""}
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+/** Moves a paid ticket, with its sales and tips, to the barber who actually did it. */
+export function ReassignPanel({
+  saleId,
+  current,
+  barbers,
+  needsPin,
+  approvers,
+}: {
+  saleId: string;
+  current: string | null;
+  barbers: { id: string; label: string }[];
+  needsPin: boolean;
+  approvers: { id: string; label: string }[];
+}) {
+  const router = useRouter();
+  const [pending, start] = useTransition();
+  const [open, setOpen] = useState(false);
+  const [to, setTo] = useState("");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [approval, setApproval] = useState<ApprovalValue>({ staffId: "", pin: "" });
+  const options = barbers.filter((b) => b.id !== current);
+  if (!options.length) return null;
+  if (!open)
+    return (
+      <Button variant="secondary" className="w-full" onClick={() => setOpen(true)}>
+        Reassign to another barber
+      </Button>
+    );
+  return (
+    <Card>
+      <CardHeader title="Reassign ticket" subtitle="The ticket's sales and tips move to the barber you pick. Tips already paid out are taken back from the first barber's next payout." />
+      <div className="space-y-3 p-4">
+        <Field label="Barber">
+          <Select value={to} onChange={(e) => setTo(e.target.value)} aria-label="New barber">
+            <option value="">Pick a barber…</option>
+            {options.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Reason (required)">
+          <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Rung up under the wrong barber" />
+        </Field>
+        {needsPin && <ManagerPin approvers={approvers} value={approval} onChange={setApproval} what="reassigning tickets" />}
+        {error && <Notice tone="red">{error}</Notice>}
+        <div className="grid grid-cols-2 gap-2">
+          <Button variant="secondary" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            disabled={pending || !to || reason.trim().length < 3 || !approvalReady(needsPin, approval)}
+            onClick={() =>
+              start(async () => {
+                setError(null);
+                const r = await reassignAction({ saleId, toStaffId: to, reason }, needsPin ? approval : null);
+                setApproval((a) => ({ ...a, pin: "" }));
+                if (!r.ok) setError(r.error ?? "Failed");
+                else {
+                  setOpen(false);
+                  setReason("");
+                  router.refresh();
+                }
+              })
+            }
+          >
+            Reassign
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}

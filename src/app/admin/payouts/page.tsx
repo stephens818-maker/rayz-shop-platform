@@ -1,0 +1,287 @@
+import type { Metadata } from "next";
+import { asc, inArray, sql } from "drizzle-orm";
+import { db } from "@/db";
+import { entityPaymentAccounts, shopPaymentAccounts, shops } from "@/db/schema";
+import { Badge, Card, CardHeader, Empty, Input, PageHeader, Select, Stat, Table, Td, Th, buttonClass } from "@/components/ui";
+import { ACCOUNT_STATE_LABEL, payoutScheduleLabel } from "@/domain/connect";
+import { Reconciliation, isReconcilable, notYetPaidOut, unmatched } from "@/domain/payout-reconcile";
+import { reportExport } from "@/domain/permissions";
+import { formatCents } from "@/lib/money";
+import { addDays, formatDateTime, todayLocal, type LocalDate } from "@/lib/time";
+import { can, guardPage, reportShopIds } from "@/server/auth/staff";
+import { coveredOwners, payoutRows, shopAccountRows } from "@/server/payments/account-report";
+import { brandPayoutSchedule } from "@/server/payments/connect";
+import { reconciliationsFor } from "@/server/payments/reconcile";
+import { BankMatch, MatchState } from "./match";
+
+export const metadata: Metadata = { title: "Payouts" };
+
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const STATUS_TONE = { paid: "green", in_transit: "blue", pending: "amber", failed: "red", canceled: "gray" } as const;
+const NOW = { brand: "Now on the brand's account", entity: "Now on its owner's account", cash_only: "Now cash only", connected: "" } as const;
+const $ = (c: number | null) => (c == null ? "—" : formatCents(c));
+const matchState = (m: Reconciliation | undefined): MatchState | null =>
+  m ? { bankReference: m.bankReference, note: m.note, by: m.reconciledByName, at: formatDateTime(m.reconciledAt) } : null;
+
+export default async function PayoutsPage({ searchParams }: { searchParams: Promise<{ shop?: string; from?: string; to?: string; bank?: string }> }) {
+  const ctx = await guardPage("/admin/payouts");
+  const sp = await searchParams;
+  const requested = sp.shop ?? (ctx.currentShopId ? ctx.currentShopId : "all");
+  const shopIds = reportShopIds(ctx, requested);
+  const to = (sp.to && DAY.test(sp.to) ? sp.to : addDays(todayLocal(), 7)) as LocalDate;
+  const from = (sp.from && DAY.test(sp.from) && sp.from <= to ? sp.from : addDays(todayLocal(), -30)) as LocalDate;
+  const scope = { shopIds, from, to };
+  const allShops = shopIds.length === ctx.shopIds.length;
+  const withBrand = ctx.brandWide && allShops;
+  const owners = await coveredOwners(shopIds);
+  const [accounts, payouts, names, schedules, brandSchedule, ownerSchedules] = await Promise.all([
+    shopAccountRows(scope),
+    payoutRows(scope, { brand: withBrand, owners }),
+    db.select({ id: shops.id, name: shops.name }).from(shops).where(inArray(shops.id, ctx.shopIds)).orderBy(asc(shops.name)),
+    db.select({ shopId: shopPaymentAccounts.shopId, schedule: shopPaymentAccounts.payoutSchedule }).from(shopPaymentAccounts).where(inArray(shopPaymentAccounts.shopId, shopIds)),
+    brandPayoutSchedule(),
+    db
+      .select({ ownerEntityId: entityPaymentAccounts.ownerEntityId, schedule: entityPaymentAccounts.payoutSchedule })
+      .from(entityPaymentAccounts)
+      .where(owners.length ? inArray(entityPaymentAccounts.ownerEntityId, owners) : sql`false`),
+  ]);
+  const matches = await reconciliationsFor(payouts.map((p) => p.id));
+  const open = unmatched(payouts, matches);
+  const onlyUnmatched = sp.bank === "unmatched";
+  const listed = onlyUnmatched ? open.rows : payouts;
+  const canMatch = can(ctx, reportExport("shop_accounts"));
+  const scheduleOf = (shopId: string) => schedules.find((s) => s.shopId === shopId)?.schedule ?? null;
+  const own = accounts
+    .filter((a) => a.paymentsMode === "connected" || a.stripeAccountId)
+    .map((a) => {
+      const cardCents = a.cardNetCents - a.brandSettledCents - a.entitySettledCents - a.unroutedCardCents;
+      const feeCents = a.processingFeesCents - a.brandFeesCents - a.entityFeesCents;
+      return { ...a, cardCents, feeCents, netCents: cardCents - feeCents };
+    });
+  const onBrand = accounts.filter((a) => a.paymentsMode === "brand" || a.brandSettledCents !== 0);
+  const brandCard = onBrand.reduce((x, a) => x + a.brandSettledCents, 0);
+  const brandFees = onBrand.reduce((x, a) => x + a.brandFeesCents, 0);
+  const brandPayouts = payouts.filter((p) => p.shopId === null && p.ownerEntityId === null);
+  const onOwner = [...new Map(accounts.filter((a) => a.ownerId && (a.paymentsMode === "entity" || a.entitySettledCents !== 0)).map((a) => [a.ownerId!, a])).values()].map((first) => {
+    const shopsOn = accounts.filter((a) => a.ownerId === first.ownerId && (a.paymentsMode === "entity" || a.entitySettledCents !== 0));
+    const cardCents = shopsOn.reduce((x, a) => x + a.entitySettledCents, 0);
+    const feeCents = shopsOn.reduce((x, a) => x + a.entityFeesCents, 0);
+    return { ...first, shopsOn, cardCents, feeCents, covered: owners.includes(first.ownerId!) };
+  });
+  const sum = (xs: { amountCents: number; status: string }[], st: string[]) => xs.filter((p) => st.includes(p.status)).reduce((a, p) => a + p.amountCents, 0);
+  const paid = sum(payouts, ["paid"]);
+  const transit = sum(payouts, ["pending", "in_transit"]);
+  const failed = payouts.filter((p) => p.status === "failed");
+  const fees = accounts.reduce((a, r) => a + r.processingFeesCents, 0);
+  const refunds = accounts.reduce((a, r) => a + r.cardRefundsCents, 0);
+  const card = accounts.reduce((a, r) => a + r.cardNetCents, 0);
+  const label = shopIds.length === 1 ? (names.find((n) => n.id === shopIds[0])?.name ?? "This shop") : allShops ? "Every shop" : `${shopIds.length} shops`;
+
+  return (
+    <div className="mx-auto max-w-6xl space-y-5">
+      <PageHeader
+        title="Payouts"
+        subtitle={`${label}, ${from} to ${to}. Deposits Stripe made to each bank, what they're made of, and the processing fees. Shops on their own account are paid to their own bank; shops on their owner's account or the brand's are paid together to that bank.`}
+      />
+      <form method="get" className="flex flex-wrap items-end gap-2">
+        <label className="text-sm text-zinc-700">
+          <span className="mb-1 block text-xs font-medium text-zinc-500">Shop</span>
+          <Select name="shop" defaultValue={shopIds.length === 1 ? shopIds[0] : "all"} className="w-72">
+            {ctx.shopIds.length > 1 && <option value="all">{ctx.brandWide ? "Every shop and the brand account" : "All my shops"}</option>}
+            {names.map((n) => (
+              <option key={n.id} value={n.id}>
+                {n.name}
+              </option>
+            ))}
+          </Select>
+        </label>
+        <label className="text-sm text-zinc-700">
+          <span className="mb-1 block text-xs font-medium text-zinc-500">Arriving from</span>
+          <Input type="date" name="from" defaultValue={from} />
+        </label>
+        <label className="text-sm text-zinc-700">
+          <span className="mb-1 block text-xs font-medium text-zinc-500">to</span>
+          <Input type="date" name="to" defaultValue={to} />
+        </label>
+        <label className="text-sm text-zinc-700">
+          <span className="mb-1 block text-xs font-medium text-zinc-500">Bank</span>
+          <Select name="bank" defaultValue={onlyUnmatched ? "unmatched" : "all"} className="w-48">
+            <option value="all">Every deposit</option>
+            <option value="unmatched">Not matched to the bank</option>
+          </Select>
+        </label>
+        <button type="submit" className={buttonClass("secondary")}>
+          Show
+        </button>
+      </form>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <Stat label="Paid to banks" value={formatCents(paid)} hint={`${payouts.filter((p) => p.status === "paid").length} payouts`} />
+        <Stat label="On the way" value={formatCents(transit)} hint={failed.length ? `${failed.length} failed` : "pending or in transit"} tone={failed.length ? "down" : undefined} />
+        <Stat
+          label="Unmatched deposits"
+          value={String(open.count)}
+          hint={open.count ? `${formatCents(open.cents)} paid or in transit, not yet ticked off the bank statement` : "every deposit is matched to the bank"}
+          tone={open.count ? "down" : undefined}
+        />
+        <Stat label="Processing fees" value={formatCents(fees)} hint={card ? `${((fees / card) * 100).toFixed(2)}% of ${formatCents(card)} card takings` : undefined} />
+        <Stat label="Card refunds" value={formatCents(refunds)} />
+      </div>
+
+      <Card>
+        <CardHeader title="By account" subtitle="Card takings are by business date, after refunds, with tips and surcharges. Payout schedules are as Stripe reports them. Payouts are by the day they reach the bank, so the two don't line up day for day. Not yet paid out is what reached the account less what's been paid out or is on the way: money Stripe still holds for this location." />
+        <Table>
+          <thead>
+            <tr>
+              <Th>Account</Th>
+              <Th>Pays out</Th>
+              <Th right>Card takings</Th>
+              <Th right>Fees</Th>
+              <Th right>To account</Th>
+              <Th right>Paid out</Th>
+              <Th right>On the way</Th>
+              <Th right>Not yet paid out</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {own.map((a) => {
+              const mine = payouts.filter((p) => p.shopId === a.shopId);
+              return (
+                <tr key={a.shopId}>
+                  <Td className="max-w-56 whitespace-normal">
+                    <div className="font-medium text-zinc-900">{a.shopName}</div>
+                    <div className="text-xs text-zinc-500">
+                      {a.stripeAccountId ? <code>{a.stripeAccountId}</code> : "No account yet"}
+                      <br />
+                      {ACCOUNT_STATE_LABEL[a.state]}
+                      {a.paymentsMode !== "connected" && (
+                        <div className="mt-1">
+                          <Badge>{NOW[a.paymentsMode]}</Badge>
+                        </div>
+                      )}
+                    </div>
+                  </Td>
+                  <Td className="max-w-44 whitespace-normal text-zinc-600">
+                    <div>To {a.ownerName}&apos;s bank</div>
+                    <div className="text-xs text-zinc-500">{payoutScheduleLabel(scheduleOf(a.shopId))}</div>
+                  </Td>
+                  <Td right>{$(a.cardCents)}</Td>
+                  <Td right>{$(a.feeCents)}</Td>
+                  <Td right>{$(a.netCents)}</Td>
+                  <Td right>{$(sum(mine, ["paid"]))}</Td>
+                  <Td right>{$(sum(mine, ["pending", "in_transit"]))}</Td>
+                  <Td right>{$(notYetPaidOut(a.netCents, sum(mine, ["paid"]), sum(mine, ["pending", "in_transit"])))}</Td>
+                </tr>
+              );
+            })}
+            {onOwner.map((o) => {
+              const mine = payouts.filter((p) => p.ownerEntityId === o.ownerId);
+              return (
+                <tr key={`owner-${o.ownerId}`} className="bg-zinc-50/60">
+                  <Td className="max-w-56 whitespace-normal">
+                    <div className="font-medium text-zinc-900">{o.ownerName}&apos;s account</div>
+                    <div className="text-xs text-zinc-500">
+                      {o.ownerAccountId ? <code>{o.ownerAccountId}</code> : "No account yet"}
+                      <br />
+                      {o.shopsOn.map((a) => a.shopName).join(", ")}
+                    </div>
+                  </Td>
+                  <Td className="max-w-44 whitespace-normal text-zinc-600">
+                    <div>To {o.ownerName}&apos;s bank</div>
+                    <div className="text-xs text-zinc-500">{payoutScheduleLabel(ownerSchedules.find((x) => x.ownerEntityId === o.ownerId)?.schedule ?? null)}</div>
+                  </Td>
+                  <Td right>{$(o.cardCents)}</Td>
+                  <Td right>{$(o.feeCents)}</Td>
+                  <Td right>{$(o.cardCents - o.feeCents)}</Td>
+                  <Td right>{o.covered ? $(sum(mine, ["paid"])) : "—"}</Td>
+                  <Td right>{o.covered ? $(sum(mine, ["pending", "in_transit"])) : "—"}</Td>
+                  <Td right>{o.covered ? $(notYetPaidOut(o.cardCents - o.feeCents, sum(mine, ["paid"]), sum(mine, ["pending", "in_transit"]))) : "—"}</Td>
+                </tr>
+              );
+            })}
+            {onBrand.length > 0 && (
+              <tr className="bg-zinc-50/60">
+                <Td className="max-w-56 whitespace-normal">
+                  <div className="font-medium text-zinc-900">Brand account</div>
+                  <div className="text-xs text-zinc-500">{onBrand.map((a) => a.shopName).join(", ")}</div>
+                </Td>
+                <Td className="max-w-44 whitespace-normal text-zinc-600">
+                  <div>To the brand&apos;s bank</div>
+                  <div className="text-xs text-zinc-500">{payoutScheduleLabel(brandSchedule)}</div>
+                </Td>
+                <Td right>{$(brandCard)}</Td>
+                <Td right>{$(brandFees)}</Td>
+                <Td right>{$(brandCard - brandFees)}</Td>
+                <Td right>{withBrand ? $(sum(brandPayouts, ["paid"])) : "—"}</Td>
+                <Td right>{withBrand ? $(sum(brandPayouts, ["pending", "in_transit"])) : "—"}</Td>
+                <Td right>{withBrand ? $(notYetPaidOut(brandCard - brandFees, sum(brandPayouts, ["paid"]), sum(brandPayouts, ["pending", "in_transit"]))) : "—"}</Td>
+              </tr>
+            )}
+          </tbody>
+        </Table>
+        {((onBrand.length > 0 && !withBrand) || onOwner.some((o) => !o.covered)) && (
+          <p className="px-4 py-3 text-xs text-zinc-500">
+            A shared account&apos;s deposits pool every shop on it, so they&apos;re shown only with all of those shops selected: every shop for the brand account, all of an owner&apos;s
+            for theirs.
+          </p>
+        )}
+      </Card>
+
+      <Card>
+        <CardHeader
+          title="Payouts"
+          subtitle="Each deposit, itemized from Stripe's balance transactions: gross card charges, the fees taken, and refunds netted out. Tick each one off against the bank statement as it lands."
+        />
+        {listed.length === 0 ? (
+          <Empty title={onlyUnmatched ? "Every deposit in these dates is matched to the bank" : "No payouts arriving in these dates"} />
+        ) : (
+          <Table>
+            <thead>
+              <tr>
+                <Th>Arrives</Th>
+                <Th>Account</Th>
+                <Th>Payout</Th>
+                <Th>Status</Th>
+                <Th right>Gross</Th>
+                <Th right>Fees</Th>
+                <Th right>Refunds</Th>
+                <Th right>Net deposit</Th>
+                <Th>Bank</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {listed.map((p) => (
+                <tr key={p.stripePayoutId}>
+                  <Td>{p.arrivalDate}</Td>
+                  <Td>{p.shopName}</Td>
+                  <Td>
+                    <code className="text-xs text-zinc-600">{p.stripePayoutId}</code>
+                    {p.itemCount != null && <span className="ml-2 text-xs text-zinc-400">{p.itemCount} items</span>}
+                  </Td>
+                  <Td>
+                    <Badge tone={STATUS_TONE[p.status as keyof typeof STATUS_TONE] ?? "gray"}>{p.status.replace("_", " ")}</Badge>
+                    {p.failureMessage && <div className="mt-1 text-xs text-red-700">{p.failureMessage}</div>}
+                  </Td>
+                  <Td right>{$(p.grossCents)}</Td>
+                  <Td right>{p.feeCents == null ? "—" : formatCents(-p.feeCents)}</Td>
+                  <Td right>{p.refundCents == null ? "—" : formatCents(-p.refundCents)}</Td>
+                  <Td right className="font-medium">
+                    {formatCents(p.amountCents)}
+                  </Td>
+                  <Td>
+                    <BankMatch
+                      payoutId={p.id}
+                      canEdit={canMatch}
+                      reconcilable={isReconcilable(p.status)}
+                      matched={matchState(matches.get(p.id))}
+                    />
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Card>
+    </div>
+  );
+}
