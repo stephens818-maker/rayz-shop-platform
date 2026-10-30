@@ -168,7 +168,9 @@ function Summary({ v, funding, open, onToggle }: { v: HandoffView; funding: stri
         {v.discounts.map((d, i) => (
           <Row key={`d${i}`} k={d.label} v={$(-d.cents)} className="text-emerald-700" />
         ))}
-        <Row k="Tax" v={$(v.taxCents)} className="text-zinc-600" />
+        {v.taxLines.map((t, i) => (
+          <Row key={`${t.label}-${i}`} k={t.label} v={$(t.cents)} className="text-zinc-600" />
+        ))}
         <Row k="Tip" v={v.tip.cents == null && !paid ? (v.pay.readerTips ? "On the reader" : "—") : $(v.tipCents)} className="text-zinc-600" />
         {v.split.length > 1 && v.tipCents > 0 && <div className="pl-3 text-sm text-zinc-500">Shared: {v.split.map((s) => `${s.label} ${$(s.cents)}`).join(", ")}</div>}
         {fee && v.feeLabel && <Row k={v.feeLabel} v={$(v.creditFeeCents)} className="text-amber-700" />}

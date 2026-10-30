@@ -118,10 +118,22 @@ async function assertDefaultsUnlocked(ctx: Awaited<ReturnType<typeof authorize>>
   if (changed.length) await assertShopMayEdit(ctx, "location_default");
 }
 
+const optRate = z.number().min(0).max(0.2).nullable().optional();
+const optLabel = z.string().trim().max(80).nullable().optional();
+const blank = (s: string | null | undefined) => {
+  const t = s?.trim() ?? "";
+  return t ? t.slice(0, 80) : null;
+};
+
 const Money = z.object({
   serviceTaxRate: z.number().min(0).max(0.2),
   productTaxRate: z.number().min(0).max(0.2),
   taxRatesVerified: z.boolean(),
+  stateRate: optRate,
+  cityRate: optRate,
+  stateLabel: optLabel,
+  cityLabel: optLabel,
+  productLabel: optLabel,
 });
 
 /** Taxes are a compliance setting with their own permission. The card fee has its own editor (settings.card_fee). */
@@ -132,9 +144,22 @@ export async function saveShopMoneyAction(shopId: string, raw: z.input<typeof Mo
     const v = Money.parse(raw);
     const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
     if (before && (Number(before.serviceTaxRate) !== Number(v.serviceTaxRate.toFixed(5)) || Number(before.productTaxRate) !== Number(v.productTaxRate.toFixed(5)))) await assertShopMayEdit(ctx, "taxes");
+    const taxDisplay = {
+      stateRate: v.stateRate && v.stateRate > 0 ? v.stateRate : null,
+      cityRate: v.cityRate && v.cityRate > 0 ? v.cityRate : null,
+      stateLabel: blank(v.stateLabel),
+      cityLabel: blank(v.cityLabel),
+      productLabel: blank(v.productLabel),
+    };
+    const receipt = { ...((before?.receipt ?? {}) as Record<string, unknown>), taxDisplay };
     await db
       .update(shops)
-      .set({ ...v, serviceTaxRate: v.serviceTaxRate.toFixed(5), productTaxRate: v.productTaxRate.toFixed(5) })
+      .set({
+        serviceTaxRate: v.serviceTaxRate.toFixed(5),
+        productTaxRate: v.productTaxRate.toFixed(5),
+        taxRatesVerified: v.taxRatesVerified,
+        receipt,
+      })
       .where(eq(shops.id, shopId));
     if (before && (Number(before.serviceTaxRate) !== v.serviceTaxRate || Number(before.productTaxRate) !== v.productTaxRate)) {
       const { recordSalesTaxRate } = await import("@/server/fee-tax-rates");
@@ -145,7 +170,7 @@ export async function saveShopMoneyAction(shopId: string, raw: z.input<typeof Mo
       "shop.tax_fee",
       "shop",
       shopId,
-      { before: before && { serviceTaxRate: before.serviceTaxRate, productTaxRate: before.productTaxRate, taxRatesVerified: before.taxRatesVerified }, after: v },
+      { before: before && { serviceTaxRate: before.serviceTaxRate, productTaxRate: before.productTaxRate, taxRatesVerified: before.taxRatesVerified, taxDisplay: (before.receipt as { taxDisplay?: unknown } | null)?.taxDisplay ?? null }, after: { ...v, taxDisplay } },
       shopId,
     );
     await noteShopEdit("taxes", ["rates"], shopId);
@@ -301,7 +326,8 @@ export async function saveReceiptAction(shopId: string, raw: z.input<typeof Rece
     const values = { ...v, headline: v.headline?.trim() || null, footer: v.footer?.trim() || null, reviewFollowUp: { ...v.reviewFollowUp, enabled: v.reviewFollowUp.enabled && !!v.reviewUrl } };
     const before = await db.query.shops.findFirst({ where: eq(shops.id, shopId), columns: { receipt: true } });
     if (!same(receiptValue(receiptBranding(before?.receipt)), receiptValue(values))) await assertShopMayEdit(ctx, "receipt");
-    await db.update(shops).set({ receipt: values }).where(eq(shops.id, shopId));
+    const prior = before?.receipt && typeof before.receipt === "object" ? (before.receipt as Record<string, unknown>) : {};
+    await db.update(shops).set({ receipt: prior.taxDisplay ? { ...values, taxDisplay: prior.taxDisplay } : values }).where(eq(shops.id, shopId));
     await audit(ctx.actor, "shop.receipt", "shop", shopId, { before: before ? receiptBranding(before.receipt) : null, after: values }, shopId);
     await noteShopEdit("receipt", ["branding"], shopId);
     await noteShopEdit("setting", ["reviews"], shopId);

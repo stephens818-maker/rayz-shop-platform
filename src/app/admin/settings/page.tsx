@@ -26,6 +26,7 @@ import { editableShopParts } from "@/domain/permissions";
 import { cleanOperator } from "@/domain/phone-operator";
 import { FilingFrequency, filingFor, stateCode } from "@/domain/sales-tax";
 import { taxJurisdiction } from "@/domain/location-profile";
+import { taxDisplayOf } from "@/domain/receipt-tax";
 import { appBaseUrl } from "@/lib/deployment";
 import { flags } from "@/lib/flags";
 import { canEditShopFee, shopFeePolicy } from "@/server/payments/card-fee";
@@ -139,6 +140,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           serviceTaxRate: Number(shop.serviceTaxRate),
           productTaxRate: Number(shop.productTaxRate),
           taxRatesVerified: shop.taxRatesVerified,
+          ...taxDisplayOf(shop.receipt),
         }}
       />
       {filing && taxStates.length > 0 && <TaxFilingEditor states={taxStates} />}

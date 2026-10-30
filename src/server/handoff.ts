@@ -6,6 +6,7 @@ import { feeDisclosure, feeLabel, type CardFeeConfig } from "@/domain/checkout";
 import { perBarberTipProblem } from "@/domain/combined-checkout";
 import { maskEmail, maskPhone } from "@/domain/client-privacy";
 import { receiptBranding, takesCards } from "@/domain/connect";
+import { shopReceiptTaxLines } from "@/domain/receipt-tax";
 import {
   BrandHandoff,
   RECEIPT_CHANNELS,
@@ -238,6 +239,7 @@ export interface HandoffView {
   discounts: { label: string; cents: number }[];
   servicesCents: number;
   taxCents: number;
+  taxLines: { label: string; cents: number }[];
   tipCents: number;
   giftCardCents: number;
   /** What's left to pay today before any credit card surcharge. */
@@ -334,6 +336,11 @@ export async function handoffView(id: string): Promise<HandoffView> {
     discounts: t ? t.discountBreakdown.map((x) => ({ label: x.label, cents: x.cents })) : (pricing.discounts ?? []).map((x) => ({ label: x.label, cents: x.cents })),
     servicesCents: t?.serviceGrossCents ?? sale.serviceGrossCents,
     taxCents: t?.taxCents ?? sale.serviceTaxCents + sale.productTaxCents,
+    taxLines: shopReceiptTaxLines(
+      shop,
+      { serviceTaxCents: t?.serviceTaxCents ?? sale.serviceTaxCents, productTaxCents: t?.productTaxCents ?? sale.productTaxCents },
+      paid ? sale.pricing : { taxRates: none?.ctx.config.taxRates },
+    ),
     tipCents: paid ? sale.tipCents : tipCents,
     giftCardCents: t?.giftCardAppliedCents ?? 0,
     dueCents: t?.primaryChargeCents ?? sale.totalCents,

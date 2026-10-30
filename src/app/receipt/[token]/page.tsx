@@ -157,10 +157,12 @@ export default async function ReceiptPage({
                   <td className="text-right">-{formatCents(x.cents)}</td>
                 </tr>
               ))}
-              <tr>
-                <td>Tax</td>
-                <td className="text-right">{formatCents(d.taxCents)}</td>
-              </tr>
+              {d.taxLines.map((t, i) => (
+                <tr key={`${t.label}-${i}`}>
+                  <td>{t.label}</td>
+                  <td className="text-right">{formatCents(t.cents)}</td>
+                </tr>
+              ))}
               <tr>
                 <td>Tip</td>
                 <td className="text-right">{formatCents(d.tipCents)}</td>

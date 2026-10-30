@@ -119,6 +119,8 @@ export interface ReceiptEmailInput {
   people?: ReceiptPerson[] | null;
   discounts: { label: string; cents: number }[];
   taxCents: number;
+  /** Jurisdiction lines. When set, they replace the single Tax row. An empty list means no tax was charged. */
+  taxLines?: { label: string; cents: number }[];
   tipCents: number;
   fee: { label: string; cents: number } | null;
   feeWaivedCents?: number;
@@ -164,7 +166,7 @@ export function receiptEmail(o: ReceiptEmailInput): { subject: string; body: str
       : o.lines.map((l) => `${l.name}${l.qty > 1 ? ` × ${l.qty}` : ""}  ${formatCents(l.cents)}${l.refunded ? " (refunded)" : ""}`)),
     ...(o.people?.length ? [""] : []),
     ...o.discounts.map((d) => row(d.label, d.cents, true)),
-    row("Tax", o.taxCents),
+    ...(o.taxLines ? o.taxLines.map((t) => row(t.label, t.cents)) : [row("Tax", o.taxCents)]),
     row("Tip", o.tipCents),
     ...(o.fee ? [row(o.fee.label, o.fee.cents)] : []),
     ...(o.feeWaivedCents ? [`Card surcharge waived (${formatCents(o.feeWaivedCents)})`] : []),

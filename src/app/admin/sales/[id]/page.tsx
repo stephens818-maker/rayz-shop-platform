@@ -217,18 +217,15 @@ export default async function SalePage({ params, searchParams }: { params: Promi
                   <td className="text-right">-{formatCents(d.cents)}</td>
                 </tr>
               ))}
-              {sale.serviceTaxCents > 0 || pricing.taxRates?.serviceRate ? (
-                <tr>
-                  <td>Service tax{pricing.taxRates ? ` (${formatRate(pricing.taxRates.serviceRate)})` : ""}</td>
-                  <td className="text-right">{formatCents(sale.serviceTaxCents)}</td>
+              {printed.taxLines.map((t, i) => (
+                <tr key={`${t.label}-${i}`}>
+                  <td>
+                    {t.label}
+                    {t.rate > 0 ? ` (${formatRate(t.rate)})` : ""}
+                  </td>
+                  <td className="text-right">{formatCents(t.cents)}</td>
                 </tr>
-              ) : null}
-              {sale.productNetCents > 0 && (
-                <tr>
-                  <td>Product tax{pricing.taxRates ? ` (${formatRate(pricing.taxRates.productRate)})` : ""}</td>
-                  <td className="text-right">{formatCents(sale.productTaxCents)}</td>
-                </tr>
-              )}
+              ))}
               <tr>
                 <td>
                   Tip

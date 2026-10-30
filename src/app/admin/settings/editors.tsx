@@ -126,13 +126,27 @@ export function ShopInfoEditor({ shopId, initial, editable, policiesLocked }: { 
   );
 }
 
-type Money = { serviceTaxRate: number; productTaxRate: number; taxRatesVerified: boolean };
+type Money = {
+  serviceTaxRate: number;
+  productTaxRate: number;
+  taxRatesVerified: boolean;
+  stateRate: number | null;
+  cityRate: number | null;
+  stateLabel: string | null;
+  cityLabel: string | null;
+  productLabel: string | null;
+};
+
+const pct = (n: number | null) => (n == null || !Number.isFinite(n) ? "" : (n * 100).toFixed(3).replace(/\.?0+$/, ""));
+const rateOrNull = (s: string) => (s.trim() === "" ? null : Number(s) / 100);
 
 export function MoneyEditor({ shopId, initial, canEdit, ratesLocked }: { shopId: string; initial: Money; canEdit: boolean; ratesLocked: boolean }) {
   const { pending, msg, save } = useSave();
   const [v, setV] = useState(initial);
-  const [svc, setSvc] = useState((initial.serviceTaxRate * 100).toFixed(3).replace(/\.?0+$/, ""));
-  const [prd, setPrd] = useState((initial.productTaxRate * 100).toFixed(3).replace(/\.?0+$/, ""));
+  const [svc, setSvc] = useState(pct(initial.serviceTaxRate));
+  const [prd, setPrd] = useState(pct(initial.productTaxRate));
+  const [statePct, setStatePct] = useState(pct(initial.stateRate));
+  const [cityPct, setCityPct] = useState(pct(initial.cityRate));
   return (
     <Card>
       <CardHeader title="Tax" subtitle={canEdit ? "Rates are stored per shop and snapshotted on every receipt." : "You can see but not change taxes."} />
@@ -144,6 +158,21 @@ export function MoneyEditor({ shopId, initial, canEdit, ratesLocked }: { shopId:
         <Field label="Product tax %">
           <Input inputMode="decimal" value={prd} disabled={ratesLocked} onChange={(e) => setPrd(e.target.value)} />
         </Field>
+        <Field label="State portion %" hint="Optional. Splits the service tax line on the receipt. The service tax % is what is charged.">
+          <Input inputMode="decimal" value={statePct} disabled={ratesLocked} onChange={(e) => setStatePct(e.target.value)} />
+        </Field>
+        <Field label="City portion %" hint="Optional. Shown with the state portion when both are set.">
+          <Input inputMode="decimal" value={cityPct} disabled={ratesLocked} onChange={(e) => setCityPct(e.target.value)} />
+        </Field>
+        <Field label="State tax label" hint="Blank uses State of … sales tax.">
+          <Input value={v.stateLabel ?? ""} disabled={ratesLocked} onChange={(e) => setV({ ...v, stateLabel: e.target.value || null })} />
+        </Field>
+        <Field label="City tax label" hint="Blank uses City of … sales tax.">
+          <Input value={v.cityLabel ?? ""} disabled={ratesLocked} onChange={(e) => setV({ ...v, cityLabel: e.target.value || null })} />
+        </Field>
+        <Field label="Product tax label" hint="Blank uses Product sales tax when a service tax line is also shown." className="sm:col-span-2">
+          <Input value={v.productLabel ?? ""} disabled={ratesLocked} onChange={(e) => setV({ ...v, productLabel: e.target.value || null })} />
+        </Field>
         <label className="flex items-center gap-2 self-end pb-2 text-sm sm:col-span-2">
           <input type="checkbox" checked={v.taxRatesVerified} onChange={(e) => setV({ ...v, taxRatesVerified: e.target.checked })} /> Rates verified for this location
         </label>
@@ -152,7 +181,17 @@ export function MoneyEditor({ shopId, initial, canEdit, ratesLocked }: { shopId:
         <SaveBar
           pending={pending}
           msg={msg}
-          onClick={() => save(() => saveShopMoneyAction(shopId, { ...v, serviceTaxRate: Number(svc) / 100, productTaxRate: Number(prd) / 100 }))}
+          onClick={() =>
+            save(() =>
+              saveShopMoneyAction(shopId, {
+                ...v,
+                serviceTaxRate: Number(svc) / 100,
+                productTaxRate: Number(prd) / 100,
+                stateRate: rateOrNull(statePct),
+                cityRate: rateOrNull(cityPct),
+              }),
+            )
+          }
         />
       )}
     </Card>

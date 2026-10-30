@@ -198,7 +198,8 @@ export const receiptAdapter: SyncAdapter<ReceiptValue, ReceiptValue> = {
     for (const [shopId, w] of writes) {
       const [r] = await tx.select({ r: shops.receipt }).from(shops).where(eq(shops.id, shopId));
       const before = receiptBranding(r?.r);
-      const after = { ...before, ...w.value };
+      const prior = r?.r && typeof r.r === "object" ? (r.r as Record<string, unknown>) : {};
+      const after = { ...before, ...w.value, ...(prior.taxDisplay ? { taxDisplay: prior.taxDisplay } : {}) };
       await tx.update(shops).set({ receipt: after as unknown as Record<string, unknown> }).where(eq(shops.id, shopId));
       await audit(who.actor, "shop.receipt", "shop", shopId, { before, after, via: "brand_sync" }, shopId, tx);
     }

@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { CelebrationBanner } from "@/components/celebration";
 import { feeDisclosure } from "@/domain/checkout";
+import { taxDisplayOf } from "@/domain/receipt-tax";
 import { can, guardPage, limitsAt } from "@/server/auth/staff";
 import { shownBadges } from "@/server/badges";
 import { noteBriefs, noteViewer } from "@/server/client-notes";
@@ -177,6 +178,9 @@ export default async function CheckoutPage({
           id: c.shop.id,
           name: c.shop.name,
           taxVerified: c.shop.taxRatesVerified,
+          state: c.shop.state,
+          city: c.shop.city,
+          taxDisplay: taxDisplayOf(c.shop.receipt),
         }}
         config={{
           ...c.config,

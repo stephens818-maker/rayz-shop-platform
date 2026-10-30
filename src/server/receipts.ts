@@ -8,6 +8,7 @@ import { maskEmail, maskPhone } from "@/domain/client-privacy";
 import { receiptBranding } from "@/domain/connect";
 import { takesOnlineBookings } from "@/domain/location-lifecycle";
 import { fullAddress, mapsUrl } from "@/domain/location-profile";
+import { shopReceiptTaxLines } from "@/domain/receipt-tax";
 import {
   DEFAULT_RECEIPT_FOOTER,
   REQUEST_LIMIT,
@@ -118,6 +119,7 @@ export async function receiptData(saleId: string, tx: DBorTx = db, now = new Dat
     discounts: pricing.discounts ?? [],
     subtotalCents: items.reduce((a, i) => a + i.grossCents, 0),
     taxCents: sale.serviceTaxCents + sale.productTaxCents,
+    taxLines: shopReceiptTaxLines(shop, { serviceTaxCents: sale.serviceTaxCents, productTaxCents: sale.productTaxCents }, sale.pricing),
     tipCents: sale.tipCents,
     fee: sale.cardFeeCents > 0 ? { label: pricing.cardFee ? feeLabel(pricing.cardFee) : "Credit card fee", cents: sale.cardFeeCents } : null,
     feeWaivedCents: sale.cardFeeWaivedCents,
@@ -195,6 +197,7 @@ export async function composeReceipt(saleId: string, channel: ReceiptSendChannel
     people: d.people,
     discounts: d.discounts,
     taxCents: d.taxCents,
+    taxLines: d.taxLines,
     tipCents: d.tipCents,
     fee: d.fee,
     feeWaivedCents: d.feeWaivedCents,

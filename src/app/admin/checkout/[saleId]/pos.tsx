@@ -3,6 +3,8 @@
 import type { StepUpAction } from "@/domain/staff-auth";
 import { ClientEntryFields, entryPayload, type EntryField, type EntryValues } from "@/components/client-entry-fields";
 import { useRouter } from "next/navigation";
+import { formatRate } from "@/lib/money";
+import { receiptTaxLines, type TaxDisplay } from "@/domain/receipt-tax";
 import {
   type ChangeEvent,
   type FormEvent,
@@ -193,7 +195,7 @@ export function Pos(props: {
     status: string;
     times: TimesView | null;
   } | null;
-  shop: { id: string; name: string; taxVerified: boolean };
+  shop: { id: string; name: string; taxVerified: boolean; state: string; city: string; taxDisplay: TaxDisplay };
   config: { taxRates: TaxRates; cardFee: CardFeeConfig; tipPresets: number[]; loyalty?: LoyaltyBasis; walletFee?: boolean };
   feeNotice: string | null;
   /** The tip the client chose while booking; filled in until someone changes it. */
@@ -2569,16 +2571,17 @@ export function Pos(props: {
                   className="text-emerald-700"
                 />
               ))}
-              <Row
-                k={`Tax (services ${(props.config.taxRates.serviceRate * 100).toFixed(2)}%)`}
-                v={$(totals.serviceTaxCents)}
-              />
-              {totals.productNetCents > 0 && (
-                <Row
-                  k={`Tax (products ${(props.config.taxRates.productRate * 100).toFixed(2)}%)`}
-                  v={$(totals.productTaxCents)}
-                />
-              )}
+              {receiptTaxLines({
+                state: props.shop.state,
+                city: props.shop.city,
+                serviceTaxCents: totals.serviceTaxCents,
+                productTaxCents: totals.productTaxCents,
+                serviceRate: props.config.taxRates.serviceRate,
+                productRate: props.config.taxRates.productRate,
+                ...props.shop.taxDisplay,
+              }).map((t, i) => (
+                <Row key={`${t.label}-${i}`} k={t.rate > 0 ? `${t.label} (${formatRate(t.rate)})` : t.label} v={$(t.cents)} />
+              ))}
               <Row k="Tip" v={$(totals.tipCents)} />
               {totals.cardFeeCents > 0 && (
                 <Row
