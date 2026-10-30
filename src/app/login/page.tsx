@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Logo } from "@/components/ui";
-import { demoMode } from "@/lib/deployment";
+import { showDemoLogins } from "@/lib/deployment";
 import { deviceRequestShops } from "./actions";
 import { DemoLogin, LoginForm } from "./form";
 
@@ -19,7 +19,7 @@ const DEMO_LOGINS: DemoLogin[] = [
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string; blocked?: string }> }) {
   const { next, blocked } = await searchParams;
   const deviceShops = await deviceRequestShops();
-  const showDemo = demoMode() || process.env.NODE_ENV !== "production" || process.env.SHOW_DEMO_LOGINS === "true";
+  const showDemo = showDemoLogins();
   return (
     <div className="grid min-h-dvh place-items-center bg-ink-900 px-4 py-10">
       <div className="w-full max-w-sm">

@@ -7,6 +7,15 @@ export function demoMode(): boolean {
   return process.env.DEMO_MODE === "true";
 }
 
+/**
+ * Demo emails and the seed password stay off a hosted deploy. Vercel previews are reachable,
+ * so DEMO_MODE there is not enough. Local demo and local development can still list them.
+ */
+export function showDemoLogins(env: Record<string, string | undefined> = process.env): boolean {
+  if (env.VERCEL) return false;
+  return env.DEMO_MODE === "true" || (env.NODE_ENV !== "production" && env.NODE_ENV !== "test");
+}
+
 const NOT_REAL = new Set(["", "disabled", "console", "simulator"]);
 
 /**

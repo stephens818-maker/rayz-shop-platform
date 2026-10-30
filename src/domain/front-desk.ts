@@ -26,6 +26,13 @@ export const frontDeskTabs = (perms: ReadonlySet<Permission>): FrontDeskTab[] =>
 /** The other pages in their sidebar, for More. */
 export const frontDeskMore = (sections: { items: NavItem[] }[]): NavItem[] => sections.flatMap((s) => s.items).filter((i) => !TAB_HREFS.has(i.href));
 
+/** Where a sign-in lands. A shop login opens Checkout. An explicit /admin next link still wins. */
+export function staffLandingPath(o: { kind: string; next: string; canSell: boolean }): string {
+  if (o.next.startsWith("/admin")) return o.next;
+  if (o.kind === "shop" && o.canSell) return "/admin/sales";
+  return o.canSell ? "/admin" : "/admin/calendar";
+}
+
 /** Today's clients at the desk: who to check in, then who to check out. */
 export type DeskStep = "check_in" | "check_out" | null;
 export const deskStep = (status: string): DeskStep =>

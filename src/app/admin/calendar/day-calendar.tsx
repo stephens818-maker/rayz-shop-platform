@@ -1770,14 +1770,13 @@ function ApptPanel({
       <ClientNotesBrief brief={appt.clientNotes} customerId={appt.customerId} />
       {appt.customerId && <AppointmentMessages key={appt.id} appointmentId={appt.id} />}
 
-      {appt.customerId && appt.hasPhone && canManage.message && (
-        <ContactClient
-          customerId={appt.customerId}
-          canText={appt.smsOptIn}
-          hasPhone
-          compact
-        />
-      )}
+      <ContactClient
+        customerId={appt.customerId ?? ""}
+        canText={!!appt.smsOptIn}
+        hasPhone={!!appt.hasPhone}
+        canMessage={canManage.message}
+        compact
+      />
 
       {appt.clockHold && (
         <Notice tone="red">

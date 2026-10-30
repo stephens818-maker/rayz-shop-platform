@@ -3,6 +3,7 @@
 import { useState, useTransition, type ReactNode, type SyntheticEvent } from "react";
 import { Button, Input, Textarea } from "@/components/ui";
 import type { Level } from "@/domain/client-privacy";
+import { textButtonState } from "@/domain/text-client";
 import { withStepUp } from "../step-up";
 import { contactClientAction, revealClientFieldAction } from "./actions";
 
@@ -93,14 +94,27 @@ export function Masked({
   );
 }
 
-/** Call or text through the shop line. The number is looked up on the server and never shown. */
-export function ContactClient({ customerId, canText, hasPhone, compact = false }: { customerId: string; canText: boolean; hasPhone: boolean; compact?: boolean }) {
+/** Call or text through the shop line. The number is looked up on the server and never shown. Text stays on screen even when it can't be sent. */
+export function ContactClient({
+  customerId,
+  canText,
+  hasPhone,
+  canMessage = true,
+  compact = false,
+}: {
+  customerId: string;
+  canText: boolean;
+  hasPhone: boolean;
+  canMessage?: boolean;
+  compact?: boolean;
+}) {
   const [mode, setMode] = useState<"idle" | "text">("idle");
   const [message, setMessage] = useState("");
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, start] = useTransition();
-  if (!hasPhone) return compact ? null : <p className="text-xs text-zinc-500">No phone number on file.</p>;
+  void compact;
+  const text = textButtonState({ customerId: customerId || null, hasPhone, smsOptIn: canText, canMessage });
   const send = (channel: "sms" | "call") =>
     start(async () => {
       setError(null);
@@ -114,15 +128,14 @@ export function ContactClient({ customerId, canText, hasPhone, compact = false }
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2">
-        <Button size="sm" variant="secondary" disabled={pending} onClick={() => send("call")}>
+        <Button size="sm" variant="secondary" disabled={pending || !customerId || !hasPhone} onClick={() => send("call")}>
           Call through shop line
         </Button>
-        {canText && (
-          <Button size="sm" variant="secondary" disabled={pending} onClick={() => setMode(mode === "text" ? "idle" : "text")}>
-            Text
-          </Button>
-        )}
+        <Button size="sm" variant="secondary" disabled={pending || !text.enabled} title={text.reason ?? undefined} aria-label="Text" onClick={() => setMode(mode === "text" ? "idle" : "text")}>
+          Text
+        </Button>
       </div>
+      {text.reason && <p className="text-xs text-zinc-500">{text.reason}</p>}
       {mode === "text" && (
         <div className="space-y-2">
           <Textarea

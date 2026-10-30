@@ -19,6 +19,9 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
             <Link href="/" className="rounded-md bg-brand-600 px-3 py-1.5 font-medium text-white hover:bg-brand-700">
               Book
             </Link>
+            <Link href="/login" className="ml-1 rounded-md px-3 py-1.5 font-medium text-white ring-1 ring-white/40 hover:bg-white/10">
+              Sign in
+            </Link>
           </nav>
         </div>
       </header>
@@ -27,10 +30,6 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
         Ray&apos;z Barber Shop · modern meets retro ·{" "}
         <Link href="/receipt" className="underline">
           Receipts
-        </Link>{" "}
-        ·{" "}
-        <Link href="/login" className="underline">
-          Staff
         </Link>{" "}
         ·{" "}
         <Link href="/docs/api" className="underline">

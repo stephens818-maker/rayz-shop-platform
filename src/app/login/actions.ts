@@ -5,6 +5,7 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "@/db";
 import { shops, staff } from "@/db/schema";
+import { staffLandingPath } from "@/domain/front-desk";
 import { BLOCK_MESSAGE } from "@/domain/network-access";
 import { deviceLabel } from "@/domain/staff-auth";
 import { clientIp } from "@/lib/client-ip";
@@ -84,7 +85,7 @@ export async function login(_prev: LoginState | null, form: FormData): Promise<L
   await db.update(staff).set({ lastSignInAt: new Date() }).where(eq(staff.id, user.id));
   await audit({ staffId: user.id, label: `${access.role.name}:${user.displayLabel}` }, "staff.login", "staff", user.id, { ip, ...(ticket ? { twoStep: true } : {}) }, access.scope === "all" ? null : (access.shopIds[0] ?? null));
   const next = String(form.get("next") ?? "");
-  redirect(next.startsWith("/admin") ? next : access.permissions.has("sales.view") ? "/admin" : "/admin/calendar");
+  redirect(staffLandingPath({ kind: user.kind, next, canSell: access.permissions.has("sales.view") }));
 }
 
 async function deviceShopsOf(ids: string[]) {

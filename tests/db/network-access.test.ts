@@ -276,7 +276,7 @@ describe("trusted devices", () => {
 
     jar.trusted = device;
     jar.ip = HOME_IP;
-    expect((await tryLogin("coralville@rayz.test")).redirect).toBe("/admin");
+    expect((await tryLogin("coralville@rayz.test")).redirect).toBe("/admin/sales");
     expect(await ctxAs(ids.coralville, HOME_IP)).not.toBeNull();
     expect(passed(await request("/admin/calendar", { ip: HOME_IP, device }))).toBe(true);
     const seen = (await m.db.db.select().from(S().trustedDevices))[0];

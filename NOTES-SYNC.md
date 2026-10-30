@@ -911,6 +911,27 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-10-30: core, receipt tax labels and the Oct 29 shop batch (first slice)
+
+Receipts name the tax that was charged. Iowa with only a service rate shows "State of Iowa sales tax". A shop can set a state portion and a city portion, and can rename the state, city, and product lines. Those labels are stored on `shops.receipt.taxDisplay`. Saving receipt branding or a brand sync keeps them. The service tax percent and the product tax percent are still what is charged. A line is omitted when that tax is zero. `formatRate` still prints `7%`, not `7.%`.
+
+Demo logins and the seed password are not rendered on a Vercel deploy, including the sandbox. They still show on a local demo. The app already refuses to start when `DEMO_MODE` is combined with a live Stripe key, `APP_ENV=production`, or a real text/email/voice/push provider (`assertDemoModeAllowed`). A live key while `DEMO_MODE` is on also leaves charges on the simulator. `GET /api/health` and the admin footer already show the running commit.
+
+A shop login (the shared front-desk account) lands on Checkout (`/admin/sales`). A person who can sell still lands on Today. An `/admin/...` link they were sent still wins. The public home nav ends with Sign in, after Book. That is the one sign-in entry.
+
+The calendar panel and the client card always show Text. It is disabled, with a reason, when there is no client, no phone, no text opt-in, or the login cannot message. Opt-in stays off until the client agrees.
+
+`docs/sidebar-map.md` is the proposed sidebar (Front Desk, Calendar, Clients, Employees, Inventory, Campaigns, Reports, Brand Settings, Shop Settings) for Charles to review. The live sidebar is unchanged until he says to build it.
+
+Not built in this slice, on purpose:
+
+- SMS provider (Telnyx / Twilio). Charles marked it low priority. The simulator and opt-in default off stay.
+- Payroll and payment math. Jessica's $7.60 tip clawback still needs a data migration. Online gift-card sales through Stripe wait. Refund wording that would change tip payouts was left as it is.
+- The full Squire re-layout, dropdown sidebar, Employees tab, Customers cleanup, two-way thread inside the calendar panel (Inbox already holds the thread), appointment timer, drag and resize, Cmd-K search, handbook, booking-links page, location and staff photos, performance budgets, and the full security pass. Gift cards and inventory count reasons already exist; this slice did not rebuild them.
+- Vercel crons stay as they are. Charles is on a paid plan. `DEMO_RESEED` was not set.
+
+The next migration is still `core_0156`.
+
 ### 2026-10-29: core, checkout hang, own pay, and the 3% card fee
 
 A stuck card charge no longer holds the only database connection. `finalizeSale` claims the ticket, charges Stripe outside the transaction, then records the payment. A second pay within two minutes is refused. The connection uses a 5 second lock timeout. The anniversary scan sets an 8 second statement timeout and clears it. `GET /api/health` returns `{ ok, dbMs, commit }`, and the admin footer shows the same commit.
