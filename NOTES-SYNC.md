@@ -911,6 +911,14 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-10-31: core, restore old tip claw-backs (`core_0156`)
+
+`core_0156_tip_clawback_restore` finds tip reversals the old refund logic wrote after a tip had already been transferred, including a partial refund like Jessica's $7.60 on ticket 14858. The negative tip line is removed when it is not inside an approved, sent, or paid payout. When it is, an offsetting adjustment pays the barber back and the paid payout is left as it was. The shop absorbs the tip (`tip_absorptions`, kind `after_payout`). A transfer the old refund had marked reversed is cleared so it no longer shows as reversed. Each fix is one `tips.clawback_restored` audit row. Running it again does nothing. A refund from before the transfer was sent is left as a reversal. A transfer Stripe reversed with no tip refund is left reversed. No other payroll or payment math changed.
+
+The next migration is `core_0157`.
+
+Still queued for the next medium batch, not started here: SMS provider, Squire re-layout and sidebar, Customers cleanup, in-panel text thread, appointment timer, global search, handbook, gift-card and inventory rebuilds, performance, security pass, and location and staff photos. `docs/sidebar-map.md` is still the proposal waiting on Charles.
+
 ### 2026-10-30: core, receipt tax labels and the Oct 29 shop batch (first slice)
 
 Receipts name the tax that was charged. Iowa with only a service rate shows "State of Iowa sales tax". A shop can set a state portion and a city portion, and can rename the state, city, and product lines. Those labels are stored on `shops.receipt.taxDisplay`. Saving receipt branding or a brand sync keeps them. The service tax percent and the product tax percent are still what is charged. A line is omitted when that tax is zero. `formatRate` still prints `7%`, not `7.%`.
@@ -926,11 +934,11 @@ The calendar panel and the client card always show Text. It is disabled, with a 
 Not built in this slice, on purpose:
 
 - SMS provider (Telnyx / Twilio). Charles marked it low priority. The simulator and opt-in default off stay.
-- Payroll and payment math. Jessica's $7.60 tip clawback still needs a data migration. Online gift-card sales through Stripe wait. Refund wording that would change tip payouts was left as it is.
+- Payroll and payment math, except the claw-back restore in `core_0156` (see the Oct 31 log). Online gift-card sales through Stripe wait. Refund wording that would change tip payouts was left as it is.
 - The full Squire re-layout, dropdown sidebar, Employees tab, Customers cleanup, two-way thread inside the calendar panel (Inbox already holds the thread), appointment timer, drag and resize, Cmd-K search, handbook, booking-links page, location and staff photos, performance budgets, and the full security pass. Gift cards and inventory count reasons already exist; this slice did not rebuild them.
 - Vercel crons stay as they are. Charles is on a paid plan. `DEMO_RESEED` was not set.
 
-The next migration is still `core_0156`.
+The next migration is `core_0157`.
 
 ### 2026-10-29: core, checkout hang, own pay, and the 3% card fee
 
@@ -940,7 +948,7 @@ A stuck card charge no longer holds the only database connection. `finalizeSale`
 
 New shops start with the credit card fee on at 3%, or at the brand's rate when one is already set. When the brand applies the fee only to selected shops, the new shop is added to that list. The fee can be changed or turned off. There is no cap. Sales tax stays blank. Clinton's tax, hours and phone stay blank; its fee is the same 3%. The Clinton paragraph below that says the fee stays off is superseded.
 
-The next migration is `core_0156`.
+The next migration is `core_0157`.
 
 ### 2026-10-29: core, Clinton is the pilot
 

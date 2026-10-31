@@ -1093,6 +1093,13 @@
       "when": 1796643000000,
       "tag": "core_0155_barber_own_pay",
       "breakpoints": true
+    },
+    {
+      "idx": 156,
+      "version": "7",
+      "when": 1796643060000,
+      "tag": "core_0156_tip_clawback_restore",
+      "breakpoints": true
     }
   ]
 }
