@@ -993,7 +993,7 @@ export const catalogCategories = pgTable("catalog_categories", {
 });
 
 export type LedgerKind = "opening" | "sale" | "refund" | "void" | "receive" | "transfer_out" | "transfer_in" | "adjust" | "stocktake" | "upload";
-export type AdjustReason = "damage" | "theft" | "count_correction" | "back_bar" | "found" | "other";
+export type AdjustReason = "lost" | "damage" | "theft" | "count_correction" | "back_bar" | "expired" | "found" | "other";
 
 /**
  * Every change to stock, append-only. Inserting a row moves shop_products.stock and records the

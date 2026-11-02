@@ -29,6 +29,23 @@ describe("demo mode", () => {
     vi.stubEnv("NOTIFICATIONS_VOICE_PROVIDER", "console");
     const p = await import("@/server/notifications/providers");
     expect([p.smsProvider().enabled, p.emailProvider().enabled, p.voiceProvider().enabled]).toEqual([false, false, false]);
+    vi.stubEnv("NOTIFICATIONS_SMS_PROVIDER", "telnyx");
+    vi.stubEnv("TELNYX_API_KEY", "KEY");
+    vi.resetModules();
+    const again = await import("@/server/notifications/providers");
+    expect(again.smsProvider().enabled).toBe(false);
+  });
+
+  it("uses Telnyx only when that provider is selected and a key is set", async () => {
+    vi.stubEnv("DEMO_MODE", "");
+    vi.stubEnv("NOTIFICATIONS_SMS_PROVIDER", "telnyx");
+    const off = await import("@/server/notifications/providers");
+    expect(off.smsProvider().name).toBe("disabled");
+    vi.stubEnv("TELNYX_API_KEY", "KEY");
+    vi.stubEnv("TELNYX_FROM", "+15550001111");
+    vi.resetModules();
+    const on = await import("@/server/notifications/providers");
+    expect(on.smsProvider()).toMatchObject({ name: "telnyx", enabled: true });
   });
 
   it("shows customer sign-in codes even in a production build, and only in demo mode", async () => {
@@ -67,6 +84,7 @@ describe("demo mode can't run in production", () => {
     expect(() => assertDemoModeAllowed({ ...demo, STRIPE_SECRET_KEY: "sk_live_1" })).toThrow(/live STRIPE_SECRET_KEY/);
     expect(() => assertDemoModeAllowed({ ...demo, STRIPE_SECRET_KEY: "rk_live_1" })).toThrow(/live STRIPE_SECRET_KEY/);
     expect(() => assertDemoModeAllowed({ ...demo, NOTIFICATIONS_SMS_PROVIDER: "twilio" })).toThrow(/NOTIFICATIONS_SMS_PROVIDER=twilio/);
+    expect(() => assertDemoModeAllowed({ ...demo, NOTIFICATIONS_SMS_PROVIDER: "telnyx" })).toThrow(/NOTIFICATIONS_SMS_PROVIDER=telnyx/);
     expect(() => assertDemoModeAllowed({ ...demo, NOTIFICATIONS_EMAIL_PROVIDER: "Resend" })).toThrow(/NOTIFICATIONS_EMAIL_PROVIDER=resend/);
     expect(() => assertDemoModeAllowed({ APP_ENV: "production", STRIPE_SECRET_KEY: "sk_live_1" })).not.toThrow();
   });

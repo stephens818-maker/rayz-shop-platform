@@ -267,21 +267,25 @@ export const LEDGER_KIND_LABEL: Record<string, string> = {
   upload: "Bulk upload",
 };
 
-export const ADJUST_REASONS = ["damage", "theft", "count_correction", "back_bar", "found", "other"] as const;
+export const ADJUST_REASONS = ["lost", "damage", "theft", "back_bar", "count_correction", "expired", "found", "other"] as const;
 export type AdjustReasonKey = (typeof ADJUST_REASONS)[number];
 export const ADJUST_REASON_LABEL: Record<AdjustReasonKey, string> = {
-  damage: "Damaged",
+  lost: "Lost",
+  damage: "Broken / damaged",
   theft: "Theft",
+  back_bar: "Back bar / shop use",
   count_correction: "Count correction",
-  back_bar: "Used in service / back bar",
+  expired: "Expired",
   found: "Found",
   other: "Other",
 };
 /** Reasons that only take stock away; "found" only adds, count corrections and other go either way. */
 export const ADJUST_DIRECTION: Record<AdjustReasonKey, "out" | "in" | "either"> = {
+  lost: "out",
   damage: "out",
   theft: "out",
   back_bar: "out",
+  expired: "out",
   found: "in",
   count_correction: "either",
   other: "either",

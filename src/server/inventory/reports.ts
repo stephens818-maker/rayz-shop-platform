@@ -113,7 +113,7 @@ export async function movement(s: InvScope) {
         sum(delta) filter (where kind = 'adjust' and reason = 'found' and created_at >= ${start} and created_at < ${end})::int found,
         sum(delta) filter (where (kind = 'stocktake' or (kind = 'adjust' and reason = 'count_correction')) and created_at >= ${start} and created_at < ${end})::int count_variance,
         sum(delta) filter (where (kind in ('opening', 'upload') or (kind = 'adjust' and reason = 'other')) and created_at >= ${start} and created_at < ${end})::int other,
-        sum(-delta * coalesce(unit_cost_cents, 0)) filter (where (kind = 'stocktake' or (kind = 'adjust' and reason in ('damage', 'theft', 'count_correction', 'found'))) and created_at >= ${start} and created_at < ${end})::int shrink_cents,
+        sum(-delta * coalesce(unit_cost_cents, 0)) filter (where (kind = 'stocktake' or (kind = 'adjust' and reason in ('damage', 'theft', 'count_correction', 'found', 'lost', 'expired'))) and created_at >= ${start} and created_at < ${end})::int shrink_cents,
         sum(-delta * coalesce(unit_cost_cents, 0)) filter (where kind = 'adjust' and reason = 'back_bar' and created_at >= ${start} and created_at < ${end})::int back_bar_cents
       from inventory_ledger
       where shop_id in ${uuids(s.shopIds)} and created_at < ${end}

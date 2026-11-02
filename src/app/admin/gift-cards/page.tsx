@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import QRCode from "qrcode";
 import { Badge, Card, CardHeader, Empty, Input, PageHeader, Select, Stat, Table, Td, Th, buttonClass } from "@/components/ui";
 import { ledgerLabel } from "@/domain/gift-cards";
 import { formatCents } from "@/lib/money";
@@ -30,6 +31,7 @@ export default async function GiftCardsPage({ searchParams }: { searchParams: Pr
   const [stats, rows] = await Promise.all([giftCardStats(ctx), searchGiftCards(viewer, { q, status })]);
   const exact = q ? rows.find((r) => r.code === q.toUpperCase()) : undefined;
   const detail = sp.card && UUID.test(sp.card) ? await giftCardDetail(viewer, { id: sp.card }) : exact ? await giftCardDetail(viewer, { code: exact.code }) : null;
+  const qr = detail ? await QRCode.toDataURL(detail.code, { margin: 1, width: 180, errorCorrectionLevel: "M" }) : null;
   const working = openShops(ctx).map((s) => ({ id: s.id, name: s.name }));
   const homeShop = ctx.currentShopId ?? working[0]?.id ?? null;
   const canIssue = can(ctx, "giftcards.issue");
@@ -85,6 +87,10 @@ export default async function GiftCardsPage({ searchParams }: { searchParams: Pr
           />
           <div className="grid gap-4 p-4 md:grid-cols-[14rem_1fr]">
             <div>
+              {qr && (
+                <img src={qr} alt="" width={180} height={180} className="mb-2 rounded-md bg-white p-1 ring-1 ring-zinc-200" />
+              )}
+              <p className="mb-2 font-mono text-sm tracking-wide text-zinc-800">{detail.code}</p>
               <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">Balance</div>
               <div className="text-3xl font-semibold tabular-nums text-zinc-900">{formatCents(detail.balanceCents)}</div>
               <div className="text-xs text-zinc-500">of {formatCents(detail.initialCents)} first loaded</div>

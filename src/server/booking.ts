@@ -812,6 +812,7 @@ const TRANSITIONS: Record<string, string[]> = {
 export async function setAppointmentStatus(id: string, status: keyof typeof TRANSITIONS, actor: Actor, now = new Date()) {
   const a = await db.query.appointments.findFirst({ where: eq(appointments.id, id) });
   if (!a) throw notFound("Appointment");
+  if (status === "in_service" && a.status === "in_service") return startService(id, actor, now);
   if (!TRANSITIONS[a.status]?.includes(status)) throw new AppError("conflict", `Can't move from ${a.status} to ${status}`);
   if (status === "in_service") return startService(id, actor, now);
   try {

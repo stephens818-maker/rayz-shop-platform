@@ -1,8 +1,8 @@
 # Sidebar map
 
-Charles asked for this map before the sidebar is rebuilt. The app still uses the groups in `src/domain/navigation.ts` (Front desk, Inventory, Campaign Center, Insights, Payroll, Setup). This page is the proposed home for each of those items. Nothing here moves a page.
+The live sidebar in `src/domain/navigation.ts` follows this map. Groups collapse, the group for the current page stays open, and other groups the person opened stay open on this browser. A person only sees a page their permissions already allow.
 
-Order inside a group is the order below. A person only sees a page their permissions already allow. Shop logins keep the front-desk tabs (Front desk, Calendar, Checkout, Clients, Walk-ins, Time clock, Openings, Reports).
+Order inside a group is the order below. Shop logins keep the front-desk tabs (Front desk, Calendar, Checkout, Clients, Walk-ins, Time clock, Openings, Reports).
 
 ## Front Desk
 
@@ -127,3 +127,7 @@ Booking links (public URL, QR, embed) are not a page yet. They would go here aft
 - Client messages — `/admin/messages`
 - Rayz Assistant — `/admin/assistant/settings`
 - Client badges — `/admin/client-badges`
+
+## Help
+
+- Handbook — `/admin/help`

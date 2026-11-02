@@ -125,7 +125,7 @@ describe("permission catalog and templates", () => {
       expect(p.has("campaign_center.openings"), k).toBe(true);
       expect(p.has("report.openings.view"), k).toBe(true);
       for (const b of BRAND_CAMPAIGN_CENTER) expect(p.has(b), `${k} ${b}`).toBe(false);
-      expect(navFor(p).find((s) => s.title === "Campaign Center")?.items.map((i) => i.href), k).toEqual(["/admin/campaign-center/openings"]);
+      expect(navFor(p).find((s) => s.title === "Campaigns")?.items.map((i) => i.href), k).toEqual(["/admin/campaign-center/openings"]);
     }
     expect(access("barber").permissions.has("campaign_center.openings")).toBe(false);
     for (const k of ["brand_owner", "brand_admin"]) {
@@ -428,7 +428,21 @@ describe("navigation follows permissions", () => {
     expect(hrefs).not.toContain("/admin/catalog");
     for (const h of hrefs) expect(pageAllowed(fd, h as keyof typeof PAGE_ACCESS)).toBe(true);
     const barber = navFor(access("barber").permissions).flatMap((s) => s.items.map((i) => i.href));
-    expect(barber).toEqual(["/admin", "/admin/calendar", "/admin/clock", "/admin/my-time", "/admin/my-tips", "/admin/my-banking", "/admin/my-pay", "/admin/milestones", "/admin/customers", "/admin/reports", "/admin/timesheets", "/admin/pay-questions"]);
+    expect(barber).toEqual([
+      "/admin",
+      "/admin/milestones",
+      "/admin/calendar",
+      "/admin/customers",
+      "/admin/clock",
+      "/admin/my-time",
+      "/admin/timesheets",
+      "/admin/my-tips",
+      "/admin/my-banking",
+      "/admin/my-pay",
+      "/admin/pay-questions",
+      "/admin/reports",
+      "/admin/help",
+    ]);
     expect(pageAllowed(access("barber").permissions, "/admin/my-pay")).toBe(true);
     expect(pageAllowed(access("apprentice").permissions, "/admin/my-pay")).toBe(true);
     expect(pageAllowed(access("shop_manager").permissions, "/admin/my-pay")).toBe(true);

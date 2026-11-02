@@ -168,7 +168,7 @@ describe("We have openings, from the shop login", () => {
     expect(ctx.staff.kind).toBe("shop");
     expect(ctx.permissions.has("campaign_center.openings")).toBe(true);
     for (const p of ["campaign_center.view", "campaign_center.create", "campaign_center.send", "campaign_center.export", "promos.manage", "report.campaign_center.view"] as const) expect(ctx.permissions.has(p), p).toBe(false);
-    expect(navFor(ctx.permissions).find((x) => x.title === "Campaign Center")!.items.map((i) => i.href)).toEqual(["/admin/campaign-center/openings"]);
+    expect(navFor(ctx.permissions).find((x) => x.title === "Campaigns")!.items.map((i) => i.href)).toEqual(["/admin/campaign-center/openings"]);
     await expect(CP.previewBlast(ctx, { channels: ["sms"], segment: {}, shopIds: [fx.cv] }, NOW)).rejects.toThrow();
     await expect(O.approveOpenings(ctx, crypto.randomUUID(), NOW)).rejects.toThrow(/Approving/);
   });

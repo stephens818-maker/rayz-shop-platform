@@ -2,10 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { cx } from "@/components/ui";
 import type { NavItem } from "@/domain/navigation";
 import { switchShop } from "./actions";
+
+const OPEN_KEY = "rayz-nav-open";
 
 /** The sections arrive already filtered by the server, from the signed-in person's permissions. */
 export function AdminNav({ sections }: { sections: { title: string; items: NavItem[] }[] }) {
@@ -15,25 +17,58 @@ export function AdminNav({ sections }: { sections: { title: string; items: NavIt
     .filter(matches)
     .sort((a, b) => b.length - a.length)[0];
   const active = (href: string) => href === best;
+  const current = sections.find((s) => s.items.some((i) => i.href === best))?.title ?? null;
+  const [remembered, setRemembered] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(OPEN_KEY);
+      if (raw) setRemembered(JSON.parse(raw) as Record<string, boolean>);
+    } catch {
+      /* a bad saved value just leaves groups at their default */
+    }
+  }, []);
+  const isOpen = (title: string) => title === current || remembered[title] === true;
+  const toggle = (title: string) => {
+    if (title === current) return;
+    const next = { ...remembered, [title]: !isOpen(title) };
+    setRemembered(next);
+    try {
+      localStorage.setItem(OPEN_KEY, JSON.stringify(next));
+    } catch {
+      /* private mode can refuse storage; the click still opens the group */
+    }
+  };
   return (
-    <nav className="flex gap-1 overflow-x-auto px-3 pb-3 text-sm lg:block lg:flex-1 lg:overflow-y-auto lg:pb-4">
+    <nav className="flex flex-col gap-0.5 px-2 pb-3 text-sm lg:flex-1 lg:overflow-y-auto lg:pb-4" aria-label="Admin">
       {sections.map((s) => {
-        const items = s.items;
+        const open = isOpen(s.title);
         return (
-          <div key={s.title} className="flex gap-1 lg:mb-4 lg:block">
-            <div className="hidden px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-400 lg:block">{s.title}</div>
-            {items.map((i) => (
-              <Link
-                key={i.href}
-                href={i.href}
-                className={cx(
-                  "block shrink-0 whitespace-nowrap rounded-md px-2.5 py-1.5",
-                  active(i.href) ? "bg-white/10 font-medium text-white" : "hover:bg-white/5 hover:text-white",
-                )}
-              >
-                {i.label}
-              </Link>
-            ))}
+          <div key={s.title}>
+            <button
+              type="button"
+              aria-expanded={open}
+              onClick={() => toggle(s.title)}
+              className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-400 hover:bg-white/5 hover:text-white"
+            >
+              {s.title}
+              <span aria-hidden>{open ? "–" : "+"}</span>
+            </button>
+            {open && (
+              <div className="mb-1">
+                {s.items.map((i) => (
+                  <Link
+                    key={i.href}
+                    href={i.href}
+                    className={cx(
+                      "block rounded-md px-2.5 py-1.5",
+                      active(i.href) ? "bg-white/10 font-medium text-white" : "hover:bg-white/5 hover:text-white",
+                    )}
+                  >
+                    {i.label}
+                  </Link>
+                ))}
+              </div>
+            )}
           </div>
         );
       })}

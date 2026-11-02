@@ -198,6 +198,55 @@ export async function unreadCount(shopIds: readonly string[]) {
   return r?.n ?? 0;
 }
 
+export interface PanelThreadMessage {
+  id: string;
+  direction: "in" | "out" | "note";
+  body: string;
+  at: string;
+  staffLabel: string | null;
+}
+
+/** The shop's text thread with one client, for the calendar panel. The phone number stays on the server. */
+export interface PanelThread {
+  threadId: string | null;
+  unread: number;
+  messages: PanelThreadMessage[];
+  replyBlock: string | null;
+}
+
+export async function panelThread(shopId: string, customerId: string, now = new Date()): Promise<PanelThread> {
+  const c = await db.query.customers.findFirst({ where: eq(customers.id, customerId), columns: { phone: true } });
+  if (!c?.phone) return { threadId: null, unread: 0, messages: [], replyBlock: "This client has no phone on file." };
+  const t = await db.query.messageThreads.findFirst({ where: and(eq(messageThreads.shopId, shopId), eq(messageThreads.phone, c.phone)) });
+  if (!t) {
+    return { threadId: null, unread: 0, messages: [], replyBlock: await replyProblem({ phone: c.phone, lastInboundAt: null }, now) };
+  }
+  const rows = await db
+    .select({ id: messages.id, direction: messages.direction, body: messages.body, at: messages.createdAt, staffLabel: staff.displayLabel })
+    .from(messages)
+    .leftJoin(staff, eq(staff.id, messages.staffId))
+    .where(eq(messages.threadId, t.id))
+    .orderBy(desc(messages.createdAt))
+    .limit(40);
+  return {
+    threadId: t.id,
+    unread: t.unread,
+    messages: rows.reverse().map((r) => ({ id: r.id, direction: r.direction, body: r.body, at: r.at.toISOString(), staffLabel: r.staffLabel })),
+    replyBlock: await replyProblem(t, now),
+  };
+}
+
+/** A staff reply to this client from the shop's number. Same STOP, opt-in and reply-window rules as the inbox. */
+export async function replyToCustomer(shopId: string, customerId: string, body: string, who: { staffId: string; actor: Actor }, now = new Date()) {
+  const c = await db.query.customers.findFirst({ where: eq(customers.id, customerId), columns: { phone: true } });
+  if (!c?.phone) throw new AppError("bad_request", "This client has no phone on file");
+  const existing = await db.query.messageThreads.findFirst({ where: and(eq(messageThreads.shopId, shopId), eq(messageThreads.phone, c.phone)) });
+  const problem = await replyProblem(existing ?? { phone: c.phone, lastInboundAt: null }, now);
+  if (problem) throw new AppError("conflict", problem);
+  const thread = existing ?? (await threadFor(shopId, c.phone));
+  return replyInThread(thread.id, body, who, now);
+}
+
 export async function threadView(threadId: string) {
   const t = await db.query.messageThreads.findFirst({ where: eq(messageThreads.id, threadId) });
   if (!t) throw notFound("Conversation");

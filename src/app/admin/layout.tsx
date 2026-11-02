@@ -5,6 +5,7 @@ import { ThemeController, ThemeSwitch } from "@/components/theme";
 import { Toaster } from "@/components/toast";
 import { Logo } from "@/components/ui";
 import { frontDeskMore, frontDeskTabs } from "@/domain/front-desk";
+import { handbookFor } from "@/domain/handbook";
 import { STRIPE_PAYOUT_PAGES, navFor, reportsFor } from "@/domain/navigation";
 import { buildRevision } from "@/lib/deployment";
 import { flags } from "@/lib/flags";
@@ -47,6 +48,20 @@ export default async function AdminLayout({
   const sections = navFor(ctx.permissions, { hide: stripePayoutsOn() && flags.tipToBarber() ? [] : STRIPE_PAYOUT_PAGES });
   const hrefs = new Set(sections.flatMap((s) => s.items.map((i) => i.href)));
   const reports = groupReports(reportsFor(ctx.permissions)).flatMap((g) => g.reports.map((r) => ({ label: r.label, href: r.href, group: g.label })));
+  const handbook = handbookFor(ctx.permissions).map((t) => ({ slug: t.slug, title: t.title, keywords: t.keywords }));
+  const palette = (
+    <CommandPalette
+      sections={sections}
+      reports={reports}
+      shops={ctx.assignedShops}
+      currentShopId={ctx.currentShopId}
+      combined={ctx.combinedView}
+      brandWide={ctx.brandWide}
+      findClients
+      handbook={handbook}
+      goTo={GO_TO.filter((g) => hrefs.has(g.href)).map((g) => ({ ...g }))}
+    />
+  );
   const extras = (
     <>
       <Toaster />
@@ -88,6 +103,7 @@ export default async function AdminLayout({
         <p className="no-print px-3 pb-3 text-[11px] text-zinc-400" data-testid="build-revision">
           {buildRevision()}
         </p>
+        {palette}
         {extras}
       </div>
     );
@@ -164,16 +180,7 @@ export default async function AdminLayout({
           {buildRevision()}
         </p>
       </main>
-      <CommandPalette
-        sections={sections}
-        reports={reports}
-        shops={ctx.assignedShops}
-        currentShopId={ctx.currentShopId}
-        combined={ctx.combinedView}
-        brandWide={ctx.brandWide}
-        findClients
-        goTo={GO_TO.filter((g) => hrefs.has(g.href)).map((g) => ({ ...g }))}
-      />
+      {palette}
       {extras}
     </div>
   );

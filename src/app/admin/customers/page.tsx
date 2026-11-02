@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { and, asc, desc, eq, gte, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { clientRatings, customers, loyaltyAccounts, shops } from "@/db/schema";
+import { clientRatings, customers, loyaltyAccounts, shops, staff } from "@/db/schema";
 import { ClientBadges } from "@/components/client-badges";
 import { Badge, Card, Empty, LinkButton, Notice, PageHeader, StarBadge, Table, Td, Th } from "@/components/ui";
 import { EMPTY_SEGMENT } from "@/domain/marketing";
@@ -24,8 +24,11 @@ export const metadata: Metadata = { title: "Clients" };
 
 const PAGE = 50;
 
-export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string; f?: string; page?: string; rating?: string; sort?: string }> }) {
+const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+
+export default async function CustomersPage({ searchParams }: { searchParams: Promise<{ q?: string; f?: string; page?: string; rating?: string; sort?: string; letter?: string }> }) {
   const sp = await searchParams;
+  const letter = LETTERS.includes((sp.letter ?? "").toUpperCase()) ? (sp.letter ?? "").toUpperCase() : "";
   const ctx = await guardPage("/admin/customers");
   const full = can(ctx, "clients.view_all");
   const q = (sp.q ?? "").trim().slice(0, 120);
@@ -69,6 +72,7 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
           c: customers,
           shop: shops.name,
           progress: loyaltyAccounts.progressCents,
+          preferred: staff.displayLabel,
           lastVisit: sql<string | null>`(select max(starts_at) from appointments a where a.customer_id = ${customers.id} and a.status = 'completed')`,
           visits: sql<number>`(select count(*)::int from appointments a where a.customer_id = ${customers.id} and a.status = 'completed')`,
           visited: sql<string[]>`array(select distinct vs.name from appointments a join shops vs on vs.id = a.shop_id where a.customer_id = ${customers.id} and a.status = 'completed' order by vs.name)`,
@@ -77,9 +81,10 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         })
         .from(customers)
         .leftJoin(shops, eq(shops.id, customers.homeShopId))
+        .leftJoin(staff, eq(staff.id, customers.preferredStaffId))
         .leftJoin(loyaltyAccounts, eq(loyaltyAccounts.customerId, customers.id))
         .leftJoin(r, eq(r.customerId, customers.id))
-        .where(and(list.where, ratingFilter ? byRating[ratingFilter] : undefined))
+        .where(and(list.where, ratingFilter ? byRating[ratingFilter] : undefined, letter ? sql`upper(left(${customers.firstName}, 1)) = ${letter}` : undefined))
         .orderBy(...order)
         .limit(PAGE)
         .offset((page - 1) * PAGE);
@@ -93,14 +98,18 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
       rows.map((r) => r.c.id),
     ),
   ]);
-  const pageHref = (n: number) => {
-    const qs = new URLSearchParams({ page: String(n) });
+  const listHref = (extra: { letter?: string; page?: number } = {}) => {
+    const qs = new URLSearchParams();
     if (q) qs.set("q", q);
     if (sp.f && seg !== EMPTY_SEGMENT) qs.set("f", sp.f);
     if (ratingFilter) qs.set("rating", ratingFilter);
     if (sort !== "recent") qs.set("sort", sort);
-    return `/admin/customers?${qs}`;
+    if (extra.letter) qs.set("letter", extra.letter);
+    if (extra.page && extra.page > 1) qs.set("page", String(extra.page));
+    const s = qs.toString();
+    return s ? `/admin/customers?${s}` : "/admin/customers";
   };
+  const pageHref = (n: number) => listHref({ letter: letter || undefined, page: n });
   const matched = (id: string) =>
     list?.matched
       .get(id)
@@ -141,6 +150,16 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
         mayExport={full && can(ctx, "clients.export") && !clientListDenied(ctx)}
         mayBlast={can(ctx, "campaign_center.create")}
       />
+      <nav aria-label="First name A to Z" className="mb-3 flex flex-wrap gap-1 text-xs">
+        <Link href={listHref()} className={letter ? "rounded px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-100" : "rounded bg-zinc-900 px-1.5 py-0.5 text-white"}>
+          All
+        </Link>
+        {LETTERS.map((L) => (
+          <Link key={L} href={listHref({ letter: L })} className={letter === L ? "rounded bg-zinc-900 px-1.5 py-0.5 text-white" : "rounded px-1.5 py-0.5 text-zinc-600 hover:bg-zinc-100"}>
+            {L}
+          </Link>
+        ))}
+      </nav>
       {list?.problem && <Notice tone="amber">{list.problem}. Showing the list without filters.</Notice>}
       {paused ? (
         <Notice>{PAUSED_MESSAGE}</Notice>
@@ -159,13 +178,16 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                   <Th>Shops visited</Th>
                   <Th right>Visits</Th>
                   <Th>Last visit</Th>
+                  <Th>Preferred barber</Th>
+                  <Th>Texts</Th>
+                  <Th>Email</Th>
                   <Th>Comes in</Th>
                   <Th right>Loyalty progress</Th>
                   {showRating && <Th>Rating</Th>}
                 </tr>
               </thead>
               <tbody>
-                {rows.map(({ c, shop, progress, lastVisit, visits, visited, ratingAvg, ratingCount }) => (
+                {rows.map(({ c, shop, progress, preferred, lastVisit, visits, visited, ratingAvg, ratingCount }) => (
                   <tr key={c.id} className="hover:bg-zinc-50">
                     <Td>
                       <Link className="font-medium hover:underline" href={`/admin/customers/${c.id}`}>
@@ -182,6 +204,9 @@ export default async function CustomersPage({ searchParams }: { searchParams: Pr
                     <Td className="text-zinc-600">{visited.length ? visited.join(", ") : "—"}</Td>
                     <Td right>{visits}</Td>
                     <Td>{lastVisit ? formatDate(new Date(lastVisit), "MMM d, yyyy") : "—"}</Td>
+                    <Td>{preferred ?? "—"}</Td>
+                    <Td>{c.smsOptIn ? <Badge tone="green">On</Badge> : <Badge>Off</Badge>}</Td>
+                    <Td>{c.emailOptIn ? <Badge tone="green">On</Badge> : <Badge>Off</Badge>}</Td>
                     <Td className="whitespace-nowrap">
                       <CadenceCell c={cadence.get(c.id)} />
                     </Td>

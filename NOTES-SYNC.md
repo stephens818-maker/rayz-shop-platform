@@ -911,6 +911,22 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-11-01: core, sidebar, Telnyx, calendar thread, handbook
+
+The sidebar follows `docs/sidebar-map.md`: Front Desk, Calendar, Clients, Employees, Inventory, Campaigns, Reports, Brand Settings, Shop Settings, and Help. Groups stay collapsed. The group for the current page stays open, and other groups opened in this browser stay open. Who can open a page is unchanged. Shop logins still use the front-desk tabs. Search (Cmd-K) is on that shop shell too, and it includes the handbook topics that login may read.
+
+Texts can go through Telnyx when `NOTIFICATIONS_SMS_PROVIDER=telnyx` and `TELNYX_API_KEY` is set (`TELNYX_FROM`, `TELNYX_MESSAGING_PROFILE_ID` optional). No key means the provider is off. Demo mode still sends nothing, including when Telnyx is selected, and the app still refuses to start if demo mode is combined with Telnyx. Twilio is unchanged. Opt-in stays off. This slice does not add a Telnyx webhook.
+
+The calendar panel "Messages to the client" shows that shop's thread with the client: direction, text, time, and an unread count. A reply box uses the same STOP, opt-in, and 24-hour window as the inbox. The phone number stays on the server. People who cannot message clients do not get the box.
+
+A second Start, when the visit is already in the chair, says the time it started. Lost and Expired are inventory count reasons (stock leaving). Shrink reports include them. Broken / damaged is the existing damage reason. A gift-card lookup shows a QR of the code the card already has.
+
+The client list has an A–Z filter on the first letter of the first name, plus preferred barber and text/email opt-in columns. Handbook is `/admin/help`, also under Help in the sidebar and in Search. Texting, time clock, my pay, inventory, campaigns, and settings topics stay hidden without the matching permission. The same words are in `docs/handbook/`.
+
+Not changed: payroll, overtime, time clock math, tips, tip payouts, Stripe charges, refunds, card fee, sales tax math, and the payroll export. Online gift-card charges through Stripe still wait.
+
+Still open: the customer profile laid out in sections, booking links, drag-to-resize, the rest of the Squire screen re-layout, the owner dashboard cache, a security hardening pass (no new auth or encryption in this run), and location and staff photos. Photos would be the first use of `core_0157` if they need a table. The next migration is still `core_0157`.
+
 ### 2026-10-31: core, restore old tip claw-backs (`core_0156`)
 
 `core_0156_tip_clawback_restore` finds tip reversals the old refund logic wrote after a tip had already been transferred, including a partial refund like Jessica's $7.60 on ticket 14858. The negative tip line is removed when it is not inside an approved, sent, or paid payout. When it is, an offsetting adjustment pays the barber back and the paid payout is left as it was. The shop absorbs the tip (`tip_absorptions`, kind `after_payout`). A transfer the old refund had marked reversed is cleared so it no longer shows as reversed. Each fix is one `tips.clawback_restored` audit row. Running it again does nothing. A refund from before the transfer was sent is left as a reversal. A transfer Stripe reversed with no tip refund is left reversed. No other payroll or payment math changed.

@@ -51,6 +51,7 @@ export function CommandPalette({
   combined,
   brandWide,
   findClients,
+  handbook,
   goTo,
 }: {
   sections: { title: string; items: NavItem[] }[];
@@ -60,6 +61,8 @@ export function CommandPalette({
   combined: boolean;
   brandWide: boolean;
   findClients: boolean;
+  /** Handbook topics this person may read. */
+  handbook: { slug: string; title: string; keywords: string }[];
   /** The "G then a letter" jumps this person can use. */
   goTo: { key: string; href: string; label: string }[];
 }) {
@@ -136,6 +139,7 @@ export function CommandPalette({
     const pages: Row[] = sections.flatMap((s) =>
       s.items.map((i) => ({ id: `page:${i.href}`, label: i.label, group: "Pages", keywords: s.title, href: i.href, hint: s.title, run: go(i.href) })),
     );
+    const guides: Row[] = handbook.map((t) => ({ id: `help:${t.slug}`, label: t.title, group: "Handbook", keywords: `${t.keywords} help handbook`, href: `/admin/help#${t.slug}`, hint: "Handbook", run: go(`/admin/help#${t.slug}`) }));
     const reps: Row[] = reports.map((r) => ({ id: `report:${r.href}`, label: r.label, group: "Reports", keywords: `report ${r.group}`, href: r.href, hint: r.group, run: go(r.href) }));
     const switches: Row[] =
       shops.length > 1
@@ -154,14 +158,14 @@ export function CommandPalette({
       { id: "help", label: "Keyboard shortcuts", group: "Actions", keywords: "keys hotkeys help", run: () => setHelp(true) },
       { id: "logout", label: "Sign out", group: "Actions", keywords: "log out leave", run: () => start(() => logout()) },
     ];
-    return [...pages, ...reps, ...switches, ...actions];
-  }, [sections, reports, shops, currentShopId, combined, brandWide, theme, router]);
+    return [...pages, ...guides, ...reps, ...switches, ...actions];
+  }, [sections, handbook, reports, shops, currentShopId, combined, brandWide, theme, router]);
 
   const rows = useMemo<Row[]>(() => {
     const ranked = rankCommands(q, commands, q.trim() ? 40 : commands.length);
     const people: Row[] = clients.map((c) => ({ id: `client:${c.id}`, label: c.short, group: "Clients", client: c, run: () => router.push(`/admin/customers/${c.id}`) }));
     if (!q.trim()) {
-      const order = ["Pages", "Reports", "Switch shop", "Actions"];
+      const order = ["Pages", "Handbook", "Reports", "Switch shop", "Actions"];
       return [...ranked].sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group));
     }
     return ranked.length > 0 && strongMatch(q, ranked[0]) ? [...groupInOrder(ranked), ...people] : [...people, ...groupInOrder(ranked)];

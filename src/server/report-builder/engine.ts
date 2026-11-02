@@ -1093,7 +1093,7 @@ async function buildStaff(
 
 // ───────────────────────────── Inventory ─────────────────────────────
 
-const SHRINK = `(kind = 'stocktake' or (kind = 'adjust' and reason in ('damage', 'theft', 'count_correction', 'found')))`;
+const SHRINK = `(kind = 'stocktake' or (kind = 'adjust' and reason in ('damage', 'theft', 'count_correction', 'found', 'lost', 'expired')))`;
 
 /** One row per product and location (shop_products). Movement is the ledger in the dates, as on the stock movement and sell-through reports. */
 function buildInventory(def: ReportDefinition, scope: ReportScope): Built {

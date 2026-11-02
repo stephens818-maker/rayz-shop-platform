@@ -8,7 +8,7 @@ import { appointments, timeBlocks } from "@/db/schema";
 import { safe } from "@/server/action";
 import { clockBlockChangeDenied } from "@/server/auth/policy";
 import { overrideClockBlock, releaseClockBlock, resetClockBlock } from "@/server/clock-blocks";
-import { StaffContext, authorize, blockCaller, requireStaff } from "@/server/auth/staff";
+import { StaffContext, authorize, blockCaller, can, requireStaff } from "@/server/auth/staff";
 import { staffWallTime } from "@/server/booking";
 import {
   StaffBlockInput,
@@ -29,6 +29,7 @@ import { sendToCheckout } from "@/server/combined-checkout";
 import { searchClients } from "@/server/client-search";
 import { AppError, forbidden, notFound } from "@/server/errors";
 import { correctServiceTimes, reviewServiceTime } from "@/server/service-times";
+import { panelThread, replyToCustomer } from "@/server/messaging";
 import { messageHistory } from "@/server/notification-history";
 import { assertShop as assertShopAccess, hasShop, requireInTenant } from "@/server/tenant";
 import { isValidLocalDate, localDateOf, zonedWallTime } from "@/lib/time";
@@ -53,12 +54,32 @@ export async function calendarPulseAction(input: { shopId: string; date: string 
 
 const loadAppt = changeableAppt;
 
-/** The messages about one appointment (confirmation, reminders, moves), with where each got to. */
+const canText = (ctx: StaffContext) => can(ctx, "clients.message") || can(ctx, "inbox.view");
+
+/** The inbox thread with this client, plus the appointment's outbound notices. The phone stays on the server. */
 export async function appointmentMessagesAction(id: string) {
   return safe(async () => {
     const ctx = await requireStaff();
-    await loadAppt(ctx, id);
-    return messageHistory(ctx, { appointmentId: id }, 20);
+    const a = await loadAppt(ctx, id);
+    const [history, thread] = await Promise.all([
+      messageHistory(ctx, { appointmentId: id }, 20),
+      a.customerId ? panelThread(a.shopId, a.customerId) : Promise.resolve({ threadId: null, unread: 0, messages: [], replyBlock: "No client on this appointment." }),
+    ]);
+    return { history, thread, canText: canText(ctx) };
+  });
+}
+
+/** A reply from the calendar panel. Same rules as the inbox: opt-in, STOP, and the reply window. */
+export async function appointmentReplyAction(id: string, body: string) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    if (!canText(ctx)) throw forbidden("You can't text clients");
+    const a = await loadAppt(ctx, id);
+    if (!a.customerId) throw new AppError("bad_request", "No client on this appointment");
+    const r = await replyToCustomer(a.shopId, a.customerId, body, { staffId: ctx.staff.id, actor: ctx.actor });
+    revalidatePath("/admin/calendar");
+    revalidatePath("/admin/inbox");
+    return r;
   });
 }
 

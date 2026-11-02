@@ -6,8 +6,8 @@ import { nativePush } from "./push";
 
 /**
  * Pluggable SMS, voice and email providers: `disabled` (default), `console`, `simulator` (dev: the
- * call simulator drives replies, keypresses and delivery) and `twilio`, which is real but stays off
- * until TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN are set. Email is `resend` (RESEND_API_KEY) or `postmark`
+ * call simulator drives replies, keypresses and delivery), `twilio` (off until TWILIO_ACCOUNT_SID and
+ * TWILIO_AUTH_TOKEN are set) and `telnyx` (off until TELNYX_API_KEY is set). Email is `resend` (RESEND_API_KEY) or `postmark`
  * (POSTMARK_SERVER_TOKEN), real and off until its key is set, from EMAIL_FROM on a verified domain.
  * App push is `disabled`, `console`, `simulator`, `native` (APNs and FCM, src/server/notifications/push.ts) or the
  * `expo` stub, by NOTIFICATIONS_PUSH_PROVIDER.
@@ -142,6 +142,42 @@ class TwilioSms implements SmsProvider {
   }
 }
 
+export interface TelnyxEnv {
+  apiKey: string;
+  from: string | null;
+  messagingProfileId: string | null;
+}
+
+/** Telnyx stays off until TELNYX_API_KEY is set. TELNYX_FROM is the sender; TELNYX_MESSAGING_PROFILE_ID is optional. */
+export function telnyxEnv(env: Record<string, string | undefined> = process.env): TelnyxEnv | null {
+  const apiKey = env.TELNYX_API_KEY?.trim();
+  if (!apiKey) return null;
+  return { apiKey, from: env.TELNYX_FROM?.trim() || null, messagingProfileId: env.TELNYX_MESSAGING_PROFILE_ID?.trim() || null };
+}
+
+/** https://developers.telnyx.com/api/messaging/send-message */
+export class TelnyxSms implements SmsProvider {
+  name = "telnyx";
+  enabled = true;
+  constructor(private env: TelnyxEnv) {}
+  async sendSms(to: string, body: string, o: SmsOptions = {}): Promise<SendResult> {
+    const from = o.from ?? this.env.from;
+    const r = await postJson(
+      "https://api.telnyx.com/v2/messages",
+      { Authorization: `Bearer ${this.env.apiKey}` },
+      { to, text: body, ...(from ? { from } : {}), ...(this.env.messagingProfileId ? { messaging_profile_id: this.env.messagingProfileId } : {}) },
+    );
+    const data = r.json.data;
+    const id = data && typeof data === "object" && "id" in data && typeof data.id === "string" ? data.id : undefined;
+    if (!r.ok) {
+      const errors = Array.isArray(r.json.errors) ? r.json.errors : [];
+      const detail = errors[0] && typeof errors[0] === "object" && "detail" in errors[0] && typeof errors[0].detail === "string" ? errors[0].detail : "";
+      throw new Error(`Telnyx refused the text (${r.status}${detail ? `: ${detail}` : ""})`.slice(0, 300));
+    }
+    return { providerMessageId: id };
+  }
+}
+
 class TwilioVoice implements VoiceProvider {
   name = "twilio";
   enabled = true;
@@ -252,6 +288,10 @@ export function smsProvider(): SmsProvider {
       return new SimulatorProvider();
     case "twilio":
       return twilioOr((env) => new TwilioSms(env));
+    case "telnyx": {
+      const env = telnyxEnv();
+      return env ? new TelnyxSms(env) : new DisabledProvider();
+    }
     default:
       return new DisabledProvider();
   }
