@@ -96,6 +96,8 @@ async function main() {
         ownerEntityId: brandOwner.id,
         cardFeeEnabled: true,
         cardFeeRate: "0.03000", // SANDBOX TEST rate, the same 3% as the brand policy above. Not a column default.
+        // Iowa's sandbox 7% is 6% state + 1% city on the receipt. The charged rate stays 7%. Illinois has no service tax to split.
+        receipt: s.state === "IA" && s.serviceTaxRate === "0.07" && s.city.trim() ? { taxDisplay: { stateRate: 0.06, cityRate: 0.01 } } : {},
       })),
     )
     .returning();
@@ -894,8 +896,8 @@ async function seedServiceTimes(o: {
 
 /**
  * Tip payouts: the ledger synced from the history, everything before the last two days recorded as
- * paid before tip payouts. Coralville pays cash at drawer close; Moline pays daily two days after the
- * tip. Makenna chose Stripe and finished the simulator's payout setup, paid to Stripe's test Visa debit card.
+ * paid before tip payouts. Every shop defaults to Stripe. Coralville batches at the end of the night;
+ * Moline waits two days for the card to settle. Makenna finished the simulator's payout setup, paid to Stripe's test Visa debit card.
  */
 async function seedTips(o: { today: LocalDate; staffByKey: Map<string, typeof t.staff.$inferSelect>; shopBySlug: Map<string, Shop> }) {
   await syncTipLedger();

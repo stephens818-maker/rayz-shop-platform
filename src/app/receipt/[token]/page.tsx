@@ -175,7 +175,7 @@ export default async function ReceiptPage({
               )}
               {d.feeWaivedCents > 0 && (
                 <tr className="text-zinc-500">
-                  <td>Card surcharge waived</td>
+                  <td>Credit card fee waived</td>
                   <td className="text-right">{formatCents(d.feeWaivedCents)}</td>
                 </tr>
               )}
@@ -278,6 +278,7 @@ export default async function ReceiptPage({
               ))}
             </div>
           )}
+          {d.feeNotice && <p className="text-center text-sm text-zinc-500">{d.feeNotice}</p>}
           <p className="text-center text-sm text-zinc-500">{d.shop.footer}</p>
         </div>
       </article>

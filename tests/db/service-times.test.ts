@@ -75,13 +75,18 @@ describe("capturing service times", () => {
     await expect(st.finishService(a.id, actor, plus(t0, 55))).rejects.toThrow(/already finished/i);
   });
 
-  it("stepping back from In chair clears the start; Finish needs a start", async () => {
+  it("Start waits for check-in, and a later check-in keeps the start", async () => {
     const a = await book();
+    await expect(st.startService(a.id, actor)).rejects.toThrow(/check the client in first/i);
+    await expect(m.booking.setAppointmentStatus(a.id, "in_service", actor)).rejects.toThrow(/can't move from booked/i);
     await m.booking.setAppointmentStatus(a.id, "checked_in", actor);
     await m.booking.setAppointmentStatus(a.id, "in_service", actor);
+    const started = (await st.timesOf(a.id)).started;
+    expect(started).not.toBeNull();
     await m.booking.setAppointmentStatus(a.id, "checked_in", actor);
-    expect((await st.timesOf(a.id)).started).toBeNull();
-    await expect(st.finishService(a.id, actor)).rejects.toThrow(/start the service first/i);
+    expect((await st.timesOf(a.id)).started?.at).toEqual(started!.at);
+    const row = await m.db.db.query.appointments.findFirst({ where: eq(m.schema.appointments.id, a.id) });
+    expect(row?.status).toBe("in_service");
   });
 
   it("a walk-in's arrival is when it was added", async () => {
@@ -91,6 +96,7 @@ describe("capturing service times", () => {
 
   it("checkout stands in for a missed Finish and records the checkout", async () => {
     const a = await book();
+    await m.booking.setAppointmentStatus(a.id, "checked_in", actor, new Date(Date.now() - 40 * 60_000));
     await st.startService(a.id, actor, new Date(Date.now() - 35 * 60_000));
     const sale = await m.checkout.openSaleForAppointment(a.id, actor);
     const ctx = await m.checkout.loadCheckoutContext(sale.id);
@@ -102,8 +108,31 @@ describe("capturing service times", () => {
     expect(v.actualMin).toBeGreaterThanOrEqual(35);
   });
 
+  it("an early visit that already started and finished can be paid before its scheduled time", async () => {
+    const a = await book();
+    const past = new Date(Date.now() - 50 * 60_000);
+    await m.booking.setAppointmentStatus(a.id, "checked_in", actor, past);
+    await st.startService(a.id, actor, new Date(past.getTime() + 5 * 60_000));
+    await st.finishService(a.id, actor, new Date(past.getTime() + 40 * 60_000));
+    const sale = await m.checkout.openSaleForAppointment(a.id, actor);
+    const ctx = await m.checkout.loadCheckoutContext(sale.id);
+    const lines = ctx.items.map((i) => ({ kind: i.kind, refId: i.refId, name: i.name, qty: i.qty }));
+    await m.checkout.finalizeSale({ saleId: sale.id, lines, tipCents: 0, tender: { method: "cash", cashTenderedCents: null }, actor });
+    const paid = await m.db.db.query.sales.findFirst({ where: eq(m.schema.sales.id, sale.id) });
+    expect(paid?.status).toBe("paid");
+  });
+
+  it("a visit that hasn't started and is still scheduled later can't be paid", async () => {
+    const a = await book();
+    const sale = await m.checkout.openSaleForAppointment(a.id, actor);
+    const ctx = await m.checkout.loadCheckoutContext(sale.id);
+    const lines = ctx.items.map((i) => ({ kind: i.kind, refId: i.refId, name: i.name, qty: i.qty }));
+    await expect(m.checkout.finalizeSale({ saleId: sale.id, lines, tipCents: 0, tender: { method: "cash", cashTenderedCents: null }, actor })).rejects.toThrow(/hasn't started yet/i);
+  });
+
   it("opening checkout without a start leaves the cut untimed", async () => {
     const a = await book();
+    await m.db.db.update(m.schema.appointments).set({ startsAt: new Date(Date.now() - 60_000), endsAt: new Date(Date.now() + 20 * 60_000) }).where(eq(m.schema.appointments.id, a.id));
     const sale = await m.checkout.openSaleForAppointment(a.id, actor);
     const ctx = await m.checkout.loadCheckoutContext(sale.id);
     const lines = ctx.items.map((i) => ({ kind: i.kind, refId: i.refId, name: i.name, qty: i.qty }));
@@ -122,6 +151,8 @@ describe("who can start, finish and correct", () => {
     const own = await book(makenna.id);
     const other = await book(colleague.id);
     await signInAs(makenna.id);
+    await m.booking.setAppointmentStatus(own.id, "checked_in", actor);
+    await m.booking.setAppointmentStatus(other.id, "checked_in", actor);
     expect(await actions.setStatusAction(own.id, "in_service")).toEqual({ ok: true, data: null });
     expect(await actions.setStatusAction(other.id, "in_service")).toMatchObject({ ok: false, error: expect.stringMatching(/your own/i) });
     await new Promise((r) => setTimeout(r, 20));

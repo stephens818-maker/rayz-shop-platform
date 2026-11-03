@@ -55,7 +55,8 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
   const decls = mine.declarations.filter((d) => d.businessDate <= period.end && (own || ctx.shopIds.includes(d.shopId)));
   const inSheet = new Set(view.punchIds);
   const pickShops = shopRows.filter((s) => editShopIds.includes(s.id) && (team.includes(s.id) || view.shops.some((v) => v.shopId === s.id)));
-  const snap = (s: Snap) => (s ? `${PUNCH_LABEL[s.type]} ${formatDateTime(s.at)} at ${shopName.get(s.shopId) ?? "another shop"}${s.voided ? " (void)" : ""}` : "nothing");
+  const clock = (at: Date | string) => formatTime(at, undefined, { zone: true });
+  const snap = (s: Snap) => (s ? `${PUNCH_LABEL[s.type]} ${formatDateTime(s.at, { zone: true })} at ${shopName.get(s.shopId) ?? "another shop"}${s.voided ? " (void)" : ""}` : "nothing");
   const q = (start: string) => `/admin/timesheets/${staffId}?period=${start}`;
 
   return (
@@ -155,11 +156,11 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
                         {d.shifts.map((sh) => (
                           <div key={sh.inId} className="flex flex-wrap items-center gap-1">
                             <span className="tabular-nums">
-                              {formatTime(sh.start)} – {sh.end ? formatTime(sh.end) : "still open"}
+                              {clock(sh.start)} – {sh.end ? clock(sh.end) : "still open"}
                             </span>
                             {sh.breaks.map((b) => (
                               <span key={b.startId} className="text-xs text-zinc-500">
-                                break {formatTime(b.start)}–{b.end ? `${formatTime(b.end)} ${b.paid ? "(paid)" : "(unpaid)"}` : "?"}
+                                break {clock(b.start)}–{b.end ? `${clock(b.end)} ${b.paid ? "(paid)" : "(unpaid)"}` : "?"}
                               </span>
                             ))}
                             {sh.flags.map((f) => (
@@ -205,7 +206,7 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
                 <tbody>
                   {mine.map((p) => (
                     <tr key={p.id} className={p.voidedAt ? "text-zinc-400 line-through" : undefined}>
-                      <Td className="tabular-nums">{formatDateTime(p.at)}</Td>
+                      <Td className="tabular-nums">{formatDateTime(p.at, { zone: true })}</Td>
                       <Td>
                         {PUNCH_LABEL[p.type]}
                         {(p.flags as PunchFlag[])

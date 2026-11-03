@@ -2282,7 +2282,7 @@ export function Pos(props: {
                   {props.config.cardFee.enabled && (
                     <p className="text-[11px] text-zinc-500">
                       {props.feeNotice ??
-                        "Credit cards carry the surcharge on their own part."}
+                        "Credit cards carry the credit card fee on their own part."}
                     </p>
                   )}
                 </div>
@@ -2592,7 +2592,7 @@ export function Pos(props: {
               )}
               {totals.cardFeeWaivedCents > 0 && (
                 <Row
-                  k="Card surcharge waived"
+                  k="Credit card fee waived"
                   v={$(-totals.cardFeeWaivedCents)}
                   className="text-zinc-500"
                 />

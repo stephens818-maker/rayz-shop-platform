@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db, DBorTx, Tx } from "@/db";
 import {
   appointmentItems,
+  appointmentTimes,
   appointments,
   cashDrawers,
   checkoutHandoffs,
@@ -923,8 +924,21 @@ export async function finalizeSale(input: FinalizeInput) {
         ? "This ticket was combined into another one"
         : `Sale is already ${pre.sale.status}`,
     );
-  const future = [pre.appointment?.startsAt, ...pre.family.members.map((m) => m.startsAt)].filter((at): at is Date => !!at && at.getTime() > now.getTime());
-  if (pre.feeChannel !== "deposit" && future.length)
+  const visits = [
+    pre.appointment ? { id: pre.appointment.id, startsAt: pre.appointment.startsAt } : null,
+    ...pre.family.members.map((m) => ({ id: m.appointmentId, startsAt: m.startsAt })),
+  ].filter((v): v is { id: string; startsAt: Date } => !!v);
+  const begun = new Set<string>();
+  if (visits.length) {
+    const times = await db
+      .select({ id: appointmentTimes.appointmentId, startedAt: appointmentTimes.startedAt, finishedAt: appointmentTimes.finishedAt })
+      .from(appointmentTimes)
+      .where(inArray(appointmentTimes.appointmentId, visits.map((v) => v.id)));
+    for (const t of times)
+      if ((t.startedAt && t.startedAt.getTime() <= now.getTime()) || (t.finishedAt && t.finishedAt.getTime() <= now.getTime())) begun.add(t.id);
+  }
+  const waiting = visits.filter((v) => !begun.has(v.id) && v.startsAt.getTime() > now.getTime());
+  if (pre.feeChannel !== "deposit" && waiting.length)
     throw new AppError("bad_request", "This appointment hasn't started yet. Check it out once the visit has begun.");
   if (input.lines.length === 0)
     throw new AppError("bad_request", "Add at least one item");

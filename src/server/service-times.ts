@@ -25,7 +25,7 @@ import { AppError, notFound } from "./errors";
 type Times = typeof appointmentTimes.$inferSelect;
 type Patch = Partial<Omit<Times, "appointmentId" | "updatedAt">>;
 
-const STARTABLE = ["booked", "confirmed", "checked_in", "in_service"];
+const STARTABLE = ["checked_in", "in_service"];
 const STATUS_WORD: Record<string, string> = { completed: "checked out", cancelled: "cancelled", no_show: "a no-show" };
 
 async function current(appointmentId: string, tx: DBorTx): Promise<Times | null> {
@@ -76,6 +76,7 @@ export async function clearStart(appointmentId: string, tx: DBorTx = db) {
 export async function startService(appointmentId: string, actor: Actor, now = new Date()) {
   await db.transaction(async (tx) => {
     const a = await lockAppointment(appointmentId, tx);
+    if (a.status === "booked" || a.status === "confirmed") throw new AppError("conflict", "Check the client in first.");
     if (!STARTABLE.includes(a.status)) throw new AppError("conflict", `This appointment is ${STATUS_WORD[a.status] ?? a.status}, so it can't be started`);
     const t = await current(appointmentId, tx);
     if (t?.finishedAt) throw new AppError("conflict", "This service is already finished. A manager can correct the times.");

@@ -48,7 +48,7 @@ import { AppError, isDoubleBookingError, notFound } from "./errors";
 import { liveClock } from "./clock-live";
 import { AppointmentMessageContext, cancelPendingReminders, queueAppointmentMessage, scheduleAppointmentNotifications } from "./notifications/queue";
 import { guardian, householdContact } from "./household-contact";
-import { clearArrival, clearStart, recordArrival, startService } from "./service-times";
+import { clearArrival, recordArrival, startService } from "./service-times";
 import { queueStaffAlert } from "./staff-alerts";
 import { cleanNotificationPrefs, reminderHours } from "@/domain/staff-notifications";
 import { shopReminderHours } from "./location-defaults";
@@ -796,23 +796,31 @@ export async function moveInTx(
 }
 
 const TRANSITIONS: Record<string, string[]> = {
-  booked: ["confirmed", "checked_in", "in_service", "cancelled", "no_show"],
-  confirmed: ["checked_in", "in_service", "cancelled", "no_show"],
+  booked: ["confirmed", "checked_in", "cancelled", "no_show"],
+  confirmed: ["checked_in", "cancelled", "no_show"],
   checked_in: ["in_service", "cancelled", "no_show", "booked"],
-  in_service: ["completed", "checked_in"],
+  in_service: ["completed"],
   completed: [],
   cancelled: ["booked"],
   no_show: ["booked"],
 };
 
 /**
- * Status changes also record service times: checking in is the arrival, "in the chair" starts the
- * service, and stepping back undoes them. Finishing goes through Finish or checkout.
+ * Status changes also record service times: checking in is the arrival, and "in the chair" starts the
+ * service only after check-in. A check-in after Start keeps the start. Finishing goes through Finish or checkout.
  */
 export async function setAppointmentStatus(id: string, status: keyof typeof TRANSITIONS, actor: Actor, now = new Date()) {
   const a = await db.query.appointments.findFirst({ where: eq(appointments.id, id) });
   if (!a) throw notFound("Appointment");
   if (status === "in_service" && a.status === "in_service") return startService(id, actor, now);
+  if (status === "checked_in" && a.status === "in_service") {
+    await db.transaction(async (tx) => {
+      if (!a.checkedInAt) await tx.update(appointments).set({ checkedInAt: now }).where(eq(appointments.id, id));
+      await recordArrival(id, actor, tx, now);
+      await audit(actor, "appointment.checked_in", "appointment", id, { from: a.status, kept: "in_service" }, a.shopId, tx);
+    });
+    return;
+  }
   if (!TRANSITIONS[a.status]?.includes(status)) throw new AppError("conflict", `Can't move from ${a.status} to ${status}`);
   if (status === "in_service") return startService(id, actor, now);
   try {
@@ -833,7 +841,6 @@ export async function setAppointmentStatus(id: string, status: keyof typeof TRAN
         await queueStaffAlert("arrived", id, { actorStaffId: actor.staffId, now }, tx);
       }
       if (status === "booked" && a.status === "checked_in") await clearArrival(id, tx);
-      if (status === "checked_in" && a.status === "in_service") await clearStart(id, tx);
       if (status === "cancelled" || status === "no_show") await cancelPendingReminders(id, tx);
       if (status === "cancelled" && a.customerId) await scheduleAppointmentNotifications("cancelled", await messageContext(id, tx), tx, now);
       if (status === "cancelled") await queueStaffAlert("cancel", id, { actorStaffId: actor.staffId, now }, tx);

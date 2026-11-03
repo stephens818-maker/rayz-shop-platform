@@ -274,15 +274,16 @@ describe("SB-C3: cash tip declarations", () => {
 
     await dec.declarationReminderCron(on(1));
     await dec.declarationReminderCron(on(1));
-    expect((await jobs()).map((j) => j.subject)).toEqual(["Declare last month's cash tips"]);
+    expect((await jobs()).map((j) => j.subject)).toEqual(["Optional: declare last month's cash tips"]);
     for (const d of [2, 5, 8]) await dec.declarationReminderCron(on(d));
     expect(await jobs()).toHaveLength(1);
     await dec.declarationReminderCron(on(9));
     await dec.declarationReminderCron(on(9));
-    expect((await jobs()).map((j) => j.subject).sort()).toEqual(["Declare last month's cash tips", `Last day to declare ${month}'s cash tips`].sort());
+    expect((await jobs()).map((j) => j.subject).sort()).toEqual(["Optional: declare last month's cash tips", `Optional: declare ${month}'s cash tips`].sort());
     await dec.declarationReminderCron(on(10));
     expect(await jobs()).toHaveLength(2);
-    expect((await jobs())[0].body).toContain(`close on ${next}-10`);
+    expect((await jobs())[0].body).toMatch(/optional/i);
+    expect((await jobs())[0].body).not.toMatch(/close on|required/i);
 
     await m.db.db.delete(s().notificationJobs).where(and(eq(s().notificationJobs.kind, "tip_declaration"), eq(s().notificationJobs.to, email)));
     await dec.declareCashTips({ staffId: b.id, shopId: sh.id, businessDate: today, amountCents: 0, attested: true, source: "staff_app", actor });

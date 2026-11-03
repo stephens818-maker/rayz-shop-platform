@@ -169,7 +169,7 @@ export function receiptEmail(o: ReceiptEmailInput): { subject: string; body: str
     ...(o.taxLines ? o.taxLines.map((t) => row(t.label, t.cents)) : [row("Tax", o.taxCents)]),
     row("Tip", o.tipCents),
     ...(o.fee ? [row(o.fee.label, o.fee.cents)] : []),
-    ...(o.feeWaivedCents ? [`Card surcharge waived (${formatCents(o.feeWaivedCents)})`] : []),
+    ...(o.feeWaivedCents ? [`Credit card fee waived (${formatCents(o.feeWaivedCents)})`] : []),
     row("Total", o.totalCents),
     ...o.tenders.map((t) => row(`Paid with ${t.label}`, t.cents)),
     ...o.refunds.map((r) => row(r.label, r.cents, true)),

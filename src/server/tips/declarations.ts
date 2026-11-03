@@ -3,7 +3,6 @@ import { db, DBorTx } from "@/db";
 import { notificationJobs, shops, staff, tipDeclarations, timeEntries, type TipDeclarationSource } from "@/db/schema";
 import type { PayrollSettings, TipDeclarationSettings } from "@/domain/payroll/calc";
 import { closesOn, declarationProblem, lastMonthOf, monthOf, reminderDue } from "@/domain/tip-declarations";
-import { formatCents } from "@/lib/money";
 import { addDays, startOfLocalDay, todayLocal, type LocalDate } from "@/lib/time";
 import { appBaseUrl } from "@/lib/deployment";
 import { audit, type Actor } from "@/server/audit";
@@ -218,7 +217,6 @@ export async function declarationReminderCron(now = new Date()) {
       sent.set(k, { n: v.n + 1, today: v.today || r.at >= startOfLocalDay(today) });
     }
   }
-  const closes = closesOn(from, rules);
   for (const w of worked) {
     if (declared.has(w.staffId) || !w.email) continue;
     const before = sent.get(w.email.toLowerCase());
@@ -227,8 +225,8 @@ export async function declarationReminderCron(now = new Date()) {
       kind: "tip_declaration",
       channel: "email",
       to: w.email,
-      subject: before ? `Last day to declare ${month}'s cash tips` : "Declare last month's cash tips",
-      body: `Hi ${w.first ?? "there"}, please declare the cash tips you were handed in ${month} (tips that weren't rung up on a ticket), even if it's ${formatCents(0)}. Declarations for ${month} close on ${closes}. Open the staff app's tips screen, or ${appBaseUrl()}/admin/my-tips.`,
+      subject: before ? `Optional: declare ${month}'s cash tips` : "Optional: declare last month's cash tips",
+      body: `Hi ${w.first ?? "there"}, if you were handed cash tips in ${month} that weren't rung up on a ticket, you can declare them. It's optional, and you don't need to enter $0. Open the staff app's tips screen, or ${appBaseUrl()}/admin/my-tips.`,
       shopId: w.shopId,
     }, now);
     out.sent++;

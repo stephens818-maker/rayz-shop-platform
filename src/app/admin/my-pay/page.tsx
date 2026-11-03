@@ -83,6 +83,7 @@ export default async function MyPayPage() {
   const gross = estimate.reduce((a, e) => a + e.l.hourlyTotal, 0);
   const tipsEarned = estimate.reduce((a, e) => a + e.l.tips, 0);
   const tipsPaid = estimate.reduce((a, e) => a + e.l.tipsPaidOut, 0);
+  const tipsPending = Math.max(0, tipsEarned - tipsPaid);
   const commission = estimate.reduce((a, e) => a + e.l.commission + e.l.productTotal, 0);
 
   return (
@@ -92,7 +93,8 @@ export default async function MyPayPage() {
         <Stat label="Hourly gross this period" value={estimate.length ? dollars(gross) : "—"} hint="hours × your rate" />
         <Stat label="Commission this period" value={estimate.length ? dollars(commission) : "—"} hint="service and product" />
         <Stat label="Tips earned" value={estimate.length ? dollars(tipsEarned) : "—"} />
-        <Stat label="Tips paid out" value={estimate.length ? dollars(tipsPaid) : "—"} hint={estimate.length ? `${dollars(Math.max(0, tipsEarned - tipsPaid))} pending` : undefined} />
+        <Stat label="Tips paid out" value={estimate.length ? dollars(tipsPaid) : "—"} />
+        <Stat label="Pending tips" value={estimate.length ? dollars(tipsPending) : "—"} hint="earned, not paid out yet" />
       </div>
       {settings.enabled && (
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">

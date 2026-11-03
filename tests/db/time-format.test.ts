@@ -64,7 +64,7 @@ describe("the brand's time format", () => {
     const period = (await tc.periodFor(day)).start;
     const page = await open("/admin/timesheets/[staffId]", { staffId: mk.id }, { period });
     expect(page.kind).toBe("ok");
-    expect(page.text).toContain("9:05 AM – 5:30 PM");
+    expect(page.text).toMatch(/9:05 AM (CDT|CST) – 5:30 PM (CDT|CST)/);
     expect(page.text).not.toMatch(/\b17:30\b/);
 
     const { staffAppConfig } = await import("@/server/staff-api/config");

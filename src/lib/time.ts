@@ -100,9 +100,15 @@ const zoned = (instant: Date | number | string | DateTime) => (DateTime.isDateTi
  * The one clock formatter, shared with the customer API: "9:05 AM" in the shop's zone. A Luxon
  * DateTime reads in its own zone. Without a format, the brand's `time_format`.
  */
-export function formatTime(instant: Date | number | string | DateTime, format: TimeFormat = currentTimeFormat()): string {
+export function formatTime(
+  instant: Date | number | string | DateTime,
+  format: TimeFormat = currentTimeFormat(),
+  opts?: { zone?: boolean },
+): string {
   const z = zoned(instant);
-  return `${z.toFormat(timePattern(format))}${repeatedHourZone(z)}`;
+  const clock = `${z.toFormat(timePattern(format))}${repeatedHourZone(z)}`;
+  if (!opts?.zone || /\s(?:CST|CDT)$/.test(clock)) return clock;
+  return `${clock} ${z.setLocale("en-US").toFormat("ZZZZ")}`;
 }
 
 /** In the hour that happens twice when clocks fall back, which one it is ("1:30 AM CDT", "1:30 AM CST"); elsewhere nothing. */
@@ -123,6 +129,8 @@ export interface DateTimeStyle {
   date?: string;
   /** Between the date and the time, " · " by default. */
   sep?: string;
+  /** Append the shop zone (CST or CDT) on payroll times. */
+  zone?: boolean;
 }
 
 /**
@@ -132,7 +140,7 @@ export interface DateTimeStyle {
 export function formatDateTime(instant: Date | number | string | DateTime, style: TimeFormat | DateTimeStyle = {}): string {
   const st = typeof style === "string" ? { format: style } : style;
   const z = zoned(instant);
-  return `${z.toFormat(st.date ?? "EEE, MMM d")}${st.sep ?? " · "}${formatTime(z, st.format)}`;
+  return `${z.toFormat(st.date ?? "EEE, MMM d")}${st.sep ?? " · "}${formatTime(z, st.format, { zone: st.zone })}`;
 }
 
 /** A time of day from minutes after midnight: "9:05 AM" (or "09:05" on the 24-hour setting). Past midnight wraps. */

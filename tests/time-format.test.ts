@@ -31,6 +31,8 @@ describe("time format", () => {
     expect(DEFAULT_DISPLAY.timeFormat).toBe("12h");
     expect(timePattern()).toBe("h:mm a");
     expect(formatTime(at(9 * 60 + 5))).toBe("9:05 AM");
+    expect(formatTime(at(9 * 60 + 5), undefined, { zone: true })).toBe("9:05 AM CDT");
+    expect(formatTime(zonedWallTime("2026-11-02", 9 * 60 + 5).toJSDate(), undefined, { zone: true })).toBe("9:05 AM CST");
     expect(formatTime(at(17 * 60 + 30))).toBe("5:30 PM");
     expect(formatTime(at(0))).toBe("12:00 AM");
     expect(formatTime(at(12 * 60))).toBe("12:00 PM");

@@ -1100,6 +1100,13 @@
       "when": 1796643060000,
       "tag": "core_0156_tip_clawback_restore",
       "breakpoints": true
+    },
+    {
+      "idx": 157,
+      "version": "7",
+      "when": 1796643120000,
+      "tag": "core_0157_no_transfer_tips",
+      "breakpoints": true
     }
   ]
 }

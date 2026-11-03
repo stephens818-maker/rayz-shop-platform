@@ -65,6 +65,7 @@ export function ServiceTimesBox({ appointmentId, status, times, canCorrect }: { 
   const [editing, setEditing] = useState(false);
   const t = times;
   const open = ["booked", "confirmed", "checked_in", "in_service"].includes(status);
+  const canStart = status === "checked_in" || status === "in_service";
   const running = !!t?.started && !t.finished;
   const flagged = !!t && t.flags.length > 0;
   return (
@@ -88,11 +89,12 @@ export function ServiceTimesBox({ appointmentId, status, times, canCorrect }: { 
 
       {open && (
         <div className="mt-2 grid grid-cols-2 gap-2">
-          {!t?.started && (
+          {canStart && !t?.started && (
             <Button size="sm" disabled={pending} onClick={() => run(() => setStatusAction(appointmentId, "in_service"))}>
               Start
             </Button>
           )}
+          {!canStart && !t?.started && <p className="col-span-2 text-xs text-zinc-500">Check the client in first.</p>}
           {running && (
             <Button size="sm" disabled={pending} onClick={() => run(() => finishServiceAction(appointmentId))}>
               Finish
@@ -156,7 +158,7 @@ export function ServiceTimesBox({ appointmentId, status, times, canCorrect }: { 
 export function ServiceTimer({ appointmentId, status, times }: { appointmentId: string; status: string; times: TimesView | null }) {
   const { pending, error, run } = useRun();
   const running = !!times?.started && !times.finished;
-  if (!["booked", "confirmed", "checked_in", "in_service"].includes(status)) return null;
+  if (!["checked_in", "in_service"].includes(status)) return null;
   return (
     <div className="flex items-center justify-end gap-2">
       {running && (

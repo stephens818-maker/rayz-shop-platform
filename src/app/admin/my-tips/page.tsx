@@ -14,7 +14,6 @@ import { guardPage } from "@/server/auth/staff";
 import { accountDestination, staffAccount, staffAccountState } from "@/server/tips/accounts";
 import { myTips, shopTipConfigs } from "@/server/tips/ledger";
 import { tipOverrides } from "@/server/compensation";
-import { ordinal } from "@/domain/tip-declarations";
 import { myDeclarations } from "@/server/tips/declarations";
 import { PAYOUT_STATUS_TONE } from "../tips/labels";
 import { DeclarationList, DeclareCashTips } from "./declare";
@@ -73,12 +72,12 @@ export default async function MyTipsPage({ searchParams }: { searchParams: Promi
         <Card>
           <CardHeader
             title="Cash tips you were handed"
-            subtitle={`Cash tips that weren't rung up on a ticket go on your W-2, so declare them${declared.rules.atClockOut ? " when you clock out, or here" : ""}: each month's close on the ${ordinal(declared.rules.lockDay)} of the next.`}
+            subtitle={`Optional. Cash tips that weren't rung up on a ticket can be declared${declared.rules.atClockOut ? " when you clock out, or here" : " here"} so they go on your W-2. You don't have to enter $0.`}
           />
           <div className="space-y-3 px-4 py-3">
             {declared.reminder && (
               <Notice tone="amber">
-                You haven&apos;t declared cash tips for {formatDate(`${declared.reminder.month}-01`, "MMMM yyyy")}. Declare them (even $0) by {formatDate(declared.reminder.closesOn, "MMM d")}.
+                Cash tips for {formatDate(`${declared.reminder.month}-01`, "MMMM yyyy")} are optional. Declare them here if you were handed any. You don&apos;t have to enter $0.
               </Notice>
             )}
             <DeclareCashTips shops={shopRows} today={today} attestation={declared.rules.attestation} />

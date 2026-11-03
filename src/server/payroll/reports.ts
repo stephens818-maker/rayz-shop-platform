@@ -368,9 +368,9 @@ export async function payrollTimesheetsData(i: PayrollReportInput): Promise<Repo
           cells: [
             s.date,
             who(s.staffId),
-            formatTime(s.start),
-            s.end ? formatTime(s.end) : "Still open",
-            s.breaks.map((b) => `${formatTime(b.start)}–${b.end ? formatTime(b.end) : "open"}${b.paid ? "" : " unpaid"}`).join("; "),
+            formatTime(s.start, undefined, { zone: true }),
+            s.end ? formatTime(s.end, undefined, { zone: true }) : "Still open",
+            s.breaks.map((b) => `${formatTime(b.start, undefined, { zone: true })}–${b.end ? formatTime(b.end, undefined, { zone: true }) : "open"}${b.paid ? "" : " unpaid"}`).join("; "),
             s.breakMin,
             s.unpaidBreakMin,
             h2(s.workedMin / 60),
