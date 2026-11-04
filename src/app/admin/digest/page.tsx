@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { and, asc, count, eq, max } from "drizzle-orm";
 import { Card, CardHeader, PageHeader } from "@/components/ui";
 import { db } from "@/db";
@@ -51,10 +52,6 @@ export default async function MorningEmailPage() {
       )[0].n
     : 0;
 
-  const plans = versionPlans(morningShops(ctx.access), settings.versions[ctx.staff.id]);
-  const preview = plans.length ? await buildMorningDashboard({ access: ctx.access, firstName: ctx.staff.firstName, shopIds: plans[0].shopIds, settings }) : null;
-  const html = preview && hasContent(preview) ? renderMorningHtml(preview) : null;
-
   return (
     <div className="mx-auto max-w-6xl space-y-4">
       <PageHeader
@@ -68,18 +65,39 @@ export default async function MorningEmailPage() {
           people={list}
           lastSent={last?.date ? `Last sent ${formatDate(last.date, "EEE MMM d")}${last.date === todayLocal() ? " (today)" : ""} to ${sent} ${sent === 1 ? "person" : "people"}.` : "Hasn't gone out yet."}
         />
-        <Card className="self-start overflow-hidden">
-          <CardHeader
-            title="Your copy, right now"
-            subtitle={
-              html
-                ? `${plans.length > 1 ? `The first of your ${plans.length} emails: ` : ""}${preview!.version.label}. Charts and links work in the email; the open dashboard has every barber.`
-                : "You can't see the Morning Dashboard for any open shop, or every section you could see is off."
-            }
-          />
-          {html && <iframe title="Morning Dashboard email preview" srcDoc={html} sandbox="" className="h-[48rem] w-full border-0 bg-zinc-100" />}
-        </Card>
+        <Suspense fallback={<Card className="self-start"><CardHeader title="Your copy, right now" subtitle="Loading the preview…" /></Card>}>
+          <DigestPreview access={ctx.access} staffId={ctx.staff.id} firstName={ctx.staff.firstName} settings={settings} />
+        </Suspense>
       </div>
     </div>
+  );
+}
+
+async function DigestPreview({
+  access,
+  staffId,
+  firstName,
+  settings,
+}: {
+  access: Awaited<ReturnType<typeof guardPage>>["access"];
+  staffId: string;
+  firstName: string;
+  settings: Awaited<ReturnType<typeof loadMorningSettings>>;
+}) {
+  const plans = versionPlans(morningShops(access), settings.versions[staffId]);
+  const preview = plans.length ? await buildMorningDashboard({ access, firstName, shopIds: plans[0].shopIds, settings }) : null;
+  const html = preview && hasContent(preview) ? renderMorningHtml(preview) : null;
+  return (
+    <Card className="self-start overflow-hidden">
+      <CardHeader
+        title="Your copy, right now"
+        subtitle={
+          html
+            ? `${plans.length > 1 ? `The first of your ${plans.length} emails: ` : ""}${preview!.version.label}. Charts and links work in the email; the open dashboard has every barber.`
+            : "You can't see the Morning Dashboard for any open shop, or every section you could see is off."
+        }
+      />
+      {html && <iframe title="Morning Dashboard email preview" srcDoc={html} sandbox="" className="h-[48rem] w-full border-0 bg-zinc-100" />}
+    </Card>
   );
 }

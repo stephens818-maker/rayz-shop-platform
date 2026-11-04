@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
+import { toast } from "@/components/toast";
 import { ClockInput } from "@/components/time-input";
 import { Button, Input, Notice, cx } from "@/components/ui";
 import { FINISHED_VIA_LABEL, FLAG_LABEL, REVIEW_LABEL, formatMinutes, type Stamp, type TimesView } from "@/domain/service-times";
@@ -90,13 +91,13 @@ export function ServiceTimesBox({ appointmentId, status, times, canCorrect }: { 
       {open && (
         <div className="mt-2 grid grid-cols-2 gap-2">
           {canStart && !t?.started && (
-            <Button size="sm" disabled={pending} onClick={() => run(() => setStatusAction(appointmentId, "in_service"))}>
+            <Button size="sm" disabled={pending} onClick={() => run(() => setStatusAction(appointmentId, "in_service"), () => toast("Started"))}>
               Start
             </Button>
           )}
           {!canStart && !t?.started && <p className="col-span-2 text-xs text-zinc-500">Check the client in first.</p>}
           {running && (
-            <Button size="sm" disabled={pending} onClick={() => run(() => finishServiceAction(appointmentId))}>
+            <Button size="sm" disabled={pending} onClick={() => run(() => finishServiceAction(appointmentId), () => toast("Finished"))}>
               Finish
             </Button>
           )}
@@ -167,11 +168,11 @@ export function ServiceTimer({ appointmentId, status, times }: { appointmentId: 
         </span>
       )}
       {!times?.started ? (
-        <Button size="sm" variant="secondary" disabled={pending} onClick={() => run(() => setStatusAction(appointmentId, "in_service"))}>
+        <Button size="sm" variant="secondary" disabled={pending} onClick={() => run(() => setStatusAction(appointmentId, "in_service"), () => toast("Started"))}>
           Start
         </Button>
       ) : running ? (
-        <Button size="sm" disabled={pending} onClick={() => run(() => finishServiceAction(appointmentId))}>
+        <Button size="sm" disabled={pending} onClick={() => run(() => finishServiceAction(appointmentId), () => toast("Finished"))}>
           Finish
         </Button>
       ) : null}

@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Fragment, useState } from "react";
 import { Badge, BrandLock, Button, Card, CardHeader, Field, Input, Select, Suggestions, cx } from "@/components/ui";
 import { useAction } from "@/components/use-action";
-import { ADJUST_DIRECTION, ADJUST_REASONS, ADJUST_REASON_LABEL, AdjustReasonKey } from "@/domain/inventory";
+import { ADJUST_DIRECTION, ADJUST_REASONS, ADJUST_REASON_HELP, ADJUST_REASON_LABEL, AdjustReasonKey } from "@/domain/inventory";
 import { adjustStockAction, createProductAction, saveShopLevelsAction, saveShopProductAction } from "./actions";
 
 export interface StockRowView {
@@ -33,6 +33,8 @@ export interface StockRowView {
   high: number | null;
   over: boolean;
   vendor: string | null;
+  /** How many times this shop has posted Lost or Expired for this product. */
+  shrink?: { lost: number; expired: number };
 }
 type Perms = { price: boolean; priceLocked: boolean; adjust: boolean; levels: boolean };
 
@@ -200,7 +202,13 @@ function AdjustPanel({ shopId, r }: { shopId: string; r: StockRowView }) {
         </Select>
         <Input className="py-1.5" inputMode="numeric" placeholder={mode === "set" ? "Count" : "Qty"} aria-label="Quantity" value={qty} onChange={(e) => setQty(e.target.value.replace(/\D/g, ""))} />
       </div>
-      <Input className="mt-2 py-1.5" placeholder={reason === "other" ? "What happened (required)" : "Note (optional)"} value={note} onChange={(e) => setNote(e.target.value)} />
+        <p className="mt-1 text-xs text-zinc-500">{ADJUST_REASON_HELP[reason]}</p>
+        {(reason === "lost" || reason === "expired") && r.shrink && (
+          <p className="text-xs text-zinc-500">
+            At this shop: Lost {r.shrink.lost} time{r.shrink.lost === 1 ? "" : "s"}, Expired {r.shrink.expired} time{r.shrink.expired === 1 ? "" : "s"}.
+          </p>
+        )}
+        <Input className="mt-2 py-1.5" placeholder={reason === "other" ? "What happened (required)" : "Note (optional)"} value={note} onChange={(e) => setNote(e.target.value)} />
       <div className="mt-2 flex items-center justify-between gap-2">
         <span className="text-xs text-zinc-500">{after !== null ? `${r.onHand} → ${after} on hand` : `${r.onHand} on hand`}</span>
         <Button

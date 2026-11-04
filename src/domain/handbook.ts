@@ -16,6 +16,29 @@ export interface HandbookTopic {
  */
 export const HANDBOOK: HandbookTopic[] = [
   {
+    slug: "staff-chat",
+    title: "Staff chat",
+    keywords: "message channel shop direct coworker",
+    needs: [],
+    steps: [
+      "Open Staff chat. You see your shop's channel, the brand channel, and your direct messages.",
+      "Type a message and send it. It stays on file.",
+      "Don't put a client's phone number or email in chat. Use a first name and last initial.",
+      "A manager can remove a message or mark it reported.",
+    ],
+  },
+  {
+    slug: "booking-links",
+    title: "Booking links",
+    keywords: "online book link barber public",
+    needs: ["calendar.manage"],
+    steps: [
+      "Open Booking links.",
+      "Copy the shop link, or one barber's link.",
+      "The public list shows a barber's first name only.",
+    ],
+  },
+  {
     slug: "sign-in",
     title: "Sign in",
     keywords: "login password lockout security authenticator",

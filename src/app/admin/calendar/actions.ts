@@ -189,6 +189,16 @@ export async function createStaffAppointmentAction(input: StaffBookingInput) {
   });
 }
 
+/** Drag the bottom edge. Booked and confirmed only; the start stays put. */
+export async function resizeAppointmentAction(id: string, date: string, endMin: number) {
+  return safe(async () => {
+    const { resizeForStaff } = await import("@/server/calendar-ops");
+    await resizeForStaff(await requireStaff(), id, date, endMin);
+    revalidatePath("/admin/calendar");
+    return null;
+  });
+}
+
 /** Moves land on the target barber's grid; with "calendar.squeeze_in" they can be squeezed in instead. */
 export async function moveAppointmentAction(id: string, staffId: string, date: string, startMin: number, opts: { squeezeIn?: boolean } = {}) {
   return safe(async () => {

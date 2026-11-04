@@ -30,6 +30,7 @@ import { clientCadence } from "@/server/visit-cadence";
 import { clientProductHistory } from "@/server/product-history";
 import { REFILL_SOURCE_LABEL, REFILL_STATUS_LABEL, REFILL_STATUS_TONE, lastsLabel, refillHint, type ProductHistory } from "@/domain/product-history";
 import { BuyAgainButton } from "./buy-again";
+import { ArchiveClient } from "../archive-button";
 import { ageOn, splitProblem } from "@/domain/family";
 import { cadenceLabel } from "@/domain/visit-cadence";
 import { todayLocal } from "@/lib/time";
@@ -289,11 +290,21 @@ export default async function CustomerPage({
           </>
         }
         actions={
-          <Link className="text-sm underline" href="/admin/customers">
-            {full ? "All clients" : "My clients"}
-          </Link>
+          <span className="flex items-center gap-3">
+            {full && can(ctx, "clients.edit") && <ArchiveClient id={c.id} archived={!!c.archivedAt} />}
+            <Link className="text-sm underline" href="/admin/customers">
+              {full ? "All clients" : "My clients"}
+            </Link>
+          </span>
         }
       />
+      <nav className="flex flex-wrap gap-x-3 gap-y-1 text-sm" aria-label="On this page">
+        <a className="underline" href="#profile">Profile</a>
+        <a className="underline" href="#visits">Visits</a>
+        <a className="underline" href="#products">Products</a>
+        <a className="underline" href="#purchases">Purchases</a>
+        <a className="underline" href="#messages">Messages</a>
+      </nav>
       {sp.existing && <div className="rounded-lg bg-amber-50 px-4 py-2 text-sm text-amber-800">This client was already on file, so no new record was made.</div>}
       {sp.merged && (
         <div className="rounded-lg bg-emerald-50 px-4 py-2 text-sm text-emerald-800">
@@ -335,7 +346,7 @@ export default async function CustomerPage({
         )}
       </div>
       <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
-        <div className="space-y-4">
+        <div id="profile" className="space-y-4">
           <ClientIdentity
             id={c.id}
             firstName={c.firstName}
@@ -555,7 +566,7 @@ export default async function CustomerPage({
             carried={new Set(carried.map((p) => p.id))}
             shop={buyShopId ? (ctx.shops.find((s) => s.id === buyShopId)?.name ?? null) : null}
           />
-          <Card>
+          <Card id="visits">
             <CardHeader
               title="Visit history"
               subtitle={`${visitCount} appointment${visitCount === 1 ? "" : "s"} at every Ray'z shop, including Squire history${moneyShops ? ". Prices show for this shop's visits only." : ""}`}
@@ -594,7 +605,7 @@ export default async function CustomerPage({
             {pager("v", vPage, visitCount, VISITS_PAGE)}
           </Card>
           {full && (
-            <Card>
+            <Card id="purchases">
               <CardHeader
                 title="Purchases"
                 subtitle={`${saleCount} ticket${saleCount === 1 ? "" : "s"}${moneyShops ? " at this shop" : ""} · ${moneyShops ? "" : "lifetime "}${formatCents(spend.ticketSpendCents)} after refunds`}
@@ -661,7 +672,7 @@ async function MessagesSent({ ctx, customerId }: { ctx: Parameters<typeof messag
   const lines = await messageHistory(ctx, { customerId }, 15);
   if (!lines.length) return null;
   return (
-    <Card>
+    <Card id="messages">
       <CardHeader title="Messages" subtitle="Texts and emails the system sent this client, newest first. Delivered means the carrier or mail server confirmed it." />
       <div className="px-4 pb-2">
         <MessageHistoryList lines={lines} showShop={ctx.brandWide} />
@@ -758,7 +769,7 @@ function ProductsCard({ customerId, history: h, carried, shop }: { customerId: s
   };
   const due = h.refills.filter((r) => r.status === "running_out").length;
   return (
-    <Card data-testid="product-history">
+    <Card id="products" data-testid="product-history">
       <CardHeader
         title="Products"
         subtitle={`What they've bought at every Ray'z shop, net of returns${shop ? `. Buy again puts it on their ticket at ${shop}.` : "."}`}

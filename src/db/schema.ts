@@ -1276,6 +1276,8 @@ export const customers = pgTable(
     lastAppSignInAt: ts("last_app_sign_in_at"),
     /** The client deleted their account: the row stays so sales add up, with every identifying detail cleared. */
     deletedAt: ts("deleted_at"),
+    /** Hidden from search and the client list. Visits and tickets stay. */
+    archivedAt: ts("archived_at"),
     /** Values of the brand's custom client fields, by client_fields.id. */
     customFields: jsonb("custom_fields").$type<Record<string, string>>().notNull().default(sql`'{}'::jsonb`),
     /** Consent is opt-in: nothing is sent until the client (or their Squire record) says yes. */
@@ -5884,3 +5886,73 @@ export const brandSyncControls = pgTable("brand_sync_controls", {
   updatedAt: ts("updated_at").notNull().defaultNow(),
   updatedBy: uuid("updated_by").references(() => staff.id, { onDelete: "set null" }),
 });
+
+/** One photo for a shop's public booking page and the desk. A small JPEG or PNG data URL. */
+export const locationPhotos = pgTable("location_photos", {
+  shopId: uuid("shop_id")
+    .primaryKey()
+    .references(() => shops.id, { onDelete: "cascade" }),
+  dataUrl: text("data_url").notNull(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+  updatedBy: uuid("updated_by").references(() => staff.id, { onDelete: "set null" }),
+});
+
+/** The photo an employee sets of themselves, or a manager sets for them. */
+export const staffPhotos = pgTable("staff_photos", {
+  staffId: uuid("staff_id")
+    .primaryKey()
+    .references(() => staff.id, { onDelete: "cascade" }),
+  dataUrl: text("data_url").notNull(),
+  updatedAt: ts("updated_at").notNull().defaultNow(),
+});
+
+/** Shop channel, one brand channel, or a direct message. Separate from client texting. */
+export const staffChannels = pgTable(
+  "staff_channels",
+  {
+    id: id(),
+    kind: text("kind").$type<"shop" | "brand" | "dm">().notNull(),
+    shopId: uuid("shop_id").references(() => shops.id, { onDelete: "cascade" }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    uniqueIndex("staff_channels_shop_uq").on(t.shopId).where(sql`${t.kind} = 'shop'`),
+    uniqueIndex("staff_channels_brand_uq").on(t.kind).where(sql`${t.kind} = 'brand'`),
+    check("staff_channels_kind_ck", sql`${t.kind} in ('shop', 'brand', 'dm')`),
+    check("staff_channels_shop_ck", sql`(${t.kind} = 'shop') = (${t.shopId} is not null)`),
+  ],
+);
+
+export const staffChannelMembers = pgTable(
+  "staff_channel_members",
+  {
+    channelId: uuid("channel_id")
+      .notNull()
+      .references(() => staffChannels.id, { onDelete: "cascade" }),
+    staffId: uuid("staff_id")
+      .notNull()
+      .references(() => staff.id, { onDelete: "cascade" }),
+  },
+  (t) => [primaryKey({ columns: [t.channelId, t.staffId] })],
+);
+
+export const staffMessages = pgTable(
+  "staff_messages",
+  {
+    id: id(),
+    channelId: uuid("channel_id")
+      .notNull()
+      .references(() => staffChannels.id, { onDelete: "cascade" }),
+    authorId: uuid("author_id")
+      .notNull()
+      .references(() => staff.id),
+    body: text("body").notNull(),
+    createdAt: createdAt(),
+    deletedAt: ts("deleted_at"),
+    reportedAt: ts("reported_at"),
+  },
+  (t) => [
+    index("staff_messages_channel_idx").on(t.channelId, t.createdAt),
+    check("staff_messages_body_ck", sql`char_length(btrim(${t.body})) > 0 and char_length(${t.body}) <= 2000`),
+  ],
+);

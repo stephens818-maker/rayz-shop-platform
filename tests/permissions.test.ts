@@ -436,6 +436,7 @@ describe("navigation follows permissions", () => {
       "/admin/clock",
       "/admin/my-time",
       "/admin/timesheets",
+      "/admin/chat",
       "/admin/my-tips",
       "/admin/my-banking",
       "/admin/my-pay",

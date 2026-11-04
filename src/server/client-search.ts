@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { and, eq, inArray, or, sql, type Column, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql, type Column, type SQL } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, couponCodes, couponRedemptions, customerSquireIds, customerTags, customers, giftCards, sales } from "@/db/schema";
 import { maskPhone } from "@/domain/client-privacy";
@@ -32,6 +32,7 @@ export interface SearchOptions {
 const sha = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
 const esc = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 const sn = customers.searchName;
+const liveClient = and(isNull(customers.archivedAt), isNull(customers.deletedAt));
 const fullName = sql`lower(${customers.firstName} || ' ' || coalesce(${customers.lastName}, ''))`;
 const lastFirst = sql`lower(coalesce(${customers.lastName}, '') || ' ' || ${customers.firstName})`;
 /** Typo tolerance: how alike a typed word and a word of the name must be (pg_trgm word similarity). */
@@ -65,7 +66,7 @@ function nameQuery(p: Extract<Probe, { kind: "name" }>, scope: Scope, cap: numbe
   const words = p.tokens.map((t) => (t.length <= 2 ? sql`(' ' || ${sn}) like ${`% ${esc(t)}%`}` : sql`(${sn} like ${`%${esc(t)}%`} or ${t} <% ${sn})`));
   const match = and(...words, p.last4 ? sql`right(${customers.phone}, 4) = ${p.last4}` : undefined)!;
   const exact = or(sql`${fullName} = ${p.text}`, sql`${lastFirst} = ${p.text}`)!;
-  const where = scope.clients ? or(and(match, scope.clients), and(exact, p.last4 ? sql`right(${customers.phone}, 4) = ${p.last4}` : undefined)) : match;
+  const where = and(scope.clients ? or(and(match, scope.clients), and(exact, p.last4 ? sql`right(${customers.phone}, 4) = ${p.last4}` : undefined)) : match, liveClient);
   const score = sql<number>`(word_similarity(${p.text}, ${sn}) + similarity(${p.text}, ${sn})
     + case when ${fullName} = ${p.text} or ${lastFirst} = ${p.text} then 2 when ${sn} like ${`${esc(p.text)}%`} then 1 else 0 end)::float8`;
   return db.transaction(async (tx) => {
@@ -77,7 +78,7 @@ function nameQuery(p: Extract<Probe, { kind: "name" }>, scope: Scope, cap: numbe
 function probeQuery(p: Probe, scope: Scope, cap: number): Promise<Found[]> {
   const base = PROBE_RULES[p.kind].rank;
   const reach = PROBE_RULES[p.kind].reach;
-  const c = (cond: SQL) => ids(db.select({ id: customers.id }).from(customers).where(reach === "scoped" ? and(cond, scope.clients) : cond).limit(cap), base);
+  const c = (cond: SQL) => ids(db.select({ id: customers.id }).from(customers).where(and(cond, liveClient, reach === "scoped" ? scope.clients : undefined)).limit(cap), base);
   const atShops = (col: Column) => (scope.shops ? (scope.shops.length ? inArray(col, [...scope.shops]) : sql`false`) : undefined);
   switch (p.kind) {
     case "name":
@@ -229,7 +230,7 @@ export async function clientHits(ctx: StaffContext, policy: ClientPolicy, ranked
       select s.display_label from appointments a join staff s on s.id = a.staff_id
       where a.customer_id = c.id and a.status = 'completed' group by s.id, s.display_label order by count(*) desc, max(a.starts_at) desc limit 1
     ) ub on true
-    where c.id in (${list})`)) as unknown as {
+    where c.id in (${list}) and c.archived_at is null and c.deleted_at is null`)) as unknown as {
     id: string;
     number: number;
     first_name: string;

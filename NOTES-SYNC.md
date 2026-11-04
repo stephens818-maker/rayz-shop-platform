@@ -912,6 +912,26 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-11-03: staff how-to, staff chat, speed, public names, cleanup
+
+`core_0158_chat_photos_cleanup` (next migration is `core_0159`). It archives the canary client Consent Zzcanary, cancels visit A5TDPQTQ87 when that visit is still open, and voids open unpaid ticket `5417a3e4` when it has no pending or succeeded payment. History stays. Search skips archived clients.
+
+A one-minute phone-GPS cluster (in, break, and out, all self, all GPS) is voided only when that shop day is not inside a locked timesheet. A locked period is left alone. The local test database had no Makenna punches on Oct 27, so nothing there was changed. If those punches are in a locked pay period on the sandbox, this migration will not touch them. That is the payroll flag: do not edit them by hand.
+
+Public booking lists a barber's first name only. A label like "Barber 2 (test)" is left off the online list. Staff screens still use the usual display label.
+
+STOP now marks that number's pending texts suppressed, with the reason "The number replied STOP", so they no longer sit on Queued. Telnyx inbound texts hit `/api/telnyx/sms`, reuse the same STOP / START / HELP handling, and check `TELNYX_PUBLIC_KEY` when it is set. The notifications page says Telnyx, Twilio, and Resend all stay off until a key is set.
+
+The how-to widget is a separate chat from the existing assistant. It is off unless `HELP_WIDGET=on`. The monthly cap defaults to 0, so it does not call a paid model. It answers only from handbook topics that person can already open. It cannot book, refund, text, or change settings. Client-facing AI, the client portal, and past-experience history stay later. Online gift-card charges stay on hold.
+
+Staff chat is `/admin/chat`: one channel per shop, one all-shops channel (managers post), and direct messages with people at the same shops. Messages stay on file. A manager can report or remove one. Phone numbers and emails pasted into a message are stripped. It does not text clients and it does not touch pay.
+
+Booking links are `/admin/booking-links`. A client profile has jump links to profile, visits, products, purchases, and messages. Drag the bottom of a booked or confirmed appointment to change the end. A shop photo and an employee's own photo save as a small JPEG or PNG. Checkout has Void ticket for an open ticket. A client page has Archive client. Start and Finish show a toast. Lost and Expired say what they do and how many times that product was posted that way. Search shows the real last name when the viewer is allowed to see it (Consent Zzcanary, not only Consent Z.). The calendar panel reply is a free-text box. Inbox already had one.
+
+The Morning Dashboard email preview loads after the settings form, so that page does not wait on the full email before it can draw. Staff access for the recipient list is still one lookup per person. The owner dashboard, morning report, and payroll report still compute live numbers. They were not cached across people, and checkout was not given chat, AI, or report work. A first request after a deploy is still the cold start.
+
+Security in this pass: archived clients leave search, public barber names are first names, staff chat cannot keep a phone or email, the Telnyx webhook rejects a bad signature when the public key is set, and the how-to cannot see a handbook topic the person cannot open. This was not a full auth rewrite.
+
 ### 2026-11-02: core, no-transfer tip restore, Stripe tips, timesheet zones
 
 `core_0157_no_transfer_tips` restores a tip reversal that has no Stripe tip transfer, including the simulator's Jessica $7.60 on ticket 14858. The shop absorbs it and the barber keeps it (`how` `no_transfer`). A void stays reversed. Running it again does nothing. A full refund of an unpaid tip, before any transfer is sent, still reverses on a new refund. This migration only fixes the rows already stored.

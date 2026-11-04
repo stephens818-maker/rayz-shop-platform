@@ -280,6 +280,17 @@ export const ADJUST_REASON_LABEL: Record<AdjustReasonKey, string> = {
   other: "Other",
 };
 /** Reasons that only take stock away; "found" only adds, count corrections and other go either way. */
+export const ADJUST_REASON_HELP: Record<AdjustReasonKey, string> = {
+  lost: "You can't find it. This takes it off the count.",
+  damage: "Broken or damaged, so it comes off the count.",
+  theft: "Taken. This takes it off the count.",
+  back_bar: "Used in the shop, not sold.",
+  count_correction: "The shelf count didn't match. Say what you counted.",
+  expired: "Past its date, so it comes off the count and isn't sold.",
+  found: "It turned up. This puts it back on the count.",
+  other: "Say what happened. Required.",
+};
+
 export const ADJUST_DIRECTION: Record<AdjustReasonKey, "out" | "in" | "either"> = {
   lost: "out",
   damage: "out",

@@ -1,9 +1,10 @@
 import "server-only";
-import { eq } from "drizzle-orm";
+import { and, eq, gt, lt, ne, notInArray } from "drizzle-orm";
 import { db } from "@/db";
 import { appointments, staffShops, timeBlocks } from "@/db/schema";
 import { selfBlockProblem } from "@/domain/staff-time";
-import { isValidLocalDate, localMinutesOf } from "@/lib/time";
+import { isValidLocalDate, localMinutesOf, type LocalDate } from "@/lib/time";
+import { audit } from "@/server/audit";
 import { blockChangeDenied, clockBlockChangeDenied } from "@/server/auth/policy";
 import { StaffContext, assertShopAccess, blockCaller, can } from "@/server/auth/staff";
 import { usableReason } from "@/server/block-reasons";
@@ -103,6 +104,34 @@ export async function bookForStaff(ctx: StaffContext, input: StaffBookingInput, 
   });
   if (typed && appt.customer) await fillEntry(appt.customer.id, typed, { actor: ctx.actor, staffId: ctx.staff.id, shopId: input.shopId });
   return appt;
+}
+
+/** Drag the bottom of a booked or confirmed appointment to change when it ends. The start stays. */
+export async function resizeForStaff(ctx: StaffContext, id: string, date: string, endMin: number) {
+  const a = await changeableAppt(ctx, id);
+  if (!["booked", "confirmed"].includes(a.status)) throw new AppError("conflict", "Only an appointment that hasn't started can be made longer or shorter.");
+  if (!isValidLocalDate(date)) throw new AppError("bad_request", "Pick a date");
+  if (!Number.isInteger(endMin) || endMin % 5 !== 0) throw new AppError("bad_request", "End on a 5 minute mark");
+  const startMin = localMinutesOf(a.startsAt);
+  if (endMin <= startMin) throw new AppError("bad_request", "The end has to be after the start");
+  if (endMin - startMin > 8 * 60) throw new AppError("bad_request", "That's longer than a visit on the book. Pick a shorter end.");
+  const endsAt = staffWallTime(date as LocalDate, endMin);
+  const clash = await db
+    .select({ id: appointments.id })
+    .from(appointments)
+    .where(
+      and(
+        eq(appointments.staffId, a.staffId),
+        ne(appointments.id, a.id),
+        notInArray(appointments.status, ["cancelled", "no_show"]),
+        lt(appointments.startsAt, endsAt),
+        gt(appointments.endsAt, a.startsAt),
+      ),
+    )
+    .limit(1);
+  if (clash.length) throw new AppError("conflict", "That runs into another appointment.");
+  await db.update(appointments).set({ endsAt }).where(eq(appointments.id, a.id));
+  await audit(ctx.actor, "appointment.resize", "appointment", a.id, { endsAt: endsAt.toISOString() }, a.shopId);
 }
 
 /** Moves land on the target barber's grid; with "calendar.squeeze_in" they can be squeezed in instead. */

@@ -16,6 +16,8 @@ const CUSTOM_REPORTS: Permission[] = ["report_builder.view", "report_builder.bui
 export const PAGE_ACCESS = {
   "/admin": null,
   "/admin/help": null,
+  "/admin/chat": null,
+  "/admin/booking-links": ["calendar.manage", "settings.shop"],
   "/admin/calendar": null,
   "/admin/calendar/board": ["calendar.manage"],
   "/admin/customers": null,
@@ -175,6 +177,7 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
     title: "Calendar",
     items: [
       { href: "/admin/calendar", label: "Calendar" },
+      { href: "/admin/booking-links", label: "Booking links" },
       { href: "/admin/calendar/board", label: "All-shops day board" },
     ],
   },
@@ -194,6 +197,7 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
       { href: "/admin/my-time", label: "My time" },
       { href: "/admin/time-off", label: "Time off" },
       { href: "/admin/timesheets", label: "Timesheets" },
+      { href: "/admin/chat", label: "Staff chat" },
       { href: "/admin/payroll/hours", label: "Hours" },
       { href: "/admin/time-clock", label: "Time clock setup" },
       { href: "/admin/milestones/settings", label: "Staff milestones" },

@@ -95,6 +95,7 @@ import {
 } from "../actions";
 import { CheckoutPrompts, type PromptsProps } from "./prompts";
 import { StripeCardEntry } from "./stripe-card";
+import { VoidOpenTicket } from "./void-open";
 import { formatTime } from "@/lib/time";
 
 type Line = {
@@ -995,11 +996,12 @@ export function Pos(props: {
             Checkout
           </h1>
         </div>
-        <Badge tone={props.payments.mode === "stripe" ? "violet" : "gray"}>
-          {props.payments.mode === "stripe"
-            ? "Stripe test mode"
-            : "Payment simulator (no Stripe keys)"}
-        </Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <VoidOpenTicket saleId={props.sale.id} />
+          <Badge tone={props.payments.mode === "stripe" ? "violet" : "gray"}>
+            {props.payments.mode === "stripe" ? "Stripe test mode" : "Payment simulator (no Stripe keys)"}
+          </Badge>
+        </div>
       </div>
       {!props.shop.taxVerified && (
         <div className="mb-3">

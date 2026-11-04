@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { catalogCategories, services, shopHours, shopServices, shops, staff, staffSchedules, staffShops, Shop, TaxCategory } from "@/db/schema";
+import { isTestBarberLabel, publicBarberName } from "@/domain/public-barber";
 import { notFound } from "./errors"; import { timingAt } from "./brand-sync/adapters/service-rules";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -92,8 +93,14 @@ export async function shopBarbers(shopId: string, opts: { onlineOnly?: boolean }
     .where(eq(staffSchedules.shopId, shopId));
   const has = new Set(scheduled.map((s) => s.staffId));
   return rows
-    .filter((r) => has.has(r.id) && (!opts.onlineOnly || r.visibleOnline))
-    .map(({ id, slug, displayName, color }) => ({ id, slug, displayName, color, photoUrl: null }));
+    .filter((r) => has.has(r.id) && (!opts.onlineOnly || r.visibleOnline) && !(opts.onlineOnly && isTestBarberLabel(r.displayName)))
+    .map(({ id, slug, displayName, color }) => ({
+      id,
+      slug,
+      displayName: opts.onlineOnly ? publicBarberName(displayName) : displayName,
+      color,
+      photoUrl: null,
+    }));
 }
 
 export async function shopWeeklyHours(shopId: string, tx: DBorTx = db) {

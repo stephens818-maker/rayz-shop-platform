@@ -19,6 +19,8 @@ import { stepUpFactor } from "@/server/auth/sign-in-guard";
 import { milestoneSettingsAt } from "@/server/milestones/engine";
 import { logout } from "../login/actions";
 import { AssistantPanel } from "./assistant/panel";
+import { HelpWidget } from "./help-widget";
+import { helpWidgetOn } from "@/domain/help-widget";
 import { BfcacheGuard } from "./bfcache-guard";
 import { StepUpHost } from "./step-up";
 import { ClientQuickSearch } from "./client-quick-search";
@@ -68,6 +70,7 @@ export default async function AdminLayout({
       <StepUpHost factor={factor} />
       {milestones.enabled && milestones.liveToast && <MilestoneToasts since={new Date().toISOString()} />}
       {assistant.on && <AssistantPanel firstName={ctx.staff.kind === "shop" ? ctx.staff.displayLabel : ctx.staff.firstName} />}
+      {helpWidgetOn() && <HelpWidget firstName={ctx.staff.kind === "shop" ? ctx.staff.displayLabel : ctx.staff.firstName} />}
     </>
   );
   if (ctx.staff.kind === "shop") {

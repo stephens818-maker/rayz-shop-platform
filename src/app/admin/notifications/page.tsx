@@ -79,8 +79,8 @@ export default async function NotificationsPage({ searchParams }: { searchParams
       />
       {off && (
         <Notice>
-          Sending is off. Jobs are still queued and marked “suppressed” when due, so nothing reaches customers. Set NOTIFICATIONS_SMS_PROVIDER / NOTIFICATIONS_EMAIL_PROVIDER to{" "}
-          <code>console</code> to log messages, or wire Twilio / Resend before go-live.
+          Sending is off. Jobs are still queued and marked “suppressed” when due, so nothing reaches customers. Telnyx sends texts when TELNYX_API_KEY is set. Twilio and Resend stay available the same way, and all of them stay off until a key is set. Set NOTIFICATIONS_SMS_PROVIDER / NOTIFICATIONS_EMAIL_PROVIDER to{" "}
+          <code>console</code> to log messages instead.
         </Notice>
       )}
       <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-7">

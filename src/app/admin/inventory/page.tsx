@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { asc } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { products } from "@/db/schema";
+import { inventoryLedger, products } from "@/db/schema";
 import { Card, CardHeader, LinkButton, PageHeader, Stat, Table, Td, Th, cx } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { can, canAny, guardPage } from "@/server/auth/staff";
@@ -33,7 +33,22 @@ export default async function InventoryPage() {
   );
 
   if (shopId) {
-    const [levels, all] = await Promise.all([stockLevels([shopId]), db.select().from(products).orderBy(asc(products.brand), asc(products.name))]);
+    const [levels, all, shrinkRows] = await Promise.all([
+      stockLevels([shopId]),
+      db.select().from(products).orderBy(asc(products.brand), asc(products.name)),
+      db
+        .select({ productId: inventoryLedger.productId, reason: inventoryLedger.reason, n: sql<number>`count(*)::int` })
+        .from(inventoryLedger)
+        .where(and(eq(inventoryLedger.shopId, shopId), inArray(inventoryLedger.reason, ["lost", "expired"])))
+        .groupBy(inventoryLedger.productId, inventoryLedger.reason),
+    ]);
+    const shrinkOf = new Map<string, { lost: number; expired: number }>();
+    for (const row of shrinkRows) {
+      const cur = shrinkOf.get(row.productId) ?? { lost: 0, expired: 0 };
+      if (row.reason === "lost") cur.lost = row.n;
+      if (row.reason === "expired") cur.expired = row.n;
+      shrinkOf.set(row.productId, cur);
+    }
     const shop = ctx.shops.find((s) => s.id === shopId)?.name ?? "";
     const rows: StockRowView[] = all
       .filter((p) => p.active || levels.some((l) => l.productId === p.id))
@@ -67,6 +82,7 @@ export default async function InventoryPage() {
           high: l?.high ?? p.highStockThreshold,
           over: l?.over ?? false,
           vendor: l?.preferredVendor?.name ?? null,
+          shrink: shrinkOf.get(p.id) ?? { lost: 0, expired: 0 },
         };
       });
     const here = levels.filter((l) => l.active || l.onHand !== 0);

@@ -1107,6 +1107,13 @@
       "when": 1796643120000,
       "tag": "core_0157_no_transfer_tips",
       "breakpoints": true
+    },
+    {
+      "idx": 158,
+      "version": "7",
+      "when": 1796643180000,
+      "tag": "core_0158_chat_photos_cleanup",
+      "breakpoints": true
     }
   ]
 }

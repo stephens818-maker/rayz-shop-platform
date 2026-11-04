@@ -382,3 +382,16 @@ export async function setClientPhotoAction(id: string, dataUrl: string | null) {
     revalidatePath(`/admin/customers/${id}`);
   });
 }
+
+/** Hides the client from search. Visits and tickets stay. */
+export async function archiveClientAction(id: string) {
+  return safe(async () => {
+    const ctx = await authorize("clients.edit");
+    const row = await db.query.customers.findFirst({ where: eq(customers.id, id), columns: { id: true, archivedAt: true, deletedAt: true } });
+    if (!row || row.deletedAt) throw new AppError("not_found", "Client not found");
+    if (!row.archivedAt) await db.update(customers).set({ archivedAt: new Date() }).where(eq(customers.id, id));
+    await audit(ctx.actor, "client.archive", "customer", id, {}, ctx.currentShopId);
+    revalidatePath(`/admin/customers/${id}`);
+    revalidatePath("/admin/customers");
+  });
+}

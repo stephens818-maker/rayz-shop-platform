@@ -92,9 +92,10 @@ export function AppointmentMessages({ appointmentId }: { appointmentId: string }
                       send(draft);
                     }}
                   >
-                    <input
+                    <textarea
                       value={draft}
                       maxLength={320}
+                      rows={2}
                       onChange={(e) => setDraft(e.target.value)}
                       placeholder="Text this client"
                       aria-label="Text this client"

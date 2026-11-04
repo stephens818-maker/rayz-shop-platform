@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { ClientHitRow } from "@/components/client-hit";
+import { clientListName } from "@/domain/staff-chat";
 import { startSequence, takeSequence, useHotkeys } from "@/components/hotkeys";
 import { setThemePref, useThemePref } from "@/components/theme";
 import { cx } from "@/components/ui";
@@ -163,7 +164,7 @@ export function CommandPalette({
 
   const rows = useMemo<Row[]>(() => {
     const ranked = rankCommands(q, commands, q.trim() ? 40 : commands.length);
-    const people: Row[] = clients.map((c) => ({ id: `client:${c.id}`, label: c.short, group: "Clients", client: c, run: () => router.push(`/admin/customers/${c.id}`) }));
+    const people: Row[] = clients.map((c) => ({ id: `client:${c.id}`, label: clientListName(c), group: "Clients", client: c, run: () => router.push(`/admin/customers/${c.id}`) }));
     if (!q.trim()) {
       const order = ["Pages", "Handbook", "Reports", "Switch shop", "Actions"];
       return [...ranked].sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group));

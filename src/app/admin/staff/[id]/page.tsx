@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { and, asc, eq, gt } from "drizzle-orm";
 import { db } from "@/db";
 import { payrollProfiles, roles, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
+import { PhotoUpload } from "@/components/photo-upload";
 import { Card, CardHeader, Notice, PageHeader } from "@/components/ui";
 import { TrophyCase } from "@/components/trophy-case";
 import { assignableRoles, staffEditDenied } from "@/domain/permissions";
@@ -17,6 +18,8 @@ import { trainingRatesFor } from "@/server/payroll/training-rates";
 import { OTHER_SHOP, hasShop, inTenant } from "@/server/tenant";
 import { barberIntervalRows } from "@/server/timing";
 import { StaffTimingCard } from "../../booking-times/editors";
+import { saveStaffPhotoAction } from "../../photos/actions";
+import { staffPhotoOf } from "@/server/shop-photos";
 import { loadMilestoneSettings } from "@/server/milestones/engine";
 import { milestoneViewer, personFor, trophyCase } from "@/server/milestones/views";
 import { futureBookings } from "@/server/offboarding";
@@ -72,6 +75,7 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
     ? await Promise.all([loadBookingOptions(ctx, person!.id), loadNotificationPrefs(person!.id), canSchedule ? dayHistory(person!.id, ctx.brandWide ? null : ctx.shopIds) : Promise.resolve([])])
     : [null, null, []];
   const ownOrManager = isPerson && (person!.id === ctx.staff.id || (can(ctx, "staff.manage") && !editDenied));
+  const photo = person && ownOrManager ? await staffPhotoOf(person.id) : null;
   const isolved = isPerson && ctx.brandWide && can(ctx, "payroll.run") ? ((await db.select().from(payrollProfiles).where(eq(payrollProfiles.staffId, person!.id)))[0] ?? null) : undefined;
   const training =
     isolved !== undefined ? await Promise.all([trainingRatesFor([person!.id]).then((m) => m.get(person!.id) ?? []), lockedThrough()]).then(([versions, locked]) => ({ versions, locked })) : null;
@@ -108,6 +112,14 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
         }
       />
       {editDenied && <Notice tone="blue">{editDenied}</Notice>}
+      {person && ownOrManager && (
+        <Card>
+          <CardHeader title="Photo" subtitle={person.id === ctx.staff.id ? "This is the photo you show on the schedule." : "The photo this person shows on the schedule."} />
+          <div className="p-4">
+            <PhotoUpload label="Upload a JPEG or PNG" current={photo} save={(dataUrl) => saveStaffPhotoAction(person.id, dataUrl)} />
+          </div>
+        </Card>
+      )}
       <ProfileForm
         readOnly={!!editDenied}
         contactMasked={!!contact?.masked}

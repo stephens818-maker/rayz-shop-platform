@@ -4,6 +4,7 @@ import { callLogs, contactOptOuts, customers, messageThreads, messages, notifica
 import type { CallDirection, CallKind, CallStatus } from "@/db/schema";
 import { Actor, audit } from "./audit";
 import { AppError, notFound } from "./errors";
+import { OPT_OUT_REASON } from "@/domain/notification-delivery";
 import { NotificationKind, processDueJobs } from "./notifications/queue";
 
 /**
@@ -47,6 +48,12 @@ export async function recordOptOut(phone: string, channel: "sms" | "voice", sour
     .insert(contactOptOuts)
     .values({ phone, channel, source, customerIds: ids })
     .onConflictDoUpdate({ target: [contactOptOuts.phone, contactOptOuts.channel], set: { customerIds: sql`${contactOptOuts.customerIds} || ${JSON.stringify(ids)}::jsonb` } });
+  if (channel === "sms") {
+    await tx
+      .update(notificationJobs)
+      .set({ status: "suppressed", lastError: OPT_OUT_REASON.stop })
+      .where(and(eq(notificationJobs.to, phone), eq(notificationJobs.channel, "sms"), eq(notificationJobs.status, "pending")));
+  }
   return ids;
 }
 

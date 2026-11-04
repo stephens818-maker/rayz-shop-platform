@@ -1,4 +1,5 @@
 import { groupFamilies, type ClientHit } from "@/domain/client-search";
+import { clientListName } from "@/domain/staff-chat";
 import { ClientBadges } from "./client-badges";
 import { StarBadge, cx } from "./ui";
 
@@ -30,7 +31,7 @@ export function ClientHitRow({ hit, className, hideKids }: { hit: ClientHit; cla
       <ClientAvatar hit={hit} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
-          <span className="truncate font-medium text-zinc-900">{hit.short}</span>
+          <span className="truncate font-medium text-zinc-900">{clientListName(hit)}</span>
           {hit.nickname && <span className="truncate text-zinc-500">&ldquo;{hit.nickname}&rdquo;</span>}
           <StarBadge rating={hit.rating} showCount={false} />
           <span className="ml-auto shrink-0 font-mono text-[11px] text-zinc-400">C{hit.number}</span>

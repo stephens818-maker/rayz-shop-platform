@@ -25,6 +25,7 @@ import { ConflictConfirm } from "@/components/conflict-confirm";
 import { useHotkeys } from "@/components/hotkeys";
 import { columnsThatFit } from "@/domain/calendar-layout";
 import { toast } from "@/components/toast";
+import { useAction as useServerAction } from "@/components/use-action";
 import { ClientHitRow, FamilyPickList } from "@/components/client-hit";
 import { togglePartyMember } from "@/domain/family";
 import {
@@ -69,6 +70,7 @@ import {
   releaseClockBlockAction,
   resetClockBlockAction,
   moveAppointmentAction,
+  resizeAppointmentAction,
   searchCustomersAction,
   setStatusAction,
   sendToCheckoutAction,
@@ -867,6 +869,7 @@ function Column({
     end: () => void;
   };
 }) {
+  const resize = useServerAction();
   const top = (m: number) =>
     (Math.max(m, data.rangeStart) - data.rangeStart) * PX;
   const h = (s: number, e: number) =>
@@ -1140,6 +1143,27 @@ function Column({
                   <span className="shrink-0 font-normal opacity-70">
                     (walk-in)
                   </span>
+                )}
+                {movable && (
+                  <span
+                    role="separator"
+                    aria-label="Change how long this appointment is"
+                    className="absolute inset-x-0 bottom-0 z-10 h-2 cursor-ns-resize"
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      const origin = e.clientY;
+                      const startEnd = a.endMin;
+                      const up = (ev: PointerEvent) => {
+                        window.removeEventListener("pointerup", up);
+                        const raw = startEnd + Math.round((ev.clientY - origin) / PX);
+                        const endMin = Math.max(a.startMin + 15, Math.round(raw / 15) * 15);
+                        if (endMin === a.endMin) return;
+                        resize.run(() => resizeAppointmentAction(a.id, data.date, endMin), undefined, `Now ends at ${label(endMin)}`);
+                      };
+                      window.addEventListener("pointerup", up);
+                    }}
+                  />
                 )}
                 {a.squeezed && (
                   <span
