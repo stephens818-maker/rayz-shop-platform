@@ -1114,6 +1114,13 @@
       "when": 1796643180000,
       "tag": "core_0158_chat_photos_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 159,
+      "version": "7",
+      "when": 1796643240000,
+      "tag": "core_0159_stripe_tips_and_labels",
+      "breakpoints": true
     }
   ]
 }

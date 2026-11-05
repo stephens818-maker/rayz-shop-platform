@@ -14,7 +14,7 @@ import {
   stateRule,
   withShopsApplied,
 } from "@/domain/card-fee-policy";
-import { CardFeeConfig, CartLine, cardFeeFor, computeCheckout, describeFee, feeDisclosure } from "@/domain/checkout";
+import { CardFeeConfig, CartLine, cardFeeFor, computeCheckout, creditCardFeeWording, describeFee, feeDisclosure, feeLabel } from "@/domain/checkout";
 import { planSplitTenders } from "@/domain/combined-checkout";
 
 const on: CardFeeConfig = { enabled: true, rate: 0.03, appliesToTip: false };
@@ -69,7 +69,9 @@ describe("cardFeeFor: fee types, cap and minimum", () => {
   });
 
   it("uses the brand's notice, with {fee} filled in", () => {
-    expect(feeDisclosure({ ...on, notice: "We add a {fee} surcharge on credit cards." })).toBe("We add a 3% surcharge on credit cards.");
+    expect(feeDisclosure({ ...on, notice: "We add a {fee} surcharge on credit cards." })).toBe("We add a 3% credit card fee on credit cards.");
+    expect(feeLabel({ ...on, name: "Credit card surcharge" })).toBe("Credit card fee (3%)");
+    expect(creditCardFeeWording("Thank you. A surcharge may apply.")).toBe("Thank you. A credit card fee may apply.");
     expect(feeDisclosure({ ...on, type: "both", rate: 0.02, flatCents: 30 })).toContain("2% + $0.30 credit card fee");
     expect(feeDisclosure({ ...on, off: "state_not_allowed" })).toBeNull();
     expect(describeFee({ rate: 0.05 })).toBe("5%");

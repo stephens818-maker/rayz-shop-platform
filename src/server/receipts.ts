@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, ne, sql } from "dr
 import { db, DBorTx, Tx } from "@/db";
 import { progressLabel, progressShare } from "@/domain/loyalty";
 import { appointments, contactOptOuts, customers, notificationJobs, payments, receiptDeliveries, receiptOptOuts, refunds, saleItems, sales, shops, staff } from "@/db/schema";
-import { feeDisclosure, feeLabel, type CardFeeConfig } from "@/domain/checkout";
+import { creditCardFeeWording, feeDisclosure, feeLabel, type CardFeeConfig } from "@/domain/checkout";
 import { groupByPerson } from "@/domain/combined-checkout";
 import { maskEmail, maskPhone } from "@/domain/client-privacy";
 import { receiptBranding } from "@/domain/connect";
@@ -109,7 +109,7 @@ export async function receiptData(saleId: string, tx: DBorTx = db, now = new Dat
       mapUrl: shopLine ? mapsUrl(shop) : null,
       directionsUrl: shopLine ? `${appBaseUrl()}/locations/${shop.slug}/directions` : null,
       phone: brand.showPhone && shop.phone ? shop.phone : null,
-      footer: brand.footer ?? DEFAULT_RECEIPT_FOOTER,
+      footer: creditCardFeeWording(brand.footer ?? DEFAULT_RECEIPT_FOOTER),
     },
     firstName: customer?.firstName ?? null,
     barber: barberFirstName(barber),
@@ -133,7 +133,7 @@ export async function receiptData(saleId: string, tx: DBorTx = db, now = new Dat
       return { label: r.kind === "void" ? `Voided, back to ${to}` : `Refunded to ${to}`, cents: r.amountCents, at: r.createdAt };
     }),
     refundedCents,
-    disclosures: pricing.disclosures ?? [],
+    disclosures: (pricing.disclosures ?? []).map((x) => creditCardFeeWording(x)),
     loyalty:
       loyalty && loyalty.enabled
         ? {
@@ -483,7 +483,7 @@ export async function requestReceiptCopies(contact: string, now = new Date()) {
     const brand = receiptBranding(shop?.receipt);
     const title = brand.headline ?? `Ray'z Barber Shop · ${shop?.name ?? ""}`;
     const list = items.map(({ s, token }) => ({ date: formatDate(s.paidAt!, "MMM d"), number: s.number, totalCents: s.totalCents, url: receiptUrl(token) }));
-    const m = channel === "sms" ? { subject: null, body: receiptListSms({ title, items: list }) } : receiptListEmail({ title, items: list, footer: brand.footer ?? DEFAULT_RECEIPT_FOOTER });
+    const m = channel === "sms" ? { subject: null, body: receiptListSms({ title, items: list }) } : receiptListEmail({ title, items: list, footer: creditCardFeeWording(brand.footer ?? DEFAULT_RECEIPT_FOOTER) });
     const [job] = await tx
       .insert(notificationJobs)
       .values({ kind: "receipt", channel, to, shopId: recent[0].shopId, customerId: recent[0].customerId, subject: m.subject, body: m.body, runAt: now })

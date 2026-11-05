@@ -67,6 +67,8 @@ export interface ReceiptTaxLine {
 }
 
 /** The tax rows on a receipt. Nothing is listed when that tax is zero. */
+const sameRate = (labeled: number | null, charged: number) => labeled != null && Math.abs(labeled - charged) < 0.0005;
+
 export function receiptTaxLines(o: ReceiptTaxInput): ReceiptTaxLine[] {
   const lines: ReceiptTaxLine[] = [];
   const stateLabel = labelOf(o.stateLabel) ?? defaultStateTaxLabel(o.state);
@@ -74,12 +76,14 @@ export function receiptTaxLines(o: ReceiptTaxInput): ReceiptTaxLine[] {
   const stateRate = rateOf(o.stateRate);
   const cityRate = rateOf(o.cityRate);
   if (o.serviceTaxCents > 0) {
-    if (stateRate && cityRate) {
+    const split = stateRate && cityRate && sameRate(stateRate + cityRate, o.serviceRate);
+    if (split) {
       const [stateCents, cityCents] = allocateProportionally(o.serviceTaxCents, [stateRate, cityRate]);
       if (stateCents > 0) lines.push({ label: stateLabel, cents: stateCents, rate: stateRate });
       if (cityCents > 0) lines.push({ label: cityLabel, cents: cityCents, rate: cityRate });
-    } else if (cityRate) lines.push({ label: cityLabel, cents: o.serviceTaxCents, rate: cityRate });
-    else lines.push({ label: stateLabel, cents: o.serviceTaxCents, rate: stateRate ?? o.serviceRate });
+    } else if (cityRate && !stateRate && sameRate(cityRate, o.serviceRate)) lines.push({ label: cityLabel, cents: o.serviceTaxCents, rate: cityRate });
+    else if (stateRate && !cityRate && sameRate(stateRate, o.serviceRate)) lines.push({ label: stateLabel, cents: o.serviceTaxCents, rate: stateRate });
+    else lines.push({ label: stateLabel, cents: o.serviceTaxCents, rate: o.serviceRate });
   }
   if (o.productTaxCents > 0) {
     const productLabel = labelOf(o.productLabel) ?? (o.serviceTaxCents > 0 ? "Product sales tax" : stateLabel);

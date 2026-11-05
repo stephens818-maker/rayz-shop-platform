@@ -1,4 +1,4 @@
-import { and, eq, gt, gte, inArray, lt, lte, sql } from "drizzle-orm";
+import { and, eq, gt, gte, inArray, isNotNull, lt, lte, sql } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { db } from "@/db";
 import { payGroups, paymentTransfers, payrollEmployers, payrollExportSends, payrollProfiles, shops, staff, timeEntries, tipAbsorptions, tipLedger, tipPayouts, type PayrollSendShop } from "@/db/schema";
@@ -631,7 +631,7 @@ async function tipsPaidPeriod(r: Pick<PeriodRun, "ref" | "label" | "blocks">, se
   if (!shopIds.length || (sel && !sel.length)) return none;
   const inPeriod = (t: typeof tipLedger | typeof tipAbsorptions) =>
     and(inArray(t.shopId, shopIds), gte(t.businessDate, r.ref.start), lte(t.businessDate, r.ref.end), sel ? inArray(t.staffId, sel) : undefined);
-  const [entries, absorbed] = await Promise.all([
+  const [entries, absorbed, restored] = await Promise.all([
     db
       .select({
         shopId: tipLedger.shopId,
@@ -656,6 +656,17 @@ async function tipsPaidPeriod(r: Pick<PeriodRun, "ref" | "label" | "blocks">, se
       .from(tipAbsorptions)
       .where(inPeriod(tipAbsorptions))
       .groupBy(tipAbsorptions.shopId, tipAbsorptions.staffId, tipAbsorptions.employerId),
+    db
+      .select({
+        shopId: tipLedger.shopId,
+        staffId: tipLedger.staffId,
+        employerId: tipLedger.employerId,
+        cents: sql<number>`sum(-${tipLedger.amountCents})::int`,
+      })
+      .from(tipLedger)
+      .innerJoin(tipAbsorptions, and(eq(tipAbsorptions.refundId, tipLedger.refundId), eq(tipAbsorptions.staffId, tipLedger.staffId)))
+      .where(and(eq(tipLedger.kind, "refund"), isNotNull(tipLedger.refundId), inPeriod(tipLedger)))
+      .groupBy(tipLedger.shopId, tipLedger.staffId, tipLedger.employerId),
   ]);
   const rows = new Map<string, TipsPaidRow>();
   const rowOf = (staffId: string, employerId: string | null, shopId: string) => {
@@ -697,6 +708,9 @@ async function tipsPaidPeriod(r: Pick<PeriodRun, "ref" | "label" | "blocks">, se
     row[e.toBarber ? "transferredCents" : bucketOf(e.method, e.status)] += e.cents;
     if (e.kind === "refund") row.reversedCents -= e.cents;
   }
+  // A refund the shop already absorbed (Jessica's $7.60) is in both the refund ledger row and
+  // tip_absorptions. Count it once, as absorbed. A void has no absorption, so it stays reversed.
+  for (const a of restored) rowOf(a.staffId, a.employerId, a.shopId).reversedCents -= a.cents;
   for (const a of absorbed) rowOf(a.staffId, a.employerId, a.shopId).absorbedCents += a.cents;
   if (!rows.size) return none;
   const list = [...rows.values()];

@@ -38,8 +38,11 @@ describe("receipt tax labels", () => {
     expect(lines[0].cents + lines[1].cents).toBe(700);
     expect(lines.reduce((a, l) => a + l.cents, 0)).toBe(800);
     expect(
-      receiptTaxLines({ state: "IA", city: "Iowa City", serviceTaxCents: 100, productTaxCents: 0, serviceRate: 0.07, productRate: 0, cityRate: 0.01 }),
+      receiptTaxLines({ state: "IA", city: "Iowa City", serviceTaxCents: 100, productTaxCents: 0, serviceRate: 0.01, productRate: 0, cityRate: 0.01 }),
     ).toEqual([{ label: "City of Iowa City sales tax", cents: 100, rate: 0.01 }]);
+    expect(
+      receiptTaxLines({ state: "IA", city: "Iowa City", serviceTaxCents: 800, productTaxCents: 0, serviceRate: 0.08, productRate: 0, stateRate: 0.06, cityRate: 0.01 }),
+    ).toEqual([{ label: "State of Iowa sales tax", cents: 800, rate: 0.08 }]);
     expect(
       receiptTaxLines({ state: "IA", city: "Iowa City", serviceTaxCents: 100, productTaxCents: 0, serviceRate: 0.07, productRate: 0, stateLabel: "Local option tax" }),
     ).toEqual([{ label: "Local option tax", cents: 100, rate: 0.07 }]);

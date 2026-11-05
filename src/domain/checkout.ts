@@ -204,8 +204,31 @@ export function describeFee(cfg: FeeShape): string {
   return p.type === "flat" ? formatCents(p.flatCents) : p.type === "both" ? `${formatRate(p.rate)} + ${formatCents(p.flatCents)}` : formatRate(p.rate);
 }
 
+/** Receipts, notices and footers say credit card fee. Older saved text that still says surcharge is shown that way. */
+export function creditCardFeeWording(text: string): string {
+  const put = (src: string, pattern: RegExp, next: string) =>
+    src.replace(pattern, (m) => (m[0] === m[0].toUpperCase() && m[0] !== m[0].toLowerCase() ? next[0].toUpperCase() + next.slice(1) : next));
+  return put(
+    put(
+      put(
+        put(
+          put(put(text, /credit card surcharges/gi, "credit card fees"), /credit card surcharge/gi, "credit card fee"),
+          /card surcharges/gi,
+          "credit card fees",
+        ),
+        /card surcharge/gi,
+        "credit card fee",
+      ),
+      /\bsurcharges\b/gi,
+      "credit card fees",
+    ),
+    /\bsurcharge\b/gi,
+    "credit card fee",
+  );
+}
+
 export function feeLabel(cfg: FeeShape & { name?: string | null }): string {
-  const name = cfg.name?.trim() || "Credit card fee";
+  const name = creditCardFeeWording(cfg.name?.trim() || "Credit card fee");
   return `${name} (${describeFee(cfg)})`;
 }
 
@@ -215,7 +238,7 @@ export const DEFAULT_FEE_NOTICE = "A {fee} credit card fee applies to credit car
 export function feeDisclosure(cfg: Pick<CardFeeConfig, "rate" | "enabled"> & Partial<CardFeeConfig>): string | null {
   const p = feeParts(cfg);
   if (!cfg.enabled || cfg.off || (p.rate <= 0 && p.flatCents <= 0)) return null;
-  return (cfg.notice?.trim() || DEFAULT_FEE_NOTICE).replaceAll("{fee}", describeFee(cfg));
+  return creditCardFeeWording((cfg.notice?.trim() || DEFAULT_FEE_NOTICE).replaceAll("{fee}", describeFee(cfg)));
 }
 
 export type CardFeeBasis = "charge_excluding_tip" | "charge_including_tip";

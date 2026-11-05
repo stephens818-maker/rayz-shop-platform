@@ -2039,7 +2039,7 @@ export function Pos(props: {
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-zinc-500">
                     {split
-                      ? `${parts.length} payments, ${$(base.primaryBaseCents)} before any surcharge`
+                      ? `${parts.length} payments, ${$(base.primaryBaseCents)} before any credit card fee`
                       : "One payment"}
                   </span>
                   <button
@@ -2250,7 +2250,7 @@ export function Pos(props: {
                             {pp.tipCents > 0 &&
                               `Includes the ${$(pp.tipCents)} tip. `}
                             {pp.feeCents > 0 &&
-                              `Charged ${$(pp.chargeCents)} with the ${$(pp.feeCents)} surcharge.`}
+                              `Charged ${$(pp.chargeCents)} with the ${$(pp.feeCents)} credit card fee.`}
                           </div>
                         )}
                       </div>
@@ -2476,7 +2476,7 @@ export function Pos(props: {
                         setWaive({ ...waive, on: e.target.checked })
                       }
                     />
-                    Waive the card surcharge
+                    Waive the credit card fee
                   </label>
                   {props.perms.maxWaiverCents != null && (
                     <div

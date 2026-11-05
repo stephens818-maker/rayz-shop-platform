@@ -912,6 +912,20 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-11-04: Jessica $7.60 once, Stripe tip default, tax labels, credit card fee
+
+`core_0159_stripe_tips_and_labels` (next migration is `core_0160`).
+
+Jessica's $7.60 on ticket 14858 was counted twice on the tips-paid report and the iSolved export: the refund row still said reversed, and the shop's absorption said absorbed. The money was already right. A refund that the shop absorbs is now only absorbed. A void has no absorption, so it stays reversed. The report hint and the export both follow that.
+
+`core_0157` moved a shop to Stripe only when `defaultMethod` was exactly the text `cash` and the schedule was not payroll. The tax split in that same migration is what the sandbox shows, so the migration ran. A capitalized `Cash`, a `method` key, or a brand-sync override of cash was left behind. `core_0159` sets every existing non-payroll shop to Stripe, including that override, and does not change the schedule. Coralville stays end of night. A shop that pays tips through payroll stays on payroll. A shop can still change the method later.
+
+A receipt splits state and city tax only when those rates add up to the rate that was charged. Ticket 14864 at 8% no longer prints 6% + 1%. A saved split that does not add up to the shop's service rate is cleared. A 7% shop whose split is 6% + 1% keeps it.
+
+Receipt notices, footers, and the fee line say credit card fee, including older saved wording that still said surcharge. The card-fee page no longer says a new location starts without the fee. A new shop the fee applies to starts at 3%. Ticking shops is only the "selected" list.
+
+Makenna's Oct 27 open GPS punches were not changed. Coralville's end-of-night tip timing was not changed.
+
 ### 2026-11-03: staff how-to, staff chat, speed, public names, cleanup
 
 `core_0158_chat_photos_cleanup` (next migration is `core_0159`). It archives the canary client Consent Zzcanary, cancels visit A5TDPQTQ87 when that visit is still open, and voids open unpaid ticket `5417a3e4` when it has no pending or succeeded payment. History stays. Search skips archived clients.

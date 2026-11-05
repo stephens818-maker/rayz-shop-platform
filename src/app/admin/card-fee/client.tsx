@@ -38,7 +38,7 @@ const OWN_LABEL: Record<string, string> = {
 
 const APPLY_HINT: Record<FeeApplyTo, string> = {
   all: "Every shop, including locations added later.",
-  selected: "Only the shops ticked below. A new location starts without it until it's ticked.",
+  selected: "Only the shops ticked below. A new location is not on this list until you tick it. A new shop the fee applies to starts at 3%.",
   none: "No shop adds the surcharge.",
 };
 
