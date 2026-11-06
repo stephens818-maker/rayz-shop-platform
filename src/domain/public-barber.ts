@@ -5,6 +5,16 @@ export function publicBarberName(label: string): string {
   return first.replace(/\.$/, "") || label;
 }
 
+/**
+ * When two barbers at a shop share a first name, the public list adds a specialty (never a last
+ * name). A unique first name stays on its own.
+ */
+export function publicBarberHints(names: readonly string[], specialties: readonly (string | null | undefined)[]): (string | null)[] {
+  const counts = new Map<string, number>();
+  for (const n of names) counts.set(n, (counts.get(n) ?? 0) + 1);
+  return names.map((n, i) => ((counts.get(n) ?? 0) > 1 ? specialties[i]?.trim() || null : null));
+}
+
 export function isTestBarberLabel(label: string): boolean {
   return /\(test\)/i.test(label);
 }

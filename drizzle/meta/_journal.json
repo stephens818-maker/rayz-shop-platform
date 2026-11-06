@@ -1121,6 +1121,13 @@
       "when": 1796643240000,
       "tag": "core_0159_stripe_tips_and_labels",
       "breakpoints": true
+    },
+    {
+      "idx": 160,
+      "version": "7",
+      "when": 1796643300000,
+      "tag": "core_0160_public_barbers",
+      "breakpoints": true
     }
   ]
 }

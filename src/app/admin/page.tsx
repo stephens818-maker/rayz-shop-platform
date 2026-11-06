@@ -146,6 +146,7 @@ export default async function Dashboard({
       .where(where)
       .groupBy(appointments.status);
 
+  const policyPromise = clientPolicy(ctx);
   const [
     summary,
     prior,
@@ -156,6 +157,7 @@ export default async function Dashboard({
     alerts,
     rangeCounts,
     payPeriods,
+    policy,
   ] =
     await Promise.all([
       salesSummary(scope),
@@ -220,13 +222,13 @@ export default async function Dashboard({
             ),
           ),
       payPeriodPicker(shopIds, today),
+      policyPromise,
     ]);
   const seesTeam = canAny(ctx, [
     "calendar.manage",
     "timeoff.approve",
     "schedules.edit",
   ]);
-  const policy = await clientPolicy(ctx);
   const [
     times,
     staffing,

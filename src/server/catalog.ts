@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { catalogCategories, services, shopHours, shopServices, shops, staff, staffSchedules, staffShops, Shop, TaxCategory } from "@/db/schema";
-import { isTestBarberLabel, publicBarberName } from "@/domain/public-barber";
+import { catalogCategories, services, shopHours, shopServices, shops, staff, staffPhotos, staffSchedules, staffShops, Shop, TaxCategory } from "@/db/schema";
+import { isTestBarberLabel, publicBarberHints, publicBarberName } from "@/domain/public-barber";
 import { notFound } from "./errors"; import { timingAt } from "./brand-sync/adapters/service-rules";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -66,8 +66,10 @@ export async function shopCatalog(shopId: string, opts: { onlineOnly?: boolean }
 export interface PublicBarber {
   id: string;
   slug: string;
-  /** Admin-set label (e.g. "Taylor R."). First names only — never a surname. */
+  /** First name on the public list. Staff screens keep the admin label. */
   displayName: string;
+  /** Set when another barber here has the same first name. A specialty, never a last name. */
+  hint: string | null;
   color: string;
   photoUrl: string | null;
 }
@@ -79,6 +81,7 @@ export async function shopBarbers(shopId: string, opts: { onlineOnly?: boolean }
       id: staff.id,
       slug: staff.publicSlug,
       displayName: staff.displayLabel,
+      specialty: staff.publicSpecialty,
       color: staff.color,
       visibleOnline: staffShops.visibleOnline,
     })
@@ -92,15 +95,21 @@ export async function shopBarbers(shopId: string, opts: { onlineOnly?: boolean }
     .from(staffSchedules)
     .where(eq(staffSchedules.shopId, shopId));
   const has = new Set(scheduled.map((s) => s.staffId));
-  return rows
-    .filter((r) => has.has(r.id) && (!opts.onlineOnly || r.visibleOnline) && !(opts.onlineOnly && isTestBarberLabel(r.displayName)))
-    .map(({ id, slug, displayName, color }) => ({
-      id,
-      slug,
-      displayName: opts.onlineOnly ? publicBarberName(displayName) : displayName,
-      color,
-      photoUrl: null,
-    }));
+  const listed = rows.filter((r) => has.has(r.id) && (!opts.onlineOnly || r.visibleOnline) && !(opts.onlineOnly && isTestBarberLabel(r.displayName)));
+  const pics = listed.length
+    ? await tx.select({ staffId: staffPhotos.staffId }).from(staffPhotos).where(inArray(staffPhotos.staffId, listed.map((r) => r.id)))
+    : [];
+  const photo = new Set(pics.map((p) => p.staffId));
+  const names = listed.map((r) => (opts.onlineOnly ? publicBarberName(r.displayName) : r.displayName));
+  const hints = opts.onlineOnly ? publicBarberHints(names, listed.map((r) => r.specialty)) : listed.map(() => null);
+  return listed.map((r, i) => ({
+    id: r.id,
+    slug: r.slug,
+    displayName: names[i],
+    hint: hints[i],
+    color: r.color,
+    photoUrl: photo.has(r.id) ? `/book/photo/${r.slug}` : null,
+  }));
 }
 
 export async function shopWeeklyHours(shopId: string, tx: DBorTx = db) {

@@ -64,7 +64,9 @@ interface Barber {
   id: string;
   slug: string;
   displayName: string;
+  hint?: string | null;
   color: string;
+  photoUrl?: string | null;
 }
 interface ShopInfo {
   slug: string;
@@ -775,6 +777,8 @@ export function BookingWizard({
                   setStep("time");
                 }}
                 name={b.displayName}
+                hint={b.hint ?? undefined}
+                photoUrl={b.photoUrl}
                 color={b.color}
               />
             ))}
@@ -1222,12 +1226,14 @@ function Section({
 function BarberTile({
   name,
   hint,
+  photoUrl,
   color,
   selected,
   onClick,
 }: {
   name: string;
   hint?: string;
+  photoUrl?: string | null;
   color: string;
   selected: boolean;
   onClick: () => void;
@@ -1243,12 +1249,16 @@ function BarberTile({
           : "bg-white ring-zinc-200 hover:ring-zinc-400",
       )}
     >
+      {photoUrl ? (
+        <img src={photoUrl} alt="" className="h-9 w-9 shrink-0 rounded-full object-cover" />
+      ) : (
       <span
         className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-bold text-white"
         style={{ background: color }}
       >
         {name === "Any barber" ? "★" : name[0]}
       </span>
+      )}
       <span>
         <span className="block text-sm font-medium">{name}</span>
         {hint && <span className="text-xs text-zinc-500">{hint}</span>}

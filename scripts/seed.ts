@@ -211,6 +211,7 @@ async function main() {
         staffCode: `S-${String(i + 1).padStart(4, "0")}`,
         firstName: s.firstName,
         displayLabel: s.displayLabel,
+        publicSpecialty: s.publicSpecialty ?? null,
         publicSlug: staffPublicSlug(s.firstName),
         squireName: s.squireName ?? null,
         email: s.email ?? null,

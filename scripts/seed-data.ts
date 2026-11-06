@@ -287,6 +287,8 @@ export interface StaffSeed {
   schedule: Record<string, number[]>;
   active?: boolean;
   bookable?: boolean;
+  /** Shown on the public list only when another barber at the shop has the same first name. Never a last name. */
+  publicSpecialty?: string;
   /** Role template key; barber when unset. */
   role?: "brand_owner" | "shop_manager" | "barber";
   /** The one shop a shop manager has access to. */
@@ -308,12 +310,12 @@ export const STAFF: StaffSeed[] = [
   { key: "casey", firstName: "Casey", displayLabel: "Casey", listedAt: ["coralville", "kimberly", "le-claire", "moline", "rock-island", "silvis", "utica"], schedule: { "le-claire": [2, 3] } },
   // Kimberly
   { key: "beth", firstName: "Beth", displayLabel: "Beth", listedAt: ["kimberly"], schedule: { kimberly: [1, 2, 3, 4, 5] } },
-  { key: "olivia-a", firstName: "Olivia", displayLabel: "Olivia A.", squireName: "Olivia A", listedAt: ["kimberly", "utica", "le-claire"], schedule: { kimberly: [1, 2, 3], utica: [4, 5] } },
+  { key: "olivia-a", firstName: "Olivia", displayLabel: "Olivia A.", publicSpecialty: "Kids cuts", squireName: "Olivia A", listedAt: ["kimberly", "utica", "le-claire"], schedule: { kimberly: [1, 2, 3], utica: [4, 5] } },
   { key: "sammie", firstName: "Sammie", displayLabel: "Sammie", listedAt: ["kimberly"], schedule: { kimberly: [2, 3, 4, 5, 6] } },
   { key: "maddie", firstName: "Maddie", displayLabel: "Maddie", listedAt: ["kimberly"], schedule: { kimberly: [1, 3, 4, 6] } },
   { key: "ali", firstName: "Ali", displayLabel: "Ali", listedAt: ["kimberly"], schedule: { kimberly: [1, 2, 5] } },
-  { key: "taylor-a", firstName: "Taylor", displayLabel: "Taylor A.", squireName: "Taylor A", listedAt: ["rock-island", "kimberly", "silvis", "utica"], schedule: { "rock-island": [1, 2, 3, 4], kimberly: [6] } },
-  { key: "taylor-b", firstName: "Taylor", displayLabel: "Taylor B.", squireName: "Taylor B", listedAt: ["rock-island", "kimberly"], schedule: { "rock-island": [2, 3, 4, 5, 6] } },
+  { key: "taylor-a", firstName: "Taylor", displayLabel: "Taylor A.", publicSpecialty: "Skin fades", squireName: "Taylor A", listedAt: ["rock-island", "kimberly", "silvis", "utica"], schedule: { "rock-island": [1, 2, 3, 4], kimberly: [6] } },
+  { key: "taylor-b", firstName: "Taylor", displayLabel: "Taylor B.", publicSpecialty: "Scissor cuts", squireName: "Taylor B", listedAt: ["rock-island", "kimberly"], schedule: { "rock-island": [2, 3, 4, 5, 6] } },
   { key: "daisey", firstName: "Daisey", displayLabel: "Daisey", listedAt: ["utica", "le-claire", "kimberly", "moline", "rock-island"], schedule: { utica: [1, 2, 3, 4], "le-claire": [5, 6] } },
   // Le Claire
   { key: "skylar", firstName: "Skylar", displayLabel: "Skylar", listedAt: ["le-claire", "rock-island", "silvis", "utica"], schedule: { "le-claire": [2, 3, 4, 5, 6] } },
@@ -341,7 +343,7 @@ export const STAFF: StaffSeed[] = [
   { key: "autumn", firstName: "Autumn", displayLabel: "Autumn", listedAt: ["rock-island"], schedule: {} },
   { key: "amanda", firstName: "Amanda", displayLabel: "Amanda", listedAt: ["silvis", "rock-island"], schedule: { silvis: [1, 2, 3, 4, 5] } },
   // Silvis
-  { key: "olivia-b", firstName: "Olivia", displayLabel: "Olivia B.", squireName: "Olivia B", listedAt: ["silvis", "utica"], schedule: { silvis: [1, 2, 3, 4], utica: [6] } },
+  { key: "olivia-b", firstName: "Olivia", displayLabel: "Olivia B.", publicSpecialty: "Beard trims", squireName: "Olivia B", listedAt: ["silvis", "utica"], schedule: { silvis: [1, 2, 3, 4], utica: [6] } },
   { key: "abigail", firstName: "Abigail", displayLabel: "Abigail", listedAt: ["silvis"], schedule: { silvis: [2, 3, 4, 5, 6] } },
   { key: "liv", firstName: "Liv", displayLabel: "Liv", listedAt: ["silvis"], schedule: { silvis: [1, 3, 5, 6] } },
   // Utica

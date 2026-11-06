@@ -48,7 +48,7 @@ export async function clientListQuery(
     sql`, `,
   )}], ${customers.id})` : null;
   return {
-    where: and(isNull(customers.deletedAt), clientsFor(ctx.staff.demo), search, scope, filtered ? sql`${customers.id} in ${filtered}` : undefined),
+    where: and(isNull(customers.deletedAt), isNull(customers.archivedAt), clientsFor(ctx.staff.demo), search, scope, filtered ? sql`${customers.id} in ${filtered}` : undefined),
     relevance,
     seg,
     problem,

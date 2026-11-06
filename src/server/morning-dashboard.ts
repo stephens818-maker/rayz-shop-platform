@@ -139,6 +139,38 @@ const canAt = (a: StaffAccess, shopId: string, p: Permission) => a.byShop.get(sh
 export const morningShops = (a: StaffAccess) => a.shops.filter((s) => REPORTING.has(s.status) && canAt(a, s.id, reportView("morning_dashboard"))).map((s) => s.id);
 
 /**
+ * Which shops each active person can receive the morning email for. Uses the role's permission
+ * (their main role, or their role at that shop) so the settings page does not load every person's
+ * full access. A shop-specific role variant is not applied here.
+ */
+export async function morningRecipientShops(): Promise<Map<string, { id: string; name: string }[]>> {
+  const perm = reportView("morning_dashboard");
+  const [roleRows, people, links, reporting] = await Promise.all([
+    db.select({ id: roles.id, key: roles.key, permissions: roles.permissions }).from(roles),
+    db.select({ id: staff.id, roleId: staff.roleId, scope: staff.shopScope }).from(staff).where(and(eq(staff.active, true), eq(staff.kind, "person"))),
+    db
+      .select({ staffId: staffAccessShops.staffId, shopId: shops.id, name: shops.name, status: shops.status, roleId: staffAccessShops.roleId })
+      .from(staffAccessShops)
+      .innerJoin(shops, eq(shops.id, staffAccessShops.shopId)),
+    db.select({ id: shops.id, name: shops.name, status: shops.status }).from(shops).where(inArray(shops.status, ["live", "closed"])),
+  ]);
+  const sees = new Set(roleRows.filter((r) => r.key === "brand_owner" || r.permissions.includes(perm)).map((r) => r.id));
+  const open = reporting.filter((s) => REPORTING.has(s.status));
+  const out = new Map<string, { id: string; name: string }[]>();
+  for (const p of people) {
+    const owner = roleRows.find((r) => r.id === p.roleId)?.key === "brand_owner";
+    if (p.scope === "all" || owner) {
+      out.set(p.id, sees.has(p.roleId) ? open.map((s) => ({ id: s.id, name: s.name })) : []);
+      continue;
+    }
+    const uniq = new Map<string, { id: string; name: string }>();
+    for (const l of links) if (l.staffId === p.id && REPORTING.has(l.status) && sees.has(l.roleId ?? p.roleId)) uniq.set(l.shopId, { id: l.shopId, name: l.name });
+    out.set(p.id, [...uniq.values()]);
+  }
+  return out;
+}
+
+/**
  * Active people whose role (main or at one of their shops) is on the list, plus anyone added, less
  * anyone removed, who may see the dashboard for at least one shop, with the versions they get.
  */
@@ -882,8 +914,23 @@ export interface BuildInput {
  * One person's dashboard for one version: each section shows only the shops where their reports
  * allow it, and a section they can't see anywhere is left out. Null when they have none of the shops.
  */
+const morningMemo = new Map<string, { at: number; value: MorningDashboard | null }>();
+
 export async function buildMorningDashboard(input: BuildInput, cals?: Map<string, ShopCal>): Promise<MorningDashboard | null> {
   const now = input.now ?? new Date();
+  const todayKey = input.today ?? todayLocal(now);
+  const memoOn = process.env.NODE_ENV === "production" && !input.now && !input.memo;
+  const memoKey = memoOn ? `${input.access.staffId}|${todayKey}|${[...input.shopIds].sort().join(",")}|${input.allSections ? 1 : 0}|${input.savedReports ? 1 : 0}` : "";
+  if (memoOn) {
+    const hit = morningMemo.get(memoKey);
+    if (hit && Date.now() - hit.at < 15_000) return hit.value;
+  }
+  const built = await buildMorningNow(input, cals, now);
+  if (memoOn) morningMemo.set(memoKey, { at: Date.now(), value: built });
+  return built;
+}
+
+async function buildMorningNow(input: BuildInput, cals: Map<string, ShopCal> | undefined, now: Date): Promise<MorningDashboard | null> {
   const today = input.today ?? todayLocal(now);
   const settings = input.settings ?? (await loadMorningSettings());
   const memo = input.memo ?? new Memo();

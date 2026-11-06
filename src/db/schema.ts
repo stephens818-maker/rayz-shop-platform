@@ -457,6 +457,8 @@ export const staff = pgTable("staff", {
   lastName: text("last_name"),
   /** Admin-set label shown everywhere first names collide, e.g. "Taylor R.". */
   displayLabel: text("display_label").notNull(),
+  /** Public booking hint when another barber at the shop has the same first name. Never a last name. */
+  publicSpecialty: text("public_specialty"),
   /** URL-safe, surname-free slug used in booking links. */
   publicSlug: text("public_slug").notNull().unique(),
   email: text("email").unique(),

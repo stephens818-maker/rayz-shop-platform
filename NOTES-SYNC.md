@@ -912,6 +912,22 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-11-05: archived clients, public specialties, matching booking links, faster admin reads
+
+`core_0160_public_barbers` (next migration is `core_0161`). It adds `staff.public_specialty` and fills the four colliding demo labels: Taylor A. Skin fades, Taylor B. Scissor cuts, Olivia A. Kids cuts, Olivia B. Beard trims. It also cancels visit A5TDPQTQ87 when that visit is still booked, confirmed, checked in, or in the chair. It does not touch punches, tip payout schedules, or tip transfers.
+
+The A–Z client list hid a deleted client and still showed an archived one. Search already skipped archived clients. The list now does too, so Consent Zzcanary stays off the list. Export uses the same query.
+
+Public booking still shows a first name only. When two barbers at the same shop share that first name, the tile adds a specialty (Rock Island: Taylor · Skin fades and Taylor · Scissor cuts; Utica: Olivia · Kids cuts and Olivia · Beard trims). A unique name stays the name alone. A photo, when one is saved, is a small image at `/book/photo/{slug}` for a barber who is active, bookable, and visible online. The booking JSON carries that path, not the image itself. Staff screens still use the admin label (Taylor A.).
+
+Booking links used to list everyone marked visible online, including people with no weekly hours at that shop. Silvis showed 9 there and 4 on the public list. Both now use the same working set: active, bookable, visible online, and on the weekly schedule. Silvis is Amanda, Olivia B., Abigail, and Liv.
+
+The slow admin pages were mostly the same reads, run again while the HTML streamed. In production, a payroll read and the morning dashboard are remembered for 15 seconds, and approving, locking, or editing pay drops that memory. Tests always read fresh numbers. The morning digest no longer loads every person's full access; it checks who can see the morning report in one pass, and starts the preview while that list loads. The owner dashboard starts the client-policy read with the first batch. PF-01 warms once, then takes the median of three, and fails if morning recipients, the morning dashboard, or a payroll read (with or without clock checks) is over a second.
+
+Lost and expired inventory counts, drag-to-resize, Start and Finish toasts, photo upload, Void ticket, and Archive client were already on this branch. They were not rebuilt.
+
+Makenna's Oct 27 open GPS punches were not changed. Coralville's end-of-night tip timing was not changed. The client booking helper and the client portal stay later.
+
 ### 2026-11-04: Jessica $7.60 once, Stripe tip default, tax labels, credit card fee
 
 `core_0159_stripe_tips_and_labels` (next migration is `core_0160`).

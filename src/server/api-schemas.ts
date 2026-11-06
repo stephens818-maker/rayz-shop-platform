@@ -99,7 +99,8 @@ export const ServiceList = z.object({ services: z.array(Service), addons: z.arra
 export const Barber = z.object({
   id: z.string().uuid(),
   slug: z.string().describe("Surname-free slug used in booking links"),
-  displayName: z.string().describe("First name or admin-set label, e.g. 'Taylor R.'"),
+  displayName: z.string().describe("First name only"),
+  hint: z.string().nullable().describe("A specialty, only when another barber at the shop has the same first name"),
   color: z.string(),
   photoUrl: z.string().nullable(),
 });

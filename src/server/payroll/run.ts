@@ -369,10 +369,38 @@ const centi = (x: number) => x / 100;
  * comes back exactly as it was approved. Without `clockChecks` (an employee's own pay), the time
  * clock's flags and hours gate are left out.
  */
+const payrollMemo = new Map<string, { at: number; view: PayrollView | null }>();
+const PAYROLL_MEMO_MS = 15_000;
+
+function payrollMemoKey(start: string, end: string, o: { clockChecks?: boolean; review?: { shopIds: readonly string[] }; weeks?: { shopIds: readonly string[] } }) {
+  const ids = (xs?: readonly string[]) => (xs ? [...xs].sort().join(",") : "");
+  return `${start}|${end}|${o.clockChecks === false ? 0 : 1}|${ids(o.review?.shopIds)}|${ids(o.weeks?.shopIds)}`;
+}
+
+/** Drops the short-lived payroll read cache after a pay change. Tests don't use the cache. */
+export function forgetPayrollMemo() {
+  payrollMemo.clear();
+}
+
 export async function buildPayroll(
   start: LocalDate,
   end: LocalDate,
   o: { clockChecks?: boolean; review?: { shopIds: readonly string[] }; weeks?: { shopIds: readonly string[] } } = {},
+): Promise<PayrollView | null> {
+  const memoKey = process.env.NODE_ENV === "production" ? payrollMemoKey(start, end, o) : null;
+  if (memoKey) {
+    const hit = payrollMemo.get(memoKey);
+    if (hit && Date.now() - hit.at < PAYROLL_MEMO_MS) return hit.view;
+  }
+  const view = await buildPayrollNow(start, end, o);
+  if (memoKey) payrollMemo.set(memoKey, { at: Date.now(), view });
+  return view;
+}
+
+async function buildPayrollNow(
+  start: LocalDate,
+  end: LocalDate,
+  o: { clockChecks?: boolean; review?: { shopIds: readonly string[] }; weeks?: { shopIds: readonly string[] } },
 ): Promise<PayrollView | null> {
   const groups = await ensurePayGroups();
   const review = o.review ?? null;
@@ -1611,6 +1639,7 @@ export async function preparersOf(start: LocalDate, end: LocalDate): Promise<{ s
  * to the figures needs a new approval.
  */
 export async function approvePayroll(start: LocalDate, end: LocalDate, actor: Actor, note: string | null = null, shopIds: readonly string[] | null = null): Promise<Refusal | { approvalId: string }> {
+  forgetPayrollMemo();
   const view = await payrollRunView(start, end, shopIds);
   const refused = gate(view, start, end);
   if (refused || !view) return refused!;
@@ -1646,6 +1675,7 @@ export async function approvePayroll(start: LocalDate, end: LocalDate, actor: Ac
 
 /** Take back an approval before the lock, with a reason. A locked period stays as approved. */
 export async function revokeApproval(start: LocalDate, end: LocalDate, reason: string, actor: Actor, shopIds: readonly string[] | null = null): Promise<string | null> {
+  forgetPayrollMemo();
   const why = reason.trim().slice(0, 300);
   if (!why) return "Say why the approval is taken back.";
   const view = await payrollRunView(start, end, shopIds, { clockChecks: false });
@@ -1668,6 +1698,7 @@ export async function revokeApproval(start: LocalDate, end: LocalDate, reason: s
  * approved from then on. Needs a current approval: if anything changed since, approve again first.
  */
 export async function lockPayroll(start: LocalDate, end: LocalDate, actor: Actor, shopIds: readonly string[] | null = null): Promise<Refusal | { locked: number }> {
+  forgetPayrollMemo();
   const view = await payrollRunView(start, end, shopIds);
   const refused = gate(view, start, end);
   if (refused || !view) return refused!;
@@ -1747,6 +1778,7 @@ export async function lockPayroll(start: LocalDate, end: LocalDate, actor: Actor
 
 /** Approve and lock in one step (both recorded): what the Payroll Report's two steps do back to back. */
 export async function approveAndLock(start: LocalDate, end: LocalDate, actor: Actor, shopIds: readonly string[] | null = null): Promise<Refusal | { locked: number }> {
+  forgetPayrollMemo();
   const view = await payrollRunView(start, end, shopIds);
   const refused = gate(view, start, end);
   if (refused || !view) return refused!;
@@ -1806,6 +1838,7 @@ export async function payrollTrail(start: LocalDate, end: LocalDate) {
 
 /** Moves one pay period's check and submit-by dates for every pay group that has it (a holiday), with a reason. */
 export async function savePeriodDates(start: LocalDate, end: LocalDate, v: { checkDate: LocalDate; submitBy: LocalDate; reason: string }, actor: Actor): Promise<string | null> {
+  forgetPayrollMemo();
   return savePeriodDatesFor(start, end, v, await ensurePayGroups(), actor);
 }
 
@@ -1814,6 +1847,7 @@ export async function savePayGroup(
   v: { label: string; legalEntity: string; exportTab: string; code?: string | null; calendar: PayCalendar },
   actor: Actor,
 ): Promise<string | null> {
+  forgetPayrollMemo();
   const label = v.label.trim();
   const entity = v.legalEntity.trim();
   if (!label) return "Give the pay group a label.";
@@ -1863,6 +1897,7 @@ export async function saveProfile(
   v: { employeeNumber: string | null; keyIsText: boolean; isolvedName: string | null; exportPosition: number | null; tippedOccupationCode?: string | null; zeroHourlyPay?: boolean },
   actor: Actor,
 ): Promise<string | null> {
+  forgetPayrollMemo();
   const num = v.employeeNumber?.trim() || null;
   if (num && num.length > 32) return "That employee number is too long.";
   const occ = v.tippedOccupationCode === undefined ? undefined : v.tippedOccupationCode?.trim().toUpperCase() || null;
@@ -1906,6 +1941,7 @@ export async function saveRate(
   v: { hourlyRate: number; servicePct: number; productPct: number; trainingRate: number | null; effectiveFrom?: LocalDate | null },
   actor: Actor,
 ): Promise<string | null> {
+  forgetPayrollMemo();
   const { effectiveFrom: picked = null, ...rates } = v;
   const bad = (x: number, max: number) => !Number.isFinite(x) || x < 0 || x > max;
   if (bad(rates.hourlyRate, 500)) return "Hourly wage is 0 to 500.";
@@ -1945,6 +1981,7 @@ async function punchedHours(shopId: string, periodStart: LocalDate, staffId: str
 }
 
 export async function setOverride(shopId: string, periodStart: LocalDate, staffId: string, field: Overridable, value: number | null, reason: string, actor: Actor): Promise<string | null> {
+  forgetPayrollMemo();
   if (!(OVERRIDABLE as readonly string[]).includes(field)) return "That value can't be typed over.";
   if (await isLockedOn(shopId, periodStart)) return "This pay period is locked.";
   const fromSquire = (await loadRolloutPlan()).sourceOf(shopId, periodStart) === "squire";
@@ -1982,6 +2019,7 @@ export async function addLateCommission(
   v: { shopId: string; periodStart: LocalDate; staffId: string; earnedStart: LocalDate; amount: number; reason: string },
   actor: Actor,
 ): Promise<string | null> {
+  forgetPayrollMemo();
   const g = (await ensurePayGroups()).find((x) => x.shopId === v.shopId);
   if (!g || !periodStarting(g.calendar, v.periodStart)) return "Pick a pay period of that shop.";
   if (await isLockedOn(v.shopId, v.periodStart)) return "This pay period is locked.";
@@ -2000,6 +2038,7 @@ export async function addLateCommission(
 }
 
 export async function removeLateCommission(id: string, actor: Actor): Promise<string | null> {
+  forgetPayrollMemo();
   const [r] = await db.select().from(payrollCommissionAdjustments).where(eq(payrollCommissionAdjustments.id, id));
   if (!r) return "That adjustment is gone.";
   if (await isLockedOn(r.shopId, r.periodStart)) return "This pay period is locked.";
@@ -2026,6 +2065,7 @@ export function timeEntryProblem(e: TimeEntryInput): string | null {
 }
 
 export async function addTimeEntries(list: TimeEntryInput[], actor: Actor): Promise<{ error: string } | { added: number }> {
+  forgetPayrollMemo();
   for (const [i, e] of list.entries()) {
     const p = timeEntryProblem(e);
     if (p) return { error: list.length > 1 ? `Row ${i + 1}: ${p}` : p };
@@ -2041,6 +2081,7 @@ export async function addTimeEntries(list: TimeEntryInput[], actor: Actor): Prom
 }
 
 export async function deleteTimeEntry(id: string, actor: Actor): Promise<string | null> {
+  forgetPayrollMemo();
   const [e] = await db.select().from(timeEntries).where(eq(timeEntries.id, id));
   if (!e) return "That entry is gone.";
   if (e.punchInId) return "That entry comes from clock punches. Fix the punches on the timesheet instead.";

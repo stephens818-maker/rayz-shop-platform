@@ -8,9 +8,8 @@ import { hasContent, versionPlans } from "@/domain/morning-dashboard";
 import { renderMorningHtml } from "@/domain/morning-render";
 import { seesStaffContact, staffContact } from "@/domain/staff-contact";
 import { formatDate, todayLocal } from "@/lib/time";
-import { loadStaffAccess } from "@/server/auth/access";
 import { guardPage } from "@/server/auth/staff";
-import { buildMorningDashboard, loadMorningSettings, morningShops } from "@/server/morning-dashboard";
+import { buildMorningDashboard, loadMorningSettings, morningRecipientShops, morningShops } from "@/server/morning-dashboard";
 import { MorningEditor, type MorningPerson } from "./editor";
 
 export const metadata: Metadata = { title: "Morning Dashboard email" };
@@ -18,7 +17,9 @@ export const metadata: Metadata = { title: "Morning Dashboard email" };
 export default async function MorningEmailPage() {
   const ctx = await guardPage("/admin/digest");
   const settings = await loadMorningSettings();
-  const [roleRows, people, shopRoles, [last]] = await Promise.all([
+  const previewPlans = versionPlans(morningShops(ctx.access), settings.versions[ctx.staff.id]);
+  const previewPromise = previewPlans.length ? buildMorningDashboard({ access: ctx.access, firstName: ctx.staff.firstName, shopIds: previewPlans[0].shopIds, settings }) : Promise.resolve(null);
+  const [roleRows, people, shopRoles, [last], shopLists] = await Promise.all([
     db.select({ key: roles.key, name: roles.name }).from(roles).orderBy(roles.sortOrder, roles.name),
     db
       .select({ id: staff.id, label: staff.displayLabel, email: staff.email, phone: staff.phone, role: roles.name, roleKey: roles.key })
@@ -28,21 +29,17 @@ export default async function MorningEmailPage() {
       .orderBy(asc(staff.displayLabel)),
     db.select({ staffId: staffAccessShops.staffId, key: roles.key }).from(staffAccessShops).innerJoin(roles, eq(roles.id, staffAccessShops.roleId)),
     db.select({ date: max(morningDashboardSends.date) }).from(morningDashboardSends).where(eq(morningDashboardSends.status, "queued")),
+    morningRecipientShops(),
   ]);
-  const accesses = await Promise.all(people.map((p) => loadStaffAccess(p.id)));
-  const list: MorningPerson[] = people.map((p, i) => {
-    const a = accesses[i];
-    const eligible = a ? morningShops(a) : [];
-    return {
-      id: p.id,
-      label: p.label,
-      email: staffContact(seesStaffContact({ permissions: ctx.permissions, staffId: ctx.staff.id }, p.id), p).email,
-      hasPhone: !!p.phone,
-      role: p.role,
-      roleKeys: [p.roleKey, ...shopRoles.filter((r) => r.staffId === p.id).map((r) => r.key)].filter((k): k is string => !!k),
-      shops: a ? a.shops.filter((s) => eligible.includes(s.id)).map((s) => ({ id: s.id, name: s.name })) : [],
-    };
-  });
+  const list: MorningPerson[] = people.map((p) => ({
+    id: p.id,
+    label: p.label,
+    email: staffContact(seesStaffContact({ permissions: ctx.permissions, staffId: ctx.staff.id }, p.id), p).email,
+    hasPhone: !!p.phone,
+    role: p.role,
+    roleKeys: [p.roleKey, ...shopRoles.filter((r) => r.staffId === p.id).map((r) => r.key)].filter((k): k is string => !!k),
+    shops: shopLists.get(p.id) ?? [],
+  }));
   const sent = last?.date
     ? (
         await db
@@ -66,26 +63,15 @@ export default async function MorningEmailPage() {
           lastSent={last?.date ? `Last sent ${formatDate(last.date, "EEE MMM d")}${last.date === todayLocal() ? " (today)" : ""} to ${sent} ${sent === 1 ? "person" : "people"}.` : "Hasn't gone out yet."}
         />
         <Suspense fallback={<Card className="self-start"><CardHeader title="Your copy, right now" subtitle="Loading the preview…" /></Card>}>
-          <DigestPreview access={ctx.access} staffId={ctx.staff.id} firstName={ctx.staff.firstName} settings={settings} />
+          <DigestPreview plans={previewPlans.length} promise={previewPromise} />
         </Suspense>
       </div>
     </div>
   );
 }
 
-async function DigestPreview({
-  access,
-  staffId,
-  firstName,
-  settings,
-}: {
-  access: Awaited<ReturnType<typeof guardPage>>["access"];
-  staffId: string;
-  firstName: string;
-  settings: Awaited<ReturnType<typeof loadMorningSettings>>;
-}) {
-  const plans = versionPlans(morningShops(access), settings.versions[staffId]);
-  const preview = plans.length ? await buildMorningDashboard({ access, firstName, shopIds: plans[0].shopIds, settings }) : null;
+async function DigestPreview({ plans, promise }: { plans: number; promise: ReturnType<typeof buildMorningDashboard> }) {
+  const preview = await promise;
   const html = preview && hasContent(preview) ? renderMorningHtml(preview) : null;
   return (
     <Card className="self-start overflow-hidden">
@@ -93,7 +79,7 @@ async function DigestPreview({
         title="Your copy, right now"
         subtitle={
           html
-            ? `${plans.length > 1 ? `The first of your ${plans.length} emails: ` : ""}${preview!.version.label}. Charts and links work in the email; the open dashboard has every barber.`
+            ? `${plans > 1 ? `The first of your ${plans} emails: ` : ""}${preview!.version.label}. Charts and links work in the email; the open dashboard has every barber.`
             : "You can't see the Morning Dashboard for any open shop, or every section you could see is off."
         }
       />

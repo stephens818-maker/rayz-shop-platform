@@ -4319,7 +4319,14 @@
           },
           "displayName": {
             "type": "string",
-            "description": "First name or admin-set label, e.g. 'Taylor R.'"
+            "description": "First name only"
+          },
+          "hint": {
+            "description": "A specialty, only when another barber at the shop has the same first name",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "color": {
             "type": "string"
@@ -4335,6 +4342,7 @@
           "id",
           "slug",
           "displayName",
+          "hint",
           "color",
           "photoUrl"
         ],
@@ -4359,7 +4367,14 @@
                 },
                 "displayName": {
                   "type": "string",
-                  "description": "First name or admin-set label, e.g. 'Taylor R.'"
+                  "description": "First name only"
+                },
+                "hint": {
+                  "description": "A specialty, only when another barber at the shop has the same first name",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
                 },
                 "color": {
                   "type": "string"
@@ -4375,6 +4390,7 @@
                 "id",
                 "slug",
                 "displayName",
+                "hint",
                 "color",
                 "photoUrl"
               ],
