@@ -1,0 +1,636 @@
+Appointment ID,Date,Time,Location,Barber,Client ID,Client Name,Phone,Email,Services,Add-ons,Price,Duration,Status,Booked At
+SQA-500148,4/21/2025,1:30 PM,Silvis,Amanda,SQ-20049,Marcus Thompson,3095555046,marcus.thompson48@fixture.test,Buzz Cut,,19.00,15,Checked Out,
+SQA-500355,4/23/2025,9:00 AM,Utica,Kate,SQ-20113,Lucas Ramirez,5635555107,lucas.ramirez112@fixture.test,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,4/4/2025 9:00 AM
+SQA-500437,4/23/2025,12:00 PM,Rock Island,Garrett,SQ-20149,Connor Lopez,1-309-555-5140,Connor.lopez148@Fixture.TEST,Buzz Cut,,19.00,15,Checked Out,4/16/2025 12:00 PM
+SQA-500575,4/23/2025,3:00 PM,Utica,Kate,SQ-20192,Tyler Johnson,1-563-555-5168,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,4/22/2025 3:00 PM
+SQA-500009,4/24/2025,2:30 PM,Le Claire,Audra,SQ-20007,Andre Vogel,563.555.5006,Andre.vogel6@Fixture.TEST,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,4/4/2025 2:30 PM
+SQA-500214,4/25/2025,11:00 AM,Coralville,Delaney,SQ-20072,Ryan Keller,(319) 555-5068,,Bald Fade,,19.00,40,Checked Out,
+SQA-500185,4/25/2025,1:30 PM,Silvis,Abigail,SQ-20062,Lucas Christensen, 309 555-5058 ,,Buzz Cut,Straight Razor Neck Shave,22.00,20,No Show,
+SQA-500524,4/25/2025,4:00 PM,Rock Island,Garrett,SQ-20179,Nora Lindgren,+1 309 555 5159,,Specialty Fade,,37.00,45,No Show,
+SQA-500161,4/26/2025,12:30 PM,Kimberly,Olivia A,SQ-20053,Cameron Weber,,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500122,4/29/2025,10:00 AM,Silvis,Abigail,SQ-20042,Carlos Weber,(309) 555-5039,,Specialty Fade,,37.00,45,Checked Out,4/19/2025 10:00 AM
+SQA-500212,4/29/2025,4:00 PM,Coralville,Delaney,SQ-20072,Ryan Keller,(319) 555-5068,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,4/11/2025 4:00 PM
+SQA-500337,4/30/2025,11:30 AM,Rock Island,Mercedez,SQ-20105,Ryan Zimmerman, 309 555-5100 ,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500345,4/30/2025,1:30 PM,Utica,Kate,SQ-20108,Nathan Vogel, 563 555-5103 ,Nathan.vogel107@Fixture.TEST,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,4/15/2025 1:30 PM
+SQA-500346,5/1/2025,9:00 AM,Utica,Kate,SQ-20108,Nathan Vogel, 563 555-5103 ,,Senior / Military Cut,,18.00,20,Cancelled,4/22/2025 9:00 AM
+SQA-500094,5/1/2025,2:00 PM,Silvis,Amanda,SQ-20034,Shane Lopez,3095555033,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,4/12/2025 2:00 PM
+SQA-500280,5/1/2025,3:00 PM,Coralville,Michelle,SQ-20090,Logan Olson,1-319-555-5085,,Ray'z Cut (No Shampoo),,20.00,20,Cancelled,4/22/2025 3:00 PM
+SQA-500364,5/2/2025,9:30 AM,Le Claire,Audra,SQ-20117,Noah Yoder, 563 555-5111 ,noah.yoder116@fixture.test,Ray'z Cut w/ Shampoo,Shampoo,26.00,45,Checked Out,4/23/2025 9:30 AM
+SQA-500329,5/5/2025,12:00 PM,Silvis,Liv,SQ-20103,Grant O'Brien,+1 309 555 5098,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,4/30/2025 12:00 PM
+SQA-500538,5/6/2025,9:00 AM,Utica,Em,SQ-20182,Mason Kerr,1-563-555-5160,,Ray'z Cut w/ Shampoo,Beard Line Up,28.00,45,Checked Out,
+SQA-500156,5/6/2025,11:30 AM,Silvis,Abigail,SQ-20051,Ethan Garcia,1-309-555-5048,,Ray'z Cut (No Shampoo),Shampoo,23.00,25,Checked Out,4/20/2025 11:30 AM
+SQA-500034,5/6/2025,12:30 PM,Coralville,Jessica,SQ-20017,Landon Yoder,1-319-555-5016,,Specialty Fade,,37.00,45,Checked Out,4/23/2025 12:30 PM
+SQA-500552,5/6/2025,3:30 PM,Coralville,Jessica,SQ-20187,Chris Miller,3195555163,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500038,5/7/2025,10:00 AM,Moline,Sara,SQ-20018,Brian Nguyen,+1 309 555 5017,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,4/22/2025 10:00 AM
+SQA-500129,5/7/2025,2:00 PM,Utica,Sarah,SQ-20045,Wesley Hartman, 563 555-5042 ,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500029,5/7/2025,3:00 PM,Silvis,Abigail,SQ-20016,Derek Reyes, 309 555-5015 ,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,5/6/2025 3:00 PM
+SQA-500139,5/8/2025,2:30 PM,Rock Island,Mercedez,SQ-20047,Derek Zimmerman,(309) 555-5044,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,4/19/2025 2:30 PM
+SQA-500289,5/8/2025,3:30 PM,Utica,Lindsay,SQ-20093,Cody Christensen,5635555088,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,4/19/2025 3:30 PM
+SQA-500027,5/9/2025,10:00 AM,Silvis,Amanda,SQ-20016,Derek Reyes, 309 555-5015 ,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,4/30/2025 10:00 AM
+SQA-500113,5/9/2025,12:00 PM,Utica,Em,SQ-20040,Corey Dietrich,,,Ray'z Cut (No Shampoo),,20.00,20,No Show,4/19/2025 12:00 PM
+SQA-500099,5/9/2025,2:30 PM,Kimberly,Ali,SQ-20036,Dylan Brooks, 563 555-5035 ,dylan.brooks35@fixture.test,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,4/20/2025 2:30 PM
+SQA-500176,5/9/2025,2:30 PM,Rock Island,Garrett,SQ-20059,Corey Bauer, 309 555-5055 ,corey.bauer58@fixture.test,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,5/2/2025 2:30 PM
+SQA-500331,5/10/2025,12:00 PM,Silvis,Abigail,SQ-20104,Nathan Bauer,(309) 555-5099,nathan.bauer103@fixture.test,Bald Fade,,19.00,40,Checked Out,5/4/2025 12:00 PM
+SQA-500464,5/10/2025,12:00 PM,Moline,Destiny,SQ-20157,William Kowalczyk, 309 555-5146 ,,Senior / Military Cut,Shampoo,21.00,25,Checked Out,5/3/2025 12:00 PM
+SQA-500017,5/12/2025,10:00 AM,Coralville,Jessica,SQ-20012,Corey Schroeder, 319 555-5011 ,,Bald Fade,,19.00,40,Checked Out,
+SQA-500078,5/12/2025,10:30 AM,Coralville,Michelle,SQ-20030,Cody Keller,319.555.5029,,Ray'z Cut (No Shampoo),Shampoo,23.00,25,Checked Out,
+SQA-500581,5/13/2025,3:30 PM,Moline,Sara,SQ-20194,Hector Salinas,call the shop,hector.salinas990@fixture.test,Specialty Fade,,37.00,45,Checked Out,
+SQA-500287,5/13/2025,4:00 PM,Rock Island,Mercedez,SQ-20092,Cameron Becker,3095555087,cameron.becker91@fixture.test,Specialty Fade,,37.00,45,Checked Out,5/9/2025 4:00 PM
+SQA-500136,5/14/2025,10:00 AM,Le Claire,Audra,SQ-20046,Landon Walsh,563-555-5043,landon.walsh45@fixture.test,Senior / Military Cut,,18.00,20,Checked Out,5/3/2025 10:00 AM
+SQA-500490,5/14/2025,12:30 PM,Le Claire,Audra,SQ-20164,Daniel Ostrowski,563-555-5150,,Buzz Cut,,19.00,15,Checked Out,4/25/2025 12:30 PM
+SQA-500576,5/14/2025,1:00 PM,Utica,Sarah,SQ-20192,Tyler Johnson,1-563-555-5168,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,4/27/2025 1:00 PM
+SQA-500244,5/14/2025,2:30 PM,Kimberly,Beth,SQ-20083,Jordan Lopez,+1 563 555 5079,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,5/4/2025 2:30 PM
+SQA-500153,5/17/2025,10:30 AM,Le Claire,Audra,SQ-20050,Landon O'Brien,563.555.5047,,Ray'z Cut w/ Shampoo,,23.00,40,No Show,5/4/2025 10:30 AM
+SQA-500328,5/19/2025,9:30 AM,Silvis,Liv,SQ-20103,Grant O'Brien,+1 309 555 5098,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500074,5/19/2025,3:00 PM,Coralville,Jessica,SQ-20030,Cody Keller,319.555.5029,,Buzz Cut,,19.00,15,Checked Out,5/10/2025 3:00 PM
+SQA-500239,5/20/2025,12:30 PM,Utica,Lindsay,SQ-20082,Dominic Gonzalez, 563 555-5078 ,,Bald Fade,,19.00,40,Checked Out,
+SQA-500423,5/21/2025,12:30 PM,Rock Island,Garrett,,Andre Christensen, 309 555-5136 ,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500069,5/22/2025,3:30 PM,Le Claire,Audra,SQ-20029,Aiden Hoffman,+1 563 555 5028,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500321,5/22/2025,4:30 PM,Silvis,Abigail,SQ-20101,Brooke Johnson,309-555-5096,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500391,5/23/2025,11:30 AM,Le Claire,Audra,SQ-20129,Parker Walsh,+1 563 555 5121,,Bald Fade,,19.00,40,Checked Out,
+SQA-500541,5/23/2025,12:30 PM,Moline,Sara,SQ-20185,Kayla Sisk,(309) 555-5162,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500477,5/24/2025,9:30 AM,Kimberly,Sammie,SQ-20162,Tony Bianchi,1-563-555-5149,ANTHONY.BIANCHI905@FIXTURE.TEST,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,5/6/2025 9:30 AM
+SQA-500452,5/24/2025,3:30 PM,Kimberly,Ali,SQ-20153,Christopher Duffy, 563 555-5143 ,,Ray'z Cut w/ Shampoo,Straight Razor Neck Shave,26.00,45,Checked Out,
+SQA-500582,5/24/2025,3:30 PM,Moline,Jilane,SQ-20194,Hector Salinas,call the shop,hector.salinas990@fixture.test,Bald Fade,Straight Razor Neck Shave,22.00,45,Checked Out,
+SQA-500439,5/24/2025,4:30 PM,Moline,Sara,SQ-20150,Grant Bauer,309.555.5141,grant.bauer149@fixture.test,Buzz Cut,,19.00,15,Checked Out,
+SQA-500509,5/29/2025,2:00 PM,Silvis,Abigail,SQ-20170,Nick Papadakis,309-555-5154,,Ray'z Cut w/ Shampoo,Beard Line Up,28.00,45,Cancelled,5/9/2025 2:00 PM
+SQA-500551,5/30/2025,9:00 AM,Coralville,Jessica,SQ-20187,Chris Miller,3195555163,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500117,5/31/2025,9:30 AM,Rock Island,Taylor B,SQ-20041,Noah Anderson,,noah.anderson40@fixture.test,Buzz Cut,,19.00,15,Checked Out,5/27/2025 9:30 AM
+SQA-500508,6/2/2025,12:30 PM,Rock Island,Garrett,SQ-20168,Matthew,1-563-555-5152,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,5/19/2025 12:30 PM
+SQA-500273,6/3/2025,3:00 PM,Rock Island,Taylor A,SQ-20089,Jared Anderson,+1 309 555 5084,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500402,6/4/2025,11:30 AM,Utica,Em,SQ-20137,Jordan Engel,5635555128,jordan.engel136@fixture.test,Specialty Fade,Beard Line Up,42.00,50,Checked Out,5/26/2025 11:30 AM
+SQA-500022,6/4/2025,1:00 PM,Rock Island,Taylor B,SQ-20015,Grant Larson,309.555.5014,,Buzz Cut,,19.00,15,Checked Out,5/21/2025 1:00 PM
+SQA-500211,6/6/2025,3:30 PM,Coralville,Delaney,SQ-20072,Ryan Keller,(319) 555-5068,,Bald Fade,,19.00,40,Checked Out,
+SQA-500182,6/10/2025,10:00 AM,Moline,Jilane,SQ-20060,Lucas Vogel,(309) 555-5056,,Ray'z Cut (No Shampoo),Beard Line Up,25.00,25,Checked Out,
+SQA-500467,6/11/2025,10:00 AM,Rock Island,Taylor A,SQ-20159,Joseph Russo,3095555147,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,5/30/2025 10:00 AM
+SQA-500424,6/12/2025,3:30 PM,Rock Island,Garrett,SQ-20145,Andre Christensen,(309) 555-5136,,Buzz Cut,,19.00,15,Checked Out,6/5/2025 3:30 PM
+SQA-500546,6/13/2025,11:00 AM,Moline,Jen,SQ-20186,Landon Sisk,309.555.5162,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,6/8/2025 11:00 AM
+SQA-500545,6/14/2025,10:00 AM,Moline,Jen,SQ-20186,Landon Sisk,309.555.5162,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500004,6/14/2025,1:30 PM,Coralville,Delaney,,Cameron Wright,+1 319 555 5004,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,6/9/2025 1:30 PM
+SQA-500483,6/16/2025,10:00 AM,Utica,Em,SQ-20163,Dan Ostrowski, 563 555-5150 ,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500526,6/18/2025,2:00 PM,Rock Island,Garrett,SQ-20179,Nora Lindgren,+1 309 555 5159,,Specialty Fade,,37.00,45,Checked Out,6/3/2025 2:00 PM
+SQA-500237,6/19/2025,3:30 PM,Le Claire,Audra,SQ-20081,Quinn Hoffman,5635555077,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500360,6/20/2025,9:00 AM,Rock Island,Taylor B,SQ-20114,Hunter Garcia,3095555108,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,6/13/2025 9:00 AM
+SQA-500170,6/20/2025,10:30 AM,Silvis,Liv,SQ-20056,Sean Wagner,1-309-555-5052,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500348,6/23/2025,9:00 AM,Silvis,Abigail,SQ-20109,Corey Fischer,3095555104,,Senior / Military Cut,,18.00,20,Checked Out,6/16/2025 9:00 AM
+SQA-500347,6/23/2025,4:00 PM,Utica,Kate,SQ-20108,Nathan Vogel, 563 555-5103 ,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500500,6/24/2025,11:00 AM,Moline,Mackenzie,SQ-20166,Jake Lindqvist,319-555-5151,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500507,6/24/2025,11:00 AM,Rock Island,Garrett,SQ-20168,Matthew,1-563-555-5152,,Senior / Military Cut,,18.00,20,No Show,6/6/2025 11:00 AM
+SQA-500209,6/24/2025,3:00 PM,Coralville,Michelle,SQ-20072,Ryan Keller,(319) 555-5068,,Kid'z Cut (8th grade & under),,18.00,20,No Show,6/22/2025 3:00 PM
+SQA-500218,6/25/2025,10:00 AM,Moline,Jilane,SQ-20073,Luis Brooks,309-555-5069,luis.brooks72@fixture.test,Bald Fade,,19.00,40,Checked Out,6/10/2025 10:00 AM
+SQA-500568,6/25/2025,1:00 PM,Silvis,Amanda,SQ-20190,Ryan Schultz, 309 555-5166 ,,Bald Fade,,19.00,40,Cancelled,6/20/2025 1:00 PM
+SQA-500535,6/25/2025,2:30 PM,Utica,Lindsay,SQ-20181,Brooke Kerr,563-555-5160,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,6/6/2025 2:30 PM
+SQA-500037,6/25/2025,3:30 PM,Moline,Sara,SQ-20018,Brian Nguyen,+1 309 555 5017,,Buzz Cut,,19.00,15,Checked Out,6/6/2025 3:30 PM
+SQA-500132,6/26/2025,12:30 PM,Utica,Sarah,SQ-20045,Wesley Hartman, 563 555-5042 ,wesley.hartman44@fixture.test,Specialty Fade,Beard Line Up,42.00,50,Checked Out,
+SQA-500064,6/26/2025,1:30 PM,Silvis,Amanda,SQ-20026,Dylan Larson,309.555.5025,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,6/18/2025 1:30 PM
+SQA-500163,6/27/2025,10:00 AM,Utica,Kate,SQ-20054,Hunter Hoffman, 563 555-5050 ,,Specialty Fade,,37.00,45,Checked Out,6/24/2025 10:00 AM
+SQA-500104,6/28/2025,9:00 AM,Moline,Mackenzie,SQ-20037,Kevin Jensen,(309) 555-5036,kevin.jensen36@fixture.test,Ray'z Cut w/ Shampoo,Beard Line Up,28.00,45,Checked Out,
+SQA-500213,6/28/2025,11:00 AM,Coralville,Makenna,SQ-20072,Ryan Keller,(319) 555-5068,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500024,6/30/2025,2:00 PM,Rock Island,Taylor B,SQ-20015,Grant Larson,309.555.5014,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,6/10/2025 2:00 PM
+SQA-500216,6/30/2025,4:30 PM,Moline,Destiny,,Luis Brooks,(309) 555-5069,luis.brooks72@fixture.test,Senior / Military Cut,,18.00,20,Checked Out,6/25/2025 4:30 PM
+SQA-500105,7/1/2025,10:30 AM,Kimberly,Maddie,SQ-20038,Dominic Hoffman, 563 555-5037 ,,Senior / Military Cut,,18.00,20,Checked Out,6/15/2025 10:30 AM
+SQA-500070,7/2/2025,1:00 PM,Le Claire,Audra,SQ-20029,Aiden Hoffman,+1 563 555 5028,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,6/18/2025 1:00 PM
+SQA-500215,7/4/2025,12:30 PM,Moline,Jilane,SQ-20073,Luis Brooks,309-555-5069,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,6/28/2025 12:30 PM
+SQA-500368,7/4/2025,1:30 PM,Coralville,Delaney,SQ-20118,Cody Reyes, 319 555-5112 ,cody.reyes117@fixture.test,Specialty Fade,,37.00,45,Checked Out,6/22/2025 1:30 PM
+SQA-500383,7/4/2025,1:30 PM,Kimberly,Sammie,SQ-20125,Brian Klein,563.555.5117,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,
+SQA-500263,7/4/2025,4:30 PM,Le Claire,Audra,SQ-20087,Eli Wagner,5635555082,eli.wagner86@fixture.test,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,6/24/2025 4:30 PM
+SQA-500096,7/5/2025,9:00 AM,Silvis,Abigail,SQ-20034,Shane Lopez,3095555033,Shane.lopez33@Fixture.TEST,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,6/18/2025 9:00 AM
+SQA-500320,7/5/2025,11:00 AM,Silvis,Liv,SQ-20101,Brooke Johnson,309-555-5096,,Buzz Cut,,19.00,15,Cancelled,7/3/2025 11:00 AM
+SQA-500240,7/7/2025,9:00 AM,Utica,Lindsay,SQ-20082,Dominic Gonzalez, 563 555-5078 ,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,6/18/2025 9:00 AM
+SQA-500378,7/8/2025,2:30 PM,Kimberly,Sammie,SQ-20125,Brian Klein,563.555.5117,,Buzz Cut,,19.00,15,Checked Out,6/30/2025 2:30 PM
+SQA-500186,7/9/2025,4:00 PM,Silvis,Liv,SQ-20064,Luis Gonzalez, 309 555-5060 ,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500150,7/10/2025,9:30 AM,Silvis,Amanda,SQ-20049,Marcus Thompson,3095555046,,Bald Fade,,19.00,40,Checked Out,7/7/2025 9:30 AM
+SQA-500067,7/12/2025,9:00 AM,Silvis,Amanda,SQ-20028,Trevor Nguyen,+1 309 555 5027,,Ray'z Cut (No Shampoo),Straight Razor Neck Shave,23.00,25,Cancelled,6/28/2025 9:00 AM
+SQA-500350,7/12/2025,11:00 AM,Silvis,Amanda,SQ-20109,Corey Fischer,3095555104,,Specialty Fade,,37.00,45,Cancelled,7/10/2025 11:00 AM
+SQA-500258,7/15/2025,2:30 PM,Moline,Mackenzie,SQ-20086,Luis Thompson,309-555-5081,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,
+SQA-500471,7/17/2025,10:00 AM,Coralville,Makenna,SQ-20160,Joseph,309.555.5147,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,7/7/2025 10:00 AM
+SQA-500482,7/18/2025,11:00 AM,Utica,Em,SQ-20163,Dan Ostrowski, 563 555-5150 ,daniel.ostrowski906@fixture.test,Bald Fade,Shampoo,22.00,45,Cancelled,7/2/2025 11:00 AM
+SQA-500560,7/21/2025,3:00 PM,Rock Island,Taylor A,SQ-20188,Chris Miller,+1 309 555 5164,,Specialty Fade,Shampoo,40.00,50,No Show,
+SQA-500072,7/24/2025,10:00 AM,Le Claire,Audra,SQ-20029,Aiden Hoffman,+1 563 555 5028,aiden.hoffman28@fixture.test,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,7/7/2025 10:00 AM
+SQA-500179,7/24/2025,10:00 AM,Rock Island,Garrett,SQ-20059,Corey Bauer, 309 555-5055 ,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,7/8/2025 10:00 AM
+SQA-500184,7/24/2025,2:30 PM,Moline,Jilane,SQ-20060,Lucas Vogel,(309) 555-5056,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500386,7/25/2025,9:30 AM,Rock Island,Taylor A,SQ-20127,Xavier Fischer,309.555.5119,,Senior / Military Cut,,18.00,20,Checked Out,7/16/2025 9:30 AM
+SQA-500307,7/25/2025,11:00 AM,Utica,Sarah,SQ-20097,Victor Klein,563.555.5092,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,
+SQA-500092,7/25/2025,2:00 PM,Silvis,Abigail,SQ-20034,Shane Lopez,3095555033,Shane.lopez33@Fixture.TEST,Ray'z Cut w/ Shampoo,Shampoo,26.00,45,Checked Out,7/18/2025 2:00 PM
+SQA-500371,7/26/2025,10:30 AM,Le Claire,Audra,SQ-20122,Aiden Ramirez, 563 555-5114 ,,Bald Fade,,19.00,40,Checked Out,7/23/2025 10:30 AM
+SQA-500164,7/26/2025,1:00 PM,Utica,Kate,SQ-20054,Hunter Hoffman, 563 555-5050 ,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500171,7/28/2025,10:00 AM,Silvis,Liv,SQ-20056,Sean Wagner,1-309-555-5052,,Bald Fade,Beard Line Up,24.00,45,Checked Out,
+SQA-500376,7/29/2025,2:30 PM,Utica,Sarah,SQ-20124,Trevor Lopez,5635555116,trevor.lopez123@fixture.test,Specialty Fade,,37.00,45,Checked Out,7/17/2025 2:30 PM
+SQA-500068,7/31/2025,11:30 AM,Le Claire,Skylar,SQ-20029,Aiden Hoffman,+1 563 555 5028,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500431,7/31/2025,12:00 PM,Moline,Jen,SQ-20147,Spencer Anderson,+1 309 555 5138,,Buzz Cut,,19.00,15,Checked Out,7/12/2025 12:00 PM
+SQA-500426,7/31/2025,12:30 PM,Utica,Lindsay,SQ-20146,Ethan Yoder,5635555137,ethan.yoder145@fixture.test,Ray'z Cut (No Shampoo),Shampoo,23.00,25,Checked Out,7/14/2025 12:30 PM
+SQA-500354,8/1/2025,11:30 AM,Silvis,Liv,SQ-20112,Brandon O'Brien,1-309-555-5106,,Senior / Military Cut,,18.00,20,Checked Out,7/15/2025 11:30 AM
+SQA-500269,8/1/2025,4:30 PM,Utica,Sarah,SQ-20088,Gabriel Thompson,5635555083,gabriel.thompson87@fixture.test,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,7/31/2025 4:30 PM
+SQA-500236,8/2/2025,10:30 AM,Le Claire,Audra,SQ-20081,Quinn Hoffman,5635555077,,Senior / Military Cut,,18.00,20,Checked Out,7/24/2025 10:30 AM
+SQA-500377,8/2/2025,1:00 PM,Utica,Em,SQ-20124,Trevor Lopez,5635555116,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,7/21/2025 1:00 PM
+SQA-500197,8/4/2025,12:00 PM,Utica,Lindsay,SQ-20067,Derek Schroeder,5635555063,,Kid'z Cut (8th grade & under),Straight Razor Neck Shave,21.00,25,Checked Out,
+SQA-500573,8/6/2025,12:30 PM,Le Claire,Skylar,SQ-20191,Tyler Johnson,(563) 555-5167,tyler.johnson972@fixture.test,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,8/5/2025 12:30 PM
+SQA-500081,8/6/2025,1:30 PM,Moline,Jilane,SQ-20032,Quinn Steiner,1-309-555-5031,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,7/27/2025 1:30 PM
+SQA-500434,8/6/2025,4:00 PM,Coralville,Jessica,SQ-20148,Derek Dietrich,(319) 555-5139,,Senior / Military Cut,Beard Line Up,23.00,25,Checked Out,
+SQA-500387,8/7/2025,10:30 AM,Silvis,Amanda,SQ-20128,Mason Thompson,1-309-555-5120,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,
+SQA-500404,8/7/2025,11:30 AM,Utica,Em,SQ-20137,Jordan Engel,5635555128,jordan.engel136@fixture.test,Specialty Fade,,37.00,45,Checked Out,
+SQA-500152,8/7/2025,12:00 PM,Silvis,Amanda,SQ-20049,Marcus Thompson,3095555046,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,7/22/2025 12:00 PM
+SQA-500294,8/7/2025,3:30 PM,Coralville,Delaney,SQ-20094,Kayla Christensen, 319 555-5089 ,,Buzz Cut,,19.00,15,Checked Out,8/5/2025 3:30 PM
+SQA-500332,8/8/2025,11:00 AM,Silvis,Abigail,,Nathan Bauer,309.555.5099,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,7/20/2025 11:00 AM
+SQA-500475,8/8/2025,2:00 PM,Silvis,Amanda,SQ-20161,Anthony Bianchi,3095555148,,Ray'z Cut w/ Shampoo,Straight Razor Neck Shave,26.00,45,Checked Out,8/7/2025 2:00 PM
+SQA-500018,8/8/2025,4:30 PM,Le Claire,Skylar,SQ-20014,Corey Peterson,(563) 555-5013,,Senior / Military Cut,,18.00,20,Checked Out,8/2/2025 4:30 PM
+SQA-500308,8/11/2025,9:00 AM,Kimberly,Brittany,SQ-20098,Ethan Hartman,5635555093,,Specialty Fade,,37.00,45,Checked Out,8/1/2025 9:00 AM
+SQA-500504,8/13/2025,11:30 AM,Rock Island,Garrett,SQ-20168,Matthew,1-563-555-5152,,Specialty Fade,Shampoo,40.00,50,No Show,8/8/2025 11:30 AM
+SQA-500564,8/13/2025,12:30 PM,Kimberly,Maddie,SQ-20189,Ryan Schultz,563.555.5165,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,7/29/2025 12:30 PM
+SQA-500370,8/13/2025,4:30 PM,Utica,Sarah,SQ-20121,Quinn Reyes,,,Specialty Fade,,37.00,45,Checked Out,8/3/2025 4:30 PM
+SQA-500226,8/14/2025,2:00 PM,Coralville,Delaney,SQ-20076,Seth Schmidt, 319 555-5072 ,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,7/31/2025 2:00 PM
+SQA-500217,8/15/2025,10:00 AM,Moline,Jilane,SQ-20073,Luis Brooks,309-555-5069,,Bald Fade,,19.00,40,Checked Out,8/2/2025 10:00 AM
+SQA-500118,8/15/2025,11:30 AM,Rock Island,Taylor B,SQ-20041,Noah Anderson,,,Ray'z Cut w/ Shampoo,,23.00,40,No Show,8/13/2025 11:30 AM
+SQA-500358,8/16/2025,11:00 AM,Utica,Lindsay,SQ-20113,Lucas Ramirez,5635555107,,Specialty Fade,,37.00,45,Checked Out,8/7/2025 11:00 AM
+SQA-500451,8/16/2025,3:00 PM,Kimberly,Ali,SQ-20153,Christopher Duffy, 563 555-5143 ,,Specialty Fade,,37.00,45,Checked Out,7/29/2025 3:00 PM
+SQA-500553,8/16/2025,3:00 PM,Coralville,Jessica,SQ-20187,Chris Miller,3195555163,,Specialty Fade,,37.00,45,Checked Out,8/9/2025 3:00 PM
+SQA-500297,8/18/2025,9:30 AM,Moline,Jen,SQ-20095,Aiden Jensen, 309 555-5090 ,Aiden.jensen94@Fixture.TEST,Bald Fade,Straight Razor Neck Shave,22.00,45,Checked Out,8/10/2025 9:30 AM
+SQA-500140,8/19/2025,10:00 AM,Rock Island,Garrett,SQ-20047,Derek Zimmerman,(309) 555-5044,,Specialty Fade,,37.00,45,Checked Out,8/8/2025 10:00 AM
+SQA-500098,8/20/2025,11:00 AM,Kimberly,Ali,SQ-20036,Dylan Brooks, 563 555-5035 ,,Ray'z Cut w/ Shampoo,Beard Line Up,28.00,45,Checked Out,
+SQA-500210,8/20/2025,1:30 PM,Coralville,Jessica,SQ-20072,Ryan Keller,(319) 555-5068,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,8/15/2025 1:30 PM
+SQA-500107,8/21/2025,1:30 PM,Kimberly,Sammie,SQ-20038,Dominic Hoffman, 563 555-5037 ,,Senior / Military Cut,,18.00,20,Checked Out,8/6/2025 1:30 PM
+SQA-500374,8/22/2025,3:30 PM,Le Claire,Audra,SQ-20123,Eric Yoder, 563 555-5115 ,,Bald Fade,,19.00,40,Checked Out,8/6/2025 3:30 PM
+SQA-500059,8/23/2025,10:00 AM,Le Claire,Audra,SQ-20023,Quinn Johnson, 563 555-5022 ,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500238,8/25/2025,9:30 AM,Utica,Lindsay,SQ-20082,Dominic Gonzalez, 563 555-5078 ,,Specialty Fade,Beard Line Up,42.00,50,Checked Out,
+SQA-500325,8/25/2025,11:30 AM,Rock Island,Taylor A,SQ-20102,Xavier Johnson,3095555097,,Buzz Cut,,19.00,15,Cancelled,8/6/2025 11:30 AM
+SQA-500470,8/26/2025,2:30 PM,Coralville,Makenna,SQ-20160,Joseph,309.555.5147,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,8/6/2025 2:30 PM
+SQA-500327,8/27/2025,9:00 AM,Rock Island,Mercedez,SQ-20102,Xavier Johnson,3095555097,xavier.johnson101@fixture.test,Buzz Cut,,19.00,15,Checked Out,8/20/2025 9:00 AM
+SQA-500276,8/27/2025,12:30 PM,Rock Island,Taylor A,SQ-20089,Jared Anderson,+1 309 555 5084,Jared.anderson88@Fixture.TEST,Senior / Military Cut,,18.00,20,Checked Out,8/14/2025 12:30 PM
+SQA-500172,8/29/2025,10:30 AM,Silvis,Amanda,SQ-20056,Sean Wagner,1-309-555-5052,,Specialty Fade,,37.00,45,Checked Out,8/19/2025 10:30 AM
+SQA-500160,8/29/2025,3:30 PM,Kimberly,Brittany,SQ-20053,Cameron Weber,,cameron.weber52@fixture.test,Bald Fade,,19.00,40,Checked Out,
+SQA-500051,9/1/2025,9:30 AM,Utica,Sarah,SQ-20021,Dominic Zimmerman,563-555-5020,,Senior / Military Cut,,18.00,20,Cancelled,8/31/2025 9:30 AM
+SQA-500102,9/2/2025,12:00 PM,Kimberly,Ali,SQ-20036,Dylan Brooks, 563 555-5035 ,,Specialty Fade,Beard Line Up,42.00,50,Checked Out,8/22/2025 12:00 PM
+SQA-500019,9/2/2025,12:30 PM,Le Claire,Skylar,SQ-20014,Corey Peterson,(563) 555-5013,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500246,9/4/2025,9:30 AM,Kimberly,Beth,SQ-20083,Jordan Lopez,+1 563 555 5079,jordan.lopez82@fixture.test,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500222,9/4/2025,2:00 PM,Coralville,Makenna,SQ-20074,Blake Vogel,3195555070,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500433,9/5/2025,2:30 PM,Coralville,Makenna,SQ-20148,Derek Dietrich,(319) 555-5139,,Specialty Fade,,37.00,45,Checked Out,8/25/2025 2:30 PM
+SQA-500511,9/8/2025,9:30 AM,Moline,Sara,SQ-20171,Zach Holm,309.555.5155,,Senior / Military Cut,,18.00,20,Checked Out,9/1/2025 9:30 AM
+SQA-500559,9/11/2025,1:30 PM,Rock Island,Taylor A,SQ-20188,Chris Miller,+1 309 555 5164,,Kid'z Cut (8th grade & under),,18.00,20,Cancelled,9/5/2025 1:30 PM
+SQA-500200,9/13/2025,4:00 PM,Utica,Lindsay,SQ-20067,Derek Schroeder,5635555063,,Senior / Military Cut,,18.00,20,Checked Out,9/7/2025 4:00 PM
+SQA-500583,9/15/2025,3:30 PM,Kimberly,Brittany,SQ-20002,Nora Christensen, 563 555-5001 ,nora.christensen1@fixture.test,Kid'z Cut (8th grade & under),Beard Line Up,23.00,25,Checked Out,8/28/2025 3:30 PM
+SQA-500574,9/17/2025,12:00 PM,Utica,Sarah,SQ-20192,Tyler Johnson,1-563-555-5168,,Senior / Military Cut,,18.00,20,Checked Out,9/10/2025 12:00 PM
+SQA-500050,9/18/2025,10:00 AM,Utica,Lindsay,SQ-20021,Dominic Zimmerman,563-555-5020,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500556,9/18/2025,11:00 AM,Rock Island,Taylor A,SQ-20188,Chris Miller,+1 309 555 5164,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500362,9/19/2025,9:00 AM,Moline,Sara,,Noah Ramirez,309.555.5110,,Bald Fade,,19.00,40,Checked Out,9/4/2025 9:00 AM
+SQA-500256,9/22/2025,2:30 PM,Moline,Mackenzie,SQ-20086,Luis Thompson,309-555-5081,,Ray'z Cut w/ Shampoo,Straight Razor Neck Shave,26.00,45,Checked Out,
+SQA-500249,9/23/2025,2:30 PM,Kimberly,Beth,SQ-20083,Jordan Lopez,+1 563 555 5079,jordan.lopez82@fixture.test,Buzz Cut,,19.00,15,Checked Out,9/16/2025 2:30 PM
+SQA-500283,9/23/2025,2:30 PM,Rock Island,Mercedez,SQ-20092,Cameron Becker,3095555087,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,
+SQA-500400,9/24/2025,12:30 PM,Utica,Kate,SQ-20137,Jordan Engel,5635555128,,Specialty Fade,Beard Line Up,42.00,50,Checked Out,9/14/2025 12:30 PM
+SQA-500108,9/24/2025,4:00 PM,Kimberly,Brittany,SQ-20038,Dominic Hoffman, 563 555-5037 ,dominic.hoffman37@fixture.test,Buzz Cut,,19.00,15,Checked Out,9/7/2025 4:00 PM
+SQA-500274,9/25/2025,9:00 AM,Rock Island,Taylor A,SQ-20089,Jared Anderson,+1 309 555 5084,,Specialty Fade,,37.00,45,Checked Out,9/16/2025 9:00 AM
+SQA-500527,9/25/2025,2:30 PM,Rock Island,Garrett,SQ-20180,Owen Lindgren, 309 555-5159 ,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,9/7/2025 2:30 PM
+SQA-500290,9/26/2025,3:00 PM,Utica,Lindsay,SQ-20093,Cody Christensen,5635555088,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,9/23/2025 3:00 PM
+SQA-500155,9/27/2025,11:00 AM,Le Claire,Audra,SQ-20050,Landon O'Brien,563.555.5047,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,9/7/2025 11:00 AM
+SQA-500425,9/29/2025,9:30 AM,Utica,Lindsay,SQ-20146,Ethan Yoder,5635555137,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,9/17/2025 9:30 AM
+SQA-500021,9/29/2025,12:30 PM,Rock Island,Taylor B,SQ-20015,Grant Larson,309.555.5014,grant.larson14@fixture.test,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500353,9/30/2025,1:30 PM,Kimberly,Beth,SQ-20110,Tyler Dietrich,(563) 555-5105,tyler.dietrich109@fixture.test,Kid'z Cut (8th grade & under),Beard Line Up,23.00,25,Checked Out,9/12/2025 1:30 PM
+SQA-500539,10/1/2025,11:00 AM,Kimberly,Brittany,SQ-20184,Eli Pham,(563) 555-5161,,Bald Fade,,19.00,40,Checked Out,9/30/2025 11:00 AM
+SQA-500047,10/1/2025,3:00 PM,Utica,Sarah,SQ-20020,Jason Becker,563.555.5019,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,9/25/2025 3:00 PM
+SQA-500173,10/2/2025,10:30 AM,Le Claire,Audra,SQ-20058,Adam Carlson,563-555-5054,,Senior / Military Cut,,18.00,20,Checked Out,9/22/2025 10:30 AM
+SQA-500565,10/2/2025,2:30 PM,Kimberly,Maddie,SQ-20189,Ryan Schultz,563.555.5165,ryan.schultz971@fixture.test,Bald Fade,,19.00,40,Checked Out,9/18/2025 2:30 PM
+SQA-500086,10/3/2025,9:30 AM,Moline,Destiny,SQ-20032,Quinn Steiner,1-309-555-5031,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500339,10/3/2025,9:30 AM,Kimberly,Olivia A,SQ-20106,Justin Wright,1-563-555-5101,,Ray'z Cut w/ Shampoo,Straight Razor Neck Shave,26.00,45,Checked Out,9/19/2025 9:30 AM
+SQA-500088,10/3/2025,11:00 AM,Utica,Sarah,,Hunter Johnson,563.555.5032,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,9/13/2025 11:00 AM
+SQA-500020,10/4/2025,10:30 AM,Rock Island,Taylor B,SQ-20015,Grant Larson,309.555.5014,,Bald Fade,,19.00,40,Checked Out,9/27/2025 10:30 AM
+SQA-500135,10/4/2025,10:30 AM,Le Claire,Skylar,SQ-20046,Landon Walsh,563-555-5043,landon.walsh45@fixture.test,Buzz Cut,,19.00,15,Cancelled,9/14/2025 10:30 AM
+SQA-500206,10/7/2025,12:30 PM,Utica,Lindsay,SQ-20070,Ian Gonzalez,563-555-5066,,Buzz Cut,,19.00,15,Checked Out,10/5/2025 12:30 PM
+SQA-500248,10/7/2025,1:00 PM,Kimberly,Beth,SQ-20083,Jordan Lopez,+1 563 555 5079,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,9/24/2025 1:00 PM
+SQA-500444,10/8/2025,3:30 PM,Coralville,Makenna,SQ-20151,Michael Hansen,(319) 555-5142,,Senior / Military Cut,,18.00,20,Cancelled,
+SQA-500405,10/9/2025,10:30 AM,Kimberly,Olivia A,SQ-20138,Grant Yoder,563.555.5129,,Senior / Military Cut,,18.00,20,Checked Out,10/6/2025 10:30 AM
+SQA-500457,10/9/2025,1:30 PM,Rock Island,Taylor B,SQ-20154,Chris Duffy,3095555144,,Ray'z Cut w/ Shampoo,Beard Line Up,28.00,45,Checked Out,9/28/2025 1:30 PM
+SQA-500394,10/9/2025,2:00 PM,Le Claire,Audra,SQ-20129,Parker Walsh,+1 563 555 5121,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,9/25/2025 2:00 PM
+SQA-500314,10/9/2025,2:30 PM,Kimberly,Ali,SQ-20100,Ethan Johnson,(563) 555-5095,,Senior / Military Cut,,18.00,20,Checked Out,10/3/2025 2:30 PM
+SQA-500579,10/9/2025,3:00 PM,Moline,Jilane,SQ-20194,Hector Salinas,call the shop,,Buzz Cut,,19.00,15,Checked Out,9/27/2025 3:00 PM
+SQA-500388,10/9/2025,4:30 PM,Silvis,Amanda,SQ-20128,Mason Thompson,1-309-555-5120,Mason.thompson127@Fixture.TEST,Senior / Military Cut,Shampoo,21.00,25,Checked Out,
+SQA-500084,10/10/2025,9:30 AM,Moline,Jilane,SQ-20032,Quinn Steiner,1-309-555-5031,,Ray'z Cut (No Shampoo),,20.00,20,Cancelled,9/29/2025 9:30 AM
+SQA-500448,10/10/2025,12:00 PM,Moline,Jen,SQ-20152,Michael,3195555142,,Bald Fade,,19.00,40,Checked Out,
+SQA-500385,10/10/2025,1:30 PM,Rock Island,Taylor A,SQ-20127,Xavier Fischer,309.555.5119,,Senior / Military Cut,,18.00,20,Checked Out,9/22/2025 1:30 PM
+SQA-500151,10/11/2025,3:00 PM,Silvis,Amanda,SQ-20049,Marcus Thompson,3095555046,marcus.thompson48@fixture.test,Specialty Fade,,37.00,45,No Show,10/4/2025 3:00 PM
+SQA-500087,10/14/2025,11:00 AM,Utica,Sarah,SQ-20033,Hunter Johnson,(563) 555-5032,,Buzz Cut,,19.00,15,Checked Out,10/6/2025 11:00 AM
+SQA-500584,10/14/2025,2:00 PM,Moline,Destiny,SQ-20003,Grant Zimmerman,3095555002,,Buzz Cut,,19.00,15,Checked Out,10/7/2025 2:00 PM
+SQA-500298,10/15/2025,3:30 PM,Moline,Jilane,SQ-20095,Aiden Jensen, 309 555-5090 ,,Kid'z Cut (8th grade & under),Beard Line Up,23.00,25,Checked Out,
+SQA-500501,10/16/2025,12:30 PM,Kimberly,Maddie,SQ-20167,Matthew Sorensen, 563 555-5152 ,,Buzz Cut,Beard Line Up,24.00,20,Checked Out,10/6/2025 12:30 PM
+SQA-500101,10/16/2025,2:30 PM,Kimberly,Ali,SQ-20036,Dylan Brooks, 563 555-5035 ,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500310,10/17/2025,4:00 PM,Kimberly,Olivia A,SQ-20098,Ethan Hartman,5635555093,,Buzz Cut,,19.00,15,Checked Out,10/9/2025 4:00 PM
+SQA-500133,10/22/2025,12:00 PM,Utica,Lindsay,SQ-20045,Wesley Hartman, 563 555-5042 ,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500550,10/22/2025,2:00 PM,Coralville,Jessica,SQ-20187,Chris Miller,3195555163,chris.miller970@fixture.test,Senior / Military Cut,,18.00,20,Checked Out,10/10/2025 2:00 PM
+SQA-500520,10/23/2025,9:30 AM,Coralville,Makenna,SQ-20176,Tyler Brandt,(319) 555-5157,,Senior / Military Cut,,18.00,20,Cancelled,
+SQA-500270,10/23/2025,2:30 PM,Utica,Lindsay,SQ-20088,Gabriel Thompson,5635555083,,Specialty Fade,,37.00,45,Cancelled,
+SQA-500123,10/25/2025,1:00 PM,Silvis,Abigail,,Carlos Weber,3095555039,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500580,10/27/2025,10:00 AM,Moline,Jilane,SQ-20194,Hector Salinas,call the shop,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,10/14/2025 10:00 AM
+SQA-500474,10/28/2025,12:00 PM,Coralville,Makenna,SQ-20160,Joseph,309.555.5147,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,
+SQA-500435,10/28/2025,1:00 PM,Coralville,Makenna,SQ-20148,Derek Dietrich,(319) 555-5139,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500126,10/29/2025,4:00 PM,Moline,Mackenzie,SQ-20044,Austin Gonzalez,309-555-5041,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500241,11/3/2025,2:30 PM,Utica,Lindsay,,Dominic Gonzalez,563.555.5078,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,
+SQA-500304,11/4/2025,9:00 AM,Utica,Sarah,SQ-20097,Victor Klein,563.555.5092,victor.klein96@fixture.test,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500322,11/4/2025,2:30 PM,Rock Island,Taylor A,SQ-20102,Xavier Johnson,3095555097,,Specialty Fade,,37.00,45,No Show,10/16/2025 2:30 PM
+SQA-500443,11/4/2025,3:30 PM,Coralville,Makenna,SQ-20151,Michael Hansen,(319) 555-5142,,Specialty Fade,Straight Razor Neck Shave,40.00,50,Checked Out,10/23/2025 3:30 PM
+SQA-500547,11/5/2025,11:30 AM,Moline,Jen,SQ-20186,Landon Sisk,309.555.5162,,Bald Fade,,19.00,40,Checked Out,10/16/2025 11:30 AM
+SQA-500254,11/6/2025,10:30 AM,Le Claire,Skylar,SQ-20085,Victor O'Brien,563.555.5080,,Bald Fade,,19.00,40,Checked Out,
+SQA-500293,11/6/2025,10:30 AM,Coralville,Makenna,SQ-20094,Kayla Christensen, 319 555-5089 ,,Bald Fade,,19.00,40,Checked Out,10/30/2025 10:30 AM
+SQA-500043,11/6/2025,1:30 PM,Kimberly,Maddie,SQ-20019,Isaac Nguyen,(563) 555-5018,,Buzz Cut,,19.00,15,Checked Out,10/28/2025 1:30 PM
+SQA-500446,11/6/2025,3:00 PM,Moline,Jilane,SQ-20152,Michael,3195555142,,Specialty Fade,,37.00,45,Checked Out,10/17/2025 3:00 PM
+SQA-500343,11/7/2025,10:00 AM,Utica,Kate,SQ-20108,Nathan Vogel, 563 555-5103 ,,Buzz Cut,Straight Razor Neck Shave,22.00,20,Checked Out,10/22/2025 10:00 AM
+SQA-500127,11/8/2025,1:30 PM,Moline,Jilane,SQ-20044,Austin Gonzalez,309-555-5041,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500261,11/12/2025,10:00 AM,Le Claire,Audra,SQ-20087,Eli Wagner,5635555082,eli.wagner86@fixture.test,Ray'z Cut w/ Shampoo,Shampoo,26.00,45,Checked Out,11/4/2025 10:00 AM
+SQA-500397,11/14/2025,2:30 PM,Coralville,Makenna,SQ-20132,Aiden Meyer,319-555-5124,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500180,11/15/2025,9:30 AM,Moline,Jilane,SQ-20060,Lucas Vogel,(309) 555-5056,,Buzz Cut,,19.00,15,Checked Out,11/4/2025 9:30 AM
+SQA-500334,11/15/2025,2:30 PM,Silvis,Liv,SQ-20104,Nathan Bauer,(309) 555-5099,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,11/5/2025 2:30 PM
+SQA-500131,11/15/2025,3:00 PM,Utica,Lindsay,SQ-20045,Wesley Hartman, 563 555-5042 ,wesley.hartman44@fixture.test,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,11/13/2025 3:00 PM
+SQA-500011,11/17/2025,9:30 AM,Coralville,Makenna,SQ-20008,Nathan Ramirez,1-319-555-5007,,Buzz Cut,Straight Razor Neck Shave,22.00,20,Checked Out,11/3/2025 9:30 AM
+SQA-500318,11/19/2025,10:30 AM,Kimberly,Ali,SQ-20100,Ethan Johnson,(563) 555-5095,,Bald Fade,,19.00,40,Checked Out,11/1/2025 10:30 AM
+SQA-500301,11/19/2025,11:00 AM,Moline,Jilane,,Aiden Jensen,309.555.5090,,Bald Fade,,19.00,40,Checked Out,11/13/2025 11:00 AM
+SQA-500054,11/19/2025,4:30 PM,Kimberly,Ali,SQ-20022,Eli Gonzalez,563.555.5021,,Senior / Military Cut,,18.00,20,Checked Out,11/13/2025 4:30 PM
+SQA-500450,11/20/2025,1:00 PM,Kimberly,Maddie,SQ-20153,Christopher Duffy, 563 555-5143 ,,Bald Fade,Beard Line Up,24.00,45,Checked Out,10/31/2025 1:00 PM
+SQA-500058,11/20/2025,2:00 PM,Le Claire,Skylar,SQ-20023,Quinn Johnson, 563 555-5022 ,,Ray'z Cut w/ Shampoo,,23.00,40,Cancelled,11/15/2025 2:00 PM
+SQA-500026,11/21/2025,2:00 PM,Silvis,Abigail,SQ-20016,Derek Reyes, 309 555-5015 ,,Senior / Military Cut,,18.00,20,Checked Out,11/13/2025 2:00 PM
+SQA-500407,11/25/2025,1:00 PM,Utica,Sarah,SQ-20139,Victor Vogel,(563) 555-5130,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,11/11/2025 1:00 PM
+SQA-500035,11/26/2025,12:30 PM,Coralville,Jessica,SQ-20017,Landon Yoder,1-319-555-5016,landon.yoder16@fixture.test,Specialty Fade,Shampoo,40.00,50,Checked Out,11/11/2025 12:30 PM
+SQA-500055,11/26/2025,4:30 PM,Le Claire,Audra,SQ-20023,Quinn Johnson, 563 555-5022 ,,Specialty Fade,,37.00,45,No Show,
+SQA-500076,11/27/2025,9:30 AM,Coralville,Michelle,SQ-20030,Cody Keller,319.555.5029,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,11/20/2025 9:30 AM
+SQA-500502,11/27/2025,10:00 AM,Kimberly,Maddie,SQ-20167,Matthew Sorensen, 563 555-5152 ,,Senior / Military Cut,Shampoo,21.00,25,Checked Out,11/13/2025 10:00 AM
+SQA-500252,11/29/2025,11:30 AM,Le Claire,Skylar,SQ-20085,Victor O'Brien,563.555.5080,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500014,11/29/2025,3:00 PM,Coralville,Michelle,SQ-20012,Corey Schroeder, 319 555-5011 ,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500528,12/2/2025,11:00 AM,Rock Island,Garrett,SQ-20180,Owen Lindgren, 309 555-5159 ,,Bald Fade,,19.00,40,Checked Out,11/13/2025 11:00 AM
+SQA-500001,12/3/2025,11:00 AM,Le Claire,Skylar,SQ-20004,Brooke Christensen,5635555003,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,11/28/2025 11:00 AM
+SQA-500279,12/3/2025,3:00 PM,Coralville,Makenna,SQ-20090,Logan Olson,1-319-555-5085,,Bald Fade,,19.00,40,Checked Out,11/20/2025 3:00 PM
+SQA-500063,12/3/2025,3:30 PM,Silvis,Liv,SQ-20026,Dylan Larson,309.555.5025,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500203,12/4/2025,10:00 AM,Rock Island,Taylor B,SQ-20068,Dominic Weber,309-555-5064,dominic.weber67@fixture.test,Ray'z Cut (No Shampoo),Beard Line Up,25.00,25,Checked Out,
+SQA-500340,12/4/2025,1:00 PM,Kimberly,Olivia A,SQ-20106,Justin Wright,1-563-555-5101,,Senior / Military Cut,,18.00,20,Checked Out,12/3/2025 1:00 PM
+SQA-500459,12/4/2025,1:30 PM,Le Claire,Audra,SQ-20155,Alex Moreno,+1 563 555 5145,alexander.moreno902@fixture.test,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500515,12/5/2025,4:00 PM,Utica,Sarah,SQ-20172,Zachary Holm,309.555.5155,,Bald Fade,,19.00,40,Checked Out,11/27/2025 4:00 PM
+SQA-500095,12/5/2025,4:30 PM,Silvis,Abigail,SQ-20034,Shane Lopez,3095555033,,Specialty Fade,,37.00,45,Checked Out,11/22/2025 4:30 PM
+SQA-500469,12/8/2025,12:00 PM,Coralville,Jessica,SQ-20160,Joseph,309.555.5147,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,11/21/2025 12:00 PM
+SQA-500342,12/10/2025,12:30 PM,Kimberly,Beth,SQ-20106,Justin Wright,1-563-555-5101,,Specialty Fade,Beard Line Up,42.00,50,Checked Out,11/29/2025 12:30 PM
+SQA-500278,12/10/2025,1:00 PM,Coralville,Makenna,SQ-20090,Logan Olson,1-319-555-5085,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,12/2/2025 1:00 PM
+SQA-500025,12/11/2025,9:30 AM,Rock Island,Taylor B,SQ-20015,Grant Larson,309.555.5014,,Senior / Military Cut,,18.00,20,Checked Out,12/1/2025 9:30 AM
+SQA-500232,12/11/2025,11:30 AM,Rock Island,Taylor B,SQ-20080,Ethan Van Dyke,1-309-555-5076,,Ray'z Cut (No Shampoo),Shampoo,23.00,25,Checked Out,12/8/2025 11:30 AM
+SQA-500566,12/12/2025,12:30 PM,Kimberly,Maddie,SQ-20189,Ryan Schultz,563.555.5165,ryan.schultz971@fixture.test,Specialty Fade,,37.00,45,Cancelled,11/22/2025 12:30 PM
+SQA-500532,12/16/2025,1:00 PM,Utica,Kate,SQ-20181,Brooke Kerr,563-555-5160,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500181,12/17/2025,4:30 PM,Moline,Jilane,SQ-20060,Lucas Vogel,(309) 555-5056,,Bald Fade,,19.00,40,Checked Out,
+SQA-500489,12/19/2025,1:00 PM,Le Claire,Audra,SQ-20164,Daniel Ostrowski,563-555-5150,,Ray'z Cut w/ Shampoo,,23.00,40,No Show,12/16/2025 1:00 PM
+SQA-500071,12/19/2025,2:00 PM,Le Claire,Audra,SQ-20029,Aiden Hoffman,+1 563 555 5028,,Buzz Cut,,19.00,15,Cancelled,12/3/2025 2:00 PM
+SQA-500100,12/19/2025,2:00 PM,Kimberly,Ali,SQ-20036,Dylan Brooks, 563 555-5035 ,,Kid'z Cut (8th grade & under),,18.00,20,No Show,
+SQA-500514,12/22/2025,11:30 AM,Utica,Sarah,SQ-20172,Zachary Holm,309.555.5155,,Senior / Military Cut,Shampoo,21.00,25,Checked Out,12/16/2025 11:30 AM
+SQA-500548,12/24/2025,11:30 AM,Moline,Jen,SQ-20186,Landon Sisk,309.555.5162,,Ray'z Cut (No Shampoo),,20.00,20,No Show,12/22/2025 11:30 AM
+SQA-500422,12/25/2025,11:30 AM,Rock Island,Mercedez,SQ-20145,Andre Christensen,(309) 555-5136,,Senior / Military Cut,Straight Razor Neck Shave,21.00,25,Checked Out,12/23/2025 11:30 AM
+SQA-500073,12/25/2025,4:30 PM,Coralville,Michelle,SQ-20030,Cody Keller,319.555.5029,,Bald Fade,,19.00,40,Checked Out,12/17/2025 4:30 PM
+SQA-500205,12/26/2025,9:30 AM,Utica,Kate,SQ-20069,Cameron Nguyen,(563) 555-5065,cameron.nguyen68@fixture.test,Specialty Fade,,37.00,45,No Show,12/16/2025 9:30 AM
+SQA-500403,12/27/2025,9:30 AM,Utica,Em,SQ-20137,Jordan Engel,5635555128,jordan.engel136@fixture.test,Specialty Fade,,37.00,45,Checked Out,
+SQA-500311,12/30/2025,9:30 AM,Kimberly,Olivia A,SQ-20098,Ethan Hartman,5635555093,,Bald Fade,,19.00,40,Checked Out,12/14/2025 9:30 AM
+SQA-500040,12/31/2025,11:00 AM,Kimberly,Olivia A,SQ-20019,Isaac Nguyen,(563) 555-5018,,Specialty Fade,Straight Razor Neck Shave,40.00,50,Checked Out,
+SQA-500168,12/31/2025,3:00 PM,Utica,Sarah,SQ-20054,Hunter Hoffman, 563 555-5050 ,,Bald Fade,,19.00,40,Checked Out,
+SQA-500478,1/1/2026,10:30 AM,Kimberly,Sammie,SQ-20162,Tony Bianchi,1-563-555-5149,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,12/30/2025 10:30 AM
+SQA-500518,1/1/2026,10:30 AM,Coralville,Delaney,SQ-20174,Ben Achebe,+1 309 555 5156,,Bald Fade,,19.00,40,Checked Out,12/17/2025 10:30 AM
+SQA-500401,1/1/2026,1:00 PM,Utica,Em,SQ-20137,Jordan Engel,5635555128,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,12/29/2025 1:00 PM
+SQA-500077,1/2/2026,4:00 PM,Coralville,Michelle,SQ-20030,Cody Keller,319.555.5029,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,12/13/2025 4:00 PM
+SQA-500506,1/3/2026,11:00 AM,Rock Island,Taylor A,SQ-20168,Matthew,1-563-555-5152,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,12/19/2025 11:00 AM
+SQA-500393,1/3/2026,2:30 PM,Le Claire,Audra,SQ-20129,Parker Walsh,+1 563 555 5121,,Bald Fade,,19.00,40,Checked Out,12/25/2025 2:30 PM
+SQA-500053,1/6/2026,11:00 AM,Kimberly,Maddie,SQ-20022,Eli Gonzalez,563.555.5021,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,12/26/2025 11:00 AM
+SQA-500521,1/7/2026,2:30 PM,Le Claire,Skylar,SQ-20177,Marcus Freeman,5635555158,,Specialty Fade,Straight Razor Neck Shave,40.00,50,Checked Out,12/23/2025 2:30 PM
+SQA-500085,1/10/2026,2:00 PM,Moline,Jilane,SQ-20032,Quinn Steiner,1-309-555-5031,,Kid'z Cut (8th grade & under),Straight Razor Neck Shave,21.00,25,Checked Out,
+SQA-500363,1/10/2026,3:00 PM,Le Claire,Audra,SQ-20117,Noah Yoder, 563 555-5111 ,noah.yoder116@fixture.test,Ray'z Cut w/ Shampoo,Straight Razor Neck Shave,26.00,45,Checked Out,1/1/2026 3:00 PM
+SQA-500516,1/12/2026,12:30 PM,Rock Island,Mercedez,SQ-20173,Benjamin Achebe,+1 309 555 5156,,Buzz Cut,Shampoo,22.00,20,Checked Out,1/7/2026 12:30 PM
+SQA-500369,1/12/2026,4:00 PM,Coralville,Makenna,SQ-20119,Brian Schroeder,,,Bald Fade,,19.00,40,Checked Out,12/31/2025 4:00 PM
+SQA-500201,1/14/2026,2:00 PM,Utica,Lindsay,SQ-20067,Derek Schroeder,5635555063,,Ray'z Cut w/ Shampoo,Straight Razor Neck Shave,26.00,45,Checked Out,12/26/2025 2:00 PM
+SQA-500624,1/14/2026,3:30 PM,Silvis,Amanda,,Jake,,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500169,1/17/2026,3:00 PM,Coralville,Jessica,SQ-20055,Nora Reyes, 319 555-5051 ,,Ray'z Cut (No Shampoo),Straight Razor Neck Shave,23.00,25,Checked Out,1/13/2026 3:00 PM
+SQA-500271,1/19/2026,9:30 AM,Utica,Sarah,,Gabriel Thompson,563-555-5083,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500167,1/19/2026,4:00 PM,Utica,Em,SQ-20054,Hunter Hoffman, 563 555-5050 ,,Bald Fade,,19.00,40,Checked Out,1/15/2026 4:00 PM
+SQA-500533,1/23/2026,3:00 PM,Utica,Lindsay,SQ-20181,Brooke Kerr,563-555-5160,brooke.kerr953@fixture.test,Specialty Fade,,37.00,45,Checked Out,1/18/2026 3:00 PM
+SQA-500080,1/23/2026,4:00 PM,Moline,Jilane,SQ-20031,Mason O'Brien,+1 309 555 5030,,Bald Fade,,19.00,40,Checked Out,1/8/2026 4:00 PM
+SQA-500554,1/27/2026,11:30 AM,Coralville,Jessica,SQ-20187,Chris Miller,3195555163,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500315,1/27/2026,4:00 PM,Kimberly,Maddie,SQ-20100,Ethan Johnson,(563) 555-5095,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,1/10/2026 4:00 PM
+SQA-500144,1/28/2026,10:00 AM,Kimberly,Maddie,SQ-20048,Brandon De La Cruz,(563) 555-5045,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500120,1/28/2026,10:30 AM,Silvis,Abigail,SQ-20042,Carlos Weber,(309) 555-5039,carlos.weber41@fixture.test,Senior / Military Cut,Beard Line Up,23.00,25,Cancelled,1/8/2026 10:30 AM
+SQA-500454,1/28/2026,11:00 AM,Rock Island,Taylor B,SQ-20154,Chris Duffy,3095555144,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,
+SQA-500542,1/29/2026,10:30 AM,Moline,Jen,SQ-20185,Kayla Sisk,(309) 555-5162,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,1/27/2026 10:30 AM
+SQA-500178,1/29/2026,1:30 PM,Rock Island,Garrett,SQ-20059,Corey Bauer, 309 555-5055 ,,Senior / Military Cut,Shampoo,21.00,25,Checked Out,1/27/2026 1:30 PM
+SQA-500418,1/30/2026,2:30 PM,Utica,Lindsay,SQ-20144,Aiden Steiner,563.555.5135,aiden.steiner143@fixture.test,Bald Fade,,19.00,40,Checked Out,1/22/2026 2:30 PM
+SQA-500626,1/31/2026,2:00 PM,Kimberly,Sammie,,Coach,,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500234,2/2/2026,12:00 PM,Rock Island,Garrett,SQ-20080,Ethan Van Dyke,1-309-555-5076,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500326,2/2/2026,2:00 PM,Rock Island,Taylor A,SQ-20102,Xavier Johnson,3095555097,xavier.johnson101@fixture.test,Senior / Military Cut,,18.00,20,Checked Out,1/13/2026 2:00 PM
+SQA-500414,2/3/2026,3:30 PM,Kimberly,Maddie,SQ-20143,Ryan Carlson,(563) 555-5134,,Ray'z Cut w/ Shampoo,Beard Line Up,28.00,45,Checked Out,
+SQA-500458,2/3/2026,4:00 PM,Le Claire,Audra,SQ-20155,Alex Moreno,+1 563 555 5145,alexander.moreno902@fixture.test,Buzz Cut,,19.00,15,Checked Out,
+SQA-500436,2/4/2026,12:30 PM,Coralville,Delaney,SQ-20148,Derek Dietrich,(319) 555-5139,,Specialty Fade,,37.00,45,Checked Out,1/23/2026 12:30 PM
+SQA-500075,2/4/2026,2:00 PM,Coralville,Michelle,SQ-20030,Cody Keller,319.555.5029,,Senior / Military Cut,,18.00,20,Checked Out,1/25/2026 2:00 PM
+SQA-500233,2/4/2026,2:30 PM,Rock Island,Mercedez,SQ-20080,Ethan Van Dyke,1-309-555-5076,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500255,2/4/2026,3:00 PM,Moline,Mackenzie,SQ-20086,Luis Thompson,309-555-5081,,Specialty Fade,Beard Line Up,42.00,50,Checked Out,1/22/2026 3:00 PM
+SQA-500142,2/6/2026,11:00 AM,Rock Island,Mercedez,SQ-20047,Derek Zimmerman,(309) 555-5044,,Buzz Cut,Straight Razor Neck Shave,22.00,20,Cancelled,
+SQA-500061,2/6/2026,2:30 PM,Le Claire,Audra,SQ-20024,Dylan Becker,1-563-555-5023,,Specialty Fade,,37.00,45,Checked Out,1/31/2026 2:30 PM
+SQA-500154,2/6/2026,4:00 PM,Le Claire,Skylar,,Landon O'Brien, 563 555-5047 ,,Kid'z Cut (8th grade & under),Shampoo,21.00,25,Checked Out,
+SQA-500044,2/7/2026,10:30 AM,Kimberly,Maddie,SQ-20019,Isaac Nguyen,(563) 555-5018,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500030,2/7/2026,11:30 AM,Silvis,Abigail,,Derek Reyes,1-309-555-5015,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,2/1/2026 11:30 AM
+SQA-500366,2/9/2026,9:30 AM,Coralville,Delaney,SQ-20118,Cody Reyes, 319 555-5112 ,cody.reyes117@fixture.test,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,1/24/2026 9:30 AM
+SQA-500188,2/9/2026,11:30 AM,Silvis,Amanda,SQ-20065,Aiden Garcia,3095555061,,Bald Fade,Shampoo,22.00,45,Checked Out,2/2/2026 11:30 AM
+SQA-500196,2/10/2026,2:30 PM,Moline,Jilane,SQ-20066,Marcus Schroeder,1-309-555-5062,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,1/29/2026 2:30 PM
+SQA-500262,2/11/2026,10:30 AM,Le Claire,Audra,SQ-20087,Eli Wagner,5635555082,,Senior / Military Cut,,18.00,20,Cancelled,1/30/2026 10:30 AM
+SQA-500398,2/11/2026,1:00 PM,Utica,Sarah,SQ-20136,Aaron Yoder,(563) 555-5127,Aaron.yoder135@Fixture.TEST,Specialty Fade,,37.00,45,Checked Out,
+SQA-500534,2/12/2026,9:30 AM,Utica,Lindsay,SQ-20181,Brooke Kerr,563-555-5160,brooke.kerr953@fixture.test,Buzz Cut,,19.00,15,Checked Out,1/31/2026 9:30 AM
+SQA-500253,2/12/2026,11:30 AM,Le Claire,Audra,SQ-20085,Victor O'Brien,563.555.5080,,Bald Fade,,19.00,40,Checked Out,
+SQA-500166,2/12/2026,4:00 PM,Utica,Kate,SQ-20054,Hunter Hoffman, 563 555-5050 ,,Ray'z Cut (No Shampoo),,20.00,20,No Show,
+SQA-500224,2/12/2026,4:00 PM,Coralville,Delaney,SQ-20076,Seth Schmidt, 319 555-5072 ,seth.schmidt75@fixture.test,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500008,2/13/2026,11:00 AM,Le Claire,Audra,SQ-20007,Andre Vogel,563.555.5006,Andre.vogel6@Fixture.TEST,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,2/9/2026 11:00 AM
+SQA-500319,2/13/2026,11:00 AM,Silvis,Abigail,SQ-20101,Brooke Johnson,309-555-5096,,Bald Fade,,19.00,40,Checked Out,2/1/2026 11:00 AM
+SQA-500296,2/14/2026,9:00 AM,Moline,Jen,SQ-20095,Aiden Jensen, 309 555-5090 ,Aiden.jensen94@Fixture.TEST,Buzz Cut,,19.00,15,Checked Out,2/6/2026 9:00 AM
+SQA-500557,2/14/2026,11:30 AM,Rock Island,Taylor A,SQ-20188,Chris Miller,+1 309 555 5164,,Senior / Military Cut,,18.00,20,Checked Out,2/9/2026 11:30 AM
+SQA-500124,2/16/2026,3:00 PM,Moline,Mackenzie,SQ-20044,Austin Gonzalez,309-555-5041,austin.gonzalez43@fixture.test,Specialty Fade,,37.00,45,Checked Out,2/4/2026 3:00 PM
+SQA-500456,2/16/2026,3:00 PM,Rock Island,Taylor B,SQ-20154,Chris Duffy,3095555144,CHRISTOPHER.DUFFY901@FIXTURE.TEST,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,1/30/2026 3:00 PM
+SQA-500537,2/17/2026,2:00 PM,Utica,Em,SQ-20182,Mason Kerr,1-563-555-5160,,Bald Fade,,19.00,40,Checked Out,2/16/2026 2:00 PM
+SQA-500023,2/18/2026,10:30 AM,Rock Island,Taylor B,SQ-20015,Grant Larson,309.555.5014,,Senior / Military Cut,,18.00,20,Checked Out,2/14/2026 10:30 AM
+SQA-500438,2/19/2026,2:00 PM,Rock Island,Garrett,SQ-20149,Connor Lopez,1-309-555-5140,,Bald Fade,,19.00,40,Checked Out,2/4/2026 2:00 PM
+SQA-500384,2/20/2026,9:00 AM,Rock Island,Taylor B,SQ-20127,Xavier Fischer,309.555.5119,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500461,2/20/2026,9:00 AM,Moline,Mackenzie,SQ-20157,William Kowalczyk, 309 555-5146 ,william.kowalczyk903@fixture.test,Specialty Fade,,37.00,45,Checked Out,
+SQA-500229,2/23/2026,9:30 AM,Moline,Destiny,SQ-20078,Grant Carlson,(309) 555-5074,,Senior / Military Cut,Straight Razor Neck Shave,21.00,25,Checked Out,2/14/2026 9:30 AM
+SQA-500130,2/23/2026,12:30 PM,Utica,Em,SQ-20045,Wesley Hartman, 563 555-5042 ,wesley.hartman44@fixture.test,Bald Fade,,19.00,40,Checked Out,2/18/2026 12:30 PM
+SQA-500300,2/23/2026,2:00 PM,Moline,Jilane,SQ-20095,Aiden Jensen, 309 555-5090 ,Aiden.jensen94@Fixture.TEST,Specialty Fade,,37.00,45,Checked Out,
+SQA-500106,2/26/2026,2:00 PM,Kimberly,Maddie,SQ-20038,Dominic Hoffman, 563 555-5037 ,,Ray'z Cut (No Shampoo),Shampoo,23.00,25,Checked Out,2/16/2026 2:00 PM
+SQA-500577,2/27/2026,10:30 AM,Moline,Jilane,SQ-20194,Hector Salinas,call the shop,,Specialty Fade,,37.00,45,Checked Out,2/18/2026 10:30 AM
+SQA-500281,2/28/2026,9:30 AM,Coralville,Jessica,SQ-20090,Logan Olson,1-319-555-5085,,Buzz Cut,,19.00,15,Checked Out,2/13/2026 9:30 AM
+SQA-500415,3/3/2026,11:00 AM,Kimberly,Maddie,SQ-20143,Ryan Carlson,(563) 555-5134,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500138,3/3/2026,3:30 PM,Rock Island,Mercedez,SQ-20047,Derek Zimmerman,(309) 555-5044,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500042,3/4/2026,1:30 PM,Kimberly,Maddie,SQ-20019,Isaac Nguyen,(563) 555-5018,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500046,3/4/2026,4:00 PM,Utica,Sarah,SQ-20020,Jason Becker,563.555.5019,,Senior / Military Cut,,18.00,20,Checked Out,2/26/2026 4:00 PM
+SQA-500510,3/5/2026,12:30 PM,Moline,Sara,SQ-20171,Zach Holm,309.555.5155,zachary.holm910@fixture.test,Senior / Military Cut,,18.00,20,Cancelled,2/21/2026 12:30 PM
+SQA-500016,3/5/2026,3:30 PM,Coralville,Jessica,SQ-20012,Corey Schroeder, 319 555-5011 ,,Specialty Fade,,37.00,45,Checked Out,2/15/2026 3:30 PM
+SQA-500481,3/6/2026,1:30 PM,Kimberly,Sammie,SQ-20162,Tony Bianchi,1-563-555-5149,,Senior / Military Cut,Beard Line Up,23.00,25,Checked Out,3/1/2026 1:30 PM
+SQA-500421,3/7/2026,1:30 PM,Rock Island,Garrett,SQ-20145,Andre Christensen,(309) 555-5136,,Senior / Military Cut,,18.00,20,Checked Out,3/5/2026 1:30 PM
+SQA-500312,3/7/2026,4:30 PM,Kimberly,Olivia A,SQ-20098,Ethan Hartman,5635555093,,Buzz Cut,,19.00,15,Checked Out,2/17/2026 4:30 PM
+SQA-500540,3/9/2026,11:00 AM,Kimberly,Beth,SQ-20184,Eli Pham,(563) 555-5161,,Senior / Military Cut,Beard Line Up,23.00,25,Checked Out,2/18/2026 11:00 AM
+SQA-500389,3/9/2026,3:00 PM,Silvis,Liv,SQ-20128,Mason Thompson,1-309-555-5120,Mason.thompson127@Fixture.TEST,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,2/18/2026 3:00 PM
+SQA-500199,3/10/2026,3:30 PM,Utica,Kate,SQ-20067,Derek Schroeder,5635555063,,Specialty Fade,,37.00,45,Checked Out,2/23/2026 3:30 PM
+SQA-500441,3/12/2026,11:30 AM,Coralville,Makenna,SQ-20151,Michael Hansen,(319) 555-5142,michael.hansen900@fixture.test,Ray'z Cut (No Shampoo),,20.00,20,No Show,
+SQA-500227,3/13/2026,10:00 AM,Coralville,Delaney,SQ-20076,Seth Schmidt, 319 555-5072 ,seth.schmidt75@fixture.test,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,3/5/2026 10:00 AM
+SQA-500259,3/13/2026,10:30 AM,Moline,Jen,SQ-20086,Luis Thompson,309-555-5081,,Buzz Cut,,19.00,15,Checked Out,2/23/2026 10:30 AM
+SQA-500267,3/14/2026,10:00 AM,Utica,Sarah,SQ-20088,Gabriel Thompson,5635555083,gabriel.thompson87@fixture.test,Senior / Military Cut,,18.00,20,Checked Out,3/3/2026 10:00 AM
+SQA-500109,3/14/2026,1:00 PM,Kimberly,Olivia A,SQ-20038,Dominic Hoffman, 563 555-5037 ,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,3/9/2026 1:00 PM
+SQA-500562,3/14/2026,4:30 PM,Kimberly,Maddie,SQ-20189,Ryan Schultz,563.555.5165,,Specialty Fade,,37.00,45,No Show,
+SQA-500523,3/17/2026,2:30 PM,Le Claire,Skylar,SQ-20177,Marcus Freeman,5635555158,,Senior / Military Cut,,18.00,20,Checked Out,3/4/2026 2:30 PM
+SQA-500090,3/19/2026,12:30 PM,Utica,Kate,SQ-20033,Hunter Johnson,(563) 555-5032,,Buzz Cut,,19.00,15,Checked Out,3/2/2026 12:30 PM
+SQA-500341,3/19/2026,3:00 PM,Kimberly,Ali,SQ-20106,Justin Wright,1-563-555-5101,,Ray'z Cut (No Shampoo),Straight Razor Neck Shave,23.00,25,Checked Out,
+SQA-500149,3/19/2026,4:30 PM,Silvis,Amanda,SQ-20049,Marcus Thompson,3095555046,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,3/18/2026 4:30 PM
+SQA-500033,3/23/2026,3:00 PM,Coralville,Makenna,SQ-20017,Landon Yoder,1-319-555-5016,landon.yoder16@fixture.test,Senior / Military Cut,Straight Razor Neck Shave,21.00,25,Checked Out,3/6/2026 3:00 PM
+SQA-500306,3/26/2026,1:00 PM,Utica,Em,SQ-20097,Victor Klein,563.555.5092,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500413,3/26/2026,4:00 PM,Kimberly,Olivia A,SQ-20143,Ryan Carlson,(563) 555-5134,,Bald Fade,,19.00,40,Checked Out,
+SQA-500335,3/26/2026,4:30 PM,Silvis,Liv,SQ-20104,Nathan Bauer,(309) 555-5099,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,3/22/2026 4:30 PM
+SQA-500487,3/27/2026,11:30 AM,Utica,Em,SQ-20163,Dan Ostrowski, 563 555-5150 ,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,3/7/2026 11:30 AM
+SQA-500013,3/28/2026,2:00 PM,Kimberly,Ali,SQ-20010,Andre Larson,+1 563 555 5009,andre.larson9@fixture.test,Buzz Cut,,19.00,15,Checked Out,
+SQA-500245,3/30/2026,12:30 PM,Kimberly,Beth,SQ-20083,Jordan Lopez,+1 563 555 5079,,Ray'z Cut w/ Shampoo,,23.00,40,Cancelled,3/21/2026 12:30 PM
+SQA-500323,3/31/2026,11:00 AM,Rock Island,Taylor A,SQ-20102,Xavier Johnson,3095555097,,Bald Fade,,19.00,40,Cancelled,3/21/2026 11:00 AM
+SQA-500618,4/1/2026,1:30 PM,Le Claire,Audra,,Walk In,,,Ray'z Cut (No Shampoo),Shampoo,23.00,25,Checked Out,
+SQA-500175,4/1/2026,3:00 PM,Rock Island,Garrett,SQ-20059,Corey Bauer, 309 555-5055 ,corey.bauer58@fixture.test,Specialty Fade,,37.00,45,Checked Out,3/28/2026 3:00 PM
+SQA-500543,4/2/2026,4:30 PM,Moline,Sara,SQ-20185,Kayla Sisk,(309) 555-5162,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,3/13/2026 4:30 PM
+SQA-500056,4/4/2026,10:00 AM,Le Claire,Audra,SQ-20023,Quinn Johnson, 563 555-5022 ,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,3/17/2026 10:00 AM
+SQA-500493,4/8/2026,1:00 PM,Le Claire,Audra,SQ-20164,Daniel Ostrowski,563-555-5150,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500309,4/8/2026,2:30 PM,Kimberly,Sammie,SQ-20098,Ethan Hartman,5635555093,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,3/19/2026 2:30 PM
+SQA-500536,4/9/2026,3:30 PM,Utica,Em,SQ-20182,Mason Kerr,1-563-555-5160,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500408,4/10/2026,9:30 AM,Utica,Sarah,SQ-20139,Victor Vogel,(563) 555-5130,victor.vogel138@fixture.test,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,4/4/2026 9:30 AM
+SQA-500480,4/10/2026,4:00 PM,Kimberly,Brittany,SQ-20162,Tony Bianchi,1-563-555-5149,,Bald Fade,,19.00,40,Checked Out,4/3/2026 4:00 PM
+SQA-500621,4/11/2026,9:00 AM,Coralville,Jessica,,Walk In,,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500220,4/11/2026,12:30 PM,Coralville,Makenna,SQ-20074,Blake Vogel,3195555070,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500079,4/11/2026,4:00 PM,Moline,Sara,SQ-20031,Mason O'Brien,+1 309 555 5030,,Bald Fade,,19.00,40,Checked Out,3/23/2026 4:00 PM
+SQA-500462,4/13/2026,1:30 PM,Moline,Jen,SQ-20157,William Kowalczyk, 309 555-5146 ,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,3/27/2026 1:30 PM
+SQA-500561,4/14/2026,1:30 PM,Kimberly,Maddie,SQ-20189,Ryan Schultz,563.555.5165,,Senior / Military Cut,,18.00,20,Checked Out,4/10/2026 1:30 PM
+SQA-500499,4/15/2026,9:30 AM,Moline,Mackenzie,SQ-20166,Jake Lindqvist,319-555-5151,,Bald Fade,,19.00,40,Checked Out,3/27/2026 9:30 AM
+SQA-500204,4/17/2026,9:30 AM,Rock Island,Taylor B,SQ-20068,Dominic Weber,309-555-5064,dominic.weber67@fixture.test,Specialty Fade,,37.00,45,Checked Out,
+SQA-500382,4/17/2026,1:00 PM,Kimberly,Sammie,SQ-20125,Brian Klein,563.555.5117,,Bald Fade,,19.00,40,No Show,
+SQA-500066,4/17/2026,2:00 PM,Coralville,Delaney,SQ-20027,Mason Hartman,(319) 555-5026,mason.hartman26@fixture.test,Senior / Military Cut,,18.00,20,Checked Out,4/11/2026 2:00 PM
+SQA-500143,4/20/2026,10:30 AM,Rock Island,Mercedez,SQ-20047,Derek Zimmerman,(309) 555-5044,,Bald Fade,,19.00,40,No Show,4/8/2026 10:30 AM
+SQA-500563,4/20/2026,10:30 AM,Kimberly,Maddie,SQ-20189,Ryan Schultz,563.555.5165,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500495,4/20/2026,12:30 PM,Coralville,Delaney,SQ-20165,Jacob Lindqvist, 319 555-5151 ,,Specialty Fade,,37.00,45,Cancelled,4/10/2026 12:30 PM
+SQA-500268,4/20/2026,1:00 PM,Utica,Sarah,SQ-20088,Gabriel Thompson,5635555083,gabriel.thompson87@fixture.test,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,4/13/2026 1:00 PM
+SQA-500491,4/22/2026,10:00 AM,Le Claire,Skylar,SQ-20164,Daniel Ostrowski,563-555-5150,,Senior / Military Cut,,18.00,20,Checked Out,4/7/2026 10:00 AM
+SQA-500091,4/22/2026,2:00 PM,Silvis,Abigail,SQ-20034,Shane Lopez,3095555033,,Bald Fade,,19.00,40,Checked Out,4/14/2026 2:00 PM
+SQA-500052,4/23/2026,9:30 AM,Utica,Lindsay,SQ-20021,Dominic Zimmerman,563-555-5020,,Senior / Military Cut,,18.00,20,Checked Out,4/11/2026 9:30 AM
+SQA-500395,4/23/2026,10:00 AM,Le Claire,Audra,,Parker Walsh, 563 555-5121 ,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,4/4/2026 10:00 AM
+SQA-500517,4/23/2026,11:00 AM,Rock Island,Taylor A,SQ-20173,Benjamin Achebe,+1 309 555 5156,benjamin.achebe911@fixture.test,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,4/11/2026 11:00 AM
+SQA-500157,4/24/2026,4:30 PM,Kimberly,Beth,SQ-20053,Cameron Weber,,cameron.weber52@fixture.test,Buzz Cut,,19.00,15,Checked Out,4/17/2026 4:30 PM
+SQA-500083,4/25/2026,11:00 AM,Moline,Jilane,SQ-20032,Quinn Steiner,1-309-555-5031,quinn.steiner31@fixture.test,Senior / Military Cut,,18.00,20,Checked Out,4/8/2026 11:00 AM
+SQA-500288,4/27/2026,12:00 PM,Rock Island,Mercedez,SQ-20092,Cameron Becker,3095555087,cameron.becker91@fixture.test,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,4/17/2026 12:00 PM
+SQA-500333,4/28/2026,9:00 AM,Silvis,Liv,SQ-20104,Nathan Bauer,(309) 555-5099,,Kid'z Cut (8th grade & under),Straight Razor Neck Shave,21.00,25,Checked Out,4/17/2026 9:00 AM
+SQA-500031,4/28/2026,4:00 PM,Silvis,Abigail,SQ-20016,Derek Reyes, 309 555-5015 ,,Specialty Fade,Straight Razor Neck Shave,40.00,50,Checked Out,4/18/2026 4:00 PM
+SQA-500445,4/28/2026,4:00 PM,Coralville,Makenna,SQ-20151,Michael Hansen,(319) 555-5142,,Buzz Cut,,19.00,15,Checked Out,4/10/2026 4:00 PM
+SQA-500544,4/28/2026,4:30 PM,Moline,Sara,SQ-20185,Kayla Sisk,(309) 555-5162,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,4/15/2026 4:30 PM
+SQA-500134,4/29/2026,12:30 PM,Utica,Lindsay,SQ-20045,Wesley Hartman, 563 555-5042 ,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500472,4/29/2026,2:00 PM,Coralville,Makenna,SQ-20160,Joseph,309.555.5147,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,4/24/2026 2:00 PM
+SQA-500324,5/2/2026,1:00 PM,Rock Island,Taylor A,SQ-20102,Xavier Johnson,3095555097,,Bald Fade,,19.00,40,No Show,4/28/2026 1:00 PM
+SQA-500282,5/4/2026,10:00 AM,Coralville,Makenna,SQ-20090,Logan Olson,1-319-555-5085,logan.olson89@fixture.test,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,4/22/2026 10:00 AM
+SQA-500158,5/6/2026,11:00 AM,Kimberly,Maddie,SQ-20053,Cameron Weber,,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500411,5/6/2026,1:00 PM,Kimberly,Sammie,SQ-20142,Xavier Wagner,563.555.5133,xavier.wagner141@fixture.test,Bald Fade,,19.00,40,No Show,
+SQA-500049,5/6/2026,1:30 PM,Utica,Sarah,SQ-20020,Jason Becker,563.555.5019,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,
+SQA-500045,5/7/2026,11:00 AM,Utica,Sarah,SQ-20020,Jason Becker,563.555.5019,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,4/30/2026 11:00 AM
+SQA-500010,5/7/2026,1:00 PM,Coralville,Makenna,SQ-20008,Nathan Ramirez,1-319-555-5007,,Buzz Cut,,19.00,15,Checked Out,4/20/2026 1:00 PM
+SQA-500463,5/7/2026,2:30 PM,Moline,Mackenzie,SQ-20157,William Kowalczyk, 309 555-5146 ,,Ray'z Cut w/ Shampoo,,23.00,40,Cancelled,4/22/2026 2:30 PM
+SQA-500416,5/7/2026,3:30 PM,Utica,Lindsay,SQ-20144,Aiden Steiner,563.555.5135,aiden.steiner143@fixture.test,Specialty Fade,,37.00,45,Checked Out,
+SQA-500032,5/8/2026,1:00 PM,Coralville,Makenna,SQ-20017,Landon Yoder,1-319-555-5016,,Kid'z Cut (8th grade & under),,18.00,20,Cancelled,
+SQA-500614,5/9/2026,1:00 PM,Rock Island,Garrett,,Walk In,,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500359,5/9/2026,4:30 PM,Utica,Lindsay,SQ-20113,Lucas Ramirez,5635555107,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,5/2/2026 4:30 PM
+SQA-500432,5/11/2026,1:30 PM,Coralville,Makenna,SQ-20148,Derek Dietrich,(319) 555-5139,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500141,5/12/2026,10:00 AM,Rock Island,Mercedez,SQ-20047,Derek Zimmerman,(309) 555-5044,,Kid'z Cut (8th grade & under),Straight Razor Neck Shave,21.00,25,Checked Out,5/3/2026 10:00 AM
+SQA-500571,5/12/2026,10:30 AM,Le Claire,Skylar,SQ-20191,Tyler Johnson,(563) 555-5167,,Bald Fade,,19.00,40,Checked Out,5/2/2026 10:30 AM
+SQA-500165,5/12/2026,12:30 PM,Utica,Kate,SQ-20054,Hunter Hoffman, 563 555-5050 ,,Senior / Military Cut,,18.00,20,Checked Out,4/24/2026 12:30 PM
+SQA-500442,5/13/2026,10:00 AM,Coralville,Makenna,SQ-20151,Michael Hansen,(319) 555-5142,,Ray'z Cut w/ Shampoo,Shampoo,26.00,45,No Show,5/10/2026 10:00 AM
+SQA-500103,5/13/2026,3:00 PM,Moline,Mackenzie,SQ-20037,Kevin Jensen,(309) 555-5036,,Specialty Fade,Shampoo,40.00,50,Checked Out,5/9/2026 3:00 PM
+SQA-500623,5/15/2026,11:30 AM,Utica,Sarah,,Walk In,,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500399,5/16/2026,11:00 AM,Utica,Em,SQ-20137,Jordan Engel,5635555128,,Specialty Fade,,37.00,45,Cancelled,
+SQA-500292,5/16/2026,2:00 PM,Utica,Lindsay,SQ-20093,Cody Christensen,5635555088,,Specialty Fade,,37.00,45,Cancelled,4/27/2026 2:00 PM
+SQA-500344,5/19/2026,12:00 PM,Utica,Kate,SQ-20108,Nathan Vogel, 563 555-5103 ,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,5/2/2026 12:00 PM
+SQA-500558,5/19/2026,12:30 PM,Rock Island,Taylor A,SQ-20188,Chris Miller,+1 309 555 5164,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500313,5/22/2026,2:00 PM,Kimberly,Olivia A,SQ-20098,Ethan Hartman,5635555093,,Specialty Fade,Straight Razor Neck Shave,40.00,50,Checked Out,
+SQA-500419,5/22/2026,3:30 PM,Utica,Lindsay,SQ-20144,Aiden Steiner,563.555.5135,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,5/7/2026 3:30 PM
+SQA-500041,5/23/2026,10:00 AM,Kimberly,Maddie,SQ-20019,Isaac Nguyen,(563) 555-5018,,Senior / Military Cut,,18.00,20,Cancelled,
+SQA-500476,5/23/2026,10:30 AM,Silvis,Amanda,SQ-20161,Anthony Bianchi,3095555148,anthony.bianchi905@fixture.test,Bald Fade,,19.00,40,Cancelled,
+SQA-500110,5/23/2026,3:30 PM,Kimberly,Brittany,SQ-20039,Corey Steiner,563-555-5038,,Buzz Cut,,19.00,15,Cancelled,
+SQA-500174,5/25/2026,12:30 PM,Rock Island,Garrett,SQ-20059,Corey Bauer, 309 555-5055 ,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500316,5/26/2026,4:00 PM,Kimberly,Ali,SQ-20100,Ethan Johnson,(563) 555-5095,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,5/18/2026 4:00 PM
+SQA-500275,5/27/2026,9:00 AM,Rock Island,Mercedez,SQ-20089,Jared Anderson,+1 309 555 5084,,Ray'z Cut (No Shampoo),,20.00,20,Cancelled,5/19/2026 9:00 AM
+SQA-500115,5/27/2026,3:30 PM,Rock Island,Taylor B,SQ-20041,Noah Anderson,,noah.anderson40@fixture.test,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,5/24/2026 3:30 PM
+SQA-500198,5/28/2026,11:00 AM,Utica,Lindsay,SQ-20067,Derek Schroeder,5635555063,,Specialty Fade,Straight Razor Neck Shave,40.00,50,Cancelled,5/11/2026 11:00 AM
+SQA-500119,5/29/2026,4:00 PM,Silvis,Abigail,SQ-20042,Carlos Weber,(309) 555-5039,,Ray'z Cut (No Shampoo),Straight Razor Neck Shave,23.00,25,Checked Out,5/26/2026 4:00 PM
+SQA-500379,6/1/2026,3:00 PM,Kimberly,Sammie,SQ-20125,Brian Klein,563.555.5117,brian.klein124@fixture.test,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,5/31/2026 3:00 PM
+SQA-500190,6/2/2026,9:30 AM,Silvis,Abigail,SQ-20065,Aiden Garcia,3095555061,,Ray'z Cut w/ Shampoo,Shampoo,26.00,45,Checked Out,5/28/2026 9:30 AM
+SQA-500093,6/3/2026,11:30 AM,Silvis,Abigail,SQ-20034,Shane Lopez,3095555033,,Buzz Cut,,19.00,15,Checked Out,5/23/2026 11:30 AM
+SQA-500572,6/3/2026,1:30 PM,Le Claire,Skylar,SQ-20191,Tyler Johnson,(563) 555-5167,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,6/1/2026 1:30 PM
+SQA-500519,6/4/2026,12:30 PM,Coralville,Michelle,SQ-20175,Kevin Brandt,(319) 555-5157,kevin.brandt950@fixture.test,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,
+SQA-500015,6/4/2026,2:00 PM,Coralville,Michelle,SQ-20012,Corey Schroeder, 319 555-5011 ,,Ray'z Cut (No Shampoo),Straight Razor Neck Shave,23.00,25,Checked Out,5/18/2026 2:00 PM
+SQA-500356,6/5/2026,9:00 AM,Utica,Lindsay,SQ-20113,Lucas Ramirez,5635555107,lucas.ramirez112@fixture.test,Buzz Cut,Beard Line Up,24.00,20,Checked Out,6/3/2026 9:00 AM
+SQA-500396,6/5/2026,3:30 PM,Le Claire,Audra,SQ-20129,Parker Walsh,+1 563 555 5121,parker.walsh128@fixture.test,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,5/19/2026 3:30 PM
+SQA-500578,6/5/2026,4:30 PM,Moline,Sara,SQ-20194,Hector Salinas,call the shop,,Specialty Fade,,37.00,45,Cancelled,5/25/2026 4:30 PM
+SQA-500231,6/6/2026,12:30 PM,Kimberly,Ali,SQ-20079,Aaron Vogel,563.555.5075,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500357,6/9/2026,11:00 AM,Utica,Lindsay,SQ-20113,Lucas Ramirez,5635555107,lucas.ramirez112@fixture.test,Buzz Cut,,19.00,15,Checked Out,6/3/2026 11:00 AM
+SQA-500492,6/9/2026,11:00 AM,Le Claire,Audra,SQ-20164,Daniel Ostrowski,563-555-5150,DANIEL.OSTROWSKI906@FIXTURE.TEST,Senior / Military Cut,,18.00,20,Checked Out,6/6/2026 11:00 AM
+SQA-500207,6/9/2026,1:30 PM,Utica,Sarah,SQ-20071,Nathan Yoder,563-555-5067,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500620,6/9/2026,2:00 PM,Utica,Em,,Walk In,,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500221,6/10/2026,12:00 PM,Coralville,Delaney,SQ-20074,Blake Vogel,3195555070,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500338,6/17/2026,12:30 PM,Kimberly,Brittany,SQ-20106,Justin Wright,1-563-555-5101,,Bald Fade,,19.00,40,Checked Out,
+SQA-500266,6/17/2026,1:00 PM,Le Claire,Audra,SQ-20087,Eli Wagner,5635555082,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,5/31/2026 1:00 PM
+SQA-500512,6/17/2026,1:00 PM,Moline,Destiny,SQ-20171,Zach Holm,309.555.5155,zachary.holm910@fixture.test,Bald Fade,,19.00,40,Checked Out,6/1/2026 1:00 PM
+SQA-500243,6/17/2026,4:30 PM,Utica,Em,SQ-20082,Dominic Gonzalez, 563 555-5078 ,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,6/3/2026 4:30 PM
+SQA-500427,6/18/2026,12:00 PM,Utica,Lindsay,SQ-20146,Ethan Yoder,5635555137,,Senior / Military Cut,,18.00,20,Checked Out,6/14/2026 12:00 PM
+SQA-500039,6/19/2026,11:30 AM,Kimberly,Maddie,SQ-20019,Isaac Nguyen,(563) 555-5018,,Specialty Fade,,37.00,45,Checked Out,6/7/2026 11:30 AM
+SQA-500183,6/19/2026,1:00 PM,Moline,Jilane,SQ-20060,Lucas Vogel,(309) 555-5056,,Buzz Cut,,19.00,15,Checked Out,6/11/2026 1:00 PM
+SQA-500570,6/20/2026,1:30 PM,Le Claire,Skylar,SQ-20191,Tyler Johnson,(563) 555-5167,tyler.johnson972@fixture.test,Senior / Military Cut,,18.00,20,Cancelled,6/19/2026 1:30 PM
+SQA-500612,6/20/2026,3:00 PM,Rock Island,Garrett,,Walk In,,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500428,6/22/2026,1:00 PM,Utica,Lindsay,SQ-20146,Ethan Yoder,5635555137,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,6/17/2026 1:00 PM
+SQA-500525,6/23/2026,9:00 AM,Rock Island,Taylor A,SQ-20179,Nora Lindgren,+1 309 555 5159,nora.lindgren952@fixture.test,Specialty Fade,,37.00,45,Cancelled,
+SQA-500567,6/24/2026,12:30 PM,Silvis,Amanda,SQ-20190,Ryan Schultz, 309 555-5166 ,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,6/21/2026 12:30 PM
+SQA-500208,6/24/2026,3:30 PM,Utica,Sarah,SQ-20071,Nathan Yoder,563-555-5067,nathan.yoder70@fixture.test,Bald Fade,,19.00,40,Checked Out,
+SQA-500111,6/24/2026,4:30 PM,Kimberly,Olivia A,SQ-20039,Corey Steiner,563-555-5038,,Ray'z Cut (No Shampoo),,20.00,20,Cancelled,6/6/2026 4:30 PM
+SQA-500613,6/25/2026,9:30 AM,Rock Island,Mercedez,,Walk In,,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500455,6/25/2026,10:00 AM,Rock Island,Taylor B,SQ-20154,Chris Duffy,3095555144,,Specialty Fade,Beard Line Up,42.00,50,Checked Out,6/10/2026 10:00 AM
+SQA-500449,6/25/2026,4:00 PM,Moline,Jilane,SQ-20152,Michael,3195555142,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500128,6/26/2026,12:30 PM,Moline,Destiny,SQ-20044,Austin Gonzalez,309-555-5041,austin.gonzalez43@fixture.test,Kid'z Cut (8th grade & under),Straight Razor Neck Shave,21.00,25,Checked Out,6/17/2026 12:30 PM
+SQA-500219,6/29/2026,12:00 PM,Coralville,Makenna,SQ-20074,Blake Vogel,3195555070,,Bald Fade,,19.00,40,Checked Out,6/21/2026 12:00 PM
+SQA-500235,6/30/2026,10:00 AM,Le Claire,Audra,SQ-20081,Quinn Hoffman,5635555077,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500392,6/30/2026,12:30 PM,Le Claire,Audra,SQ-20129,Parker Walsh,+1 563 555 5121,,Specialty Fade,,37.00,45,No Show,
+SQA-500002,7/1/2026,3:00 PM,Le Claire,Skylar,SQ-20004,Brooke Christensen,5635555003,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,6/14/2026 3:00 PM
+SQA-500250,7/2/2026,9:30 AM,Rock Island,Taylor A,SQ-20084,Victor Dietrich,,,Senior / Military Cut,,18.00,20,Checked Out,6/21/2026 9:30 AM
+SQA-500177,7/2/2026,10:00 AM,Rock Island,Garrett,SQ-20059,Corey Bauer, 309 555-5055 ,,Senior / Military Cut,,18.00,20,Checked Out,6/25/2026 10:00 AM
+SQA-500494,7/2/2026,10:00 AM,Coralville,Delaney,SQ-20165,Jacob Lindqvist, 319 555-5151 ,,Buzz Cut,,19.00,15,No Show,6/17/2026 10:00 AM
+SQA-500125,7/2/2026,3:30 PM,Moline,Jilane,SQ-20044,Austin Gonzalez,309-555-5041,,Bald Fade,,19.00,40,Checked Out,6/20/2026 3:30 PM
+SQA-500336,7/2/2026,4:30 PM,Silvis,Amanda,SQ-20104,Nathan Bauer,(309) 555-5099,,Kid'z Cut (8th grade & under),,18.00,20,No Show,6/28/2026 4:30 PM
+SQA-500412,7/6/2026,11:30 AM,Kimberly,Maddie,SQ-20143,Ryan Carlson,(563) 555-5134,,Ray'z Cut w/ Shampoo,Straight Razor Neck Shave,26.00,45,Checked Out,6/23/2026 11:30 AM
+SQA-500284,7/6/2026,4:30 PM,Rock Island,Mercedez,SQ-20092,Cameron Becker,3095555087,cameron.becker91@fixture.test,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,6/25/2026 4:30 PM
+SQA-500488,7/8/2026,9:00 AM,Le Claire,Audra,SQ-20164,Daniel Ostrowski,563-555-5150,,Specialty Fade,,37.00,45,Checked Out,6/29/2026 9:00 AM
+SQA-500247,7/8/2026,10:00 AM,Kimberly,Ali,SQ-20083,Jordan Lopez,+1 563 555 5079,,Buzz Cut,,19.00,15,Checked Out,6/25/2026 10:00 AM
+SQA-500145,7/8/2026,1:00 PM,Kimberly,Maddie,SQ-20048,Brandon De La Cruz,(563) 555-5045,brandon.delacruz47@fixture.test,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,6/19/2026 1:00 PM
+SQA-500317,7/9/2026,12:30 PM,Kimberly,Ali,SQ-20100,Ethan Johnson,(563) 555-5095,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500264,7/9/2026,1:30 PM,Le Claire,Audra,SQ-20087,Eli Wagner,5635555082,,Ray'z Cut w/ Shampoo,,23.00,40,No Show,6/26/2026 1:30 PM
+SQA-500622,7/10/2026,11:30 AM,Le Claire,Skylar,,Walk In,,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500305,7/11/2026,11:00 AM,Utica,Sarah,SQ-20097,Victor Klein,563.555.5092,victor.klein96@fixture.test,Specialty Fade,,37.00,45,Checked Out,6/26/2026 11:00 AM
+SQA-500302,7/13/2026,10:30 AM,Moline,Mackenzie,SQ-20096,Shane Peterson,309.555.5091,shane.peterson95@fixture.test,Specialty Fade,,37.00,45,Cancelled,7/10/2026 10:30 AM
+SQA-500531,7/13/2026,11:30 AM,Utica,Lindsay,SQ-20181,Brooke Kerr,563-555-5160,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,6/24/2026 11:30 AM
+SQA-500007,7/14/2026,4:30 PM,Le Claire,Skylar,SQ-20007,Andre Vogel,563.555.5006,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,6/28/2026 4:30 PM
+SQA-500372,7/16/2026,1:30 PM,Le Claire,Audra,SQ-20123,Eric Yoder, 563 555-5115 ,,Kid'z Cut (8th grade & under),,18.00,20,No Show,
+SQA-500005,7/17/2026,9:00 AM,Le Claire,Audra,SQ-20007,Andre Vogel,563.555.5006,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,7/15/2026 9:00 AM
+SQA-500303,7/18/2026,10:00 AM,Moline,Jilane,SQ-20096,Shane Peterson,309.555.5091,,Ray'z Cut (No Shampoo),Shampoo,23.00,25,Checked Out,
+SQA-500549,7/18/2026,3:00 PM,Coralville,Jessica,SQ-20187,Chris Miller,3195555163,chris.miller970@fixture.test,Bald Fade,,19.00,40,Checked Out,6/30/2026 3:00 PM
+SQA-500473,7/21/2026,12:30 PM,Coralville,Makenna,SQ-20160,Joseph,309.555.5147,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500569,7/23/2026,10:30 AM,Silvis,Amanda,SQ-20190,Ryan Schultz, 309 555-5166 ,,Buzz Cut,,19.00,15,Checked Out,7/6/2026 10:30 AM
+SQA-500195,7/24/2026,2:00 PM,Moline,Mackenzie,SQ-20066,Marcus Schroeder,1-309-555-5062,,Specialty Fade,,37.00,45,Cancelled,7/5/2026 2:00 PM
+SQA-500028,7/25/2026,9:30 AM,Silvis,Abigail,SQ-20016,Derek Reyes, 309 555-5015 ,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500375,7/25/2026,3:00 PM,Utica,Sarah,SQ-20124,Trevor Lopez,5635555116,trevor.lopez123@fixture.test,Bald Fade,,19.00,40,Checked Out,
+SQA-500485,7/27/2026,2:30 PM,Utica,Kate,SQ-20163,Dan Ostrowski, 563 555-5150 ,daniel.ostrowski906@fixture.test,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,7/16/2026 2:30 PM
+SQA-500189,7/28/2026,9:00 AM,Silvis,Amanda,SQ-20065,Aiden Garcia,3095555061,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500277,7/28/2026,10:30 AM,Rock Island,Taylor A,SQ-20089,Jared Anderson,+1 309 555 5084,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500265,7/29/2026,2:00 PM,Le Claire,Audra,SQ-20087,Eli Wagner,5635555082,,Buzz Cut,,19.00,15,Checked Out,7/21/2026 2:00 PM
+SQA-500162,7/30/2026,11:30 AM,Kimberly,Olivia A,SQ-20053,Cameron Weber,,cameron.weber52@fixture.test,Buzz Cut,,19.00,15,No Show,
+SQA-500505,7/30/2026,3:00 PM,Rock Island,Garrett,SQ-20168,Matthew,1-563-555-5152,,Specialty Fade,,37.00,45,Checked Out,7/24/2026 3:00 PM
+SQA-500228,7/30/2026,3:30 PM,Moline,Jen,SQ-20078,Grant Carlson,(309) 555-5074,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500285,8/1/2026,3:30 PM,Rock Island,Taylor A,SQ-20092,Cameron Becker,3095555087,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,7/31/2026 3:30 PM
+SQA-500291,8/3/2026,10:30 AM,Utica,Kate,SQ-20093,Cody Christensen,5635555088,,Buzz Cut,,19.00,15,Checked Out,7/19/2026 10:30 AM
+SQA-500417,8/4/2026,4:30 PM,Utica,Lindsay,SQ-20144,Aiden Steiner,563.555.5135,aiden.steiner143@fixture.test,Bald Fade,,19.00,40,Checked Out,7/18/2026 4:30 PM
+SQA-500460,8/6/2026,2:00 PM,Silvis,Liv,SQ-20156,Alexander Moreno,(563) 555-5145,ALEXANDER.MORENO902@FIXTURE.TEST,Bald Fade,,19.00,40,Checked Out,8/3/2026 2:00 PM
+SQA-500272,8/6/2026,3:30 PM,Rock Island,Taylor A,SQ-20089,Jared Anderson,+1 309 555 5084,Jared.anderson88@Fixture.TEST,Senior / Military Cut,,18.00,20,Checked Out,7/27/2026 3:30 PM
+SQA-500497,8/7/2026,10:00 AM,Coralville,Jessica,SQ-20165,Jacob Lindqvist, 319 555-5151 ,jacob.lindqvist907@fixture.test,Buzz Cut,,19.00,15,Cancelled,
+SQA-500089,8/7/2026,10:30 AM,Utica,Sarah,SQ-20033,Hunter Johnson,(563) 555-5032,,Ray'z Cut w/ Shampoo,Straight Razor Neck Shave,26.00,45,Checked Out,7/26/2026 10:30 AM
+SQA-500116,8/7/2026,11:00 AM,Rock Island,Taylor B,SQ-20041,Noah Anderson,,,Specialty Fade,Straight Razor Neck Shave,40.00,50,Checked Out,
+SQA-500625,8/10/2026,12:00 PM,Utica,Sarah,,Big Mike,,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500503,8/11/2026,9:00 AM,Rock Island,Garrett,SQ-20168,Matthew,1-563-555-5152,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,
+SQA-500146,8/11/2026,3:30 PM,Kimberly,Maddie,SQ-20048,Brandon De La Cruz,(563) 555-5045,,Specialty Fade,Straight Razor Neck Shave,40.00,50,No Show,7/24/2026 3:30 PM
+SQA-500617,8/14/2026,12:00 PM,Silvis,Liv,,Walk In,,,Bald Fade,,19.00,40,Checked Out,
+SQA-500466,8/14/2026,1:30 PM,Rock Island,Taylor A,SQ-20159,Joseph Russo,3095555147,,Ray'z Cut w/ Shampoo,Straight Razor Neck Shave,26.00,45,Checked Out,8/7/2026 1:30 PM
+SQA-500616,8/18/2026,12:30 PM,Coralville,Delaney,,Walk In,,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500192,8/19/2026,11:30 AM,Moline,Destiny,SQ-20066,Marcus Schroeder,1-309-555-5062,,Kid'z Cut (8th grade & under),Shampoo,21.00,25,Checked Out,
+SQA-500496,8/20/2026,11:30 AM,Coralville,Delaney,SQ-20165,Jacob Lindqvist, 319 555-5151 ,,Specialty Fade,,37.00,45,Checked Out,8/17/2026 11:30 AM
+SQA-500484,8/20/2026,12:30 PM,Utica,Em,SQ-20163,Dan Ostrowski, 563 555-5150 ,,Buzz Cut,,19.00,15,Checked Out,7/31/2026 12:30 PM
+SQA-500260,8/20/2026,3:00 PM,Moline,Mackenzie,SQ-20086,Luis Thompson,309-555-5081,,Senior / Military Cut,Beard Line Up,23.00,25,Checked Out,8/4/2026 3:00 PM
+SQA-500367,8/21/2026,11:30 AM,Coralville,Delaney,SQ-20118,Cody Reyes, 319 555-5112 ,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500522,8/21/2026,4:00 PM,Le Claire,Skylar,SQ-20177,Marcus Freeman,5635555158,,Ray'z Cut w/ Shampoo,Beard Line Up,28.00,45,Checked Out,8/11/2026 4:00 PM
+SQA-500230,8/24/2026,10:00 AM,Moline,Jen,SQ-20078,Grant Carlson,(309) 555-5074,,Specialty Fade,Beard Line Up,42.00,50,Checked Out,8/12/2026 10:00 AM
+SQA-500390,8/24/2026,10:30 AM,Silvis,Amanda,SQ-20128,Mason Thompson,1-309-555-5120,,Buzz Cut,Shampoo,22.00,20,Checked Out,8/15/2026 10:30 AM
+SQA-500373,8/25/2026,9:00 AM,Le Claire,Audra,SQ-20123,Eric Yoder, 563 555-5115 ,eric.yoder122@fixture.test,Ray'z Cut (No Shampoo),,20.00,20,Cancelled,8/24/2026 9:00 AM
+SQA-500137,8/25/2026,10:30 AM,Le Claire,Audra,SQ-20046,Landon Walsh,563-555-5043,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500529,8/25/2026,4:00 PM,Rock Island,Garrett,,Owen Lindgren,3095555159,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500147,8/28/2026,10:30 AM,Kimberly,Maddie,SQ-20048,Brandon De La Cruz,(563) 555-5045,,Senior / Military Cut,,18.00,20,Checked Out,8/8/2026 10:30 AM
+SQA-500420,8/28/2026,11:00 AM,Rock Island,Garrett,SQ-20145,Andre Christensen,(309) 555-5136,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500060,8/29/2026,9:30 AM,Le Claire,Audra,,Dylan Becker,5635555023,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,8/19/2026 9:30 AM
+SQA-500330,8/31/2026,1:30 PM,Silvis,Liv,SQ-20103,Grant O'Brien,+1 309 555 5098,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,8/16/2026 1:30 PM
+SQA-500479,8/31/2026,1:30 PM,Kimberly,Ali,SQ-20162,Tony Bianchi,1-563-555-5149,,Buzz Cut,Shampoo,22.00,20,Checked Out,8/26/2026 1:30 PM
+SQA-500409,8/31/2026,3:00 PM,Kimberly,Maddie,SQ-20140,Jason Zimmerman,563-555-5131,,Ray'z Cut (No Shampoo),,20.00,20,No Show,8/30/2026 3:00 PM
+SQA-500114,9/1/2026,12:00 PM,Rock Island,Taylor B,SQ-20041,Noah Anderson,,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500465,9/1/2026,1:00 PM,Utica,Kate,SQ-20158,Bill Kowalczyk,309.555.5146,WILLIAM.KOWALCZYK903@FIXTURE.TEST,Senior / Military Cut,,18.00,20,Checked Out,8/26/2026 1:00 PM
+SQA-500447,9/1/2026,1:30 PM,Moline,Jilane,SQ-20152,Michael,3195555142,,Kid'z Cut (8th grade & under),,18.00,20,Checked Out,8/12/2026 1:30 PM
+SQA-500097,9/1/2026,2:30 PM,Kimberly,Ali,SQ-20036,Dylan Brooks, 563 555-5035 ,,Specialty Fade,,37.00,45,Checked Out,8/14/2026 2:30 PM
+SQA-500555,9/1/2026,4:00 PM,Rock Island,Taylor A,SQ-20188,Chris Miller,+1 309 555 5164,,Specialty Fade,Straight Razor Neck Shave,40.00,50,Checked Out,
+SQA-500351,9/2/2026,4:30 PM,Silvis,Amanda,SQ-20109,Corey Fischer,3095555104,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,8/31/2026 4:30 PM
+SQA-500513,9/3/2026,9:30 AM,Utica,Sarah,SQ-20172,Zachary Holm,309.555.5155,ZACHARY.HOLM910@FIXTURE.TEST,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,8/31/2026 9:30 AM
+SQA-500251,9/4/2026,2:00 PM,Le Claire,Skylar,SQ-20085,Victor O'Brien,563.555.5080,,Specialty Fade,,37.00,45,Checked Out,
+SQA-500082,9/7/2026,9:30 AM,Moline,Destiny,SQ-20032,Quinn Steiner,1-309-555-5031,quinn.steiner31@fixture.test,Buzz Cut,,19.00,15,Checked Out,9/1/2026 9:30 AM
+SQA-500615,9/8/2026,2:00 PM,Coralville,Delaney,,Walk In,,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500191,9/9/2026,2:30 PM,Moline,Mackenzie,SQ-20066,Marcus Schroeder,1-309-555-5062,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,9/6/2026 2:30 PM
+SQA-500380,9/9/2026,3:00 PM,Kimberly,Olivia A,SQ-20125,Brian Klein,563.555.5117,brian.klein124@fixture.test,Bald Fade,,19.00,40,No Show,
+SQA-500429,9/12/2026,9:00 AM,Utica,Lindsay,SQ-20146,Ethan Yoder,5635555137,ethan.yoder145@fixture.test,Bald Fade,,19.00,40,Checked Out,
+SQA-500048,9/12/2026,4:00 PM,Utica,Sarah,SQ-20020,Jason Becker,563.555.5019,,Bald Fade,,19.00,40,Checked Out,9/2/2026 4:00 PM
+SQA-500406,9/15/2026,1:00 PM,Utica,Sarah,SQ-20139,Victor Vogel,(563) 555-5130,,Ray'z Cut w/ Shampoo,Beard Line Up,28.00,45,Checked Out,
+SQA-500440,9/16/2026,2:00 PM,Moline,Jilane,SQ-20150,Grant Bauer,309.555.5141,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500202,9/16/2026,2:30 PM,Rock Island,Taylor B,SQ-20068,Dominic Weber,309-555-5064,dominic.weber67@fixture.test,Specialty Fade,,37.00,45,Checked Out,
+SQA-500193,9/17/2026,3:30 PM,Moline,Mackenzie,SQ-20066,Marcus Schroeder,1-309-555-5062,,Specialty Fade,,37.00,45,Checked Out,8/31/2026 3:30 PM
+SQA-500430,9/18/2026,9:00 AM,Utica,Lindsay,SQ-20146,Ethan Yoder,5635555137,ethan.yoder145@fixture.test,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,8/29/2026 9:00 AM
+SQA-500352,9/18/2026,11:00 AM,Silvis,Amanda,SQ-20109,Corey Fischer,3095555104,,Senior / Military Cut,,18.00,20,Checked Out,9/15/2026 11:00 AM
+SQA-500410,9/18/2026,3:30 PM,Kimberly,Maddie,SQ-20140,Jason Zimmerman,563-555-5131,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500194,9/19/2026,11:30 AM,Moline,Mackenzie,SQ-20066,Marcus Schroeder,1-309-555-5062,,Senior / Military Cut,,18.00,20,Checked Out,9/18/2026 11:30 AM
+SQA-500006,9/19/2026,4:00 PM,Le Claire,Audra,SQ-20007,Andre Vogel,563.555.5006,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,9/5/2026 4:00 PM
+SQA-500242,9/21/2026,10:30 AM,Utica,Lindsay,SQ-20082,Dominic Gonzalez, 563 555-5078 ,,Buzz Cut,,19.00,15,Checked Out,9/3/2026 10:30 AM
+SQA-500468,9/23/2026,9:30 AM,Rock Island,Taylor A,SQ-20159,Joseph Russo,3095555147,,Kid'z Cut (8th grade & under),Shampoo,21.00,25,Cancelled,9/16/2026 9:30 AM
+SQA-500627,9/23/2026,10:30 AM,Utica,Sarah,SQ-20198,Tobias Wendt, 563 555-5170 ,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,9/18/2026 10:30 AM
+SQA-500036,9/23/2026,3:00 PM,Coralville,Makenna,SQ-20017,Landon Yoder,1-319-555-5016,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,
+SQA-500225,9/24/2026,11:30 AM,Coralville,Delaney,SQ-20076,Seth Schmidt, 319 555-5072 ,,Senior / Military Cut,,18.00,20,Checked Out,9/13/2026 11:30 AM
+SQA-500286,9/24/2026,1:00 PM,Rock Island,Mercedez,SQ-20092,Cameron Becker,3095555087,,Bald Fade,,19.00,40,No Show,9/21/2026 1:00 PM
+SQA-500159,9/25/2026,9:30 AM,Kimberly,Olivia A,SQ-20053,Cameron Weber,,cameron.weber52@fixture.test,Bald Fade,,19.00,40,Checked Out,9/19/2026 9:30 AM
+SQA-500365,9/25/2026,10:00 AM,Le Claire,Skylar,SQ-20117,Noah Yoder, 563 555-5111 ,,Specialty Fade,,37.00,45,No Show,9/7/2026 10:00 AM
+SQA-500299,9/26/2026,11:00 AM,Moline,Jilane,SQ-20095,Aiden Jensen, 309 555-5090 ,Aiden.jensen94@Fixture.TEST,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500530,9/26/2026,3:00 PM,Utica,Lindsay,SQ-20181,Brooke Kerr,563-555-5160,brooke.kerr953@fixture.test,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,9/9/2026 3:00 PM
+SQA-500187,9/26/2026,3:30 PM,Silvis,Abigail,,Luis Gonzalez,309.555.5060,,Kid'z Cut (8th grade & under),Beard Line Up,23.00,25,Checked Out,
+SQA-500498,9/28/2026,12:00 PM,Coralville,Delaney,SQ-20165,Jacob Lindqvist, 319 555-5151 ,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500349,9/29/2026,11:00 AM,Silvis,Amanda,SQ-20109,Corey Fischer,3095555104,,Bald Fade,,19.00,40,No Show,9/28/2026 11:00 AM
+SQA-500295,9/29/2026,11:30 AM,Coralville,Makenna,SQ-20094,Kayla Christensen, 319 555-5089 ,,Bald Fade,,19.00,40,Cancelled,9/14/2026 11:30 AM
+SQA-500057,9/29/2026,1:00 PM,Le Claire,Audra,SQ-20023,Quinn Johnson, 563 555-5022 ,,Ray'z Cut w/ Shampoo,,23.00,40,Checked Out,9/22/2026 1:00 PM
+SQA-500257,9/30/2026,1:30 PM,Moline,Mackenzie,SQ-20086,Luis Thompson,309-555-5081,,Buzz Cut,,19.00,15,Checked Out,9/13/2026 1:30 PM
+SQA-500003,9/30/2026,4:30 PM,Le Claire,Skylar,SQ-20004,Brooke Christensen,5635555003,,Senior / Military Cut,,18.00,20,Checked Out,9/11/2026 4:30 PM
+SQA-500065,10/2/2026,9:00 AM,Silvis,Liv,SQ-20026,Dylan Larson,309.555.5025,,Bald Fade,,19.00,40,Checked Out,9/14/2026 9:00 AM
+SQA-500453,10/2/2026,12:00 PM,Kimberly,Maddie,SQ-20153,Christopher Duffy, 563 555-5143 ,christopher.duffy901@fixture.test,Specialty Fade,,37.00,45,Checked Out,
+SQA-500112,10/3/2026,11:30 AM,Kimberly,Olivia A,SQ-20039,Corey Steiner,563-555-5038,,Senior / Military Cut,,18.00,20,Checked Out,
+SQA-500381,10/5/2026,11:30 AM,Kimberly,Sammie,SQ-20125,Brian Klein,563.555.5117,,Ray'z Cut w/ Shampoo,Beard Line Up,28.00,45,Checked Out,
+SQA-500361,10/5/2026,12:00 PM,Rock Island,Garrett,SQ-20114,Hunter Garcia,3095555108,,Bald Fade,,19.00,40,Cancelled,10/4/2026 12:00 PM
+SQA-500012,10/6/2026,11:30 AM,Kimberly,Ali,SQ-20010,Andre Larson,+1 563 555 5009,,Kid'z Cut (8th grade & under),,18.00,20,No Show,9/30/2026 11:30 AM
+SQA-500486,10/6/2026,11:30 AM,Utica,Em,SQ-20163,Dan Ostrowski, 563 555-5150 ,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,
+SQA-500223,10/7/2026,2:30 PM,Coralville,Michelle,SQ-20075,Wesley Wagner,319-555-5071,wesley.wagner74@fixture.test,Ray'z Cut (No Shampoo),Beard Line Up,25.00,25,Checked Out,10/6/2026 2:30 PM
+SQA-500619,10/7/2026,4:30 PM,Rock Island,Taylor A,,Walk In,,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500628,10/8/2026,12:30 PM,Utica,Sarah,SQ-20198,Tobias Wendt, 563 555-5170 ,,Senior / Military Cut,,18.00,20,Checked Out,9/30/2026 12:30 PM
+SQA-500062,10/10/2026,10:00 AM,Le Claire,Audra,SQ-20024,Dylan Becker,1-563-555-5023,,Ray'z Cut (No Shampoo),,20.00,20,Checked Out,9/28/2026 10:00 AM
+SQA-500121,10/10/2026,12:00 PM,Silvis,Abigail,SQ-20042,Carlos Weber,(309) 555-5039,,Specialty Fade,,37.00,45,Checked Out,9/30/2026 12:00 PM
+SQA-500629,3/14/2026,10:00 AM,Clinton,Michelle,SQ-20001,Hunter O'Brien, 319 555-5000 ,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500630,4/2/2026,10:00 AM,Clinton,Michelle,SQ-20001,Hunter O'Brien, 319 555-5000 ,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500631,TBD,,Coralville,Michelle,SQ-20001,Hunter O'Brien, 319 555-5000 ,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500632,5/9/2026,10:00 AM,Coralville,,SQ-20001,Hunter O'Brien, 319 555-5000 ,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500633,6/1/2026,10:00 AM,Rock Island,Taylor,SQ-20001,Hunter O'Brien, 319 555-5000 ,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500634,6/8/2026,1:30 PM,Rock Island,Taylor,SQ-20001,Hunter O'Brien, 319 555-5000 ,,Buzz Cut,,19.00,15,Checked Out,
+SQA-500591,11/16/2026,9:00 AM,Moline,Mackenzie,SQ-20037,Kevin Jensen,(309) 555-5036,,Ray'z Cut (No Shampoo),,20.00,20,Confirmed,11/14/2026 9:00 AM
+SQA-500608,11/16/2026,9:00 AM,Kimberly,Maddie,SQ-20143,Ryan Carlson,(563) 555-5134,,Ray'z Cut w/ Shampoo,,23.00,40,Booked,
+SQA-500596,11/17/2026,3:00 PM,Rock Island,Taylor B,SQ-20068,Dominic Weber,309-555-5064,,Ray'z Cut w/ Shampoo,Straight Razor Neck Shave,26.00,45,Booked,11/15/2026 3:00 PM
+SQA-500605,11/19/2026,3:00 PM,Kimberly,Sammie,SQ-20125,Brian Klein,563.555.5117,brian.klein124@fixture.test,Senior / Military Cut,,18.00,20,Confirmed,11/1/2026 3:00 PM
+SQA-500586,11/20/2026,12:00 PM,Le Claire,Skylar,SQ-20007,Andre Vogel,563.555.5006,,Kid'z Cut (8th grade & under),,18.00,20,Confirmed,11/5/2026 12:00 PM
+SQA-500587,11/20/2026,4:00 PM,Kimberly,Maddie,SQ-20013,Colin Gonzalez,(563) 555-5012,,Kid'z Cut (8th grade & under),Beard Line Up,23.00,25,Booked,11/11/2026 4:00 PM
+SQA-500601,11/24/2026,2:00 PM,Rock Island,Taylor A,SQ-20099,Lucas Walsh,1-309-555-5094,,Senior / Military Cut,,18.00,20,Booked,11/18/2026 2:00 PM
+SQA-500610,11/25/2026,1:00 PM,Coralville,Jessica,SQ-20160,Joseph,309.555.5147,,Ray'z Cut w/ Shampoo,Straight Razor Neck Shave,26.00,45,Confirmed,
+SQA-500600,11/26/2026,2:00 PM,Utica,Sarah,SQ-20093,Cody Christensen,5635555088,cody.christensen92@fixture.test,Specialty Fade,,37.00,45,Booked,11/8/2026 2:00 PM
+SQA-500598,11/27/2026,12:00 PM,Rock Island,Garrett,SQ-20080,Ethan Van Dyke,1-309-555-5076,,Senior / Military Cut,,18.00,20,Booked,11/22/2026 12:00 PM
+SQA-500611,11/28/2026,4:00 PM,Utica,Sarah,SQ-20172,Zachary Holm,309.555.5155,,Ray'z Cut w/ Shampoo,,23.00,40,Booked,11/25/2026 4:00 PM
+SQA-500603,12/1/2026,12:00 PM,Le Claire,Audra,SQ-20111,Wesley Van Dyke,,wesley.vandyke110@fixture.test,Buzz Cut,,19.00,15,Confirmed,11/16/2026 12:00 PM
+SQA-500589,12/2/2026,12:00 PM,Le Claire,Skylar,SQ-20025,Ethan Wagner,563.555.5024,,Senior / Military Cut,,18.00,20,Booked,11/19/2026 12:00 PM
+SQA-500595,12/7/2026,9:00 AM,Silvis,Abigail,SQ-20062,Lucas Christensen, 309 555-5058 ,,Ray'z Cut w/ Shampoo,,23.00,40,Booked,12/4/2026 9:00 AM
+SQA-500607,12/11/2026,4:00 PM,Utica,Sarah,SQ-20137,Jordan Engel,5635555128,jordan.engel136@fixture.test,Specialty Fade,,37.00,45,Booked,11/22/2026 4:00 PM
+SQA-500594,12/14/2026,12:00 PM,Silvis,Liv,SQ-20056,Sean Wagner,1-309-555-5052,,Ray'z Cut w/ Shampoo,Beard Line Up,28.00,45,Confirmed,12/11/2026 12:00 PM
+SQA-500602,12/15/2026,11:00 AM,Rock Island,Mercedez,SQ-20105,Ryan Zimmerman, 309 555-5100 ,,Senior / Military Cut,Beard Line Up,23.00,25,Confirmed,11/30/2026 11:00 AM
+SQA-500585,12/15/2026,12:00 PM,Coralville,Delaney,SQ-20001,Hunter O'Brien, 319 555-5000 ,,Specialty Fade,,37.00,45,Confirmed,11/28/2026 12:00 PM
+SQA-500588,12/16/2026,10:00 AM,Kimberly,Maddie,SQ-20019,Isaac Nguyen,(563) 555-5018,,Specialty Fade,,37.00,45,Booked,12/1/2026 10:00 AM
+SQA-500604,12/16/2026,2:00 PM,Le Claire,Skylar,SQ-20117,Noah Yoder, 563 555-5111 ,,Specialty Fade,Shampoo,40.00,50,Confirmed,
+SQA-500599,12/17/2026,2:00 PM,Le Claire,Audra,SQ-20087,Eli Wagner,5635555082,,Senior / Military Cut,,18.00,20,Booked,11/29/2026 2:00 PM
+SQA-500606,12/17/2026,4:00 PM,Moline,Mackenzie,SQ-20131,Eli Bauer,309.555.5123,,Kid'z Cut (8th grade & under),,18.00,20,Booked,12/13/2026 4:00 PM
+SQA-500597,12/19/2026,12:00 PM,Coralville,Makenna,SQ-20074,Blake Vogel,3195555070,,Specialty Fade,,37.00,45,Confirmed,
+SQA-500593,12/19/2026,4:00 PM,Le Claire,Skylar,SQ-20050,Landon O'Brien,563.555.5047,landon.obrien49@fixture.test,Bald Fade,,19.00,40,Confirmed,12/16/2026 4:00 PM
+SQA-500592,12/21/2026,3:00 PM,Moline,Jilane,SQ-20044,Austin Gonzalez,309-555-5041,,Senior / Military Cut,Beard Line Up,23.00,25,Booked,
+SQA-500609,12/23/2026,10:00 AM,Rock Island,Taylor B,SQ-20149,Connor Lopez,1-309-555-5140,,Ray'z Cut w/ Shampoo,,23.00,40,Confirmed,12/12/2026 10:00 AM
+SQA-500590,12/26/2026,10:00 AM,Moline,Jilane,SQ-20031,Mason O'Brien,+1 309 555 5030,,Specialty Fade,,37.00,45,Confirmed,12/14/2026 10:00 AM
+SQA-500635,11/22/2026,11:00 AM,Kimberly,Brittany,,Owen Brandt,,,Buzz Cut,,19.00,15,Booked,

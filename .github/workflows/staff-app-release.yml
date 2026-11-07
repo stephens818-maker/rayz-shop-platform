@@ -1,0 +1,18 @@
+# ST-I10: the Ray'z Staff app's release gate. Tag a store build staff-app-v<version> (or run it by
+# hand); it fails until the employee privacy notice is signed off in src/domain/staff-privacy.ts.
+name: Staff app release gate
+on:
+  push:
+    tags: ["staff-app-v*"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  release-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npx --yes tsx@4 scripts/staff-release-check.ts

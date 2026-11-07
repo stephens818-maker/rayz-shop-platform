@@ -1,0 +1,2 @@
+-- TCPA express consent (claude bot, Oct 28): each consent_events grant keeps the exact wording the client agreed to, beside its version and time (created_at). Null for revokes, markers (STOP, START, import, staff edit) and earlier rows, whose wording is CONSENT_TEXTS at their text_version. Additive; the append-only trigger still refuses edits and deletes.
+ALTER TABLE "consent_events" ADD COLUMN IF NOT EXISTS "consent_text" text;

@@ -1,0 +1,3 @@
+-- The Place ID check from core_0060 as first written used a {16,512} repetition, past Postgres's limit of 255, so every write to a shop failed once it was checked. This puts the corrected check (letters, digits, _ and -, 16 to 512 characters) on databases that already ran it; on others it's the same check again.
+ALTER TABLE "shops" DROP CONSTRAINT IF EXISTS "shops_google_place_id";--> statement-breakpoint
+ALTER TABLE "shops" ADD CONSTRAINT "shops_google_place_id" CHECK ("google_place_id" IS NULL OR ("google_place_id" ~ '^[A-Za-z0-9_-]+$' AND char_length("google_place_id") BETWEEN 16 AND 512));

@@ -1,0 +1,136 @@
+Client ID,Client Name,Phone,Email,Progress,Rewards Available
+SQ-20001,Hunter O'Brien, 319 555-5000 ,hunter.obrien0@fixture.test,$138.67,1
+SQ-20003,Grant Zimmerman,3095555002,grant.zimmerman2@fixture.test,$261.25,0
+SQ-20004,Brooke Christensen,5635555003,brooke.christensen3@fixture.test,$197.09,1
+SQ-20005,Cameron Wright,3195555004,,$269.20,0
+SQ-20007,Andre Vogel,563.555.5006, Andre.vogel6@Fixture.TEST ,$81.81,0
+SQ-20008,Nathan Ramirez,1-319-555-5007, Nathan.ramirez7@Fixture.TEST ,$287.26,0
+SQ-20010,Andre Larson,+1 563 555 5009,andre.larson9@fixture.test,$95.49,0
+SQ-20013,Colin Gonzalez,(563) 555-5012,colin.gonzalez12@fixture.test,$75.20,0
+SQ-20016,Derek Reyes, 309 555-5015 ,,$50.58,0
+SQ-20018,Brian Nguyen,+1 309 555 5017,,$205.46,0
+SQ-20019,Isaac Nguyen,(563) 555-5018,,$269.54,0
+SQ-20020,Jason Becker,563.555.5019,,$105.04,0
+SQ-20021,Dominic Zimmerman,563-555-5020,dominic.zimmerman20@fixture.test,$42.19,0
+SQ-20022,Eli Gonzalez,563.555.5021,eli.gonzalez21@fixture.test,$10.41,0
+SQ-20024,Dylan Becker,1-563-555-5023,,$33.42,0
+SQ-20025,Ethan Wagner,563.555.5024, Ethan.wagner24@Fixture.TEST ,$59.47,0
+SQ-20026,Dylan Larson,309.555.5025,,$3.56,0
+SQ-20027,Mason Hartman,(319) 555-5026,mason.hartman26@fixture.test,$54.87,0
+SQ-20028,Trevor Nguyen,+1 309 555 5027,trevor.nguyen27@fixture.test,$155.88,0
+SQ-20029,Aiden Hoffman,+1 563 555 5028,aiden.hoffman28@fixture.test,$28.29,0
+SQ-20030,Cody Keller,319.555.5029,,$14.55,0
+SQ-20031,Mason O'Brien,+1 309 555 5030,mason.obrien30@fixture.test,$244.01,0
+SQ-20033,Hunter Johnson,(563) 555-5032,,$76.17,0
+SQ-20038,Dominic Hoffman, 563 555-5037 ,dominic.hoffman37@fixture.test,$94.48,0
+SQ-20042,Carlos Weber,(309) 555-5039,carlos.weber41@fixture.test,$3.01,0
+SQ-20044,Austin Gonzalez,309-555-5041,austin.gonzalez43@fixture.test,$23.13,0
+SQ-20045,Wesley Hartman, 563 555-5042 ,wesley.hartman44@fixture.test,$49.27,0
+SQ-20046,Landon Walsh,563-555-5043,landon.walsh45@fixture.test,$26.99,0
+SQ-20049,Marcus Thompson,3095555046,marcus.thompson48@fixture.test,$160.30,0
+SQ-20050,Landon O'Brien,563.555.5047,landon.obrien49@fixture.test,$212.90,0
+SQ-20051,Ethan Garcia,1-309-555-5048, Ethan.garcia50@Fixture.TEST ,$62.10,0
+SQ-20052,Ethan De La Cruz,3095555049,ethan.delacruz51@fixture.test,$201.00,1
+SQ-20053,Cameron Weber,,cameron.weber52@fixture.test,$49.86,0
+SQ-20055,Nora Reyes, 319 555-5051 ,,$124.18,0
+SQ-20057,Caleb Reyes,319.555.5053,caleb.reyes56@fixture.test,$24.33,0
+SQ-20059,Corey Bauer, 309 555-5055 ,corey.bauer58@fixture.test,$42.13,0
+SQ-20060,Lucas Vogel,(309) 555-5056,,$22.95,0
+SQ-20061,Hunter Novak,1-563-555-5057,,$118.19,1
+SQ-20062,Lucas Christensen, 309 555-5058 ,,$252.83,0
+SQ-20063,Dominic De La Cruz,3095555059,,$123.62,0
+SQ-20064,Luis Gonzalez, 309 555-5060 ,,$193.91,0
+SQ-20065,Aiden Garcia,3095555061,aiden.garcia64@fixture.test,$93.17,0
+SQ-20066,Marcus Schroeder,1-309-555-5062,,$188.78,0
+SQ-20067,Derek Schroeder,5635555063,,$9.41,0
+SQ-20068,Dominic Weber,309-555-5064,dominic.weber67@fixture.test,$9.81,0
+SQ-20069,Cameron Nguyen,(563) 555-5065,cameron.nguyen68@fixture.test,$195.42,0
+SQ-20070,Ian Gonzalez,563-555-5066,,$163.74,0
+SQ-20071,Nathan Yoder,563-555-5067,nathan.yoder70@fixture.test,$215.86,1
+SQ-20072,Ryan Keller,(319) 555-5068,,$190.89,0
+SQ-20073,Luis Brooks,309-555-5069,luis.brooks72@fixture.test,$220.34,0
+SQ-20075,Wesley Wagner,319-555-5071,wesley.wagner74@fixture.test,$257.30,0
+SQ-20077,Isaac Peterson,319.555.5073, Isaac.peterson76@Fixture.TEST ,$250.03,0
+SQ-20078,Grant Carlson,(309) 555-5074,,$177.69,0
+SQ-20079,Aaron Vogel,563.555.5075,,$41.81,0
+SQ-20080,Ethan Van Dyke,1-309-555-5076,ethan.vandyke79@fixture.test,$203.54,0
+SQ-20081,Quinn Hoffman,5635555077,,$279.29,0
+SQ-20082,Dominic Gonzalez, 563 555-5078 ,,$34.80,0
+SQ-20084,Victor Dietrich,,,$138.17,0
+SQ-20085,Victor O'Brien,563.555.5080,,$136.68,0
+SQ-20086,Luis Thompson,309-555-5081,,$140.65,1
+SQ-20088,Gabriel Thompson,5635555083,gabriel.thompson87@fixture.test,$68.14,1
+SQ-20089,Jared Anderson,+1 309 555 5084, Jared.anderson88@Fixture.TEST ,$124.01,0
+SQ-20090,Logan Olson,1-319-555-5085,logan.olson89@fixture.test,$264.53,1
+SQ-20092,Cameron Becker,3095555087,cameron.becker91@fixture.test,$71.18,0
+SQ-20093,Cody Christensen,5635555088,cody.christensen92@fixture.test,$244.46,0
+SQ-20095,Aiden Jensen, 309 555-5090 , Aiden.jensen94@Fixture.TEST ,$139.34,0
+SQ-20096,Shane Peterson,309.555.5091,shane.peterson95@fixture.test,$280.03,0
+SQ-20097,Victor Klein,563.555.5092,victor.klein96@fixture.test,$57.28,0
+SQ-20099,Lucas Walsh,1-309-555-5094,lucas.walsh98@fixture.test,$181.45,0
+SQ-20100,Ethan Johnson,(563) 555-5095,,$84.42,0
+SQ-20102,Xavier Johnson,3095555097,xavier.johnson101@fixture.test,$254.02,1
+SQ-20103,Grant O'Brien,+1 309 555 5098,grant.obrien102@fixture.test,$43.00,0
+SQ-20107,Austin Klein,1-563-555-5102,,$122.50,0
+SQ-20108,Nathan Vogel, 563 555-5103 , Nathan.vogel107@Fixture.TEST ,$179.84,1
+SQ-20110,Tyler Dietrich,(563) 555-5105,tyler.dietrich109@fixture.test,$53.24,0
+SQ-20112,Brandon O'Brien,1-309-555-5106,,$24.23,0
+SQ-20113,Lucas Ramirez,5635555107,lucas.ramirez112@fixture.test,$58.25,0
+SQ-20114,Hunter Garcia,3095555108,,$211.18,1
+SQ-20115,Cameron Peterson,+1 563 555 5109,cameron.peterson114@fixture.test,$191.28,0
+SQ-20117,Noah Yoder, 563 555-5111 ,noah.yoder116@fixture.test,$192.02,0
+SQ-20119,Brian Schroeder,,,$165.38,0
+SQ-20120,Caleb Carlson,(563) 555-5113,caleb.carlson119@fixture.test,$21.32,0
+SQ-20123,Eric Yoder, 563 555-5115 ,eric.yoder122@fixture.test,$57.85,0
+SQ-20126,Corey Lopez,1-563-555-5118,,$261.57,0
+SQ-20127,Xavier Fischer,309.555.5119,,$54.82,1
+SQ-20131,Eli Bauer,309.555.5123, Eli.bauer130@Fixture.TEST ,$51.45,0
+SQ-20134,Eric Klein,563-555-5125,,$266.31,0
+SQ-20135,Marcus Reyes,+1 319 555 5126,,$142.05,0
+SQ-20136,Aaron Yoder,(563) 555-5127, Aaron.yoder135@Fixture.TEST ,$134.54,0
+SQ-20140,Jason Zimmerman,563-555-5131,,$192.69,0
+SQ-20142,Xavier Wagner,563.555.5133,xavier.wagner141@fixture.test,$41.32,0
+SQ-20144,Aiden Steiner,563.555.5135,aiden.steiner143@fixture.test,$250.09,0
+SQ-20145,Andre Christensen,(309) 555-5136,,$30.32,0
+SQ-20146,Ethan Yoder,5635555137,ethan.yoder145@fixture.test,$149.98,0
+SQ-20148,Derek Dietrich,(319) 555-5139,,$188.58,0
+SQ-20150,Grant Bauer,309.555.5141,grant.bauer149@fixture.test,$258.34,0
+SQ-20151,Michael Hansen,(319) 555-5142,michael.hansen900@fixture.test,$247.75,0
+SQ-20152,Michael,3195555142,,$164.29,0
+SQ-20153,Christopher Duffy, 563 555-5143 ,christopher.duffy901@fixture.test,$199.73,0
+SQ-20154,Chris Duffy,3095555144,CHRISTOPHER.DUFFY901@FIXTURE.TEST,$237.71,0
+SQ-20155,Alex Moreno,+1 563 555 5145,alexander.moreno902@fixture.test,$196.81,0
+SQ-20156,Alexander Moreno,(563) 555-5145,ALEXANDER.MORENO902@FIXTURE.TEST,$212.72,0
+SQ-20157,William Kowalczyk, 309 555-5146 ,william.kowalczyk903@fixture.test,$177.59,0
+SQ-20158,Bill Kowalczyk,309.555.5146,WILLIAM.KOWALCZYK903@FIXTURE.TEST,$192.86,0
+SQ-20159,Joseph Russo,3095555147,joseph.russo904@fixture.test,$228.75,0
+SQ-20160,Joseph,309.555.5147,,$160.29,0
+SQ-20161,Anthony Bianchi,3095555148,anthony.bianchi905@fixture.test,$167.58,0
+SQ-20162,Tony Bianchi,1-563-555-5149,ANTHONY.BIANCHI905@FIXTURE.TEST,$220.90,0
+SQ-20163,Dan Ostrowski, 563 555-5150 ,daniel.ostrowski906@fixture.test,$177.55,0
+SQ-20164,Daniel Ostrowski,563-555-5150,DANIEL.OSTROWSKI906@FIXTURE.TEST,$170.04,0
+SQ-20165,Jacob Lindqvist, 319 555-5151 ,jacob.lindqvist907@fixture.test,$225.17,0
+SQ-20166,Jake Lindqvist,319-555-5151,JACOB.LINDQVIST907@FIXTURE.TEST,$253.79,0
+SQ-20167,Matthew Sorensen, 563 555-5152 ,matthew.sorensen908@fixture.test,$181.65,0
+SQ-20168,Matthew,1-563-555-5152,,$253.20,0
+SQ-20169,Nicholas Papadakis,1-563-555-5153,nicholas.papadakis909@fixture.test,$186.77,0
+SQ-20170,Nick Papadakis,309-555-5154,NICHOLAS.PAPADAKIS909@FIXTURE.TEST,$162.94,0
+SQ-20171,Zach Holm,309.555.5155,zachary.holm910@fixture.test,$235.34,0
+SQ-20172,Zachary Holm,309.555.5155,ZACHARY.HOLM910@FIXTURE.TEST,$237.64,0
+SQ-20173,Benjamin Achebe,+1 309 555 5156,benjamin.achebe911@fixture.test,$182.93,0
+SQ-20174,Ben Achebe,+1 309 555 5156,BENJAMIN.ACHEBE911@FIXTURE.TEST,$172.97,0
+SQ-20176,Tyler Brandt,(319) 555-5157,,$184.56,0
+SQ-20178,Jaylen Freeman,(563) 555-5158,,$155.26,0
+SQ-20179,Nora Lindgren,+1 309 555 5159,nora.lindgren952@fixture.test,$239.90,0
+SQ-20181,Brooke Kerr,563-555-5160,brooke.kerr953@fixture.test,$263.26,0
+SQ-20183,Derek Pham,563.555.5161,derek.pham954@fixture.test,$277.10,0
+SQ-20184,Eli Pham,(563) 555-5161,,$191.10,1
+SQ-20186,Landon Sisk,309.555.5162,,$247.62,0
+SQ-20187,Chris Miller,3195555163,chris.miller970@fixture.test,$288.25,0
+SQ-20190,Ryan Schultz, 309 555-5166 ,,$77.16,0
+SQ-20192,Tyler Johnson,1-563-555-5168,,$223.58,1
+SQ-20193,Okafor, 563 555-5169 ,,$140.24,0
+SQ-20194,Hector Salinas,call the shop,hector.salinas990@fixture.test,$120.58,0
+SQ-99001,Ghost Client,3095550001,,$40.00,0
+SQ-99002,,,nobody@fixture.test,$12.00,0
+SQ-20002,Nora,,,($5.00),0

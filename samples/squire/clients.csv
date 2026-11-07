@@ -1,0 +1,6 @@
+Client ID,First Name,Last Name,Phone,Email,Location,Notes
+SQ-10001,Alex,Sample,(319) 555-7001,alex.sample@example.test,Coralville,Likes a #2 on the sides
+SQ-10002,Brian,Sample,319-555-7002,,Coralville,
+SQ-10003,Carla,Sample,5635557003,carla@example.test,Kimberly,
+SQ-10004,,NoFirst,5635557004,,Kimberly,
+SQ-10005,Dana,Sample,309.555.7005,dana@example.test,Moline,Allergic to tea tree
