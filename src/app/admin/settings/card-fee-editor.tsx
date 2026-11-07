@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button, Card, CardHeader, Field, Input, Notice, Select, Textarea } from "@/components/ui";
 import { FEE_CHANNELS, FEE_CHANNEL_LABEL, FEE_NOTICE_MAX, SURCHARGE_BLOCKED_STATES, US_STATES, type CardFeeOverride, type CardFeePolicy, feeConfigFor, stateRule } from "@/domain/card-fee-policy";
-import { type CardFeeConfig, cardFeeFor, feeDisclosure } from "@/domain/checkout";
+import { type CardFeeConfig, cardFeeFor, creditCardFeeWording, feeDisclosure } from "@/domain/checkout";
 import { formatCents } from "@/lib/money";
 import { useSyncSave } from "@/components/brand-sync";
 import { saveShopCardFeeAction } from "./actions";
@@ -39,8 +39,8 @@ const toForm = (p: CardFeePolicy): Form => ({
   min: dollars(p.minCents),
   channels: p.channels,
   funding: p.funding,
-  notice: p.notice ?? "",
-  label: p.label,
+  notice: creditCardFeeWording(p.notice ?? ""),
+  label: creditCardFeeWording(p.label),
   cardFeeTaxable: p.cardFeeTaxable,
 });
 
@@ -54,8 +54,8 @@ const fromForm = (f: Form) => ({
   minCents: centsOrNull(f.min),
   channels: f.channels,
   funding: f.funding,
-  notice: f.notice.trim() || null,
-  label: f.label.trim().slice(0, 40) || "Credit card fee",
+  notice: creditCardFeeWording(f.notice.trim()) || null,
+  label: creditCardFeeWording(f.label.trim()).slice(0, 40) || "Credit card fee",
   cardFeeTaxable: f.cardFeeTaxable,
 });
 
@@ -118,10 +118,10 @@ function FeeFields({ f, set, disabled, walletFlag }: { f: Form; set: (f: Form) =
       <div className="sm:col-span-2">
         <div className="mb-1 text-xs font-medium text-zinc-700">Card types besides credit</div>
         <div className="grid gap-1 text-sm">
-          <label className="flex items-center gap-2 text-zinc-400" title="Card network rules and federal law don't allow surcharging debit cards">
+          <label className="flex items-center gap-2 text-zinc-400" title="Card network rules and federal law don't allow a credit card fee on debit cards">
             <input type="checkbox" checked={false} disabled /> Debit (never allowed)
           </label>
-          <label className="flex items-center gap-2 text-zinc-400" title="Card network rules don't allow surcharging prepaid cards">
+          <label className="flex items-center gap-2 text-zinc-400" title="Card network rules don't allow a credit card fee on prepaid cards">
             <input type="checkbox" checked={false} disabled /> Prepaid (never allowed)
           </label>
           <label className="flex items-center gap-2">
@@ -131,7 +131,7 @@ function FeeFields({ f, set, disabled, walletFlag }: { f: Form; set: (f: Form) =
             <input type="checkbox" checked={f.funding.googlePay} onChange={(e) => set({ ...f, funding: { ...f.funding, googlePay: e.target.checked } })} /> Credit cards in Google Pay
           </label>
           {!walletFlag && (f.funding.applePay || f.funding.googlePay) && (
-            <span className="text-xs text-amber-700">Wallet surcharges also need FEATURE_WALLET_FEE turned on; until then wallets pay none.</span>
+            <span className="text-xs text-amber-700">A credit card fee on wallets also needs FEATURE_WALLET_FEE turned on; until then wallets pay none.</span>
           )}
         </div>
       </div>
@@ -157,7 +157,7 @@ function FeeFields({ f, set, disabled, walletFlag }: { f: Form; set: (f: Form) =
   );
 }
 
-/** The brand's surcharge policy: the fee, where it applies, waivers, refunds and the state rules. */
+/** The brand's credit card fee: where it applies, waivers, refunds and the state rules. */
 export function BrandCardFeeEditor({ initial, canEdit, walletFlag, shops }: { initial: CardFeePolicy; canEdit: boolean; walletFlag: boolean; shops: { name: string; state: string }[] }) {
   const { pending, msg, save, dialog } = useSyncSave();
   const [f, setF] = useState(toForm(initial));
@@ -198,7 +198,7 @@ export function BrandCardFeeEditor({ initial, canEdit, walletFlag, shops }: { in
         </Field>
         {refundRule === "keep" && (
           <div className="sm:col-span-2">
-            <Notice>Visa and Mastercard rules may require giving the surcharge back on a refund. Check with your processor before keeping it.</Notice>
+            <Notice>Visa and Mastercard rules may require giving the credit card fee back on a refund. Check with your processor before keeping it.</Notice>
           </div>
         )}
         <div className="sm:col-span-2">
@@ -220,7 +220,7 @@ export function BrandCardFeeEditor({ initial, canEdit, walletFlag, shops }: { in
               <label
                 key={s}
                 className={blocked.includes(s) ? "flex items-center gap-1 text-red-700" : "flex items-center gap-1"}
-                title={blocked.includes(s) ? "Surcharges are restricted here" : undefined}
+                title={blocked.includes(s) ? "The credit card fee is restricted here" : undefined}
               >
                 <input
                   type="checkbox"
@@ -236,7 +236,7 @@ export function BrandCardFeeEditor({ initial, canEdit, walletFlag, shops }: { in
               </label>
             ))}
           </div>
-          <p className="mt-1 text-xs text-zinc-500">Red states restrict or ban surcharges ({blocked.join(", ")}). Confirm the current list with counsel; state law changes.</p>
+          <p className="mt-1 text-xs text-zinc-500">Red states restrict or ban a credit card fee ({blocked.join(", ")}). Confirm the current list with counsel; state law changes.</p>
         </div>
         <div className="sm:col-span-2">
           <div className="mb-1 text-xs font-medium text-zinc-700">Lower state limits</div>
@@ -271,7 +271,7 @@ export function BrandCardFeeEditor({ initial, canEdit, walletFlag, shops }: { in
         </div>
         {offShops.length > 0 && (
           <div className="sm:col-span-2">
-            <Notice>No surcharge at {offShops.map((s) => `${s.name}${s.state ? ` (${s.state})` : " (no state set)"}`).join(", ")}: not on the state list.</Notice>
+            <Notice>No credit card fee at {offShops.map((s) => `${s.name}${s.state ? ` (${s.state})` : " (no state set)"}`).join(", ")}: not on the state list.</Notice>
           </div>
         )}
       </fieldset>
@@ -281,7 +281,7 @@ export function BrandCardFeeEditor({ initial, canEdit, walletFlag, shops }: { in
   );
 }
 
-/** One shop's surcharge: the brand's, or its own fee, channels and notice. Waivers, refunds and states stay the brand's. */
+/** One shop's credit card fee: the brand's, or its own fee, channels and notice. Waivers, refunds and states stay the brand's. */
 export function ShopCardFeeEditor({
   shopId,
   shopName,
@@ -304,7 +304,7 @@ export function ShopCardFeeEditor({
   /** The brand applies the fee at this shop. */
   applied: boolean;
   canEdit: boolean;
-  /** They set the brand's surcharge too (shown a link to it). */
+  /** They set the brand's credit card fee too (shown a link to it). */
   brandAdmin: boolean;
   walletFlag: boolean;
 }) {

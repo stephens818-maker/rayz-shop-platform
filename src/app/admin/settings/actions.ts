@@ -180,14 +180,14 @@ export async function saveShopMoneyAction(shopId: string, raw: z.input<typeof Mo
 }
 
 /**
- * One shop's own surcharge settings on top of the brand's, or null to follow the brand. Brand admins,
+ * One shop's own credit card fee settings on top of the brand's, or null to follow the brand. Brand admins,
  * or people who edit the shop's checkout settings when the brand lets shop managers. Audited.
  */
 export async function saveShopCardFeeAction(shopId: string, override: CardFeeOverride | null) {
   return safe(async () => {
     const ctx = await authorize(["settings.card_fee", ...partPerms("checkout")]);
     assertShopAccess(ctx, shopId);
-    if (!canEditShopFee(ctx.permissions, await brandFeePolicy())) throw new AppError("forbidden", "The brand keeps the card surcharge view only for shop managers");
+    if (!canEditShopFee(ctx.permissions, await brandFeePolicy())) throw new AppError("forbidden", "The brand keeps the credit card fee view only for shop managers");
     await saveShopFeeOverride(ctx.actor, shopId, override);
     await noteShopEdit("card_fee", ["brand"], shopId);
     revalidatePath("/admin/settings");

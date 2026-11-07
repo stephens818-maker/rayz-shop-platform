@@ -205,7 +205,7 @@ export function feeConfigFor(p: CardFeePolicy, shopState: string | null | undefi
 
 /** Why a policy (the brand's, or a shop's merged with it) can't be saved, or null. */
 export function policyProblem(p: CardFeePolicy): string | null {
-  if (p.funding.debit || p.funding.prepaid) return "Surcharges are only allowed on credit cards. Card network rules and federal law don't allow them on debit or prepaid cards.";
+  if (p.funding.debit || p.funding.prepaid) return "The credit card fee is only allowed on credit cards. Card network rules and federal law don't allow it on debit or prepaid cards.";
   if (!Number.isFinite(p.rate) || p.rate < 0) return "The rate can't be negative";
   if (p.rate > FEE_RATE_SANITY_MAX) return "Enter the credit card fee rate as a percent from 0 to 100";
   if (!Number.isInteger(p.flatCents) || p.flatCents < 0 || p.flatCents > FEE_FLAT_MAX_CENTS) return `The flat fee is from $0.00 to $${(FEE_FLAT_MAX_CENTS / 100).toFixed(2)}`;

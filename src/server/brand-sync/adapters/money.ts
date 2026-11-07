@@ -27,7 +27,7 @@ const listOn = (o: Record<string, boolean>) =>
 export const cardFeeAdapter: SyncAdapter<CardFeePolicy, CardFeeValue> = {
   type: "card_fee",
   columns: ["cardFee"],
-  noun: "Card surcharge",
+  noun: "Credit card fee",
   area: "card_fee",
   store: "native",
   live: true,

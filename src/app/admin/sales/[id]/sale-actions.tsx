@@ -116,7 +116,7 @@ export function AssignDashboardRefund({
         )}
         {cardFeeRemainingCents > 0 && feeRefundRule !== "keep" && (
           <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={fee} onChange={(e) => setFee(e.target.checked)} /> It included all of the card surcharge ({formatCents(cardFeeRemainingCents)})
+            <input type="checkbox" checked={fee} onChange={(e) => setFee(e.target.checked)} /> It included all of the credit card fee ({formatCents(cardFeeRemainingCents)})
           </label>
         )}
         {items.some((i) => i.kind === "product" && (qty[i.id] ?? 0) > 0) && (
@@ -183,7 +183,7 @@ export function SaleActions({
   items: RefundableItem[];
   tipRemainingCents: number;
   cardFeeRemainingCents: number;
-  /** "keep": the brand keeps the card surcharge on refunds, so none of it is offered back. */
+  /** "keep": the brand keeps the credit card fee on refunds, so none of it is offered back. */
   feeRefundRule?: "proportional" | "keep" | null;
   imported: boolean;
 }) {
@@ -253,11 +253,11 @@ export function SaleActions({
           </Field>
         )}
         {cardFeeRemainingCents > 0 && feeRefundRule === "keep" && (
-          <p className="text-xs text-zinc-500">The card surcharge ({formatCents(cardFeeRemainingCents)}) is kept on refunds, as the brand set. A same-day void still gives it back.</p>
+          <p className="text-xs text-zinc-500">The credit card fee ({formatCents(cardFeeRemainingCents)}) is kept on refunds, as the brand set. A same-day void still gives it back.</p>
         )}
         {cardFeeRemainingCents > 0 && feeRefundRule !== "keep" && (
           <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={fee} onChange={(e) => setFee(e.target.checked)} /> Refund all of the card surcharge ({formatCents(cardFeeRemainingCents)})
+            <input type="checkbox" checked={fee} onChange={(e) => setFee(e.target.checked)} /> Refund all of the credit card fee ({formatCents(cardFeeRemainingCents)})
           </label>
         )}
         {cardFeeRemainingCents > 0 && feeRefundRule !== "keep" && !fee && total > 0 && (

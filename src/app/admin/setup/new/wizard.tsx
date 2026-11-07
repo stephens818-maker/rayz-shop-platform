@@ -66,7 +66,7 @@ export function LocationWizard({
     receipt: { headline: string | null; footer: string | null; showLogo: boolean; showAddress: boolean; showPhone: boolean; allowPrint: boolean };
   } | null;
   geocoder: "google" | "census" | "zip";
-  /** The brand's credit card surcharge, which a new location takes: what it is, whether it applies here, and the states it's allowed in. */
+  /** The brand's credit card fee, which a new location takes: what it is, whether it applies here, and the states it's allowed in. */
   brandFee?: { fee: string; onTips: boolean; on: boolean; appliesTo: "all" | "selected" | "none"; states: string[] } | null;
   brandIntervalMinutes: number;
   canBank: boolean;
@@ -111,12 +111,12 @@ export function LocationWizard({
   const feeSummary = !brandFee
     ? null
     : !brandFee.on || brandFee.appliesTo === "none"
-      ? "Off: the brand doesn't add a surcharge at any shop."
+      ? "Off: the brand doesn't add a credit card fee at any shop."
       : brandFee.appliesTo === "selected"
-        ? `Off until a brand admin applies the brand's surcharge (${brandFee.fee}) to this shop.`
+        ? `Off until a brand admin applies the brand's credit card fee (${brandFee.fee}) to this shop.`
         : feeState && !brandFee.states.includes(feeState)
-          ? `Off: the brand doesn't surcharge in ${feeState}.`
-          : `The brand's ${brandFee.fee} surcharge on credit cards${brandFee.onTips ? ", tips included" : ""}.`;
+          ? `Off: the brand doesn't charge a credit card fee in ${feeState}.`
+          : `The brand's ${brandFee.fee} credit card fee on credit cards${brandFee.onTips ? ", tips included" : ""}.`;
   const [screen, setScreen] = useState<{ own: boolean; tips: TipScreen; rules: Omit<ShopHandoff, "tips"> }>(() => {
     const { tips: _, ...rules } = DEFAULT_SHOP_HANDOFF;
     return { own: false, tips: options.brandTips, rules };
@@ -554,7 +554,7 @@ export function LocationWizard({
               {pay.mode !== "cash_only" && (
                 <fieldset>
                   <legend className="mb-2 text-sm font-semibold text-zinc-800">Card fee</legend>
-                  <p className="text-sm text-zinc-700">{feeSummary ?? "Follows the brand's credit card surcharge."}</p>
+                  <p className="text-sm text-zinc-700">{feeSummary ?? "Follows the brand's credit card fee."}</p>
                   <p className="mt-1 text-xs text-zinc-500">A new location takes the brand&apos;s credit card fee. It stays off until a rate is entered. Brand admins change it, or which shops use it, under Credit card fee.</p>
                 </fieldset>
               )}

@@ -103,7 +103,7 @@ export interface CommissionBase {
   loyalty: "reduces" | "shop_absorbs";
 }
 export const CARD_FEE_BASE_LABEL: Record<CommissionBase["cardFee"], string> = {
-  exclude: "Left out of commission (the surcharge is the shop's)",
+  exclude: "Left out of commission (the credit card fee is the shop's)",
   include: "Part of the sale commission is paid on",
 };
 export const LOYALTY_BASE_LABEL: Record<CommissionBase["loyalty"], string> = {

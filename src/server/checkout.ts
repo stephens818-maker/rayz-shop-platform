@@ -818,9 +818,9 @@ export async function priceCart(
   const cardFee = channel === ctx.feeChannel ? ctx.config.cardFee : feeConfigFor({ ...ctx.feePolicy.policy, rate: ctx.config.cardFee.rate }, ctx.feePolicy.state, channel);
   const waive = input.waiveCardFee ?? null;
   if (waive) {
-    if (!input.canWaiveCardFee) throw forbidden("You don't have permission to waive the card surcharge");
-    if (cardFee.waiverAllowed === false) throw new AppError("forbidden", "The brand doesn't allow waiving the card surcharge", { reason: "waiver_not_allowed" });
-    if (!waive.reason?.trim()) throw new AppError("bad_request", "Add a reason for waiving the card surcharge", { field: "waiveCardFee.reason" });
+    if (!input.canWaiveCardFee) throw forbidden("You don't have permission to waive the credit card fee");
+    if (cardFee.waiverAllowed === false) throw new AppError("forbidden", "The brand doesn't allow waiving the credit card fee", { reason: "waiver_not_allowed" });
+    if (!waive.reason?.trim()) throw new AppError("bad_request", "Add a reason for waiving the credit card fee", { field: "waiveCardFee.reason" });
   }
   const totals = computeCheckout({
     lines,
@@ -1048,7 +1048,7 @@ export async function finalizeSale(input: FinalizeInput) {
   }
   const waivedCents = legs.reduce((a, l) => a + (l.fee?.waivedCents ?? 0), 0);
   if (input.maxCardFeeWaiverCents != null && waivedCents > input.maxCardFeeWaiverCents)
-    throw new AppError("forbidden", `This waives ${formatCents(waivedCents)} of card surcharge, above your ${formatCents(input.maxCardFeeWaiverCents)} limit`, { reason: "waiver_over_limit" });
+    throw new AppError("forbidden", `This waives ${formatCents(waivedCents)} of the credit card fee, above your ${formatCents(input.maxCardFeeWaiverCents)} limit`, { reason: "waiver_over_limit" });
 
   if (
     input.expectedTotalCents != null &&

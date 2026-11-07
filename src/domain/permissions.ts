@@ -113,7 +113,7 @@ export const FEATURE_PERMISSIONS = [
   {
     key: "pos.waive_card_fee",
     group: "Point of sale",
-    label: "Waive the credit card surcharge on a ticket",
+    label: "Waive the credit card fee on a ticket",
     hint: "Only where the brand allows waivers. Each waiver needs a reason and is in the audit log.",
   },
   {
@@ -615,7 +615,7 @@ export const REPORTS = [
     key: "card_fees",
     label: "Credit card fees",
     href: "/admin/reports/card-fees",
-    hint: "Surcharges collected and waived by location, barber, day, channel and card type, the effective rate, and what they recovered of Stripe's processing cost.",
+    hint: "Credit card fees collected and waived by location, barber, day, channel and card type, the effective rate, and what they recovered of Stripe's processing cost.",
   },
   { key: "shop_accounts", label: "Shop P&L by Stripe account", href: "/admin/reports/shop-accounts", hint: "Each shop's card sales, fees, refunds, tips and payouts through its own, its owner's or the brand's Stripe account, grouped by owner." },
   {
@@ -974,7 +974,7 @@ export interface RoleDef {
 export const MONEY_LIMITS = [
   { key: "discountCents", label: "Manual discount", perms: ["pos.discount"], hint: "The most one ticket's manual discount may take off, as well as the percent limit." },
   { key: "refundCents", label: "Refund or void", perms: ["sales.refund", "sales.void"], hint: "The most one refund or void may give back. Above it, a manager whose limit covers it approves with their PIN." },
-  { key: "waiverCents", label: "Card fee waiver", perms: ["pos.waive_card_fee"], hint: "The most card surcharge one ticket's waiver may take off." },
+  { key: "waiverCents", label: "Card fee waiver", perms: ["pos.waive_card_fee"], hint: "The most credit card fee one ticket's waiver may take off." },
 ] as const satisfies readonly { key: string; label: string; perms: readonly FeaturePermission[]; hint: string }[];
 export type MoneyLimitKey = (typeof MONEY_LIMITS)[number]["key"];
 /** In cents; null is no dollar limit. */

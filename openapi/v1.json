@@ -2398,7 +2398,7 @@
         "tags": [
           "Payments"
         ],
-        "summary": "One ticket: lines, tax, tip choices and the shop's card surcharge",
+        "summary": "One ticket: lines, tax, tip choices and the shop's credit card fee",
         "security": [
           {
             "bearerAuth": []
@@ -2449,7 +2449,7 @@
           "Payments"
         ],
         "summary": "The tip and the card fee for the card picked, before the client authorizes",
-        "description": "Use PaymentSheet's FlowController: the client picks a saved card or enters one (a ConfirmationToken), this returns the fee and total from the card's funding, and your own Pay button calls /pay. Only credit cards pay the surcharge: never debit or prepaid, and not Apple Pay or Google Pay unless /app/config payments.walletFee.",
+        "description": "Use PaymentSheet's FlowController: the client picks a saved card or enters one (a ConfirmationToken), this returns the fee and total from the card's funding, and your own Pay button calls /pay. Only credit cards pay the credit card fee: never debit or prepaid, and not Apple Pay or Google Pay unless /app/config payments.walletFee.",
         "security": [
           {
             "bearerAuth": []
@@ -7373,7 +7373,7 @@
               "prepaid",
               "unknown"
             ],
-            "description": "Only credit pays the shop's card surcharge"
+            "description": "Only credit pays the shop's credit card fee"
           },
           "expMonth": {
             "anyOf": [
@@ -7458,7 +7458,7 @@
                     "prepaid",
                     "unknown"
                   ],
-                  "description": "Only credit pays the shop's card surcharge"
+                  "description": "Only credit pays the shop's credit card fee"
                 },
                 "expMonth": {
                   "anyOf": [
@@ -7553,7 +7553,7 @@
                   "prepaid",
                   "unknown"
                 ],
-                "description": "Only credit pays the shop's card surcharge"
+                "description": "Only credit pays the shop's credit card fee"
               },
               "expMonth": {
                 "anyOf": [
@@ -7938,7 +7938,7 @@
                 "type": "integer",
                 "minimum": -9007199254740991,
                 "maximum": 9007199254740991,
-                "description": "Before any card surcharge, the tip chosen so far included"
+                "description": "Before any credit card fee, the tip chosen so far included"
               },
               "tip": {
                 "type": "object",
@@ -8068,7 +8068,7 @@
                     "type": "boolean"
                   },
                   "notice": {
-                    "description": "The brand's surcharge notice; show it before the customer authorizes",
+                    "description": "The brand's credit card fee notice; show it before the customer authorizes",
                     "type": [
                       "string",
                       "null"
@@ -8090,7 +8090,7 @@
                     "maximum": 9007199254740991
                   },
                   "capCents": {
-                    "description": "Added in 1.2. The most the surcharge can be on one charge",
+                    "description": "Added in 1.2. The most the credit card fee can be on one charge",
                     "anyOf": [
                       {
                         "type": "integer",
@@ -10910,7 +10910,7 @@
               },
               "walletFee": {
                 "type": "boolean",
-                "description": "Whether the credit card surcharge applies to Apple Pay and Google Pay. Off unless the owner turns it on"
+                "description": "Whether the credit card fee applies to Apple Pay and Google Pay. Off unless the owner turns it on"
               }
             },
             "required": [

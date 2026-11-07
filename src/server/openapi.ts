@@ -463,14 +463,14 @@ export function openApiDocument(baseUrl: string) {
       },
       "/me/tickets": { get: { tags: ["Payments"], summary: "Tickets the shop sent to the app to tip and pay, mine and my children's", security: bearer, responses: { 200: ok("AppTicketList") } } },
       "/me/tickets/{id}": {
-        get: { tags: ["Payments"], summary: "One ticket: lines, tax, tip choices and the shop's card surcharge", security: bearer, parameters: [ticketParam], responses: { 200: ok("AppTicketResponse"), 404: err("Not found") } },
+        get: { tags: ["Payments"], summary: "One ticket: lines, tax, tip choices and the shop's credit card fee", security: bearer, parameters: [ticketParam], responses: { 200: ok("AppTicketResponse"), 404: err("Not found") } },
       },
       "/me/tickets/{id}/quote": {
         post: {
           tags: ["Payments"],
           summary: "The tip and the card fee for the card picked, before the client authorizes",
           description:
-            "Use PaymentSheet's FlowController: the client picks a saved card or enters one (a ConfirmationToken), this returns the fee and total from the card's funding, and your own Pay button calls /pay. Only credit cards pay the surcharge: never debit or prepaid, and not Apple Pay or Google Pay unless /app/config payments.walletFee.",
+            "Use PaymentSheet's FlowController: the client picks a saved card or enters one (a ConfirmationToken), this returns the fee and total from the card's funding, and your own Pay button calls /pay. Only credit cards pay the credit card fee: never debit or prepaid, and not Apple Pay or Google Pay unless /app/config payments.walletFee.",
           security: bearer,
           parameters: [ticketParam],
           requestBody: { required: true, content: jsonContent("QuoteBody") },

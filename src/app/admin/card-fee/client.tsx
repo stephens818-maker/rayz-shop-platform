@@ -19,7 +19,7 @@ export interface FeeShopRow {
   appliesToTip: boolean;
   inherits: boolean;
   ownKeys: string[];
-  /** "Oct 26, 2026", or null when it hasn't changed since the surcharge policy began. */
+  /** "Oct 26, 2026", or null when it hasn't changed since the credit card fee policy began. */
   changed: string | null;
 }
 
@@ -39,10 +39,10 @@ const OWN_LABEL: Record<string, string> = {
 const APPLY_HINT: Record<FeeApplyTo, string> = {
   all: "Every shop, including locations added later.",
   selected: "Only the shops ticked below. A new location is not on this list until you tick it. A new shop the fee applies to starts at 3%.",
-  none: "No shop adds the surcharge.",
+  none: "No shop adds the credit card fee.",
 };
 
-/** Which shops use the brand's surcharge, and whether shop managers may change their own shop's. */
+/** Which shops use the brand's credit card fee, and whether shop managers may change their own shop's. */
 export function FeeShopsCard({ initial, shops }: { initial: { appliesTo: FeeApplyTo; shopIds: string[]; shopsCanEdit: boolean }; shops: { id: string; name: string; state: string }[] }) {
   const { pending, msg, save } = useSave();
   const [appliesTo, setAppliesTo] = useState(initial.appliesTo);
@@ -58,7 +58,7 @@ export function FeeShopsCard({ initial, shops }: { initial: { appliesTo: FeeAppl
   };
   return (
     <Card>
-      <CardHeader title="Apply to shops" subtitle="Which shops use the brand's surcharge. A shop it doesn't apply to charges none, whatever its own setting. Every change is in the audit log." />
+      <CardHeader title="Apply to shops" subtitle="Which shops use the brand's credit card fee. A shop it doesn't apply to charges none, whatever its own setting. Every change is in the audit log." />
       <div className="space-y-4 p-4">
         <fieldset className="flex flex-wrap gap-4 text-sm">
           {FEE_APPLY_TO.map((a) => (
@@ -97,7 +97,7 @@ export function FeeShopsCard({ initial, shops }: { initial: { appliesTo: FeeAppl
                 variant="secondary"
                 disabled={push.pending || ticked.size === 0}
                 onClick={() =>
-                  confirm(`Push the brand's saved surcharge settings to ${ticked.size} shop${ticked.size === 1 ? "" : "s"}? Their own settings are replaced and the surcharge is applied there.`) &&
+                  confirm(`Push the brand's saved credit card fee to ${ticked.size} shop${ticked.size === 1 ? "" : "s"}? Their own settings are replaced and the credit card fee is applied there.`) &&
                   push.run("push", [...ticked])
                 }
               >
@@ -111,10 +111,10 @@ export function FeeShopsCard({ initial, shops }: { initial: { appliesTo: FeeAppl
         <fieldset className="space-y-1 border-t border-zinc-100 pt-3 text-sm">
           <legend className="mb-1 text-xs font-medium text-zinc-700">Shop managers</legend>
           <label className="flex items-center gap-2">
-            <input type="radio" name="shopsCanEdit" checked={!canEdit} onChange={() => setCanEdit(false)} /> See their shop&apos;s surcharge only
+            <input type="radio" name="shopsCanEdit" checked={!canEdit} onChange={() => setCanEdit(false)} /> See their shop&apos;s credit card fee only
           </label>
           <label className="flex items-center gap-2">
-            <input type="radio" name="shopsCanEdit" checked={canEdit} onChange={() => setCanEdit(true)} /> Can change their own shop&apos;s surcharge
+            <input type="radio" name="shopsCanEdit" checked={canEdit} onChange={() => setCanEdit(true)} /> Can change their own shop&apos;s credit card fee
           </label>
           <p className="text-xs text-zinc-500">
             For people who edit a shop&apos;s checkout settings. They can set their shop&apos;s fee, channels and notice within the brand&apos;s limits; which shops use it, waivers, refunds and states stay
@@ -146,12 +146,12 @@ function useBulk() {
 }
 
 const CONFIRM: Partial<Record<BulkFeeAction, string>> = {
-  reset: "Clear these shops' own surcharge settings so they follow the brand?",
-  push: "Replace these shops' own settings with the brand's and apply the surcharge there?",
-  disable: "Stop applying the surcharge at these shops? Their own settings are kept.",
+  reset: "Clear these shops' own credit card fee settings so they follow the brand?",
+  push: "Replace these shops' own settings with the brand's and apply the credit card fee there?",
+  disable: "Stop applying the credit card fee at these shops? Their own settings are kept.",
 };
 
-/** Every shop's surcharge as it stands, with bulk actions on the ticked ones. */
+/** Every shop's credit card fee as it stands, with bulk actions on the ticked ones. */
 export function ShopFeeTable({ rows }: { rows: FeeShopRow[] }) {
   const [picked, setPicked] = useState(new Set<string>());
   const bulk = useBulk();
@@ -164,7 +164,7 @@ export function ShopFeeTable({ rows }: { rows: FeeShopRow[] }) {
   const on = rows.filter((r) => r.on).length;
   return (
     <Card>
-      <CardHeader title="Shops" subtitle={`${on} of ${rows.length} shops add the surcharge. Tick shops to change them together; each change is audited with the old and new values.`} />
+      <CardHeader title="Shops" subtitle={`${on} of ${rows.length} shops add the credit card fee. Tick shops to change them together; each change is audited with the old and new values.`} />
       <div className="flex flex-wrap items-center gap-2 border-b border-zinc-100 px-4 py-3">
         <span className="text-sm text-zinc-600">{picked.size ? `${picked.size} selected` : "Select shops to"}</span>
         {BULK_FEE_ACTIONS.filter((a) => a !== "push").map((a) => (
@@ -185,7 +185,7 @@ export function ShopFeeTable({ rows }: { rows: FeeShopRow[] }) {
             </Th>
             <Th>Shop</Th>
             <Th>State</Th>
-            <Th>Surcharge</Th>
+            <Th>Credit card fee</Th>
             <Th right>Rate</Th>
             <Th>Setting</Th>
             <Th>Last changed</Th>
@@ -240,14 +240,14 @@ export function ShopFeeTable({ rows }: { rows: FeeShopRow[] }) {
       </Table>
       <div className="space-y-1 px-4 py-3 text-xs text-zinc-500">
         <p>
-          <b>Enable</b> applies the surcharge at the shop and turns its own &ldquo;off&rdquo; back on. <b>Disable</b> stops applying it there and keeps the shop&apos;s own settings. <b>Apply brand rate</b>{" "}
-          drops the shop&apos;s own fee type and rate. <b>Reset to brand default</b> drops all its own settings. <b>Push brand settings</b> does both: resets the shop and applies the surcharge there.
+          <b>Enable</b> applies the credit card fee at the shop and turns its own &ldquo;off&rdquo; back on. <b>Disable</b> stops applying it there and keeps the shop&apos;s own settings. <b>Apply brand rate</b>{" "}
+          drops the shop&apos;s own fee type and rate. <b>Reset to brand default</b> drops all its own settings. <b>Push brand settings</b> does both: resets the shop and applies the credit card fee there.
         </p>
         <p>The rate is after any state limit. Last changed is when what the shop charges last changed, including brand changes that reached it.</p>
       </div>
       {rows.some((r) => r.off === "state_not_allowed") && (
         <div className="px-4 pb-4">
-          <Notice>Shops in a state the brand doesn&apos;t surcharge in stay off whatever is applied. The state list is in the brand settings below.</Notice>
+          <Notice>Shops in a state where the brand doesn&apos;t charge a credit card fee stay off whatever is applied. The state list is in the brand settings below.</Notice>
         </div>
       )}
     </Card>

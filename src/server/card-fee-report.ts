@@ -7,7 +7,7 @@ import { formatCents } from "@/lib/money";
 import { ReportScope, grainsFor, ids, rows, staffFilter } from "./report-sql";
 
 /**
- * The credit card fee report: surcharges collected and waived, the rate they came to, and what they
+ * The credit card fee report: fees collected and waived, the rate they came to, and what they
  * recovered of the processing cost, by location, barber, day, channel and card type. Charges count
  * on the day they were taken and fee refunds on the day they were given, as in every sales report.
  * Processing cost is what Stripe charged (or, on a shop's own account, the platform's processing fee),
@@ -151,13 +151,13 @@ const rate = (label: string): Column => ({ label, kind: "pct" });
 
 const COLUMNS: Column[] = [
   int("Card charges"),
-  int("Surcharged"),
-  money("Amount surcharged"),
-  money("Surcharges charged"),
-  money("Surcharges refunded"),
-  money("Surcharges collected"),
+  int("With a credit card fee"),
+  money("Amount the fee was on"),
+  money("Credit card fees charged"),
+  money("Credit card fees refunded"),
+  money("Credit card fees collected"),
   int("Waivers"),
-  money("Surcharges waived"),
+  money("Credit card fees waived"),
   rate("Effective rate"),
   money("Processing cost"),
   money("Net cost recovery"),
@@ -220,22 +220,22 @@ export async function cardFeeReportData(scope: ReportScope, loc: ViewCtx) {
   });
   const summary = metricTable(loc, {
     id: "summary",
-    title: `Card surcharges${{ combined: "", shops: " by location", barbers: " by barber", shops_barbers: " by location and barber" }[viewOf(loc)]}`,
+    title: `Credit card fees${{ combined: "", shops: " by location", barbers: " by barber", shops_barbers: " by location and barber" }[viewOf(loc)]}`,
     subtitle:
-      "Collected is after surcharge refunds. The effective rate is what was charged over the amounts it was charged on. Net cost recovery is collected less the processing cost of every card charge.",
+      "Collected is after credit card fee refunds. The effective rate is what was charged over the amounts it was charged on. Net cost recovery is collected less the processing cost of every card charge.",
     metrics: [
       m("Card charges", "int", (x) => x.charges),
       m("Card takings", "money", (x) => x.amountCents),
-      m("Surcharged charges", "int", (x) => x.surcharged),
-      m("Surcharges charged", "money", (x) => x.feeChargedCents),
-      m("Surcharges refunded", "money", (x) => x.feeRefundedCents),
-      m("Surcharges collected", "money", (x) => x.feeCents),
+      m("Charges with a credit card fee", "int", (x) => x.surcharged),
+      m("Credit card fees charged", "money", (x) => x.feeChargedCents),
+      m("Credit card fees refunded", "money", (x) => x.feeRefundedCents),
+      m("Credit card fees collected", "money", (x) => x.feeCents),
       m("Waivers", "int", (x) => x.waivers),
-      m("Surcharges waived", "money", (x) => x.waivedCents),
-      m("Amount surcharged", "money", (x) => x.basisCents),
+      m("Credit card fees waived", "money", (x) => x.waivedCents),
+      m("Amount the fee was on", "money", (x) => x.basisCents),
       m("Effective rate", "pct", effectiveRate, false),
       m("Processing cost (all card charges)", "money", (x) => x.costCents),
-      m("Processing cost (surcharged charges)", "money", (x) => x.costSurchargedCents),
+      m("Processing cost (charges with a fee)", "money", (x) => x.costSurchargedCents),
       m("Net cost recovery", "money", (x) => x.feeCents - x.costCents),
       m("Cost recovered", "pct", recovery, false),
     ],
@@ -266,7 +266,7 @@ export async function cardFeeReportData(scope: ReportScope, loc: ViewCtx) {
   const cardTypes = plainTable(
     "card_types",
     "By card type",
-    "Only credit cards carry the surcharge; debit and prepaid show their processing cost with none recovered.",
+    "Only credit cards carry the credit card fee; debit and prepaid show their processing cost with none recovered.",
     "Card type",
     grouped(fine, (r) => `${r.brand}|${r.funding}`),
     (k) => cardTypeLabel(k.split("|")[0], k.split("|")[1]),
@@ -274,12 +274,12 @@ export async function cardFeeReportData(scope: ReportScope, loc: ViewCtx) {
   return {
     stats: [
       {
-        label: "Surcharges collected",
+        label: "Credit card fees collected",
         value: formatCents(t.feeCents),
         hint: `${t.surcharged} of ${t.charges} card charges${t.feeRefundedCents ? `, after ${formatCents(t.feeRefundedCents)} refunded` : ""}`,
       },
       { label: "Waived", value: formatCents(t.waivedCents), hint: `${t.waivers} waiver${t.waivers === 1 ? "" : "s"}` },
-      { label: "Effective rate", value: effectiveRate(t) === null ? "—" : `${((effectiveRate(t) ?? 0) * 100).toFixed(2)}%`, hint: `on ${formatCents(t.basisCents)} surcharged` },
+      { label: "Effective rate", value: effectiveRate(t) === null ? "—" : `${((effectiveRate(t) ?? 0) * 100).toFixed(2)}%`, hint: `on ${formatCents(t.basisCents)} the fee applied to` },
       {
         label: "Net cost recovery",
         value: formatCents(t.feeCents - t.costCents),
@@ -322,7 +322,7 @@ export interface FeePaymentRow {
   stripeAccountId: string | null;
 }
 
-/** Every card payment in the range with how its surcharge was worked out: the payments export. */
+/** Every card payment in the range with how its credit card fee was worked out: the payments export. */
 export async function feePayments(s: ReportScope, limit = 20000): Promise<FeePaymentRow[]> {
   return rows<FeePaymentRow>(sql`
     select p.id, p.shop_id "shopId", s.staff_id "staffId", p.business_date::text as day, s.number ticket, coalesce(p.fee_channel, 'pos') channel,

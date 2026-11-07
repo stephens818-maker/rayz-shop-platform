@@ -9,7 +9,7 @@ import { Badge, Card, LinkButton, Notice, StarBadge } from "@/components/ui";
 import { progressLabel } from "@/domain/loyalty";
 import { formatCents, formatRate } from "@/lib/money";
 import { formatPhone } from "@/lib/phone";
-import { feeLabel } from "@/domain/checkout";
+import { creditCardFeeWording, feeLabel } from "@/domain/checkout";
 import { personHeading } from "@/domain/receipts";
 import { formatDateTime, localDateOf } from "@/lib/time";
 import { can, guardPage, ratingViewer } from "@/server/auth/staff";
@@ -286,7 +286,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
           {(pricing.disclosures ?? []).length > 0 && (
             <div className="mt-4 space-y-1 border-t border-dashed border-zinc-300 pt-3 text-[11px] text-zinc-500">
               {pricing.disclosures!.map((d, k) => (
-                <p key={k}>{d}</p>
+                <p key={k}>{creditCardFeeWording(d)}</p>
               ))}
             </div>
           )}
@@ -304,7 +304,7 @@ export default async function SalePage({ params, searchParams }: { params: Promi
               {loyalty.availableCents > 0 && ` · ${formatCents(loyalty.availableCents)} in rewards ready`}
             </div>
           )}
-          <div className="mt-4 text-center text-xs text-zinc-400">{receipt.footer ?? "Thank you! Book again at rayzbarbershop.com"}</div>
+          <div className="mt-4 text-center text-xs text-zinc-400">{creditCardFeeWording(receipt.footer ?? "Thank you! Book again at rayzbarbershop.com")}</div>
         </Card>
         <div className="no-print space-y-3">
           {receiptState.available && <ReceiptPanel saleId={sale.id} onFile={receiptState.onFile} atCheckout={receiptState.atCheckout} history={receiptState.history} highlight={!!sp.done} />}

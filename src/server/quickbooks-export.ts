@@ -18,7 +18,7 @@ export const QBO_ACCOUNTS = {
   products: "Product Sales",
   tax: "Sales Tax Payable",
   tips: "Tips Payable",
-  surcharge: "Credit Card Surcharge Income",
+  surcharge: "Credit Card Fee Income",
   processing: "Merchant Processing Fees",
   difference: "Ask My Accountant",
 } as const;

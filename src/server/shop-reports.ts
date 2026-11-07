@@ -93,7 +93,7 @@ export async function endOfDayData(scope: ReportScope, loc: ViewCtx, opts: { per
           m("Net sales", "money", x, (v) => v.netSalesCents),
           m("Tax", "money", x, (v) => v.taxCents),
           m("Tips", "money", x, (v) => v.tipsCents),
-          m("Card surcharges", "money", x, (v) => v.cardFeeCents),
+          m("Credit card fees", "money", x, (v) => v.cardFeeCents),
           m("Gift cards sold", "money", x, (v) => v.giftCardsSoldCents),
           m("Avg ticket", "money", x, (v) => v.avgTicketCents, false),
         ],
@@ -101,7 +101,7 @@ export async function endOfDayData(scope: ReportScope, loc: ViewCtx, opts: { per
       metricTable(lv, {
         id: "payments",
         title: titled(lv, "How it was paid"),
-        subtitle: "After refunds, with tips and surcharges.",
+        subtitle: "After refunds, with tips and the credit card fee.",
         label: "Tender",
         metrics: [
           m("Card (credit)", "money", tender, (v) => v.cardCreditCents),

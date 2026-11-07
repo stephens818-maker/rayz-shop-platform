@@ -520,7 +520,7 @@ export async function assignRefundLines(req: AssignLinesRequest) {
     const clamped = Object.fromEntries(Object.entries(asked).map(([k, v]) => [k, Math.max(0, Math.min(v, cap[k as keyof RefundComponents]))])) as unknown as RefundComponents;
     const picked = componentsTotal(clamped);
     if (picked < r.amountCents)
-      throw new AppError("bad_request", `What you picked comes to ${formatCents(picked)}, but ${formatCents(r.amountCents)} went back on the card. Pick more lines, or add the tip or surcharge.`, { pickedCents: picked });
+      throw new AppError("bad_request", `What you picked comes to ${formatCents(picked)}, but ${formatCents(r.amountCents)} went back on the card. Pick more lines, or add the tip or credit card fee.`, { pickedCents: picked });
     const whole = picked === r.amountCents;
     const components = whole ? clamped : allocateAmount(clamped, r.amountCents);
 

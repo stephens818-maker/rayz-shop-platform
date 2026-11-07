@@ -822,7 +822,7 @@ export const SALE_FIELDS: FieldDef[] = [
     group: "Measures",
     type: "money",
     dollars: true,
-    hint: "The surcharge collected, after any waiver.",
+    hint: "The credit card fee collected, after any waiver.",
   },
   {
     key: "total",

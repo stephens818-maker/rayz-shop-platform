@@ -168,7 +168,7 @@ function IsolvedFileFields({ v, onChange }: { v: PayrollSettings; onChange: (x: 
           </label>
         ))}
         <label>
-          <span className="block text-xs text-zinc-500">Card surcharge, for commission (I10)</span>
+          <span className="block text-xs text-zinc-500">Credit card fee, for commission (I10)</span>
           <Select value={v.commissionBase.cardFee} onChange={(e) => onChange({ commissionBase: { ...v.commissionBase, cardFee: e.target.value as CommissionBase["cardFee"] } })} className="h-9 w-80">
             {Object.entries(CARD_FEE_BASE_LABEL).map(([x, l]) => (
               <option key={x} value={x}>

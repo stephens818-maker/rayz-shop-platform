@@ -293,7 +293,7 @@ export function PaymentsPanel({
           {expired && <p className="text-sm text-amber-800">That onboarding link expired or was already used. Continue to get a fresh one.</p>}
           <p className="text-sm text-zinc-600">
             {shopName} gets its own Stripe account. Stripe&apos;s own pages collect its legal entity, EIN, owner identity and bank account; Ray&apos;z keeps only the account ID
-            and the status Stripe reports. Card charges are made by Ray&apos;z on {shopName}&apos;s behalf and settle there, with tips and surcharges; refunds come back out of it,
+            and the status Stripe reports. Card charges are made by Ray&apos;z on {shopName}&apos;s behalf and settle there, with tips and the credit card fee; refunds come back out of it,
             and payouts go to {shopName}&apos;s bank. Clients&apos; saved cards work at every shop. Processing is passed on at {fees.keyed} keyed or online and {fees.terminal} on
             the card reader, and isn&apos;t returned on refunds. Year-end 1099 tax forms for its card sales come from Stripe and appear in the shop&apos;s Stripe dashboard.
           </p>
@@ -345,7 +345,7 @@ export function PaymentsPanel({
             {owner?.stripeAccountId && <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600">{owner.stripeAccountId}</code>}
           </div>
           <p className="text-sm text-zinc-600">
-            {shopName}&apos;s card sales, tips and surcharges settle in {owner?.name ?? "its owner"}&apos;s Stripe account, with every other shop of theirs set to it, and are paid
+            {shopName}&apos;s card sales, tips and credit card fee settle in {owner?.name ?? "its owner"}&apos;s Stripe account, with every other shop of theirs set to it, and are paid
             out together to the owner&apos;s bank. Refunds come back out of it. Each charge is still tagged with {shopName}, so its sales and fees report on their own. Processing is{" "}
             {fees.keyed} keyed or online and {fees.terminal} on the card reader. Card statements show the owner account&apos;s descriptor.
           </p>
@@ -358,7 +358,7 @@ export function PaymentsPanel({
       )}
       {paymentsMode === "brand" && (
         <p className="text-sm text-zinc-600">
-          {shopName}&apos;s card sales, tips and surcharges settle in the brand&apos;s main Stripe account and are paid out to the brand&apos;s bank with the other brand-account
+          {shopName}&apos;s card sales, tips and credit card fee settle in the brand&apos;s main Stripe account and are paid out to the brand&apos;s bank with the other brand-account
           shops. Each charge is still tagged with {shopName}, so its sales, refunds and fees report on their own. Processing is {fees.keyed} keyed or online and {fees.terminal} on
           the card reader.
         </p>

@@ -2,6 +2,7 @@
  * Digital receipts: a text with a link, or an email with the receipt and a link, or no receipt.
  * Pure rules: who may be sent what, and the wording. Paper is off unless a shop turns it on.
  */
+import { creditCardFeeWording } from "@/domain/checkout";
 import { formatCents } from "@/lib/money";
 
 export type ReceiptSendChannel = "sms" | "email";
@@ -168,19 +169,19 @@ export function receiptEmail(o: ReceiptEmailInput): { subject: string; body: str
     ...o.discounts.map((d) => row(d.label, d.cents, true)),
     ...(o.taxLines ? o.taxLines.map((t) => row(t.label, t.cents)) : [row("Tax", o.taxCents)]),
     row("Tip", o.tipCents),
-    ...(o.fee ? [row(o.fee.label, o.fee.cents)] : []),
+    ...(o.fee ? [row(creditCardFeeWording(o.fee.label), o.fee.cents)] : []),
     ...(o.feeWaivedCents ? [`Credit card fee waived (${formatCents(o.feeWaivedCents)})`] : []),
     row("Total", o.totalCents),
     ...o.tenders.map((t) => row(`Paid with ${t.label}`, t.cents)),
     ...o.refunds.map((r) => row(r.label, r.cents, true)),
     ...(o.refunds.length ? [row("You paid, after refunds", o.totalCents - o.refunds.reduce((a, r) => a + r.cents, 0))] : []),
     ...(o.loyalty ? ["", o.loyalty] : []),
-    ...(o.feeNotice ? ["", o.feeNotice] : []),
+    ...(o.feeNotice ? ["", creditCardFeeWording(o.feeNotice)] : []),
     "",
     `See your receipt or rebook: ${o.url}`,
     ...(o.address || o.phone ? ["", ...[o.address, o.phone && `Call ${o.phone}`, o.mapUrl && `Directions: ${o.mapUrl}`].filter((x): x is string => !!x)] : []),
     "",
-    o.footer,
+    creditCardFeeWording(o.footer),
   ];
   return { subject, body: body.join("\n") };
 }
@@ -188,7 +189,7 @@ export function receiptEmail(o: ReceiptEmailInput): { subject: string; body: str
 export function receiptListEmail(o: { title: string; items: { date: string; number: number; totalCents: number; url: string }[]; footer: string }): { subject: string; body: string } {
   return {
     subject: `Your receipts from ${o.title}`,
-    body: [`Here are your recent receipts from ${o.title}.`, "", ...o.items.map((i) => `${i.date} · ticket #${i.number} · ${formatCents(i.totalCents)}\n${i.url}`), "", o.footer].join("\n"),
+    body: [`Here are your recent receipts from ${o.title}.`, "", ...o.items.map((i) => `${i.date} · ticket #${i.number} · ${formatCents(i.totalCents)}\n${i.url}`), "", creditCardFeeWording(o.footer)].join("\n"),
   };
 }
 

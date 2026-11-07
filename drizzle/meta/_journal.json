@@ -1128,6 +1128,13 @@
       "when": 1796643300000,
       "tag": "core_0160_public_barbers",
       "breakpoints": true
+    },
+    {
+      "idx": 161,
+      "version": "7",
+      "when": 1796643360000,
+      "tag": "core_0161_credit_card_fee_wording",
+      "breakpoints": true
     }
   ]
 }

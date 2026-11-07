@@ -159,7 +159,7 @@ type Person = {
   staffName: string | null;
   readyAt: string | null;
 };
-/** One payment of a split: cash or a card, its amount (tip included, before any surcharge) and who paid. */
+/** One payment of a split: cash or a card, its amount (tip included, before any credit card fee) and who paid. */
 type Part = {
   key: string;
   method: "cash" | "card";
@@ -541,7 +541,7 @@ export function Pos(props: {
       )
     : null;
 
-  // Split payment: each part's surcharge on its own credit card, the tip on as few parts as it fits.
+  // Split payment: each part's credit card fee on its own credit card, the tip on as few parts as it fits.
   const partsIn = parts.map((p) => ({
     key: p.key,
     method: p.method,
@@ -891,7 +891,7 @@ export function Pos(props: {
   const waitingMsg = waiting.length
     ? `Answer ${waiting.map((k) => (k === "rebook" ? "the rebook prompt" : "the product suggestions")).join(" and ")} before taking payment.`
     : null;
-  // Waiving is offered only where a surcharge would apply and the brand allows it.
+  // Waiving is offered only where a credit card fee would apply and the brand allows it.
   const canWaive =
     !!props.perms.waiveCardFee &&
     props.config.cardFee.waiverAllowed !== false &&

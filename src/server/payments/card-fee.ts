@@ -281,7 +281,7 @@ export async function shopFeeRows(tx: DBorTx = db, brand?: CardFeePolicy): Promi
 }
 
 /** The card fee report's shop filter: which of these shops are on, off, following the brand, or set their own. */
-export const SHOP_FEE_FILTERS = { on: "Surcharge on", off: "Surcharge off", brand: "Following the brand", own: "Their own setting" } as const;
+export const SHOP_FEE_FILTERS = { on: "Credit card fee on", off: "Credit card fee off", brand: "Following the brand", own: "Their own setting" } as const;
 export type ShopFeeFilter = keyof typeof SHOP_FEE_FILTERS;
 
 export async function shopsMatchingFee(shopIds: string[], filter: ShopFeeFilter, tx: DBorTx = db): Promise<string[]> {

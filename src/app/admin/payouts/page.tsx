@@ -129,7 +129,7 @@ export default async function PayoutsPage({ searchParams }: { searchParams: Prom
       </div>
 
       <Card>
-        <CardHeader title="By account" subtitle="Card takings are by business date, after refunds, with tips and surcharges. Payout schedules are as Stripe reports them. Payouts are by the day they reach the bank, so the two don't line up day for day. Not yet paid out is what reached the account less what's been paid out or is on the way: money Stripe still holds for this location." />
+        <CardHeader title="By account" subtitle="Card takings are by business date, after refunds, with tips and the credit card fee. Payout schedules are as Stripe reports them. Payouts are by the day they reach the bank, so the two don't line up day for day. Not yet paid out is what reached the account less what's been paid out or is on the way: money Stripe still holds for this location." />
         <Table>
           <thead>
             <tr>

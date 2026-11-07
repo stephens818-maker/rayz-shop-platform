@@ -1954,7 +1954,7 @@ export async function payrollW2CodesData(i: PayrollReportInput): Promise<ReportD
     ],
     notes: [
       ...periodNotes(runs, capped),
-      `Qualified tips are every tip that went through payroll or was paid out (card, cash and gift card tips rung up, adjustments) plus cash tips employees declared, never the card surcharge or a service charge. Box 12 code ${codes.qualifiedTipsCode} and the overtime premium code ${codes.overtimeCode} are set in Payroll setup.`,
+      `Qualified tips are every tip that went through payroll or was paid out (card, cash and gift card tips rung up, adjustments) plus cash tips employees declared, never the credit card fee or a service charge. Box 12 code ${codes.qualifiedTipsCode} and the overtime premium code ${codes.overtimeCode} are set in Payroll setup.`,
       "iSolved files the W-2s. Before year end the CPA and iSolved confirm the codes, each employee's tipped occupation code (Treasury's list), and whether the overtime premium uses the base rate or the blended regular rate (commission raises it). Nothing here changes a paycheck.",
       ...(rates ? [] : ['Base rates show only with "See pay rates and labor cost".']),
     ],

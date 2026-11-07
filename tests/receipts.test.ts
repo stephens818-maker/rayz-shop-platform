@@ -66,17 +66,19 @@ describe("receipt wording", () => {
       taxCents: 210,
       tipCents: 600,
       fee: { label: "Credit card surcharge (3%)", cents: 120 },
+      feeNotice: "A 3% surcharge applies to credit cards.",
       totalCents: 3930,
       tenders: [{ label: "Visa •••• 4242", cents: 3930 }],
       refunds: [],
       loyalty: "Loyalty: $33.00 of $300.00 toward your next $15.00 reward.",
-      footer: "Thanks",
+      footer: "Credit card surcharge (3%): $1.20",
       url: "https://x/receipt/t",
     });
     expect(e.subject).toBe("Your receipt from Ray'z Barber Shop · Coralville");
-    for (const line of ["Barber: Michelle", "Promo  -$3.00", "Tax  $2.10", "Tip  $6.00", "Credit card surcharge (3%)  $1.20", "Total  $39.30", "Paid with Visa •••• 4242  $39.30", "Loyalty:", "https://x/receipt/t"]) {
+    for (const line of ["Barber: Michelle", "Promo  -$3.00", "Tax  $2.10", "Tip  $6.00", "Credit card fee (3%)  $1.20", "Total  $39.30", "Paid with Visa •••• 4242  $39.30", "Loyalty:", "https://x/receipt/t", "A 3% credit card fee applies to credit cards.", "Credit card fee (3%): $1.20"]) {
       expect(e.body).toContain(line);
     }
+    expect(e.body).not.toMatch(/surcharge/i);
   });
 });
 

@@ -26,7 +26,7 @@ export default async function TaxesPage({ searchParams }: { searchParams: Promis
     <div className="mx-auto max-w-6xl space-y-5">
       <PageHeader
         title="Taxes and card fees"
-        subtitle="Two separate models. Sales tax is owed to a jurisdiction and set per location; the card fee is a processing surcharge, never reported or filed as tax."
+        subtitle="Two separate models. Sales tax is owed to a jurisdiction and set per location; the credit card fee covers processing, and is never reported or filed as tax."
       />
       {unverified.length > 0 && <Notice>Tax rates aren&apos;t verified at {unverified.map((r) => r.shop).join(", ")}. Confirm them with your accountant in each shop&apos;s settings.</Notice>}
       <form className="flex flex-wrap items-end gap-2 text-sm">
@@ -98,7 +98,7 @@ export default async function TaxesPage({ searchParams }: { searchParams: Promis
         </Table>
       </Card>
       <Card>
-        <CardHeader title="Card fees" subtitle="The surcharge on card payments. It isn't taxed, isn't part of sales, and goes to the shop to cover processing." />
+        <CardHeader title="Card fees" subtitle="The credit card fee on card payments. It isn't taxed, isn't part of sales, and goes to the shop to cover processing." />
         <Table>
           <thead>
             <tr>

@@ -66,7 +66,7 @@ computeCardFee(
   basisCents: number;    // what the rate was applied to
   waivable: boolean;     // true whenever a fee applies: a surcharge is the shop's option, never required
   reason: "applies" | "disabled" | "not_credit" | "wallet_fee_off" | "zero_amount";
-  label: string | null;      // "Credit card surcharge (3%)"
+  label: string | null;      // "Credit card fee (3%)"
   disclosure: string | null; // the legal text to show before charging
 }>
 ```
@@ -911,6 +911,14 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 - Credit card fee, for Charles: a new shop gets the fee on at 3%, or at the brand's rate when one is already set. It can be edited or turned off. There is no 3% cap. `FEE_RATE_SANITY_MAX` (100%) is only a typo guard. Do you want any cap at all?
 
 ## Log
+
+### 2026-11-06: credit card fee, never surcharge
+
+`core_0161_credit_card_fee_wording` (next migration is `core_0162`). Customer-facing and admin copy says credit card fee. That includes the checkout notice, the receipt footer, the card-fee and taxes settings, reports, refunds, and the new-shop wizard.
+
+A saved notice, label, footer, or ticket disclosure that still says surcharge is rewritten, including text already stored on a ticket. Showing it also rewrites it, so an old row reads as credit card fee before the migration runs. The settings form saves the rewritten wording. `tests/fee-wording.test.ts` greps the notice, footer, and settings pages and fails if that copy still says surcharge.
+
+Makenna's Oct 27 open GPS punches were not changed. Coralville's end-of-night tip timing was not changed. The client booking helper and the client portal stay later.
 
 ### 2026-11-05: archived clients, public specialties, matching booking links, faster admin reads
 

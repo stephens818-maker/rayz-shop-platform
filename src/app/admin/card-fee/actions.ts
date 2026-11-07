@@ -10,7 +10,7 @@ import { bulkShopFee, saveBrandFeePolicy } from "@/server/payments/card-fee";
 
 async function brandAdmin() {
   const ctx = await authorize("settings.card_fee");
-  if (!ctx.brandWide) throw new AppError("forbidden", "Which shops use the surcharge is set for the whole brand");
+  if (!ctx.brandWide) throw new AppError("forbidden", "Which shops use the credit card fee is set for the whole brand");
   return ctx;
 }
 
@@ -25,7 +25,7 @@ const Shops = z.object({
   shopsCanEdit: z.boolean(),
 });
 
-/** Which shops use the brand's surcharge, and whether shop managers may change their own. Audited with the shops it reached. */
+/** Which shops use the brand's credit card fee, and whether shop managers may change their own. Audited with the shops it reached. */
 export async function saveFeeShopsAction(raw: z.input<typeof Shops>) {
   return safe(async () => {
     const ctx = await brandAdmin();
