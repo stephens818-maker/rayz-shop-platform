@@ -71,14 +71,11 @@ export default async function MyPayPage() {
 
   let estimate: { shop: string; l: Line; locked: boolean; stub: PaystubLine[] }[] = [];
   if (periods.length) {
-    const seen = new Set<string>();
-    for (const p of periods) {
-      if (seen.has(p.key)) continue;
-      seen.add(p.key);
-      const view = await buildPayroll(p.start, p.end, { clockChecks: false });
-      for (const b of view?.blocks ?? []) for (const l of b.lines) if (l.staffId === me) estimate.push({ shop: b.shop, l, locked: !!b.locked, stub: paystubLines(b, me) });
-    }
-    estimate = estimate.sort((a, b) => a.shop.localeCompare(b.shop));
+    const unique = periods.filter((p, i) => periods.findIndex((q) => q.key === p.key) === i);
+    const views = await Promise.all(unique.map((p) => buildPayroll(p.start, p.end, { clockChecks: false })));
+    estimate = views
+      .flatMap((view) => (view?.blocks ?? []).flatMap((b) => b.lines.filter((l) => l.staffId === me).map((l) => ({ shop: b.shop, l, locked: !!b.locked, stub: paystubLines(b, me) }))))
+      .sort((a, b) => a.shop.localeCompare(b.shop));
   }
   const gross = estimate.reduce((a, e) => a + e.l.hourlyTotal, 0);
   const tipsEarned = estimate.reduce((a, e) => a + e.l.tips, 0);

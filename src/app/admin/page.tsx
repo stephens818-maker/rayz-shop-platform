@@ -146,7 +146,17 @@ export default async function Dashboard({
       .where(where)
       .groupBy(appointments.status);
 
+  const seesTeam = canAny(ctx, ["calendar.manage", "timeoff.approve", "schedules.edit"]);
   const policyPromise = clientPolicy(ctx);
+  // These don't need the appointment list, so they share the first round of queries.
+  const staffingPromise = staffingFor(shopIds, today, today, reasonViewer(ctx), seesTeam ? null : [ctx.staff.id]);
+  const decisionsPromise = can(ctx, "timeoff.request")
+    ? listRequests({ staffId: ctx.staff.id }, { viewer: reasonViewer(ctx), statuses: ["approved", "denied"], limit: 20 }).then((rs) =>
+        rs.filter((r) => r.decidedAt && new Date(r.decidedAt).getTime() > now.getTime() - 7 * 86_400_000 && r.decidedVia !== "auto"),
+      )
+    : Promise.resolve([]);
+  const milestonesPromise = todayMilestones(ctx, shopIds, now);
+  const rebookPromise = can(ctx, "report.rebook_rate.view") && ctx.staff.kind === "person" ? myRebook(ctx.staff.id, ctx.shopIds, today, now) : Promise.resolve(null);
   const [
     summary,
     prior,
@@ -224,50 +234,13 @@ export default async function Dashboard({
       payPeriodPicker(shopIds, today),
       policyPromise,
     ]);
-  const seesTeam = canAny(ctx, [
-    "calendar.manage",
-    "timeoff.approve",
-    "schedules.edit",
-  ]);
-  const [
-    times,
-    staffing,
-    myDecisions,
-    badges,
-    badgeTally,
-    noteBriefsFor,
-    milestones,
-    myRebookRate,
-  ] = await Promise.all([
+  const [times, staffing, myDecisions, badges, badgeTally, noteBriefsFor, milestones, myRebookRate] = await Promise.all([
     timesFor(
       upcoming.map((a) => a.id),
       now,
     ),
-    staffingFor(
-      shopIds,
-      today,
-      today,
-      reasonViewer(ctx),
-      seesTeam ? null : [ctx.staff.id],
-    ),
-    can(ctx, "timeoff.request")
-      ? listRequests(
-          { staffId: ctx.staff.id },
-          {
-            viewer: reasonViewer(ctx),
-            statuses: ["approved", "denied"],
-            limit: 20,
-          },
-        ).then((rs) =>
-          rs.filter(
-            (r) =>
-              r.decidedAt &&
-              new Date(r.decidedAt).getTime() >
-                now.getTime() - 7 * 86_400_000 &&
-              r.decidedVia !== "auto",
-          ),
-        )
-      : Promise.resolve([]),
+    staffingPromise,
+    decisionsPromise,
     shownBadges(
       policy,
       upcoming.map((a) => a.customerId),
@@ -278,10 +251,8 @@ export default async function Dashboard({
       noteViewer(ctx, policy),
       upcoming.map((a) => a.customerId),
     ),
-    todayMilestones(ctx, shopIds, now),
-    can(ctx, "report.rebook_rate.view") && ctx.staff.kind === "person"
-      ? myRebook(ctx.staff.id, ctx.shopIds, today, now)
-      : Promise.resolve(null),
+    milestonesPromise,
+    rebookPromise,
   ]);
   const whosIn = shopIds
     .map((id) => ({

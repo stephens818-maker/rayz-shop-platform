@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, DBorTx } from "@/db";
+import { forgetReadMemo, memoRead } from "./read-memo";
 import { brandSettings, payGroups, payrollRuns, shopSyncState, shops } from "@/db/schema";
 import { BadgeSettingsSchema, badgeSettings, thresholdsProblem } from "@/domain/badges";
 import { SyncArea, clip, money, onOff, syncKey } from "@/domain/brand-sync";
@@ -904,6 +905,12 @@ async function brandRow(tx: DBorTx): Promise<Partial<BrandRow>> {
  * stored in it applied on top. No shop (brand-wide work, the brand's own editor): the brand's.
  */
 export async function brandColumn<C extends BrandColumn>(column: C, shopId?: string | null, tx: DBorTx = db): Promise<BrandRow[C] | undefined> {
+  const load = () => readBrandColumn(column, shopId, tx);
+  if (tx !== db) return load();
+  return memoRead(`brand:${column}:${shopId ?? ""}`, load);
+}
+
+async function readBrandColumn<C extends BrandColumn>(column: C, shopId: string | null | undefined, tx: DBorTx): Promise<BrandRow[C] | undefined> {
   const [row] = await tx.select({ v: brandSettings[column] }).from(brandSettings).where(eq(brandSettings.id, 1));
   let v: unknown = row?.v;
   const defs = BY_COLUMN.get(column);
@@ -937,10 +944,18 @@ export async function writeBrandColumn<C extends BrandColumn>(tx: DBorTx, column
     .insert(brandSettings)
     .values({ id: 1, loyalty: {}, [column]: value })
     .onConflictDoUpdate({ target: brandSettings.id, set: { [column]: value, updatedAt: new Date() } });
+  forgetReadMemo();
 }
 
 /** brandColumn for several shops at once: `at(shopId)` is the column as that shop has it, `at(null)` the brand's. */
 export async function brandColumnAt<C extends BrandColumn>(column: C, shopIds: readonly (string | null | undefined)[], tx: DBorTx = db): Promise<(shopId?: string | null) => BrandRow[C] | undefined> {
+  const load = () => readBrandColumnAt(column, shopIds, tx);
+  if (tx !== db) return load();
+  const ids = [...new Set(shopIds.filter((s): s is string => !!s))].sort();
+  return memoRead(`brandAt:${column}:${ids.join(",")}`, load);
+}
+
+async function readBrandColumnAt<C extends BrandColumn>(column: C, shopIds: readonly (string | null | undefined)[], tx: DBorTx): Promise<(shopId?: string | null) => BrandRow[C] | undefined> {
   const [row] = await tx.select({ v: brandSettings[column] }).from(brandSettings).where(eq(brandSettings.id, 1));
   const brand = row?.v as BrandRow[C] | undefined;
   const defs = BY_COLUMN.get(column);

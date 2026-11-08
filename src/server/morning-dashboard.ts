@@ -309,7 +309,7 @@ async function trafficBlock(c: Ctx): Promise<TrafficBlock | null> {
   if (!shops.length) return null;
   const ids = idsOf(shops);
   const [k, b] = await Promise.all([
-    per(c, (from, to) => c.memo.get(key("kpis", ids, from, to), () => kpisAt({ shopIds: ids, from, to }, [{}]))),
+    per(c, (from, to) => c.memo.get(key("kpis", ids, from, to, null), () => kpisAt({ shopIds: ids, from, to }, [{}]))),
     per(c, (from, to) => c.memo.get(key("bookings", ids, from, to), () => bookingsMade(ids, from, to))),
   ]);
   const kp = (f: (x: NonNullable<(typeof k)["day"][string]>) => number) => cmpOf((p) => (k[p][TOTAL] ? f(k[p][TOTAL]) : 0));
@@ -333,11 +333,13 @@ async function utilizationBlock(c: Ctx): Promise<UtilizationBlock | null> {
   const ids = idsOf(shops);
   const ownOnly = shops.some((s) => !canAt(c.access, s.id, "reports.all_staff"));
   const staffIds = ownOnly ? [c.access.staffId] : null;
-  const grains = ownOnly ? [{}] : [{}, { byStaff: true }];
-  const [k, avail] = await Promise.all([
-    per(c, (from, to) => c.memo.get(key("kpisStaff", ids, from, to, staffIds), () => kpisAt({ shopIds: ids, from, to, staffIds }, grains))),
-    per(c, (from, to) => c.memo.get(key("avail", ids, from, to, staffIds), () => availableMinutesAt({ shopIds: ids, from, to, staffIds }, grains))),
+  const grains = ownOnly ? [{}] : [{ byStaff: true }];
+  const [totals, byStaff, avail] = await Promise.all([
+    per(c, (from, to) => c.memo.get(key("kpis", ids, from, to, staffIds), () => kpisAt({ shopIds: ids, from, to, staffIds }, [{}]))),
+    ownOnly ? null : per(c, (from, to) => c.memo.get(key("kpisStaff", ids, from, to), () => kpisAt({ shopIds: ids, from, to }, [{ byStaff: true }]))),
+    per(c, (from, to) => c.memo.get(key("avail", ids, from, to, staffIds), () => availableMinutesAt({ shopIds: ids, from, to, staffIds }, ownOnly ? grains : [{}, { byStaff: true }]))),
   ]);
+  const k = Object.fromEntries(CMP_KEYS.map((p) => [p, { ...(byStaff?.[p] ?? {}), ...totals[p] }])) as typeof totals;
   const booked = cmpOf((p) => k[p][TOTAL]?.bookedMinutes ?? 0);
   const available = cmpOf((p) => avail[p][TOTAL] ?? 0);
 
@@ -977,9 +979,11 @@ async function buildMorningNow(input: BuildInput, cals: Map<string, ShopCal> | u
 }
 
 /** For the in-app page: the person's dashboard for these shops (or all theirs) on a morning. */
-export async function morningDashboardFor(access: StaffAccess, firstName: string, shopIds: string[] | null, today: LocalDate, now = new Date()) {
+export async function morningDashboardFor(access: StaffAccess, firstName: string, shopIds: string[] | null, today: LocalDate, now?: Date) {
   const ids = shopIds ?? morningShops(access);
-  return buildMorningDashboard({ access, firstName, shopIds: ids, today, now, allSections: true, savedReports: true });
+  // Passing `now` turns the short page cache off. The in-app page leaves it unset so a repeat
+  // load in the same few seconds reuses the dashboard. A sender that names the clock still does.
+  return buildMorningDashboard({ access, firstName, shopIds: ids, today, ...(now ? { now } : {}), allSections: true, savedReports: true });
 }
 
 // ───────────────────────────── Sending ─────────────────────────────

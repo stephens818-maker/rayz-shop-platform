@@ -24,6 +24,8 @@ import {
 import { ConflictConfirm } from "@/components/conflict-confirm";
 import { useHotkeys } from "@/components/hotkeys";
 import { columnsThatFit } from "@/domain/calendar-layout";
+import { shownBookingStatus } from "@/domain/booking-status";
+import { canDragAppointment, resizeEndMin } from "@/domain/calendar-desk";
 import { toast } from "@/components/toast";
 import { useAction as useServerAction } from "@/components/use-action";
 import { ClientHitRow, FamilyPickList } from "@/components/client-hit";
@@ -243,6 +245,7 @@ const APPT_STYLE: Record<string, string> = {
   confirmed: "bg-sky-100 ring-sky-300 text-sky-950",
   checked_in: "bg-amber-100 ring-amber-300 text-amber-950",
   in_service: "bg-violet-100 ring-violet-300 text-violet-950",
+  finished: "bg-emerald-50 ring-emerald-200 text-emerald-900",
   completed: "bg-emerald-50 ring-emerald-200 text-emerald-950",
   cancelled: "bg-zinc-50 ring-zinc-200 text-zinc-400 line-through opacity-70",
   no_show: "bg-red-50 ring-red-200 text-red-800 opacity-80",
@@ -428,7 +431,7 @@ export function DayCalendar({
   const counts = {
     total: active.length,
     waiting: all.filter((a) => a.status === "checked_in").length,
-    inChair: all.filter((a) => a.status === "in_service").length,
+    inChair: all.filter((a) => shownBookingStatus(a.status, !!a.times?.finished) === "in_service").length,
     done: all.filter((a) => a.status === "completed").length,
     est: active.reduce((s, a) => s + a.estimateCents, 0),
   };
@@ -1082,7 +1085,8 @@ function Column({
             return null;
           const shownStart =
             drag.moved?.id === a.id ? drag.moved.startMin : a.startMin;
-          const movable = !readOnly && (a.status === "booked" || a.status === "confirmed");
+          const movable = !readOnly && canDragAppointment(a.status);
+          const shown = shownBookingStatus(a.status, !!a.times?.finished);
           const hh = h(a.startMin, a.endMin);
           return (
             <button
@@ -1104,7 +1108,7 @@ function Column({
               }}
               className={cx(
                 "absolute inset-x-1 overflow-hidden rounded-md border-l-4 px-1.5 py-0.5 text-left text-xs shadow-xs ring-1 transition hover:z-10 hover:shadow-md",
-                APPT_STYLE[a.status],
+                APPT_STYLE[shown] ?? APPT_STYLE[a.status],
                 a.clockHold && "ring-2 ring-red-500",
                 selectedId === a.id && "z-10 ring-2 ring-zinc-900",
               )}
@@ -1126,6 +1130,7 @@ function Column({
                   />
                 )}
                 <span className="truncate">{a.customerName}</span>
+                {shown === "finished" && <span className="shrink-0 font-normal">Finished</span>}
                 {a.clientNotes?.pinned.length ? (
                   <PinIcon
                     className="h-3 w-3 shrink-0 text-amber-600"
@@ -1156,8 +1161,7 @@ function Column({
                       const startEnd = a.endMin;
                       const up = (ev: PointerEvent) => {
                         window.removeEventListener("pointerup", up);
-                        const raw = startEnd + Math.round((ev.clientY - origin) / PX);
-                        const endMin = Math.max(a.startMin + 15, Math.round(raw / 15) * 15);
+                        const endMin = resizeEndMin(a.startMin, startEnd, ev.clientY - origin, PX);
                         if (endMin === a.endMin) return;
                         resize.run(() => resizeAppointmentAction(a.id, data.date, endMin), undefined, `Now ends at ${label(endMin)}`);
                       };
@@ -1700,6 +1704,7 @@ function ApptPanel({
     null,
   );
   const s = appt.status;
+  const shown = shownBookingStatus(s, !!appt.times?.finished);
   const open = ["booked", "confirmed", "checked_in", "in_service"].includes(s);
   const checkout = () =>
     run(
@@ -1716,7 +1721,7 @@ function ApptPanel({
   return (
     <div className="space-y-4">
       <div>
-        <StatusBadge status={s} />
+        <StatusBadge status={shown} />
         <h2 className="mt-2 flex items-center gap-2 text-lg font-semibold">
           {appt.customerId ? (
             <Link

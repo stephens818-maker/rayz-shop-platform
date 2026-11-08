@@ -1135,6 +1135,13 @@
       "when": 1796643360000,
       "tag": "core_0161_credit_card_fee_wording",
       "breakpoints": true
+    },
+    {
+      "idx": 162,
+      "version": "7",
+      "when": 1796643420000,
+      "tag": "core_0162_page_reads",
+      "breakpoints": true
     }
   ]
 }

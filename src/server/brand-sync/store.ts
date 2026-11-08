@@ -3,6 +3,7 @@ import { db, DBorTx } from "@/db";
 import { brandSyncControls, brandSyncValues, shopSyncState } from "@/db/schema";
 import { SyncMode, SyncType, syncKey } from "@/domain/brand-sync";
 import type { Actor } from "../audit";
+import { forgetReadMemo } from "./read-memo";
 
 export interface StateRow {
   mode: SyncMode;
@@ -26,6 +27,7 @@ export async function putState(tx: DBorTx, shopId: string, key: string, mode: Sy
     .insert(shopSyncState)
     .values({ shopId, key, mode, local: (local ?? null) as object | null })
     .onConflictDoUpdate({ target: [shopSyncState.shopId, shopSyncState.key], set });
+  forgetReadMemo();
 }
 
 /**

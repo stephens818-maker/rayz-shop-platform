@@ -912,6 +912,20 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-11-07: faster admin reads, one booking status, canary tests
+
+`core_0162_page_reads` (next migration is `core_0163`). It adds indexes for appointments that are still going (`shop_id, ends_at`), time entries that overlap a pay period (`ends_at`), and tipped payments and refunds by `created_at`. It adds `brand_settings.tip_ledger_synced_at`. It does not change punches, tip payout schedules, tip transfers, or any demo row.
+
+Measured on the local seed database, warm, one call after a warmup. Morning dashboard 243 ms and 330 queries, then 235 ms and 306 queries. Payroll 256 ms and 89 queries, then 211 ms and 83 queries. My pay 161 ms and 66 queries, then 107 ms and 60 queries. The payroll and my-pay reads no longer rewrite the tip ledger on every load. After one catch-up, a later load is an index lookup until a newer tipped payment or refund exists. Checkout and a refund still sync that one ticket. The first load in a fresh server still does the catch-up.
+
+The in-app morning page was passing the clock into the dashboard, which turned off the 15-second memory from Nov 5. It no longer does, so a repeat open of /admin/morning or the digest preview reuses that memory. /admin starts the staffing, time-off, milestone, and rebook reads with the first batch instead of after it. Brand setting reads on a warm production server are remembered for 15 seconds and dropped when a setting is saved. Tests still read the database every time.
+
+A visit that is finished but not checked out stayed `in_service`, so the calendar said In chair and the side panel said Finished. Both now use the same shown status: Finished once the finish time is set, In chair while the timer is running. The stored status stays `in_service` so checkout still opens. The in-chair count leaves finished visits out. `tests/calendar-desk.test.ts` checks both labels and that the tile and the panel badge call that helper.
+
+`scripts/seed-canary-booking.ts` books one future visit, code `FUTNO0TIP`, tip $0, for the existing client whose last name is Zzcanary. It refuses to run unless `SEED_CANARY_BOOKING=1`. It was not run. The demo seed does not call it. Nothing in the sandbox or the demo data was changed. Tests cover a void of a ticket with a $9 tip already sent to the barber (the client gets the tip back, the tip transfer stays, the shop absorbs it), drag-to-resize (15-minute steps, at least 15 minutes, only booked or confirmed), and the Start and Finish toasts.
+
+Makenna's Oct 27 open GPS punches were not changed. Coralville's end-of-night tip timing was not changed. The client booking helper and the client portal stay later.
+
 ### 2026-11-06: credit card fee, never surcharge
 
 `core_0161_credit_card_fee_wording` (next migration is `core_0162`). Customer-facing and admin copy says credit card fee. That includes the checkout notice, the receipt footer, the card-fee and taxes settings, reports, refunds, and the new-shop wizard.

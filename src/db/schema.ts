@@ -79,6 +79,8 @@ export const brandSettings = pgTable("brand_settings", {
   tipPayouts: jsonb("tip_payouts").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** Staff payouts (StaffPayoutSettings in src/domain/staff-payouts.ts): the barbers' Stripe accounts, owed tips, refunds, the tip date, tax forms. */
   staffPayouts: jsonb("staff_payouts").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  /** syncTipLedger has applied every tipped payment and refund created at or before this. Page loads skip the catch-up scan until a newer one exists. */
+  tipLedgerSyncedAt: ts("tip_ledger_synced_at"),
   /** Sign-in restriction settings for the brand (BrandNetworkSettings in src/domain/network-access.ts): the blocked sign-in alert. */
   networkAccess: jsonb("network_access").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   /** The brand's tip presets for the customer screen (BrandHandoff in src/domain/handoff.ts); missing keys use the defaults. */
@@ -1822,6 +1824,7 @@ export const appointments = pgTable(
   },
   (t) => [
     index("appointments_shop_time_idx").on(t.shopId, t.startsAt),
+    index("appointments_shop_ends_idx").on(t.shopId, t.endsAt),
     index("appointments_staff_time_idx").on(t.staffId, t.startsAt),
     index("appointments_customer_idx").on(t.customerId, t.startsAt),
     index("appointments_group_idx").on(t.groupId).where(sql`group_id is not null`),
@@ -2211,6 +2214,7 @@ export const payments = pgTable(
     check("payments_fee_channel", sql`${t.feeChannel} is null or ${t.feeChannel} in ('pos', 'app', 'deposit', 'card_on_file')`),
     check("payments_fee_waived", sql`not ${t.feeWaived} or (${t.method} = 'card' and ${t.cardFeeCents} = 0 and ${t.feeWaivedCents} > 0 and ${t.feeWaivedReason} is not null)`),
     index("payments_shop_date_idx").on(t.shopId, t.businessDate),
+    index("payments_tipped_created_idx").on(t.createdAt).where(sql`${t.tipCents} <> 0`),
     index("payments_account_idx").on(t.stripeAccountId),
     index("payments_sale_idx").on(t.saleId),
     uniqueIndex("payments_stripe_pi_uq").on(t.stripePaymentIntentId),
@@ -2669,6 +2673,7 @@ export const refunds = pgTable(
   },
   (t) => [
     index("refunds_shop_date_idx").on(t.shopId, t.businessDate),
+    index("refunds_tipped_created_idx").on(t.createdAt).where(sql`${t.tipCents} <> 0`),
     index("refunds_sale_idx").on(t.saleId),
     index("refunds_awaiting_idx").on(t.shopId).where(sql`${t.awaitingLines}`),
   ],
@@ -3883,6 +3888,7 @@ export const timeEntries = pgTable(
   },
   (t) => [
     index("time_entries_starts_idx").on(t.startsAt),
+    index("time_entries_ends_idx").on(t.endsAt),
     index("time_entries_employer_idx").on(t.employerId, t.startsAt),
     index("time_entries_staff_idx").on(t.staffId),
     index("time_entries_punch_idx").on(t.punchInId),

@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, inArray, isNull, lte, sql, type SQL } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
-import { sales, shops, staffPayoutAccounts, tipLedger, tipPayouts } from "@/db/schema";
+import { brandSettings, sales, shops, staffPayoutAccounts, tipLedger, tipPayouts } from "@/db/schema";
 import {
   BrandTipPolicy,
   LedgerEntry,
@@ -32,7 +32,35 @@ import { railed } from "./payout-model";
  * runs inside checkout and refunds, and from the cron and before every batch to catch anything else
  * (the seed, a dashboard refund).
  */
+async function tipLedgerMark(tx: DBorTx): Promise<Date | null> {
+  const [row] = await tx.select({ at: brandSettings.tipLedgerSyncedAt }).from(brandSettings).where(eq(brandSettings.id, 1));
+  return row?.at ?? null;
+}
+
+/** One indexed lookup: a tipped payment or refund newer than the last full catch-up. */
+async function tipsNewerThan(tx: DBorTx, at: Date, shopIds?: readonly string[], outside = false): Promise<boolean> {
+  const shops = !shopIds?.length
+    ? sql``
+    : outside
+      ? sql`and shop_id not in (${sql.join(shopIds.map((i) => sql`${i}::uuid`), sql`, `)})`
+      : sql`and shop_id in (${sql.join(shopIds.map((i) => sql`${i}::uuid`), sql`, `)})`;
+  const rows = await tx.execute<{ x: number }>(sql`
+    select 1 as x from payments where tip_cents <> 0 and created_at > ${at.toISOString()}::timestamptz ${shops}
+    union all
+    select 1 from refunds where tip_cents <> 0 and created_at > ${at.toISOString()}::timestamptz ${shops}
+    limit 1`);
+  return [...rows].length > 0;
+}
+
 export async function syncTipLedger(tx: DBorTx = db, o: { saleId?: string; shopIds?: readonly string[] } = {}) {
+  if (o.shopIds && !o.shopIds.length) return;
+  // A page load asks for a few shops. Once a catch-up has run, a later one only looks for a tipped
+  // payment or refund newer than that (one index lookup) and skips the scan when there is none.
+  // Checkout and refunds still sync the one ticket. A shop-scoped catch-up records the time only
+  // when no other shop has a newer tip, so it cannot mark those shops done.
+  const catchUp = !o.saleId;
+  const mark = catchUp ? await tipLedgerMark(tx) : null;
+  if (catchUp && mark && !(await tipsNewerThan(tx, mark))) return;
   const cfg = await staffPayoutConfig(tx);
   const only = o.saleId
     ? sql`and s.id = ${o.saleId}::uuid`
@@ -97,6 +125,8 @@ export async function syncTipLedger(tx: DBorTx = db, o: { saleId?: string; shopI
     ${refunded} and not ${reverses}
       and not exists (select 1 from tip_ledger l where l.refund_id = r.id and l.kind = 'refund' and l.staff_id = coalesce(sh.staff_id, s.staff_id))
     on conflict (refund_id, staff_id) where refund_id is not null do nothing`);
+  if (catchUp && !(o.shopIds?.length && (await tipsNewerThan(tx, mark ?? new Date(0), o.shopIds, true))))
+    await tx.update(brandSettings).set({ tipLedgerSyncedAt: new Date() }).where(eq(brandSettings.id, 1));
 }
 
 /**
