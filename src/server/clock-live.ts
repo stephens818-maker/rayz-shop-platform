@@ -4,7 +4,7 @@ import { appointments, customers, shops, staff, staffSchedules, timeBlocks, time
 import { type ClockBlockKind, clockKindOf, effectiveEnd } from "@/domain/clock-blocks";
 import { type LiveDay, affectedBy, lateClockIn, liveDay } from "@/domain/clock-live";
 import { scheduledOn, shopClockSettings, type ClockRules, type ScheduleRow, type ShopClockSettings } from "@/domain/time-clock";
-import { settingAt } from "./brand-sync/settings";
+import { settingFor } from "./brand-sync/settings";
 import { endOfLocalDay, startOfLocalDay, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
 
 /**
@@ -20,45 +20,71 @@ export interface LiveClock {
   days: Map<string, LiveDay>;
 }
 
+export interface LiveClockShop {
+  id: string;
+  timeClock: unknown;
+  staffIds: readonly string[];
+}
+
+/** One shop. Booking and the calendar call this; the home page uses liveClocks so every shop shares one read. */
 export async function liveClock(shop: { id: string; timeClock: unknown }, date: LocalDate, staffIds: readonly string[], now = new Date(), tx: DBorTx = db): Promise<LiveClock> {
-  const settings = shopClockSettings(shop.timeClock);
-  const days = new Map<string, LiveDay>();
-  const ids = [...new Set(staffIds)];
-  if (!ids.length) return { settings, days };
+  const all = await liveClocks([{ id: shop.id, timeClock: shop.timeClock, staffIds }], date, now, tx);
+  return all.get(shop.id)!;
+}
+
+/**
+ * The same clock day as liveClock, for several shops in one pass: punches, schedules, clock rules
+ * and early-clock-in flags are each one query. A shop with nobody to check returns empty days.
+ */
+export async function liveClocks(rows: readonly LiveClockShop[], date: LocalDate, now = new Date(), tx: DBorTx = db): Promise<Map<string, LiveClock>> {
+  const out = new Map<string, LiveClock>();
+  const work = rows.filter((r) => r.staffIds.length);
+  for (const r of rows) if (!r.staffIds.length) out.set(r.id, { settings: shopClockSettings(r.timeClock), days: new Map() });
+  if (!work.length) return out;
+  const staffIds = [...new Set(work.flatMap((r) => [...r.staffIds]))];
+  const shopIds = [...new Set(work.map((r) => r.id))];
   const dayStart = startOfLocalDay(date);
   const dayEnd = endOfLocalDay(date);
-  const [punches, scheds, rules, permits] = await Promise.all([
+  const weekday = weekdayOf(date);
+  const [punches, scheds, rulesFor, permits] = await Promise.all([
     tx
       .select({ id: timePunches.id, staffId: timePunches.staffId, shopId: timePunches.shopId, type: timePunches.type, at: timePunches.at })
       .from(timePunches)
-      .where(and(inArray(timePunches.staffId, ids), gte(timePunches.at, new Date(dayStart.getTime() - 36 * HOUR)), lt(timePunches.at, new Date(dayEnd.getTime() + 36 * HOUR)), isNull(timePunches.voidedAt))),
+      .where(and(inArray(timePunches.staffId, staffIds), gte(timePunches.at, new Date(dayStart.getTime() - 36 * HOUR)), lt(timePunches.at, new Date(dayEnd.getTime() + 36 * HOUR)), isNull(timePunches.voidedAt))),
     tx
-      .select({ staffId: staffSchedules.staffId, weekday: staffSchedules.weekday, startMin: staffSchedules.startMin, endMin: staffSchedules.endMin })
+      .select({ staffId: staffSchedules.staffId, shopId: staffSchedules.shopId, weekday: staffSchedules.weekday, startMin: staffSchedules.startMin, endMin: staffSchedules.endMin })
       .from(staffSchedules)
-      .where(and(inArray(staffSchedules.staffId, ids), eq(staffSchedules.shopId, shop.id), eq(staffSchedules.weekday, weekdayOf(date)))),
-    settingAt<ClockRules>("time_clock", shop.id, tx),
-    tx.select({ id: staff.id, early: staff.clockOpensEarly }).from(staff).where(inArray(staff.id, ids)),
+      .where(and(inArray(staffSchedules.staffId, staffIds), inArray(staffSchedules.shopId, shopIds), eq(staffSchedules.weekday, weekday))),
+    settingFor<ClockRules>("time_clock", shopIds, tx),
+    tx.select({ id: staff.id, early: staff.clockOpensEarly }).from(staff).where(inArray(staff.id, staffIds)),
   ]);
   const allows = new Map(permits.map((p) => [p.id, p.early]));
-  for (const staffId of ids) {
-    const rows: ScheduleRow[] = scheds.filter((s) => s.staffId === staffId);
-    days.set(
-      staffId,
-      liveDay({
+  for (const shop of work) {
+    const settings = shopClockSettings(shop.timeClock);
+    const rules = rulesFor(shop.id);
+    const ids = [...new Set(shop.staffIds)];
+    const days = new Map<string, LiveDay>();
+    for (const staffId of ids) {
+      const rows: ScheduleRow[] = scheds.filter((s) => s.staffId === staffId && s.shopId === shop.id);
+      days.set(
         staffId,
-        shopId: shop.id,
-        punches: punches.filter((p) => p.staffId === staffId),
-        dayStart,
-        dayEnd,
-        scheduled: scheduledOn(date, weekdayOf(date), rows),
-        now,
-        shop: settings,
-        rules,
-        permitsEarly: allows.get(staffId) ?? false,
-      }),
-    );
+        liveDay({
+          staffId,
+          shopId: shop.id,
+          punches: punches.filter((p) => p.staffId === staffId),
+          dayStart,
+          dayEnd,
+          scheduled: scheduledOn(date, weekday, rows),
+          now,
+          shop: settings,
+          rules,
+          permitsEarly: allows.get(staffId) ?? false,
+        }),
+      );
+    }
+    out.set(shop.id, { settings, days });
   }
-  return { settings, days };
+  return out;
 }
 
 export interface FalloutAppt {
@@ -110,11 +136,16 @@ export async function clockFallout(shopIds: readonly string[], now = new Date())
     .where(and(eq(timeBlocks.source, "clock"), inArray(timeBlocks.shopId, [...shopIds]), inArray(timeBlocks.staffId, staffIds), lt(timeBlocks.startsAt, de), or(gt(timeBlocks.endsAt, now), eq(timeBlocks.clockOpen, true))))
     .orderBy(asc(timeBlocks.startsAt));
   const clockBlocks = blocks.map((b) => ({ ...b, endsAt: effectiveEnd(b, now), open: b.clockOpen && !b.overriddenAt, kind: clockKindOf(b.key) ?? ("break" as const) }));
+  const clocks = await liveClocks(
+    shopRows.map((s) => ({ id: s.id, timeClock: s.timeClock, staffIds: [...new Set(appts.filter((a) => a.shopId === s.id && label.has(a.staffId)).map((a) => a.staffId))] })),
+    today,
+    now,
+  );
   const out: ShopFallout[] = [];
   for (const s of shopRows.sort((a, b) => a.name.localeCompare(b.name))) {
     const here = appts.filter((a) => a.shopId === s.id && label.has(a.staffId));
     if (!here.length) continue;
-    const { settings, days } = await liveClock(s, today, [...new Set(here.map((a) => a.staffId))], now);
+    const { settings, days } = clocks.get(s.id)!;
     const f: ShopFallout = { shopId: s.id, shop: s.name, late: [], affected: [] };
     const hit = affectedBy(
       clockBlocks.filter((b) => b.shopId === s.id),

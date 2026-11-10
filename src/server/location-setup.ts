@@ -1,6 +1,6 @@
-import { and, asc, count, desc, eq, inArray, sql } from "drizzle-orm";
+import { asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { entityPaymentAccounts, ownerEntities, shopHours, shopPhotos, shopPaymentAccounts, shopProducts, shopServices, shops, staff, staffAccessShops, staffSchedules, terminalReaders } from "@/db/schema";
+import { entityPaymentAccounts, ownerEntities, shopPaymentAccounts, shops, staff } from "@/db/schema";
 import { AccountState, PAYMENTS_STEP_TITLE, accountState, paymentsStep, receiptBranding } from "@/domain/connect";
 import { REQUIRED_FOR_LIVE, SUPPORTED_TIMEZONE, US_TIMEZONES, goLiveBlockers, slugProblem } from "@/domain/location-lifecycle";
 import { connectMode, feeSchedule } from "./payments/connect";
@@ -20,48 +20,76 @@ export interface SetupStep {
 
 export const SETUP_ORDER: SetupStepKey[] = ["details", "profile", "timezone", "slug", "owner", "hours", "taxes", "menu", "team", "payments", "booking", "line", "readers", "login", "retail"];
 
+type ShopRow = typeof shops.$inferSelect;
+type OwnerRow = typeof ownerEntities.$inferSelect;
+type AccountRow = typeof shopPaymentAccounts.$inferSelect;
+type OwnerAccountRow = typeof entityPaymentAccounts.$inferSelect;
+
+interface SetupCounts {
+  hours: number;
+  menu: number;
+  barbers: number;
+  readers: number;
+  logins: number;
+  retail: number;
+  photos: number;
+}
+
 /** Every step of opening a location, worked out from what's already saved, plus its payment account and owner. */
 export async function locationSetup(shopId: string) {
-  const shop = await db.query.shops.findFirst({ where: eq(shops.id, shopId) });
-  if (!shop) return null;
-  const [account, owner, ownerAccount, [hours], [menu], scheduled, [readers], [logins], [retail], surnames, [photos]] = await Promise.all([
-    db.query.shopPaymentAccounts.findFirst({ where: eq(shopPaymentAccounts.shopId, shopId) }),
-    shop.ownerEntityId ? db.query.ownerEntities.findFirst({ where: eq(ownerEntities.id, shop.ownerEntityId) }) : Promise.resolve(undefined),
-    shop.ownerEntityId ? db.query.entityPaymentAccounts.findFirst({ where: eq(entityPaymentAccounts.ownerEntityId, shop.ownerEntityId) }) : Promise.resolve(undefined),
-    db.select({ n: count() }).from(shopHours).where(eq(shopHours.shopId, shopId)),
-    db
-      .select({ n: count() })
-      .from(shopServices)
-      .where(and(eq(shopServices.shopId, shopId), eq(shopServices.enabled, true))),
-    db.selectDistinct({ id: staffSchedules.staffId }).from(staffSchedules).where(eq(staffSchedules.shopId, shopId)),
-    db
-      .select({ n: count() })
-      .from(terminalReaders)
-      .where(and(eq(terminalReaders.shopId, shopId), eq(terminalReaders.active, true))),
-    db
-      .select({ n: count() })
-      .from(staff)
-      .innerJoin(staffAccessShops, eq(staffAccessShops.staffId, staff.id))
-      .where(and(eq(staff.kind, "shop"), eq(staff.active, true), eq(staffAccessShops.shopId, shopId))),
-    db
-      .select({ n: count() })
-      .from(shopProducts)
-      .where(and(eq(shopProducts.shopId, shopId), eq(shopProducts.active, true))),
+  const [one] = await locationSetups([shopId]);
+  return one ?? null;
+}
+
+/** The same steps for several shops. The counts are one query, so a list of locations doesn't reread each shop. */
+export async function locationSetups(shopIds: readonly string[]) {
+  const ids = [...new Set(shopIds)];
+  if (!ids.length) return [];
+  const [shopRows, accounts, owners, ownerAccounts, countRows, surnameRows] = await Promise.all([
+    db.select().from(shops).where(inArray(shops.id, ids)),
+    db.select().from(shopPaymentAccounts).where(inArray(shopPaymentAccounts.shopId, ids)),
+    db.select().from(ownerEntities),
+    db.select().from(entityPaymentAccounts),
+    db.execute(sql`
+      select s.id,
+        (select count(*)::int from shop_hours h where h.shop_id = s.id) hours,
+        (select count(*)::int from shop_services sv where sv.shop_id = s.id and sv.enabled) menu,
+        (select count(distinct sc.staff_id)::int from staff_schedules sc where sc.shop_id = s.id) barbers,
+        (select count(*)::int from terminal_readers r where r.shop_id = s.id and r.active) readers,
+        (select count(*)::int from staff st inner join staff_access_shops a on a.staff_id = st.id where st.kind = 'shop' and st.active and a.shop_id = s.id) logins,
+        (select count(*)::int from shop_products p where p.shop_id = s.id and p.active) retail,
+        (select count(*)::int from shop_photos ph where ph.shop_id = s.id) photos
+      from shops s where s.id in (${sql.join(ids.map((id) => sql`${id}`), sql`, `)})`),
     db.select({ n: staff.lastName }).from(staff).where(sql`${staff.lastName} is not null`),
-    db.select({ n: count() }).from(shopPhotos).where(eq(shopPhotos.shopId, shopId)),
   ]);
+  const surnames = surnameRows.map((r) => r.n).filter((n): n is string => !!n);
+  const counts = new Map((countRows as unknown as (SetupCounts & { id: string })[]).map((r) => [r.id, r]));
+  const zero: SetupCounts = { hours: 0, menu: 0, barbers: 0, readers: 0, logins: 0, retail: 0, photos: 0 };
+  return shopRows.map((shop) =>
+    buildSetup(
+      shop,
+      counts.get(shop.id) ?? zero,
+      owners.find((o) => o.id === shop.ownerEntityId) ?? null,
+      accounts.find((a) => a.shopId === shop.id) ?? null,
+      ownerAccounts.find((a) => a.ownerEntityId === shop.ownerEntityId) ?? null,
+      surnames,
+    ),
+  );
+}
+
+function buildSetup(shop: ShopRow, counts: SetupCounts, owner: OwnerRow | null, account: AccountRow | null, ownerAccount: OwnerAccountRow | null, surnames: string[]) {
   const reviewLink = !!receiptBranding(shop.receipt).reviewUrl;
   const profileMissing = [
     shop.latitude === null || shop.geocodeSource === "zip" ? "an exact map pin" : null,
     shop.googlePlaceId || reviewLink ? null : "the Google Place ID or review link",
-    photos.n > 0 ? null : "photos or a logo",
+    counts.photos > 0 ? null : "photos or a logo",
   ].filter((x): x is string => !!x);
-  const slugIssue = slugProblem(shop.slug, surnames.map((r) => r.n));
+  const slugIssue = slugProblem(shop.slug, surnames);
   const zone = US_TIMEZONES.find((z) => z.id === shop.timezone)?.label ?? shop.timezone;
-  const barbers = scheduled.length;
+  const barbers = counts.barbers;
   const settles = shop.paymentsMode === "entity" ? ownerAccount : account;
   const state: AccountState = accountState(settles);
-  const settings = `/admin/settings?shop=${shopId}`;
+  const settings = `/admin/settings?shop=${shop.id}`;
   const steps: SetupStep[] = ([
     {
       key: "details",
@@ -100,7 +128,7 @@ export async function locationSetup(shopId: string) {
       done: !!owner,
       detail: owner ? `${owner.name}${owner.kind === "franchisee" ? " (franchisee)" : ""}` : "Choose which business owns this location: Ray'z corporate or a franchisee.",
     },
-    { key: "hours", title: "Opening hours", done: hours.n > 0, detail: hours.n ? `${hours.n} days a week` : "Set the weekday hours.", href: settings },
+    { key: "hours", title: "Opening hours", done: counts.hours > 0, detail: counts.hours ? `${counts.hours} days a week` : "Set the weekday hours.", href: settings },
     {
       key: "taxes",
       title: "Sales tax",
@@ -113,9 +141,9 @@ export async function locationSetup(shopId: string) {
     {
       key: "menu",
       title: "Menu",
-      done: menu.n > 0,
-      detail: menu.n ? `${menu.n} services and add-ons offered` : "Turn on the services this shop offers.",
-      href: `/admin/services?shop=${shopId}`,
+      done: counts.menu > 0,
+      detail: counts.menu ? `${counts.menu} services and add-ons offered` : "Turn on the services this shop offers.",
+      href: `/admin/services?shop=${shop.id}`,
     },
     {
       key: "team",
@@ -146,20 +174,20 @@ export async function locationSetup(shopId: string) {
     {
       key: "readers",
       title: "Card readers",
-      done: readers.n > 0,
-      detail: readers.n ? `${readers.n} Stripe Terminal reader${readers.n === 1 ? "" : "s"}` : "No card reader yet: cards can still be keyed in at checkout.",
+      done: counts.readers > 0,
+      detail: counts.readers ? `${counts.readers} Stripe Terminal reader${counts.readers === 1 ? "" : "s"}` : "No card reader yet: cards can still be keyed in at checkout.",
       href: settings,
     },
-    { key: "login", title: "Front desk login", done: logins.n > 0, detail: logins.n ? `${logins.n} shop login${logins.n === 1 ? "" : "s"}` : "Add a shared login for the front desk.", href: "/admin/shop-logins" },
+    { key: "login", title: "Front desk login", done: counts.logins > 0, detail: counts.logins ? `${counts.logins} shop login${counts.logins === 1 ? "" : "s"}` : "Add a shared login for the front desk.", href: "/admin/shop-logins" },
     {
       key: "retail",
       title: "Retail products",
-      done: retail.n > 0,
-      detail: retail.n ? `${retail.n} products stocked, with reorder points and par levels` : "No retail products yet.",
-      href: `/admin/inventory/settings?shop=${shopId}`,
+      done: counts.retail > 0,
+      detail: counts.retail ? `${counts.retail} products stocked, with reorder points and par levels` : "No retail products yet.",
+      href: `/admin/inventory/settings?shop=${shop.id}`,
     },
   ] as Omit<SetupStep, "required">[]).map((x) => ({ ...x, required: (REQUIRED_FOR_LIVE as readonly string[]).includes(x.key) }));
-  return { shop, owner: owner ?? null, account: account ?? null, ownerAccount: ownerAccount ?? null, state, steps, blockers: goLiveBlockers(steps), mode: connectMode(), fees: feeSchedule(), readers: readers.n };
+  return { shop, owner, account, ownerAccount, state, steps, blockers: goLiveBlockers(steps), mode: connectMode(), fees: feeSchedule(), readers: counts.readers };
 }
 
 /** One line per shop for the setup overview. */
@@ -171,21 +199,22 @@ export async function setupOverview(shopIds: string[]) {
     .leftJoin(ownerEntities, eq(ownerEntities.id, shops.ownerEntityId))
     .where(inArray(shops.id, shopIds))
     .orderBy(asc(shops.name));
-  const details = await Promise.all(rows.map((r) => locationSetup(r.id)));
-  return rows.map((r, i) => {
-    const steps = details[i]!.steps;
+  const details = new Map((await locationSetups(rows.map((r) => r.id))).map((d) => [d.shop.id, d]));
+  return rows.map((r) => {
+    const d = details.get(r.id)!;
+    const steps = d.steps;
     return {
       id: r.id,
       name: r.name,
       status: r.status,
       closedUntil: r.closedUntil,
       regionId: r.regionId,
-      blockers: details[i]!.blockers.length,
+      blockers: d.blockers.length,
       ownerName: r.ownerName,
       ownerKind: r.ownerKind,
-      stripeAccountId: (details[i]!.shop.paymentsMode === "entity" ? details[i]!.ownerAccount : details[i]!.account)?.stripeAccountId ?? null,
-      state: details[i]!.state,
-      paymentsMode: details[i]!.shop.paymentsMode,
+      stripeAccountId: (d.shop.paymentsMode === "entity" ? d.ownerAccount : d.account)?.stripeAccountId ?? null,
+      state: d.state,
+      paymentsMode: d.shop.paymentsMode,
       done: steps.filter((s) => s.done && s.required).length,
       total: steps.filter((s) => s.required).length,
     };

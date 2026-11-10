@@ -50,11 +50,11 @@ import { type StaffContext, reasonViewer, reportShopIds } from "./auth/staff";
 import { ACTIVE_STATUSES } from "./booking";
 import { flaggedCount } from "./call-ins";
 import { refreshClockBlocks } from "./clock-blocks";
-import { clockFallout, liveClock } from "./clock-live";
+import { clockFallout, liveClocks } from "./clock-live";
 import { suggestionsFor } from "./inventory/purchasing";
-import { locationSetup } from "./location-setup";
+import { locationSetups } from "./location-setup";
 import { unreadCount } from "./messaging";
-import { fillCandidates, marketingConsent, rebookCandidates } from "./outreach-campaigns";
+import { fillCandidatesFor, marketingConsent, rebookCandidatesFor } from "./outreach-campaigns";
 import { listRequests } from "./staff-time";
 import { clockAlertFacts } from "./time-clock";
 import { brandCalendar } from "./payroll/groups";
@@ -166,12 +166,14 @@ export async function openChairTime(shopIds: readonly string[], now: Date, minFr
   for (const s of scheds) pairs.set(`${s.shopId}|${s.staffId}`, [...(pairs.get(`${s.shopId}|${s.staffId}`) ?? []), s]);
   // Breaks and early clock-outs are blocks like any other; an early clock-in adds open time.
   const shopRows = await db.select({ id: shops.id, timeClock: shops.timeClock }).from(shops).where(inArray(shops.id, [...new Set(scheds.map((s) => s.shopId))]));
-  const clocks = new Map(
-    await Promise.all(shopRows.map(async (s) => [s.id, (await liveClock(s, today, [...new Set(scheds.filter((x) => x.shopId === s.id).map((x) => x.staffId))], now)).days] as const)),
+  const clocks = await liveClocks(
+    shopRows.map((s) => ({ id: s.id, timeClock: s.timeClock, staffIds: [...new Set(scheds.filter((x) => x.shopId === s.id).map((x) => x.staffId))] })),
+    today,
+    now,
   );
   for (const rows of pairs.values()) {
     const { shopId, staffId, label } = rows[0];
-    const clock = clocks.get(shopId)?.get(staffId);
+    const clock = clocks.get(shopId)?.days.get(staffId);
     const windows = rows.map((r) => ({ start: zonedWallTime(today, r.startMin).toMillis(), end: zonedWallTime(today, r.endMin).toMillis() }));
     if (clock?.early) windows.push({ start: clock.early.start.getTime(), end: clock.early.end.getTime() });
     const busy = [
@@ -223,11 +225,13 @@ async function chairAlerts(c: Ctx): Promise<Alert[]> {
       .orderBy(asc(appointments.startsAt)),
   ]);
 
+  const withChairs = live.filter((s) => chairs.some((x) => x.shopId === s.id));
+  const fills = c.has("clients.campaigns") ? await fillCandidatesFor(withChairs.map((s) => s.id), c.now) : null;
   for (const s of live) {
     const here = chairs.filter((x) => x.shopId === s.id);
     if (!here.length) continue;
     const total = here.reduce((a, x) => a + minutesIn(x.free), 0);
-    const candidates = c.has("clients.campaigns") ? await fillCandidates(s.id, c.now) : [];
+    const candidates = fills?.get(s.id) ?? [];
     const textable = candidates.filter((x) => x.canText).length;
     const late = c.now.getTime() > zonedWallTime(c.today, 19 * 60).toMillis();
     out.push({
@@ -606,8 +610,10 @@ async function callInAlerts(c: Ctx): Promise<Alert[]> {
 async function rebookAlerts(c: Ctx): Promise<Alert[]> {
   const out: Alert[] = [];
   const late = c.now.getTime() > zonedWallTime(c.today, 19 * 60).toMillis();
-  for (const s of c.shops.filter((x) => x.status === "live")) {
-    const due = await rebookCandidates(s.id, c.now);
+  const live = c.shops.filter((x) => x.status === "live");
+  const dueByShop = await rebookCandidatesFor(live.map((s) => s.id), c.now);
+  for (const s of live) {
+    const due = dueByShop.get(s.id) ?? [];
     if (due.length < 1) continue;
     const textable = due.filter((d) => d.canText).length;
     out.push({
@@ -779,9 +785,9 @@ async function setupAlerts(c: Ctx): Promise<Alert[]> {
       });
   }
   if (c.has("locations.setup") || c.has("payments.accounts")) {
-    for (const s of c.shops.filter((x) => x.status === "setup")) {
-      const st = await locationSetup(s.id);
-      if (!st) continue;
+    const setups = await locationSetups(c.shops.filter((x) => x.status === "setup").map((s) => s.id));
+    for (const st of setups) {
+      const s = st.shop;
       const left = st.steps.filter((x) => x.required && !x.done);
       out.push({
         key: `setup_checklist:${s.id}:${c.today}:${left.length}`,

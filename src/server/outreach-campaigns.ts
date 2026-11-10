@@ -53,10 +53,15 @@ export interface Candidate {
   canText: boolean;
 }
 
-/** Clients whose last visit was at this shop, with no appointment booked, and how their visits run. */
-async function history(shopId: string, now: Date) {
+/** Clients whose last visit was at one of these shops, with no appointment booked, and how their visits run. */
+async function history(shopIds: readonly string[], now: Date) {
+  if (!shopIds.length) return [];
   const consent = await marketingConsent();
   const marketing = consent.sms ? sql.raw("bool_or(coalesce(g.sms_marketing_opt_in, c.sms_marketing_opt_in))") : sql`false`;
+  const shops = sql.join(
+    shopIds.map((id) => sql`${id}`),
+    sql`, `,
+  );
   const rows = (await db.execute(sql`
     with v as (
       select a.customer_id, count(*)::int n, min(a.starts_at) first_at, max(a.starts_at) last_at,
@@ -66,16 +71,17 @@ async function history(shopId: string, now: Date) {
       where a.status = 'completed' and a.customer_id is not null and a.starts_at > ${new Date(now.getTime() - 400 * 86_400_000).toISOString()}
       group by a.customer_id
     )
-    select v.customer_id, v.n, v.first_at, v.last_at, v.last_staff, c.first_name, coalesce(g.phone, c.phone) phone, ${marketing} as marketing
+    select v.customer_id, v.n, v.first_at, v.last_at, v.last_staff, v.last_shop, c.first_name, coalesce(g.phone, c.phone) phone, ${marketing} as marketing
     from v join customers c on c.id = v.customer_id left join customers g on g.id = c.guardian_id
-    where v.last_shop = ${shopId}
+    where v.last_shop in (${shops})
       and not exists (select 1 from appointments f where f.customer_id = v.customer_id and f.starts_at > ${now.toISOString()} and f.status in ('booked', 'confirmed', 'checked_in', 'in_service'))
-    group by v.customer_id, v.n, v.first_at, v.last_at, v.last_staff, c.first_name, coalesce(g.phone, c.phone)`)) as unknown as {
+    group by v.customer_id, v.n, v.first_at, v.last_at, v.last_staff, v.last_shop, c.first_name, coalesce(g.phone, c.phone)`)) as unknown as {
     customer_id: string;
     n: number;
     first_at: string | Date;
     last_at: string | Date;
     last_staff: string | null;
+    last_shop: string;
     first_name: string;
     phone: string | null;
     marketing: boolean;
@@ -106,20 +112,36 @@ const toCandidate = (x: Awaited<ReturnType<typeof history>>[number], now: number
 
 /** Due for a cut, most overdue first: who hears about an open chair today. */
 export async function fillCandidates(shopId: string, now: Date = new Date()): Promise<Candidate[]> {
+  return (await fillCandidatesFor([shopId], now)).get(shopId) ?? [];
+}
+
+/** Who is due for a cut at each of these shops, from one read of visit history. */
+export async function fillCandidatesFor(shopIds: readonly string[], now: Date = new Date()): Promise<Map<string, Candidate[]>> {
   const t = now.getTime();
-  return (await history(shopId, now))
-    .filter((x) => x.h.visits >= 2 && dueForCut(x.h, t))
-    .map((x) => toCandidate(x, t))
-    .sort((a, b) => b.sinceDays / Math.max(a.usualDays, 21) - a.sinceDays / Math.max(b.usualDays, 21));
+  const out = new Map<string, Candidate[]>(shopIds.map((id) => [id, []]));
+  for (const x of await history(shopIds, now)) {
+    if (!(x.h.visits >= 2 && dueForCut(x.h, t))) continue;
+    out.get(x.r.last_shop)?.push(toCandidate(x, t));
+  }
+  for (const list of out.values()) list.sort((a, b) => b.sinceDays / Math.max(a.usualDays, 21) - a.sinceDays / Math.max(b.usualDays, 21));
+  return out;
 }
 
 /** Regulars well past their usual gap. */
 export async function rebookCandidates(shopId: string, now: Date = new Date()): Promise<Candidate[]> {
+  return (await rebookCandidatesFor([shopId], now)).get(shopId) ?? [];
+}
+
+/** The same list for several shops from one read of visit history. */
+export async function rebookCandidatesFor(shopIds: readonly string[], now: Date = new Date()): Promise<Map<string, Candidate[]>> {
   const t = now.getTime();
-  return (await history(shopId, now))
-    .filter((x) => rebookDue(x.h, t).due)
-    .map((x) => toCandidate(x, t))
-    .sort((a, b) => b.sinceDays - a.sinceDays);
+  const out = new Map<string, Candidate[]>(shopIds.map((id) => [id, []]));
+  for (const x of await history(shopIds, now)) {
+    if (!rebookDue(x.h, t).due) continue;
+    out.get(x.r.last_shop)?.push(toCandidate(x, t));
+  }
+  for (const list of out.values()) list.sort((a, b) => b.sinceDays - a.sinceDays);
+  return out;
 }
 
 function assertSendingHours(now: Date, untilMin = SEND_UNTIL_MIN) {

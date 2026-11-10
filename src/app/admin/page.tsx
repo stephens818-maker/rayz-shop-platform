@@ -50,7 +50,7 @@ import { noteBriefs, noteViewer } from "@/server/client-notes";
 import { clientPolicy } from "@/server/client-privacy";
 import { ClientNotesBrief } from "@/components/client-notes-brief";
 import { ClientBadges } from "@/components/client-badges";
-import { liveClock } from "@/server/clock-live";
+import { liveClocks } from "@/server/clock-live";
 import { PortalWelcome } from "@/components/celebration";
 import { LiveRefresh } from "@/components/live-refresh";
 import { timesFor } from "@/server/service-times";
@@ -272,26 +272,17 @@ export default async function Dashboard({
           ),
         )
     : [];
-  const clocks = new Map(
-    await Promise.all(
-      clockShops.map(
-        async (s) =>
-          [
-            s.id,
-            (
-              await liveClock(
-                s,
-                today,
-                staffing.filter((r) => r.shopId === s.id).map((r) => r.staffId),
-                now,
-              )
-            ).days,
-          ] as const,
-      ),
-    ),
+  const clocks = await liveClocks(
+    clockShops.map((s) => ({
+      id: s.id,
+      timeClock: s.timeClock,
+      staffIds: staffing.filter((r) => r.shopId === s.id).map((r) => r.staffId),
+    })),
+    today,
+    now,
   );
   const clockOf = (r: (typeof staffing)[number]) => {
-    const d = clocks.get(r.shopId)?.get(r.staffId);
+    const d = clocks.get(r.shopId)?.days.get(r.staffId);
     if (!d?.status || r.status === "off") return null;
     if (d.status === "not_in" && r.status === "not_scheduled") return null;
     const at = d.since ? formatTime(d.since) : "";

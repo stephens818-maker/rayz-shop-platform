@@ -231,3 +231,23 @@ describe("an early clock-out", () => {
     expect(JSON.stringify(r)).not.toMatch(/clock|punch|on break|clocked/i);
   });
 });
+
+describe("every shop's clock day", () => {
+  it("matches reading each shop on its own", async () => {
+    const now = at(day, 15 * 60);
+    const rows = await m.db.db.select({ id: m.schema.shops.id, timeClock: m.schema.shops.timeClock }).from(m.schema.shops);
+    const batched = await fallout.liveClocks(
+      rows.map((s) => ({ ...s, staffIds: [mk.id] })),
+      day,
+      now,
+    );
+    for (const s of rows) {
+      const one = await fallout.liveClock(s, day, [mk.id], now);
+      const got = batched.get(s.id);
+      expect(got?.settings).toEqual(one.settings);
+      expect([...(got?.days.entries() ?? [])]).toEqual([...one.days.entries()]);
+    }
+    const empty = await fallout.liveClocks([{ id: cv, timeClock: rows.find((s) => s.id === cv)?.timeClock, staffIds: [] }], day, now);
+    expect([...(empty.get(cv)?.days.entries() ?? [])]).toEqual([]);
+  });
+});

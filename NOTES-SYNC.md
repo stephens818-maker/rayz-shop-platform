@@ -912,6 +912,16 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-11-09: faster /admin home, resize shows immediately
+
+No new migration. The next one is still `core_0163`. Punches, tip payout schedules, tip transfers, and demo rows were not changed.
+
+/admin was spending the time after the first byte on one database round trip per shop for the time clock, and again inside Today's chair and clock alerts, plus a full visit-history scan per shop for rebook and "due for a cut". Those are now one read for every shop. Opening a location's setup steps is one count query for the shops on the list, instead of a handful of counts per shop. On the local seed (9 shops, owner), the home page's "who's in" clock read was 30 queries one shop at a time and is 5 as one read. Today's alerts, already on that shared clock read, were 93 queries and 191 ms, then 63 queries and 148 ms once rebook, fill, and setup stopped looping per shop. The morning dashboard's today section uses that same clock read, so a cold open avoids the per-shop clock round trips. Digest, the payroll report, payroll tips, and my pay were not changed.
+
+Drag-to-resize on the day calendar updates the tile's height and end time while the pointer moves, and keeps that end if the save is still in flight. A failed save puts the tile back. The snap is still 15 minutes, the visit still has to be at least 15 minutes, and only booked or confirmed visits drag.
+
+Makenna's Oct 27 open GPS punches were not changed. Coralville's end-of-night tip timing was not changed. The client booking helper and the client portal stay later. No canary booking was added.
+
 ### 2026-11-07: faster admin reads, one booking status, canary tests
 
 `core_0162_page_reads` (next migration is `core_0163`). It adds indexes for appointments that are still going (`shop_id, ends_at`), time entries that overlap a pay period (`ends_at`), and tipped payments and refunds by `created_at`. It adds `brand_settings.tip_ledger_synced_at`. It does not change punches, tip payout schedules, tip transfers, or any demo row.

@@ -873,6 +873,24 @@ function Column({
   };
 }) {
   const resize = useServerAction();
+  // The saved end arrives on the next refresh. Until then the tile uses the end the drag just picked.
+  const [ends, setEnds] = useState<Record<string, number>>({});
+  useEffect(() => {
+    setEnds((m) => {
+      let changed = false;
+      const next = { ...m };
+      for (const a of col.appts) {
+        if (next[a.id] === a.endMin) {
+          delete next[a.id];
+          changed = true;
+        }
+      }
+      return changed ? next : m;
+    });
+  }, [col.appts]);
+  useEffect(() => {
+    if (resize.error) setEnds({});
+  }, [resize.error]);
   const top = (m: number) =>
     (Math.max(m, data.rangeStart) - data.rangeStart) * PX;
   const h = (s: number, e: number) =>
@@ -1087,7 +1105,8 @@ function Column({
             drag.moved?.id === a.id ? drag.moved.startMin : a.startMin;
           const movable = !readOnly && canDragAppointment(a.status);
           const shown = shownBookingStatus(a.status, !!a.times?.finished);
-          const hh = h(a.startMin, a.endMin);
+          const shownEnd = ends[a.id] ?? a.endMin;
+          const hh = h(a.startMin, shownEnd);
           return (
             <button
               key={a.id}
@@ -1158,13 +1177,28 @@ function Column({
                       e.stopPropagation();
                       e.preventDefault();
                       const origin = e.clientY;
-                      const startEnd = a.endMin;
+                      const saved = a.endMin;
+                      const startEnd = ends[a.id] ?? saved;
+                      const move = (ev: PointerEvent) => {
+                        const endMin = resizeEndMin(a.startMin, startEnd, ev.clientY - origin, PX);
+                        setEnds((m) => ({ ...m, [a.id]: endMin }));
+                      };
                       const up = (ev: PointerEvent) => {
+                        window.removeEventListener("pointermove", move);
                         window.removeEventListener("pointerup", up);
                         const endMin = resizeEndMin(a.startMin, startEnd, ev.clientY - origin, PX);
-                        if (endMin === a.endMin) return;
+                        if (endMin === saved) {
+                          setEnds((m) => {
+                            if (!(a.id in m)) return m;
+                            const next = { ...m };
+                            delete next[a.id];
+                            return next;
+                          });
+                        } else setEnds((m) => ({ ...m, [a.id]: endMin }));
+                        if (endMin === startEnd) return;
                         resize.run(() => resizeAppointmentAction(a.id, data.date, endMin), undefined, `Now ends at ${label(endMin)}`);
                       };
+                      window.addEventListener("pointermove", move);
                       window.addEventListener("pointerup", up);
                     }}
                   />
@@ -1193,7 +1227,7 @@ function Column({
               )}
               {hh > 48 && (
                 <div className="truncate text-[11px] opacity-70">
-                  {label(a.startMin)}–{label(a.endMin)}
+                  {label(a.startMin)}–{label(shownEnd)}
                 </div>
               )}
               {hh > 40 && a.clientNotes?.pinned[0] && (

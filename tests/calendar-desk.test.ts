@@ -37,6 +37,8 @@ describe("desk actions the canary booking is for", () => {
     expect(panel).toContain("toast(SERVICE_TIME_TOAST.finish)");
     const calendar = readFileSync("src/app/admin/calendar/day-calendar.tsx", "utf8");
     expect(calendar).toContain("resizeEndMin(");
+    expect(calendar).toContain("ends[a.id] ?? a.endMin");
+    expect(calendar).toContain('addEventListener("pointermove", move)');
   });
 });
 
