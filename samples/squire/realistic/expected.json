@@ -1,0 +1,65 @@
+{
+  "exportDate": "2026-10-13",
+  "clients": {
+    "rows": 199,
+    "created": 182,
+    "updated": 2,
+    "merged": 12,
+    "skipped": {
+      "Missing name": 2,
+      "Placeholder client": 1
+    }
+  },
+  "appointments": {
+    "rows": 635,
+    "imported": 628,
+    "pastVisits": 518,
+    "noShows": 37,
+    "cancellations": 46,
+    "upcoming": 27,
+    "clientsCreated": 1,
+    "formerBarbers": 2,
+    "walkInsWithoutClient": 15,
+    "bookedAtUnknown": 203,
+    "skipped": {
+      "Unknown shop": 2,
+      "Bad date": 1,
+      "Missing barber": 1,
+      "Ambiguous barber": 2,
+      "Inactive barber": 1
+    }
+  },
+  "transactions": {
+    "rows": 478,
+    "imported": 456,
+    "voided": 17,
+    "linked": 448,
+    "totalCents": 1368654,
+    "tipsCents": 209200,
+    "alreadyImported": 1,
+    "skipped": {
+      "Unknown shop": 1,
+      "Bad amount": 2,
+      "Bad date": 1
+    }
+  },
+  "loyalty": {
+    "rows": 135,
+    "accounts": 120,
+    "rewards": 26,
+    "skipped": {
+      "No matching client": 2,
+      "Bad amount": 1
+    }
+  },
+  "giftCards": {
+    "rows": 20,
+    "imported": 18,
+    "balanceCents": 48575,
+    "skipped": {
+      "Missing code": 1,
+      "Bad amount": 1
+    }
+  },
+  "clientsTotal": 183
+}

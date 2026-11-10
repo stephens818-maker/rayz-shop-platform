@@ -1,0 +1,479 @@
+Transaction ID,Appointment ID,Date,Time,Location,Barber,Client ID,Client Name,Services,Products,Tip,Tax,Discount,Total,Payment Method,Status
+SQT-700001,SQA-500148,4/21/2025,1:45 PM,Silvis,Amanda,SQ-20049,Marcus Thompson,19.00,,3.00,0.00,,22.00,Gift Card,Paid
+SQT-700002,SQA-500355,4/23/2025,9:20 AM,Utica,Kate,SQ-20113,Lucas Ramirez,20.00,,5.00,0.00,,25.00,Gift Card,Paid
+SQT-700003,SQA-500437,4/23/2025,12:15 PM,Rock Island,Garrett,SQ-20149,Connor Lopez,19.00,,5.00,0.00,,24.00,Gift Card,Paid
+SQT-700004,SQA-500575,4/23/2025,3:20 PM,Utica,Kate,SQ-20192,Tyler Johnson,18.00,,5.00,0.00,,23.00,Amex,Paid
+SQT-700005,SQA-500009,4/24/2025,3:10 PM,Le Claire,Audra,SQ-20007,Andre Vogel,20.00,,3.00,0.00,(3.00),23.00,Cash,Paid
+SQT-700006,SQA-500214,4/25/2025,11:40 AM,Coralville,Delaney,SQ-20072,Ryan Keller,19.00,,0.00,0.00,,19.00,Visa,Paid
+SQT-700007,,4/26/2025,1:15 PM,Kimberly,Olivia A,SQ-20053,Cameron Weber,37.00,,0.00,0.00,,37.00,Cash,Paid
+SQT-700008,SQA-500122,4/29/2025,10:45 AM,Silvis,Abigail,SQ-20042,Carlos Weber,37.00,,0.00,0.00,,37.00,Mastercard,Paid
+SQT-700009,,4/30/2025,11:45 AM,Rock Island,Mercedez,SQ-20105,Ryan Zimmerman,19.00,18.00,8.00,1.26,,46.26,Cash,Paid
+SQT-700010,SQA-500345,4/30/2025,2:10 PM,Utica,Kate,SQ-20108,Nathan Vogel,23.00,22.00,5.00,1.54,,51.54,Cash,Paid
+SQT-700011,SQA-500094,5/1/2025,2:20 PM,Silvis,Amanda,SQ-20034,Shane Lopez,20.00,,10.00,0.00,,30.00,Mastercard,Paid
+SQT-700012,SQA-500364,5/2/2025,10:15 AM,Le Claire,Audra,SQ-20117,Noah Yoder,26.00,,4.00,0.00,,30.00,Cash,Paid
+SQT-700013,SQA-500329,5/5/2025,12:20 PM,Silvis,Liv,SQ-20103,Grant O'Brien,17.00,,8.00,0.00,(3.00),25.00,Mastercard,Paid
+SQT-700014,SQA-500538,5/6/2025,9:45 AM,Utica,Em,SQ-20182,Mason Kerr,28.00,,4.00,0.00,,32.00,Visa,Paid
+SQT-700015,SQA-500156,5/6/2025,11:55 AM,Silvis,Abigail,SQ-20051,Ethan Garcia,23.00,,10.00,0.00,,33.00,Gift Card,Paid
+SQT-700016,SQA-500034,5/6/2025,1:15 PM,Coralville,Jessica,SQ-20017,Landon Yoder,37.00,,10.00,0.00,,47.00,Gift Card,Paid
+SQT-700017,SQA-500038,5/7/2025,10:40 AM,Moline,Sara,SQ-20018,Brian Nguyen,23.00,,0.00,0.00,,23.00,Cash,Paid
+SQT-700018,SQA-500129,5/7/2025,2:15 PM,Utica,Sarah,SQ-20045,Wesley Hartman,19.00,22.00,5.00,1.54,,47.54,Mastercard,Paid
+SQT-700019,SQA-500029,5/7/2025,3:20 PM,Silvis,Abigail,SQ-20016,Derek Reyes,20.00,,5.00,0.00,,25.00,Mastercard,Paid
+SQT-700020,SQA-500139,5/8/2025,2:50 PM,Rock Island,Mercedez,SQ-20047,Derek Zimmerman,20.00,,8.00,0.00,,28.00,Cash,Paid
+SQT-700021,SQA-500289,5/8/2025,3:50 PM,Utica,Lindsay,SQ-20093,Cody Christensen,17.00,,0.00,0.00,(3.00),17.00,Visa,Paid
+SQT-700022,SQA-500027,5/9/2025,10:20 AM,Silvis,Amanda,SQ-20016,Derek Reyes,20.00,,6.00,0.00,,26.00,Amex,Paid
+SQT-700023,SQA-500099,5/9/2025,2:50 PM,Kimberly,Ali,SQ-20036,Dylan Brooks,18.00,,5.00,0.00,,23.00,Mastercard,Paid
+SQT-700024,,5/9/2025,3:10 PM,Rock Island,Garrett,SQ-20059,Corey Bauer,23.00,,4.00,0.00,,27.00,Cash,Paid
+SQT-700025,SQA-500331,5/10/2025,12:40 PM,Silvis,Abigail,SQ-20104,Nathan Bauer,19.00,,10.00,0.00,,29.00,Visa,Paid
+SQT-700026,SQA-500464,5/10/2025,12:25 PM,Moline,Destiny,SQ-20157,William Kowalczyk,21.00,,8.00,0.00,,29.00,Cash,Paid
+SQT-700027,SQA-500017,5/12/2025,10:40 AM,Coralville,Jessica,SQ-20012,Corey Schroeder,19.00,,8.00,0.00,,27.00,Cash,Paid
+SQT-700028,SQA-500078,5/12/2025,10:55 AM,Coralville,Michelle,SQ-20030,Cody Keller,23.00,,8.00,0.00,,31.00,Mastercard,Paid
+SQT-700029,SQA-500581,5/13/2025,4:15 PM,Moline,Sara,SQ-20194,Hector Salinas,37.00,28.00,0.00,1.96,,66.96,Discover,Paid
+SQT-700030,SQA-500287,5/13/2025,4:45 PM,Rock Island,Mercedez,SQ-20092,Cameron Becker,37.00,,0.00,0.00,,37.00,Visa,Paid
+SQT-700031,SQA-500136,5/14/2025,10:20 AM,Le Claire,Audra,SQ-20046,Landon Walsh,18.00,,8.00,0.00,,26.00,Discover,Paid
+SQT-700031,SQA-500136,5/14/2025,10:20 AM,Le Claire,Audra,SQ-20046,Landon Walsh,18.00,,8.00,0.00,,26.00,Discover,Paid
+SQT-700032,SQA-500490,5/14/2025,12:45 PM,Le Claire,Audra,SQ-20164,Daniel Ostrowski,19.00,,5.00,0.00,,24.00,Cash,Paid
+SQT-700033,SQA-500576,5/14/2025,1:20 PM,Utica,Sarah,SQ-20192,Tyler Johnson,18.00,,5.00,0.00,,23.00,Mastercard,Paid
+SQT-700034,SQA-500074,5/19/2025,3:15 PM,Coralville,Jessica,SQ-20030,Cody Keller,19.00,,10.00,0.00,,29.00,Cash,Paid
+SQT-700035,SQA-500239,5/20/2025,1:10 PM,Utica,Lindsay,SQ-20082,Dominic Gonzalez,19.00,,6.00,0.00,,25.00,Cash,Paid
+SQT-700036,,5/21/2025,1:15 PM,Rock Island,Garrett,SQ-20145,Andre Christensen,37.00,,0.00,0.00,,37.00,Cash,Paid
+SQT-700037,SQA-500069,5/22/2025,4:15 PM,Le Claire,Audra,SQ-20029,Aiden Hoffman,37.00,,3.00,0.00,,40.00,Gift Card,Paid
+SQT-700038,SQA-500321,5/22/2025,5:15 PM,Silvis,Abigail,SQ-20101,Brooke Johnson,37.00,,0.00,0.00,,37.00,Amex,Paid
+SQT-700039,SQA-500391,5/23/2025,12:10 PM,Le Claire,Audra,SQ-20129,Parker Walsh,19.00,,5.00,0.00,,24.00,Cash,Paid
+SQT-700040,SQA-500541,5/23/2025,12:45 PM,Moline,Sara,SQ-20185,Kayla Sisk,19.00,,0.00,0.00,,19.00,Mastercard,Paid
+SQT-700041,SQA-500477,5/24/2025,10:10 AM,Kimberly,Sammie,SQ-20162,Tony Bianchi,23.00,,10.00,0.00,,33.00,Cash,Paid
+SQT-700042,,5/24/2025,4:15 PM,Kimberly,Ali,SQ-20153,Christopher Duffy,26.00,,4.00,0.00,,30.00,Discover,Paid
+SQT-700043,SQA-500582,5/24/2025,4:15 PM,Moline,Jilane,SQ-20194,Hector Salinas,22.00,,3.00,0.00,,25.00,Cash,Paid
+SQT-700044,SQA-500439,5/24/2025,4:45 PM,Moline,Sara,SQ-20150,Grant Bauer,19.00,,3.00,0.00,,22.00,Gift Card,Paid
+SQT-700045,SQA-500551,5/30/2025,9:45 AM,Coralville,Jessica,SQ-20187,Chris Miller,37.00,,5.00,0.00,,42.00,Discover,Refunded
+SQT-700046,,5/31/2025,9:45 AM,Rock Island,Taylor B,SQ-20041,Noah Anderson,19.00,18.00,5.00,1.26,,43.26,Cash,Paid
+SQT-700047,SQA-500508,6/2/2025,12:50 PM,Rock Island,Garrett,SQ-20168,Matthew,18.00,,6.00,0.00,,24.00,Mastercard,Paid
+SQT-700048,SQA-500402,6/4/2025,12:20 PM,Utica,Em,SQ-20137,Jordan Engel,42.00,,3.00,0.00,,45.00,Cash,Paid
+SQT-700049,SQA-500022,6/4/2025,1:15 PM,Rock Island,Taylor B,SQ-20015,Grant Larson,19.00,,5.00,0.00,,24.00,Discover,Paid
+SQT-700050,SQA-500211,6/6/2025,4:10 PM,Coralville,Delaney,SQ-20072,Ryan Keller,19.00,,6.00,0.00,,25.00,Cash,Paid
+SQT-700051,SQA-500182,6/10/2025,10:25 AM,Moline,Jilane,SQ-20060,Lucas Vogel,25.00,,0.00,0.00,,25.00,Amex,Paid
+SQT-700052,SQA-500467,6/11/2025,10:20 AM,Rock Island,Taylor A,SQ-20159,Joseph Russo,17.00,,3.00,0.00,(3.00),20.00,Cash,Paid
+SQT-700053,SQA-500546,6/13/2025,11:20 AM,Moline,Jen,SQ-20186,Landon Sisk,20.00,,5.00,0.00,,25.00,Mastercard,Paid
+SQT-700054,SQA-500545,6/14/2025,10:15 AM,Moline,Jen,SQ-20186,Landon Sisk,19.00,,8.00,0.00,,27.00,Discover,Paid
+SQT-700055,SQA-500004,6/14/2025,1:50 PM,Coralville,Delaney,SQ-20005,Cameron Wright,20.00,22.00,4.00,1.54,,47.54,Amex,Paid
+SQT-700056,SQA-500483,6/16/2025,10:15 AM,Utica,Em,SQ-20163,Dan Ostrowski,19.00,,10.00,0.00,,29.00,Cash,Refunded
+SQT-700057,SQA-500526,6/18/2025,2:45 PM,Rock Island,Garrett,SQ-20179,Nora Lindgren,37.00,,0.00,0.00,,37.00,Discover,Paid
+SQT-700058,SQA-500237,6/19/2025,4:15 PM,Le Claire,Audra,SQ-20081,Quinn Hoffman,37.00,28.00,0.00,1.96,,66.96,Visa,Paid
+SQT-700059,,6/20/2025,9:40 AM,Rock Island,Taylor B,SQ-20114,Hunter Garcia,23.00,,0.00,0.00,,23.00,Gift Card,Paid
+SQT-700060,SQA-500170,6/20/2025,10:50 AM,Silvis,Liv,SQ-20056,Sean Wagner,18.00,,3.00,0.00,,21.00,Gift Card,Paid
+SQT-700061,,6/23/2025,9:20 AM,Silvis,Abigail,SQ-20109,Corey Fischer,18.00,,8.00,0.00,,26.00,Mastercard,Paid
+SQT-700062,SQA-500347,6/23/2025,4:15 PM,Utica,Kate,SQ-20108,Nathan Vogel,19.00,,6.00,0.00,,25.00,Amex,Paid
+SQT-700063,SQA-500500,6/24/2025,11:40 AM,Moline,Mackenzie,SQ-20166,Jake Lindqvist,23.00,,0.00,0.00,,23.00,Cash,Paid
+SQT-700064,SQA-500218,6/25/2025,10:40 AM,Moline,Jilane,SQ-20073,Luis Brooks,19.00,,5.00,0.00,,24.00,Gift Card,Paid
+SQT-700065,SQA-500535,6/25/2025,3:10 PM,Utica,Lindsay,SQ-20181,Brooke Kerr,23.00,,0.00,0.00,,23.00,Cash,Paid
+SQT-700066,SQA-500037,6/25/2025,3:45 PM,Moline,Sara,SQ-20018,Brian Nguyen,19.00,,5.00,0.00,,24.00,Visa,Paid
+SQT-700067,,6/26/2025,1:20 PM,Utica,Sarah,SQ-20045,Wesley Hartman,42.00,,10.00,0.00,,52.00,Cash,Paid
+SQT-700068,,6/27/2025,10:45 AM,Utica,Kate,SQ-20054,Hunter Hoffman,37.00,,10.00,0.00,,47.00,Discover,Paid
+SQT-700069,SQA-500104,6/28/2025,9:45 AM,Moline,Mackenzie,SQ-20037,Kevin Jensen,25.00,,0.00,0.00,(3.00),25.00,Discover,Paid
+SQT-700070,,6/28/2025,11:20 AM,Coralville,Makenna,SQ-20072,Ryan Keller,20.00,,10.00,0.00,,30.00,Cash,Paid
+SQT-700071,SQA-500024,6/30/2025,2:40 PM,Rock Island,Taylor B,SQ-20015,Grant Larson,23.00,,5.00,0.00,,28.00,Cash,Paid
+SQT-700072,SQA-500216,6/30/2025,4:50 PM,Moline,Destiny,SQ-20073,Luis Brooks,18.00,,10.00,0.00,,28.00,Cash,Paid
+SQT-700073,SQA-500105,7/1/2025,10:50 AM,Kimberly,Maddie,SQ-20038,Dominic Hoffman,18.00,,10.00,0.00,,28.00,Mastercard,Paid
+SQT-700074,,7/2/2025,1:20 PM,Le Claire,Audra,SQ-20029,Aiden Hoffman,18.00,,0.00,0.00,,18.00,Cash,Refunded
+SQT-700075,SQA-500215,7/4/2025,12:50 PM,Moline,Jilane,SQ-20073,Luis Brooks,20.00,,0.00,0.00,,20.00,Discover,Paid
+SQT-700076,SQA-500368,7/4/2025,2:15 PM,Coralville,Delaney,SQ-20118,Cody Reyes,37.00,,8.00,0.00,,45.00,Gift Card,Paid
+SQT-700077,SQA-500383,7/4/2025,1:50 PM,Kimberly,Sammie,SQ-20125,Brian Klein,18.00,,4.00,0.00,,22.00,Cash,Paid
+SQT-700078,SQA-500096,7/5/2025,9:40 AM,Silvis,Abigail,SQ-20034,Shane Lopez,23.00,,4.00,0.00,,27.00,Gift Card,Paid
+SQT-700079,SQA-500240,7/7/2025,9:20 AM,Utica,Lindsay,SQ-20082,Dominic Gonzalez,18.00,,5.00,0.00,,23.00,Gift Card,Paid
+SQT-700080,SQA-500378,7/8/2025,2:45 PM,Kimberly,Sammie,SQ-20125,Brian Klein,19.00,,0.00,0.00,,19.00,Visa,Paid
+SQT-700081,SQA-500186,7/9/2025,4:45 PM,Silvis,Liv,SQ-20064,Luis Gonzalez,37.00,,5.00,0.00,,42.00,Discover,Paid
+SQT-700082,SQA-500258,7/15/2025,2:50 PM,Moline,Mackenzie,SQ-20086,Luis Thompson,18.00,,4.00,0.00,,22.00,Cash,Paid
+SQT-700083,SQA-500471,7/17/2025,10:20 AM,Coralville,Makenna,SQ-20160,Joseph,20.00,,5.00,0.00,,25.00,Amex,Paid
+SQT-700084,SQA-500072,7/24/2025,10:20 AM,Le Claire,Audra,SQ-20029,Aiden Hoffman,18.00,,6.00,0.00,,24.00,Gift Card,Paid
+SQT-700085,SQA-500179,7/24/2025,10:20 AM,Rock Island,Garrett,SQ-20059,Corey Bauer,20.00,,8.00,0.00,,28.00,Mastercard,Refunded
+SQT-700086,SQA-500184,7/24/2025,3:10 PM,Moline,Jilane,SQ-20060,Lucas Vogel,23.00,,8.00,0.00,,31.00,Amex,Paid
+SQT-700087,SQA-500386,7/25/2025,9:50 AM,Rock Island,Taylor A,SQ-20127,Xavier Fischer,18.00,,0.00,0.00,,18.00,Amex,Paid
+SQT-700088,SQA-500307,7/25/2025,11:20 AM,Utica,Sarah,SQ-20097,Victor Klein,18.00,,6.00,0.00,,24.00,Discover,Paid
+SQT-700089,,7/25/2025,2:45 PM,Silvis,Abigail,SQ-20034,Shane Lopez,26.00,28.00,3.00,1.96,,58.96,Cash,Paid
+SQT-700090,SQA-500371,7/26/2025,11:10 AM,Le Claire,Audra,SQ-20122,Aiden Ramirez,19.00,,10.00,0.00,,29.00,Visa,Paid
+SQT-700091,SQA-500164,7/26/2025,1:20 PM,Utica,Kate,SQ-20054,Hunter Hoffman,18.00,,8.00,0.00,,26.00,Cash,Paid
+SQT-700092,,7/28/2025,10:45 AM,Silvis,Liv,SQ-20056,Sean Wagner,24.00,,10.00,0.00,,34.00,Gift Card,Paid
+SQT-700093,SQA-500376,7/29/2025,3:15 PM,Utica,Sarah,SQ-20124,Trevor Lopez,37.00,28.00,0.00,1.96,,66.96,Discover,Paid
+SQT-700094,SQA-500068,7/31/2025,11:45 AM,Le Claire,Skylar,SQ-20029,Aiden Hoffman,19.00,,3.00,0.00,,22.00,Visa,Paid
+SQT-700095,SQA-500431,7/31/2025,12:15 PM,Moline,Jen,SQ-20147,Spencer Anderson,19.00,,0.00,0.00,,19.00,Cash,Paid
+SQT-700096,SQA-500426,7/31/2025,12:55 PM,Utica,Lindsay,SQ-20146,Ethan Yoder,23.00,,3.00,0.00,,26.00,Visa,Paid
+SQT-700097,SQA-500354,8/1/2025,11:50 AM,Silvis,Liv,SQ-20112,Brandon O'Brien,15.00,,4.00,0.00,(3.00),19.00,Amex,Paid
+SQT-700098,SQA-500269,8/1/2025,4:50 PM,Utica,Sarah,SQ-20088,Gabriel Thompson,20.00,,8.00,0.00,,28.00,Mastercard,Paid
+SQT-700099,SQA-500377,8/2/2025,1:40 PM,Utica,Em,SQ-20124,Trevor Lopez,23.00,,10.00,0.00,,33.00,Mastercard,Paid
+SQT-700100,SQA-500197,8/4/2025,12:25 PM,Utica,Lindsay,SQ-20067,Derek Schroeder,21.00,,0.00,0.00,,21.00,Gift Card,Paid
+SQT-700101,SQA-500573,8/6/2025,12:50 PM,Le Claire,Skylar,SQ-20191,Tyler Johnson,18.00,,0.00,0.00,,18.00,Cash,Paid
+SQT-700102,,8/6/2025,1:50 PM,Moline,Jilane,SQ-20032,Quinn Steiner,17.00,18.00,4.00,1.26,(3.00),40.26,Cash,Paid
+SQT-700103,SQA-500434,8/6/2025,4:25 PM,Coralville,Jessica,SQ-20148,Derek Dietrich,23.00,,5.00,0.00,,28.00,Gift Card,Paid
+SQT-700104,SQA-500387,8/7/2025,10:50 AM,Silvis,Amanda,SQ-20128,Mason Thompson,18.00,,10.00,0.00,,28.00,Amex,Paid
+SQT-700105,SQA-500404,8/7/2025,12:15 PM,Utica,Em,SQ-20137,Jordan Engel,37.00,,5.00,0.00,,42.00,Mastercard,Paid
+SQT-700106,SQA-500152,8/7/2025,12:40 PM,Silvis,Amanda,SQ-20049,Marcus Thompson,23.00,,0.00,0.00,,23.00,Cash,Paid
+SQT-700107,SQA-500294,8/7/2025,3:45 PM,Coralville,Delaney,SQ-20094,Kayla Christensen,19.00,28.00,0.00,1.96,,48.96,Cash,Paid
+SQT-700108,,8/8/2025,11:40 AM,Silvis,Abigail,SQ-20104,Nathan Bauer,23.00,,0.00,0.00,,23.00,Discover,Paid
+SQT-700109,SQA-500475,8/8/2025,2:45 PM,Silvis,Amanda,SQ-20161,Anthony Bianchi,26.00,,4.00,0.00,,30.00,Mastercard,Paid
+SQT-700110,SQA-500018,8/8/2025,4:50 PM,Le Claire,Skylar,SQ-20014,Corey Peterson,18.00,,8.00,0.00,,26.00,Amex,Paid
+SQT-700111,SQA-500308,8/11/2025,9:45 AM,Kimberly,Brittany,SQ-20098,Ethan Hartman,37.00,,4.00,0.00,,41.00,Amex,Paid
+SQT-700112,,8/13/2025,12:50 PM,Kimberly,Maddie,SQ-20189,Ryan Schultz,20.00,,5.00,0.00,,25.00,Cash,Paid
+SQT-700113,SQA-500370,8/13/2025,5:15 PM,Utica,Sarah,SQ-20121,Quinn Reyes,37.00,22.00,10.00,1.54,,70.54,Cash,Paid
+SQT-700114,SQA-500226,8/14/2025,2:20 PM,Coralville,Delaney,SQ-20076,Seth Schmidt,20.00,,0.00,0.00,,20.00,Gift Card,Paid
+SQT-700115,,8/15/2025,10:40 AM,Moline,Jilane,SQ-20073,Luis Brooks,19.00,,8.00,0.00,,27.00,Visa,Paid
+SQT-700116,SQA-500358,8/16/2025,11:45 AM,Utica,Lindsay,SQ-20113,Lucas Ramirez,37.00,,6.00,0.00,,43.00,Visa,Paid
+SQT-700117,SQA-500451,8/16/2025,3:45 PM,Kimberly,Ali,SQ-20153,Christopher Duffy,37.00,,10.00,0.00,,47.00,Discover,Paid
+SQT-700118,,8/16/2025,3:45 PM,Coralville,Jessica,SQ-20187,Chris Miller,37.00,,5.00,0.00,,42.00,Gift Card,Paid
+SQT-700119,SQA-500297,8/18/2025,10:15 AM,Moline,Jen,SQ-20095,Aiden Jensen,22.00,,6.00,0.00,,28.00,Cash,Paid
+SQT-700120,SQA-500140,8/19/2025,10:45 AM,Rock Island,Garrett,SQ-20047,Derek Zimmerman,37.00,,5.00,0.00,,42.00,Cash,Paid
+SQT-700121,SQA-500210,8/20/2025,1:50 PM,Coralville,Jessica,SQ-20072,Ryan Keller,18.00,18.00,6.00,1.26,,43.26,Visa,Refunded
+SQT-700122,SQA-500107,8/21/2025,1:50 PM,Kimberly,Sammie,SQ-20038,Dominic Hoffman,18.00,,0.00,0.00,,18.00,Gift Card,Paid
+SQT-700123,SQA-500374,8/22/2025,4:10 PM,Le Claire,Audra,SQ-20123,Eric Yoder,19.00,,8.00,0.00,,27.00,Gift Card,Paid
+SQT-700124,SQA-500059,8/23/2025,10:20 AM,Le Claire,Audra,SQ-20023,Quinn Johnson,18.00,,8.00,0.00,,26.00,Cash,Paid
+SQT-700125,SQA-500238,8/25/2025,10:20 AM,Utica,Lindsay,SQ-20082,Dominic Gonzalez,42.00,,10.00,0.00,,52.00,Amex,Paid
+SQT-700126,,8/27/2025,9:15 AM,Rock Island,Mercedez,SQ-20102,Xavier Johnson,19.00,22.00,3.00,1.54,,45.54,Visa,Paid
+SQT-700127,SQA-500276,8/27/2025,12:50 PM,Rock Island,Taylor A,SQ-20089,Jared Anderson,18.00,18.00,10.00,1.26,,47.26,Mastercard,Paid
+SQT-700128,SQA-500172,8/29/2025,11:15 AM,Silvis,Amanda,SQ-20056,Sean Wagner,37.00,,8.00,0.00,,45.00,Mastercard,Paid
+SQT-700129,,8/29/2025,4:10 PM,Kimberly,Brittany,SQ-20053,Cameron Weber,19.00,,5.00,0.00,,24.00,Gift Card,Paid
+SQT-700130,,9/2/2025,12:50 PM,Kimberly,Ali,SQ-20036,Dylan Brooks,42.00,,6.00,0.00,,48.00,Visa,Paid
+SQT-700131,SQA-500246,9/4/2025,10:10 AM,Kimberly,Beth,SQ-20083,Jordan Lopez,23.00,,5.00,0.00,,28.00,Cash,Paid
+SQT-700132,SQA-500222,9/4/2025,2:20 PM,Coralville,Makenna,SQ-20074,Blake Vogel,20.00,,10.00,0.00,,30.00,Mastercard,Paid
+SQT-700133,SQA-500200,9/13/2025,4:20 PM,Utica,Lindsay,SQ-20067,Derek Schroeder,18.00,,8.00,0.00,,26.00,Amex,Paid
+SQT-700134,SQA-500583,9/15/2025,3:55 PM,Kimberly,Brittany,SQ-20002,Nora Christensen,23.00,,0.00,0.00,,23.00,Visa,Paid
+SQT-700135,SQA-500574,9/17/2025,12:20 PM,Utica,Sarah,SQ-20192,Tyler Johnson,18.00,,4.00,0.00,,22.00,Cash,Paid
+SQT-700136,SQA-500050,9/18/2025,10:15 AM,Utica,Lindsay,SQ-20021,Dominic Zimmerman,19.00,,5.00,0.00,,24.00,Visa,Paid
+SQT-700137,SQA-500556,9/18/2025,11:20 AM,Rock Island,Taylor A,SQ-20188,Chris Miller,20.00,,4.00,0.00,,24.00,Discover,Paid
+SQT-700138,SQA-500362,9/19/2025,9:40 AM,Moline,Sara,SQ-20116,Noah Ramirez,19.00,,5.00,0.00,,24.00,Cash,Paid
+SQT-700139,SQA-500256,9/22/2025,3:15 PM,Moline,Mackenzie,SQ-20086,Luis Thompson,23.00,,5.00,0.00,(3.00),28.00,Cash,Refunded
+SQT-700140,,9/23/2025,2:45 PM,Kimberly,Beth,SQ-20083,Jordan Lopez,19.00,,5.00,0.00,,24.00,Cash,Paid
+SQT-700141,SQA-500283,9/23/2025,2:50 PM,Rock Island,Mercedez,SQ-20092,Cameron Becker,15.00,,0.00,0.00,(3.00),15.00,Cash,Paid
+SQT-700142,SQA-500108,9/24/2025,4:15 PM,Kimberly,Brittany,SQ-20038,Dominic Hoffman,19.00,,4.00,0.00,,23.00,Cash,Paid
+SQT-700143,SQA-500274,9/25/2025,9:45 AM,Rock Island,Taylor A,SQ-20089,Jared Anderson,37.00,18.00,5.00,1.26,,61.26,Cash,Paid
+SQT-700144,SQA-500527,9/25/2025,2:50 PM,Rock Island,Garrett,SQ-20180,Owen Lindgren,20.00,,3.00,0.00,,23.00,Mastercard,Paid
+SQT-700145,,9/26/2025,3:40 PM,Utica,Lindsay,SQ-20093,Cody Christensen,23.00,,3.00,0.00,,26.00,Mastercard,Paid
+SQT-700146,SQA-500155,9/27/2025,11:40 AM,Le Claire,Audra,SQ-20050,Landon O'Brien,23.00,,5.00,0.00,,28.00,Visa,Paid
+SQT-700147,,9/29/2025,9:50 AM,Utica,Lindsay,SQ-20146,Ethan Yoder,20.00,,6.00,0.00,,26.00,Amex,Paid
+SQT-700148,SQA-500021,9/29/2025,12:50 PM,Rock Island,Taylor B,SQ-20015,Grant Larson,18.00,22.00,0.00,1.54,,41.54,Discover,Paid
+SQT-700149,SQA-500353,9/30/2025,1:55 PM,Kimberly,Beth,SQ-20110,Tyler Dietrich,23.00,,0.00,0.00,,23.00,Mastercard,Paid
+SQT-700150,SQA-500539,10/1/2025,11:40 AM,Kimberly,Brittany,SQ-20184,Eli Pham,16.00,,4.00,0.00,(3.00),20.00,Mastercard,Paid
+SQT-700151,SQA-500047,10/1/2025,3:20 PM,Utica,Sarah,SQ-20020,Jason Becker,17.00,,8.00,0.00,(3.00),25.00,Cash,Paid
+SQT-700152,,10/2/2025,10:50 AM,Le Claire,Audra,SQ-20058,Adam Carlson,18.00,,5.00,0.00,,23.00,Amex,Paid
+SQT-700153,SQA-500086,10/3/2025,9:45 AM,Moline,Destiny,SQ-20032,Quinn Steiner,19.00,,8.00,0.00,,27.00,Gift Card,Paid
+SQT-700154,SQA-500020,10/4/2025,11:10 AM,Rock Island,Taylor B,SQ-20015,Grant Larson,19.00,,6.00,0.00,,25.00,Cash,Paid
+SQT-700155,SQA-500206,10/7/2025,12:45 PM,Utica,Lindsay,SQ-20070,Ian Gonzalez,19.00,,5.00,0.00,,24.00,Cash,Paid
+SQT-700156,SQA-500248,10/7/2025,1:20 PM,Kimberly,Beth,SQ-20083,Jordan Lopez,20.00,,8.00,0.00,,28.00,Gift Card,Paid
+SQT-700157,SQA-500405,10/9/2025,10:50 AM,Kimberly,Olivia A,SQ-20138,Grant Yoder,18.00,,4.00,0.00,,22.00,Discover,Paid
+SQT-700158,SQA-500457,10/9/2025,2:15 PM,Rock Island,Taylor B,SQ-20154,Chris Duffy,28.00,,0.00,0.00,,28.00,Mastercard,Paid
+SQT-700159,SQA-500394,10/9/2025,2:20 PM,Le Claire,Audra,SQ-20129,Parker Walsh,18.00,,5.00,0.00,,23.00,Mastercard,Paid
+SQT-700160,SQA-500314,10/9/2025,2:50 PM,Kimberly,Ali,SQ-20100,Ethan Johnson,18.00,,10.00,0.00,,28.00,Mastercard,Paid
+SQT-700161,SQA-500579,10/9/2025,3:15 PM,Moline,Jilane,SQ-20194,Hector Salinas,19.00,,5.00,0.00,,24.00,Amex,Paid
+SQT-700162,SQA-500388,10/9/2025,4:55 PM,Silvis,Amanda,SQ-20128,Mason Thompson,21.00,,0.00,0.00,,21.00,Cash,Paid
+SQT-700163,SQA-500448,10/10/2025,12:40 PM,Moline,Jen,SQ-20152,Michael,19.00,,5.00,0.00,,24.00,Mastercard,Paid
+SQT-700164,SQA-500385,10/10/2025,1:50 PM,Rock Island,Taylor A,SQ-20127,Xavier Fischer,15.00,18.00,0.00,1.26,(3.00),34.26,Mastercard,Refunded
+SQT-700165,SQA-500584,10/14/2025,2:15 PM,Moline,Destiny,SQ-20003,Grant Zimmerman,19.00,,8.00,0.00,,27.00,Cash,Paid
+SQT-700166,SQA-500298,10/15/2025,3:55 PM,Moline,Jilane,SQ-20095,Aiden Jensen,23.00,,6.00,0.00,,29.00,Gift Card,Paid
+SQT-700167,SQA-500501,10/16/2025,12:50 PM,Kimberly,Maddie,SQ-20167,Matthew Sorensen,24.00,,10.00,0.00,,34.00,Cash,Paid
+SQT-700168,SQA-500101,10/16/2025,3:15 PM,Kimberly,Ali,SQ-20036,Dylan Brooks,37.00,,5.00,0.00,,42.00,Amex,Paid
+SQT-700169,SQA-500550,10/22/2025,2:20 PM,Coralville,Jessica,SQ-20187,Chris Miller,18.00,,5.00,0.00,,23.00,Mastercard,Paid
+SQT-700170,SQA-500123,10/25/2025,1:15 PM,Silvis,Abigail,SQ-20042,Carlos Weber,19.00,,0.00,0.00,,19.00,Cash,Paid
+SQT-700171,,10/28/2025,12:20 PM,Coralville,Makenna,SQ-20160,Joseph,18.00,,8.00,0.00,,26.00,Visa,Paid
+SQT-700172,SQA-500435,10/28/2025,1:45 PM,Coralville,Makenna,SQ-20148,Derek Dietrich,37.00,28.00,5.00,1.96,,71.96,Discover,Paid
+SQT-700173,SQA-500126,10/29/2025,4:20 PM,Moline,Mackenzie,SQ-20044,Austin Gonzalez,20.00,,8.00,0.00,,28.00,Gift Card,Paid
+SQT-700174,SQA-500241,11/3/2025,2:50 PM,Utica,Lindsay,SQ-20082,Dominic Gonzalez,18.00,,10.00,0.00,,28.00,Gift Card,Paid
+SQT-700175,,11/4/2025,4:20 PM,Coralville,Makenna,SQ-20151,Michael Hansen,40.00,,8.00,0.00,,48.00,Cash,Paid
+SQT-700176,SQA-500547,11/5/2025,12:10 PM,Moline,Jen,SQ-20186,Landon Sisk,19.00,,0.00,0.00,,19.00,Gift Card,Paid
+SQT-700177,SQA-500254,11/6/2025,11:10 AM,Le Claire,Skylar,SQ-20085,Victor O'Brien,19.00,,0.00,0.00,,19.00,Amex,Paid
+SQT-700178,SQA-500293,11/6/2025,11:10 AM,Coralville,Makenna,SQ-20094,Kayla Christensen,19.00,,4.00,0.00,,23.00,Cash,Paid
+SQT-700179,SQA-500043,11/6/2025,1:45 PM,Kimberly,Maddie,SQ-20019,Isaac Nguyen,19.00,,3.00,0.00,,22.00,Mastercard,Paid
+SQT-700180,,11/6/2025,3:45 PM,Moline,Jilane,SQ-20152,Michael,37.00,,10.00,0.00,,47.00,Amex,Paid
+SQT-700181,SQA-500343,11/7/2025,10:20 AM,Utica,Kate,SQ-20108,Nathan Vogel,22.00,,5.00,0.00,,27.00,Amex,Paid
+SQT-700182,SQA-500127,11/8/2025,1:45 PM,Moline,Jilane,SQ-20044,Austin Gonzalez,19.00,,0.00,0.00,,19.00,Mastercard,Paid
+SQT-700183,SQA-500261,11/12/2025,10:45 AM,Le Claire,Audra,SQ-20087,Eli Wagner,26.00,,0.00,0.00,,26.00,Gift Card,Paid
+SQT-700184,SQA-500397,11/14/2025,2:50 PM,Coralville,Makenna,SQ-20132,Aiden Meyer,20.00,,5.00,0.00,,25.00,Mastercard,Paid
+SQT-700185,,11/15/2025,9:45 AM,Moline,Jilane,SQ-20060,Lucas Vogel,19.00,,8.00,0.00,,27.00,Visa,Paid
+SQT-700186,SQA-500334,11/15/2025,2:50 PM,Silvis,Liv,SQ-20104,Nathan Bauer,18.00,,8.00,0.00,,26.00,Visa,Paid
+SQT-700187,SQA-500131,11/15/2025,3:20 PM,Utica,Lindsay,SQ-20045,Wesley Hartman,18.00,,3.00,0.00,,21.00,Cash,Paid
+SQT-700188,,11/17/2025,9:50 AM,Coralville,Makenna,SQ-20008,Nathan Ramirez,19.00,,5.00,0.00,(3.00),24.00,Cash,Paid
+SQT-700189,SQA-500318,11/19/2025,11:10 AM,Kimberly,Ali,SQ-20100,Ethan Johnson,19.00,,8.00,0.00,,27.00,Visa,Paid
+SQT-700190,SQA-500301,11/19/2025,11:40 AM,Moline,Jilane,SQ-20095,Aiden Jensen,19.00,,5.00,0.00,,24.00,Cash,Paid
+SQT-700191,SQA-500054,11/19/2025,4:50 PM,Kimberly,Ali,SQ-20022,Eli Gonzalez,18.00,22.00,0.00,1.54,,41.54,Discover,Paid
+SQT-700192,SQA-500450,11/20/2025,1:45 PM,Kimberly,Maddie,SQ-20153,Christopher Duffy,24.00,,0.00,0.00,,24.00,Amex,Paid
+SQT-700193,SQA-500026,11/21/2025,2:20 PM,Silvis,Abigail,SQ-20016,Derek Reyes,18.00,,5.00,0.00,,23.00,Mastercard,Paid
+SQT-700194,SQA-500407,11/25/2025,1:20 PM,Utica,Sarah,SQ-20139,Victor Vogel,17.00,,6.00,0.00,(3.00),23.00,Amex,Paid
+SQT-700195,SQA-500035,11/26/2025,1:20 PM,Coralville,Jessica,SQ-20017,Landon Yoder,40.00,,4.00,0.00,,44.00,Visa,Paid
+SQT-700196,SQA-500076,11/27/2025,9:50 AM,Coralville,Michelle,SQ-20030,Cody Keller,18.00,,0.00,0.00,,18.00,Visa,Paid
+SQT-700197,SQA-500252,11/29/2025,11:50 AM,Le Claire,Skylar,SQ-20085,Victor O'Brien,20.00,28.00,0.00,1.96,,49.96,Visa,Paid
+SQT-700198,SQA-500014,11/29/2025,3:20 PM,Coralville,Michelle,SQ-20012,Corey Schroeder,20.00,,10.00,0.00,,30.00,Mastercard,Paid
+SQT-700199,SQA-500528,12/2/2025,11:40 AM,Rock Island,Garrett,SQ-20180,Owen Lindgren,19.00,,8.00,0.00,,27.00,Cash,Paid
+SQT-700200,SQA-500001,12/3/2025,11:40 AM,Le Claire,Skylar,SQ-20004,Brooke Christensen,23.00,,5.00,0.00,,28.00,Amex,Refunded
+SQT-700201,SQA-500279,12/3/2025,3:40 PM,Coralville,Makenna,SQ-20090,Logan Olson,19.00,,8.00,0.00,,27.00,Mastercard,Paid
+SQT-700202,SQA-500063,12/3/2025,3:50 PM,Silvis,Liv,SQ-20026,Dylan Larson,20.00,,10.00,0.00,,30.00,Mastercard,Paid
+SQT-700203,SQA-500203,12/4/2025,10:25 AM,Rock Island,Taylor B,SQ-20068,Dominic Weber,25.00,,0.00,0.00,,25.00,Cash,Paid
+SQT-700204,SQA-500340,12/4/2025,1:20 PM,Kimberly,Olivia A,SQ-20106,Justin Wright,18.00,,6.00,0.00,,24.00,Mastercard,Paid
+SQT-700205,SQA-500459,12/4/2025,1:50 PM,Le Claire,Audra,SQ-20155,Alex Moreno,18.00,,10.00,0.00,,28.00,Cash,Paid
+SQT-700206,SQA-500515,12/5/2025,4:40 PM,Utica,Sarah,SQ-20172,Zachary Holm,19.00,,5.00,0.00,,24.00,Cash,Refunded
+SQT-700207,SQA-500469,12/8/2025,12:20 PM,Coralville,Jessica,SQ-20160,Joseph,20.00,,3.00,0.00,,23.00,Gift Card,Paid
+SQT-700208,SQA-500342,12/10/2025,1:20 PM,Kimberly,Beth,SQ-20106,Justin Wright,42.00,,5.00,0.00,,47.00,Cash,Paid
+SQT-700209,SQA-500278,12/10/2025,1:20 PM,Coralville,Makenna,SQ-20090,Logan Olson,17.00,,8.00,0.00,(3.00),25.00,Mastercard,Refunded
+SQT-700210,SQA-500025,12/11/2025,9:50 AM,Rock Island,Taylor B,SQ-20015,Grant Larson,18.00,,0.00,0.00,,18.00,Amex,Paid
+SQT-700211,SQA-500232,12/11/2025,11:55 AM,Rock Island,Taylor B,SQ-20080,Ethan Van Dyke,23.00,,10.00,0.00,,33.00,Amex,Paid
+SQT-700212,SQA-500532,12/16/2025,1:40 PM,Utica,Kate,SQ-20181,Brooke Kerr,23.00,,6.00,0.00,,29.00,Amex,Paid
+SQT-700213,SQA-500181,12/17/2025,5:10 PM,Moline,Jilane,SQ-20060,Lucas Vogel,19.00,,10.00,0.00,,29.00,Cash,Paid
+SQT-700214,SQA-500422,12/25/2025,11:55 AM,Rock Island,Mercedez,SQ-20145,Andre Christensen,21.00,,10.00,0.00,,31.00,Discover,Paid
+SQT-700215,SQA-500073,12/25/2025,5:10 PM,Coralville,Michelle,SQ-20030,Cody Keller,19.00,,10.00,0.00,,29.00,Gift Card,Paid
+SQT-700216,SQA-500403,12/27/2025,10:15 AM,Utica,Em,SQ-20137,Jordan Engel,37.00,,10.00,0.00,,47.00,Cash,Paid
+SQT-700217,SQA-500311,12/30/2025,10:10 AM,Kimberly,Olivia A,SQ-20098,Ethan Hartman,19.00,,3.00,0.00,,22.00,Cash,Paid
+SQT-700218,SQA-500040,12/31/2025,11:50 AM,Kimberly,Olivia A,SQ-20019,Isaac Nguyen,40.00,,4.00,0.00,,44.00,Discover,Paid
+SQT-700219,,1/1/2026,10:50 AM,Kimberly,Sammie,SQ-20162,Tony Bianchi,20.00,18.00,8.00,1.26,,47.26,Amex,Paid
+SQT-700220,SQA-500518,1/1/2026,11:10 AM,Coralville,Delaney,SQ-20174,Ben Achebe,19.00,22.00,3.00,1.54,,45.54,Mastercard,Paid
+SQT-700221,SQA-500401,1/1/2026,1:40 PM,Utica,Em,SQ-20137,Jordan Engel,23.00,,10.00,0.00,,33.00,Mastercard,Paid
+SQT-700222,,1/2/2026,4:40 PM,Coralville,Michelle,SQ-20030,Cody Keller,23.00,18.00,8.00,1.26,,50.26,Cash,Paid
+SQT-700223,SQA-500506,1/3/2026,11:20 AM,Rock Island,Taylor A,SQ-20168,Matthew,18.00,,5.00,0.00,,23.00,Discover,Paid
+SQT-700224,SQA-500393,1/3/2026,3:10 PM,Le Claire,Audra,SQ-20129,Parker Walsh,19.00,,10.00,0.00,,29.00,Visa,Paid
+SQT-700225,SQA-500053,1/6/2026,11:20 AM,Kimberly,Maddie,SQ-20022,Eli Gonzalez,20.00,28.00,0.00,1.96,,49.96,Mastercard,Paid
+SQT-700226,SQA-500521,1/7/2026,3:20 PM,Le Claire,Skylar,SQ-20177,Marcus Freeman,40.00,,5.00,0.00,,45.00,Gift Card,Paid
+SQT-700227,SQA-500085,1/10/2026,2:25 PM,Moline,Jilane,SQ-20032,Quinn Steiner,21.00,,5.00,0.00,,26.00,Discover,Paid
+SQT-700228,SQA-500363,1/10/2026,3:45 PM,Le Claire,Audra,SQ-20117,Noah Yoder,26.00,,0.00,0.00,,26.00,Mastercard,Paid
+SQT-700229,,1/12/2026,12:50 PM,Rock Island,Mercedez,SQ-20173,Benjamin Achebe,22.00,,0.00,0.00,,22.00,Amex,Paid
+SQT-700230,SQA-500369,1/12/2026,4:40 PM,Coralville,Makenna,SQ-20119,Brian Schroeder,19.00,,5.00,0.00,,24.00,Mastercard,Paid
+SQT-700231,SQA-500201,1/14/2026,2:45 PM,Utica,Lindsay,SQ-20067,Derek Schroeder,26.00,,3.00,0.00,,29.00,Mastercard,Paid
+SQT-700232,SQA-500624,1/14/2026,4:10 PM,Silvis,Amanda,,Jake,23.00,,6.00,0.00,,29.00,Discover,Paid
+SQT-700233,SQA-500169,1/17/2026,3:25 PM,Coralville,Jessica,SQ-20055,Nora Reyes,23.00,,3.00,0.00,,26.00,Visa,Paid
+SQT-700234,,1/19/2026,10:15 AM,Utica,Sarah,SQ-20088,Gabriel Thompson,37.00,,4.00,0.00,,41.00,Cash,Paid
+SQT-700235,SQA-500167,1/19/2026,4:40 PM,Utica,Em,SQ-20054,Hunter Hoffman,19.00,22.00,0.00,1.54,,42.54,Cash,Paid
+SQT-700236,,1/23/2026,4:40 PM,Moline,Jilane,SQ-20031,Mason O'Brien,19.00,,3.00,0.00,,22.00,Mastercard,Paid
+SQT-700237,SQA-500554,1/27/2026,11:50 AM,Coralville,Jessica,SQ-20187,Chris Miller,18.00,,0.00,0.00,,18.00,Mastercard,Paid
+SQT-700238,SQA-500315,1/27/2026,4:20 PM,Kimberly,Maddie,SQ-20100,Ethan Johnson,18.00,,0.00,0.00,,18.00,Visa,Paid
+SQT-700239,SQA-500144,1/28/2026,10:20 AM,Kimberly,Maddie,SQ-20048,Brandon De La Cruz,18.00,,6.00,0.00,,24.00,Mastercard,Paid
+SQT-700240,SQA-500454,1/28/2026,11:20 AM,Rock Island,Taylor B,SQ-20154,Chris Duffy,18.00,,10.00,0.00,,28.00,Gift Card,Paid
+SQT-700241,,1/29/2026,11:10 AM,Moline,Jen,SQ-20185,Kayla Sisk,23.00,,6.00,0.00,,29.00,Cash,Paid
+SQT-700242,SQA-500178,1/29/2026,1:55 PM,Rock Island,Garrett,SQ-20059,Corey Bauer,21.00,,8.00,0.00,,29.00,Gift Card,Paid
+SQT-700243,SQA-500418,1/30/2026,3:10 PM,Utica,Lindsay,SQ-20144,Aiden Steiner,19.00,,0.00,0.00,,19.00,Cash,Paid
+SQT-700244,SQA-500626,1/31/2026,2:20 PM,Kimberly,Sammie,,Coach,18.00,,5.00,0.00,,23.00,Mastercard,Paid
+SQT-700245,SQA-500234,2/2/2026,12:20 PM,Rock Island,Garrett,SQ-20080,Ethan Van Dyke,20.00,,4.00,0.00,,24.00,Visa,Paid
+SQT-700246,SQA-500326,2/2/2026,2:20 PM,Rock Island,Taylor A,SQ-20102,Xavier Johnson,18.00,,6.00,0.00,,24.00,Gift Card,Paid
+SQT-700247,,2/3/2026,4:15 PM,Kimberly,Maddie,SQ-20143,Ryan Carlson,28.00,22.00,0.00,1.54,,51.54,Amex,Paid
+SQT-700248,SQA-500458,2/3/2026,4:15 PM,Le Claire,Audra,SQ-20155,Alex Moreno,19.00,,0.00,0.00,,19.00,Gift Card,Paid
+SQT-700249,,2/4/2026,1:15 PM,Coralville,Delaney,SQ-20148,Derek Dietrich,37.00,,4.00,0.00,,41.00,Gift Card,Paid
+SQT-700250,SQA-500075,2/4/2026,2:20 PM,Coralville,Michelle,SQ-20030,Cody Keller,15.00,,5.00,0.00,(3.00),20.00,Cash,Paid
+SQT-700251,,2/4/2026,3:10 PM,Rock Island,Mercedez,SQ-20080,Ethan Van Dyke,23.00,,10.00,0.00,,33.00,Cash,Paid
+SQT-700252,,2/4/2026,3:50 PM,Moline,Mackenzie,SQ-20086,Luis Thompson,42.00,,5.00,0.00,,47.00,Discover,Paid
+SQT-700253,SQA-500061,2/6/2026,3:15 PM,Le Claire,Audra,SQ-20024,Dylan Becker,37.00,,0.00,0.00,,37.00,Gift Card,Paid
+SQT-700254,SQA-500154,2/6/2026,4:25 PM,Le Claire,Skylar,SQ-20050,Landon O'Brien,21.00,,4.00,0.00,,25.00,Cash,Paid
+SQT-700255,,2/7/2026,11:15 AM,Kimberly,Maddie,SQ-20019,Isaac Nguyen,37.00,,0.00,0.00,,37.00,Cash,Paid
+SQT-700256,SQA-500030,2/7/2026,11:50 AM,Silvis,Abigail,SQ-20016,Derek Reyes,18.00,,5.00,0.00,,23.00,Cash,Paid
+SQT-700257,SQA-500366,2/9/2026,9:50 AM,Coralville,Delaney,SQ-20118,Cody Reyes,18.00,,5.00,0.00,,23.00,Cash,Paid
+SQT-700258,SQA-500188,2/9/2026,12:15 PM,Silvis,Amanda,SQ-20065,Aiden Garcia,22.00,,6.00,0.00,,28.00,Discover,Paid
+SQT-700259,SQA-500196,2/10/2026,3:10 PM,Moline,Jilane,SQ-20066,Marcus Schroeder,23.00,,3.00,0.00,,26.00,Cash,Paid
+SQT-700260,SQA-500398,2/11/2026,1:45 PM,Utica,Sarah,SQ-20136,Aaron Yoder,37.00,18.00,5.00,1.26,,61.26,Discover,Paid
+SQT-700261,SQA-500253,2/12/2026,12:10 PM,Le Claire,Audra,SQ-20085,Victor O'Brien,19.00,,5.00,0.00,,24.00,Amex,Paid
+SQT-700262,SQA-500224,2/12/2026,4:20 PM,Coralville,Delaney,SQ-20076,Seth Schmidt,20.00,,10.00,0.00,,30.00,Mastercard,Paid
+SQT-700263,SQA-500319,2/13/2026,11:40 AM,Silvis,Abigail,SQ-20101,Brooke Johnson,19.00,,3.00,0.00,,22.00,Cash,Paid
+SQT-700264,SQA-500296,2/14/2026,9:15 AM,Moline,Jen,SQ-20095,Aiden Jensen,19.00,,4.00,0.00,,23.00,Cash,Paid
+SQT-700265,SQA-500557,2/14/2026,11:50 AM,Rock Island,Taylor A,SQ-20188,Chris Miller,18.00,,10.00,0.00,,28.00,Discover,Paid
+SQT-700266,SQA-500124,2/16/2026,3:45 PM,Moline,Mackenzie,SQ-20044,Austin Gonzalez,37.00,22.00,0.00,1.54,,60.54,Cash,Paid
+SQT-700267,,2/16/2026,3:20 PM,Rock Island,Taylor B,SQ-20154,Chris Duffy,20.00,28.00,8.00,1.96,,57.96,Visa,Paid
+SQT-700268,SQA-500537,2/17/2026,2:40 PM,Utica,Em,SQ-20182,Mason Kerr,19.00,,5.00,0.00,,24.00,Mastercard,Paid
+SQT-700269,SQA-500023,2/18/2026,10:50 AM,Rock Island,Taylor B,SQ-20015,Grant Larson,18.00,,0.00,0.00,,18.00,Gift Card,Paid
+SQT-700270,,2/20/2026,9:20 AM,Rock Island,Taylor B,SQ-20127,Xavier Fischer,18.00,,5.00,0.00,,23.00,Visa,Paid
+SQT-700271,SQA-500461,2/20/2026,9:45 AM,Moline,Mackenzie,SQ-20157,William Kowalczyk,34.00,,0.00,0.00,(3.00),34.00,Amex,Paid
+SQT-700272,SQA-500229,2/23/2026,9:55 AM,Moline,Destiny,SQ-20078,Grant Carlson,21.00,,3.00,0.00,,24.00,Discover,Paid
+SQT-700273,,2/23/2026,1:10 PM,Utica,Em,SQ-20045,Wesley Hartman,19.00,18.00,3.00,1.26,,41.26,Cash,Paid
+SQT-700274,SQA-500300,2/23/2026,2:45 PM,Moline,Jilane,SQ-20095,Aiden Jensen,37.00,,5.00,0.00,,42.00,Amex,Paid
+SQT-700275,SQA-500106,2/26/2026,2:25 PM,Kimberly,Maddie,SQ-20038,Dominic Hoffman,23.00,,4.00,0.00,,27.00,Visa,Paid
+SQT-700276,,2/27/2026,11:15 AM,Moline,Jilane,SQ-20194,Hector Salinas,37.00,,3.00,0.00,,40.00,Cash,Paid
+SQT-700277,SQA-500415,3/3/2026,11:20 AM,Kimberly,Maddie,SQ-20143,Ryan Carlson,18.00,,6.00,0.00,,24.00,Gift Card,Paid
+SQT-700278,,3/3/2026,3:50 PM,Rock Island,Mercedez,SQ-20047,Derek Zimmerman,18.00,,8.00,0.00,,26.00,Cash,Paid
+SQT-700279,SQA-500042,3/4/2026,1:50 PM,Kimberly,Maddie,SQ-20019,Isaac Nguyen,18.00,,5.00,0.00,,23.00,Visa,Paid
+SQT-700280,,3/4/2026,4:20 PM,Utica,Sarah,SQ-20020,Jason Becker,18.00,,8.00,0.00,,26.00,Discover,Paid
+SQT-700281,SQA-500016,3/5/2026,4:15 PM,Coralville,Jessica,SQ-20012,Corey Schroeder,37.00,,0.00,0.00,,37.00,Cash,Paid
+SQT-700282,SQA-500481,3/6/2026,1:55 PM,Kimberly,Sammie,SQ-20162,Tony Bianchi,23.00,,6.00,0.00,,29.00,Visa,Paid
+SQT-700283,SQA-500421,3/7/2026,1:50 PM,Rock Island,Garrett,SQ-20145,Andre Christensen,15.00,,6.00,0.00,(3.00),21.00,Gift Card,Paid
+SQT-700284,,3/7/2026,4:45 PM,Kimberly,Olivia A,SQ-20098,Ethan Hartman,19.00,,5.00,0.00,,24.00,Gift Card,Paid
+SQT-700285,SQA-500540,3/9/2026,11:25 AM,Kimberly,Beth,SQ-20184,Eli Pham,20.00,,4.00,0.00,(3.00),24.00,Cash,Paid
+SQT-700286,,3/9/2026,3:20 PM,Silvis,Liv,SQ-20128,Mason Thompson,20.00,,3.00,0.00,,23.00,Cash,Paid
+SQT-700287,SQA-500199,3/10/2026,4:15 PM,Utica,Kate,SQ-20067,Derek Schroeder,37.00,28.00,5.00,1.96,,71.96,Cash,Paid
+SQT-700288,SQA-500227,3/13/2026,10:40 AM,Coralville,Delaney,SQ-20076,Seth Schmidt,23.00,,5.00,0.00,,28.00,Cash,Paid
+SQT-700289,SQA-500259,3/13/2026,10:45 AM,Moline,Jen,SQ-20086,Luis Thompson,19.00,,4.00,0.00,,23.00,Mastercard,Paid
+SQT-700290,SQA-500109,3/14/2026,1:40 PM,Kimberly,Olivia A,SQ-20038,Dominic Hoffman,23.00,,6.00,0.00,,29.00,Gift Card,Refunded
+SQT-700291,SQA-500523,3/17/2026,2:50 PM,Le Claire,Skylar,SQ-20177,Marcus Freeman,18.00,,0.00,0.00,,18.00,Gift Card,Paid
+SQT-700292,SQA-500090,3/19/2026,12:45 PM,Utica,Kate,SQ-20033,Hunter Johnson,19.00,22.00,3.00,1.54,,45.54,Discover,Paid
+SQT-700293,SQA-500341,3/19/2026,3:25 PM,Kimberly,Ali,SQ-20106,Justin Wright,23.00,,5.00,0.00,,28.00,Visa,Paid
+SQT-700294,SQA-500149,3/19/2026,5:10 PM,Silvis,Amanda,SQ-20049,Marcus Thompson,23.00,,5.00,0.00,,28.00,Cash,Paid
+SQT-700295,SQA-500033,3/23/2026,3:25 PM,Coralville,Makenna,SQ-20017,Landon Yoder,21.00,,5.00,0.00,,26.00,Cash,Paid
+SQT-700296,SQA-500306,3/26/2026,1:40 PM,Utica,Em,SQ-20097,Victor Klein,23.00,,8.00,0.00,,31.00,Amex,Paid
+SQT-700297,SQA-500413,3/26/2026,4:40 PM,Kimberly,Olivia A,SQ-20143,Ryan Carlson,19.00,18.00,5.00,1.26,,43.26,Gift Card,Paid
+SQT-700298,,3/27/2026,11:50 AM,Utica,Em,SQ-20163,Dan Ostrowski,20.00,,8.00,0.00,,28.00,Amex,Paid
+SQT-700299,,3/28/2026,2:15 PM,Kimberly,Ali,SQ-20010,Andre Larson,19.00,,10.00,0.00,,29.00,Amex,Refunded
+SQT-700300,SQA-500618,4/1/2026,1:55 PM,Le Claire,Audra,,Walk In,23.00,28.00,6.00,1.96,,58.96,Amex,Paid
+SQT-700301,SQA-500175,4/1/2026,3:45 PM,Rock Island,Garrett,SQ-20059,Corey Bauer,37.00,18.00,0.00,1.26,,56.26,Visa,Paid
+SQT-700302,SQA-500543,4/2/2026,5:10 PM,Moline,Sara,SQ-20185,Kayla Sisk,23.00,22.00,5.00,1.54,,51.54,Visa,Refunded
+SQT-700303,SQA-500056,4/4/2026,10:20 AM,Le Claire,Audra,SQ-20023,Quinn Johnson,20.00,,0.00,0.00,,20.00,Cash,Paid
+SQT-700304,,4/8/2026,1:45 PM,Le Claire,Audra,SQ-20164,Daniel Ostrowski,37.00,,6.00,0.00,,43.00,Gift Card,Paid
+SQT-700305,SQA-500309,4/8/2026,3:10 PM,Kimberly,Sammie,SQ-20098,Ethan Hartman,23.00,,5.00,0.00,,28.00,Cash,Paid
+SQT-700306,SQA-500536,4/9/2026,4:15 PM,Utica,Em,SQ-20182,Mason Kerr,34.00,,4.00,0.00,(3.00),38.00,Cash,Paid
+SQT-700307,SQA-500408,4/10/2026,9:50 AM,Utica,Sarah,SQ-20139,Victor Vogel,18.00,,5.00,0.00,,23.00,Gift Card,Refunded
+SQT-700308,,4/10/2026,4:40 PM,Kimberly,Brittany,SQ-20162,Tony Bianchi,19.00,,4.00,0.00,,23.00,Visa,Paid
+SQT-700309,SQA-500621,4/11/2026,9:15 AM,Coralville,Jessica,,Walk In,19.00,,4.00,0.00,,23.00,Cash,Paid
+SQT-700310,SQA-500220,4/11/2026,1:15 PM,Coralville,Makenna,SQ-20074,Blake Vogel,37.00,,5.00,0.00,,42.00,Amex,Paid
+SQT-700311,SQA-500079,4/11/2026,4:40 PM,Moline,Sara,SQ-20031,Mason O'Brien,16.00,28.00,8.00,1.96,(3.00),53.96,Mastercard,Paid
+SQT-700312,SQA-500462,4/13/2026,1:50 PM,Moline,Jen,SQ-20157,William Kowalczyk,20.00,,10.00,0.00,,30.00,Cash,Paid
+SQT-700313,SQA-500561,4/14/2026,1:50 PM,Kimberly,Maddie,SQ-20189,Ryan Schultz,18.00,,0.00,0.00,,18.00,Gift Card,Paid
+SQT-700314,SQA-500499,4/15/2026,10:10 AM,Moline,Mackenzie,SQ-20166,Jake Lindqvist,19.00,,4.00,0.00,,23.00,Mastercard,Paid
+SQT-700315,SQA-500204,4/17/2026,10:15 AM,Rock Island,Taylor B,SQ-20068,Dominic Weber,37.00,22.00,10.00,1.54,,70.54,Amex,Paid
+SQT-700316,SQA-500066,4/17/2026,2:20 PM,Coralville,Delaney,SQ-20027,Mason Hartman,18.00,,0.00,0.00,,18.00,Gift Card,Paid
+SQT-700317,SQA-500563,4/20/2026,11:10 AM,Kimberly,Maddie,SQ-20189,Ryan Schultz,23.00,,10.00,0.00,,33.00,Amex,Paid
+SQT-700318,SQA-500268,4/20/2026,1:40 PM,Utica,Sarah,SQ-20088,Gabriel Thompson,23.00,,4.00,0.00,,27.00,Cash,Paid
+SQT-700319,,4/22/2026,10:20 AM,Le Claire,Skylar,SQ-20164,Daniel Ostrowski,18.00,,6.00,0.00,,24.00,Discover,Paid
+SQT-700320,SQA-500091,4/22/2026,2:40 PM,Silvis,Abigail,SQ-20034,Shane Lopez,19.00,,8.00,0.00,,27.00,Discover,Paid
+SQT-700321,SQA-500052,4/23/2026,9:50 AM,Utica,Lindsay,SQ-20021,Dominic Zimmerman,18.00,,6.00,0.00,,24.00,Amex,Paid
+SQT-700322,SQA-500395,4/23/2026,10:20 AM,Le Claire,Audra,SQ-20129,Parker Walsh,20.00,,3.00,0.00,,23.00,Amex,Paid
+SQT-700323,,4/23/2026,11:40 AM,Rock Island,Taylor A,SQ-20173,Benjamin Achebe,23.00,,5.00,0.00,,28.00,Amex,Paid
+SQT-700324,SQA-500157,4/24/2026,4:45 PM,Kimberly,Beth,SQ-20053,Cameron Weber,16.00,,3.00,0.00,(3.00),19.00,Discover,Paid
+SQT-700325,,4/25/2026,11:20 AM,Moline,Jilane,SQ-20032,Quinn Steiner,18.00,,5.00,0.00,,23.00,Visa,Paid
+SQT-700326,SQA-500288,4/27/2026,12:20 PM,Rock Island,Mercedez,SQ-20092,Cameron Becker,20.00,18.00,4.00,1.26,,43.26,Amex,Paid
+SQT-700327,SQA-500333,4/28/2026,9:25 AM,Silvis,Liv,SQ-20104,Nathan Bauer,21.00,,8.00,0.00,,29.00,Mastercard,Paid
+SQT-700328,SQA-500031,4/28/2026,4:50 PM,Silvis,Abigail,SQ-20016,Derek Reyes,40.00,,3.00,0.00,,43.00,Discover,Paid
+SQT-700329,,4/28/2026,4:15 PM,Coralville,Makenna,SQ-20151,Michael Hansen,19.00,28.00,5.00,1.96,,53.96,Cash,Paid
+SQT-700330,SQA-500544,4/28/2026,5:10 PM,Moline,Sara,SQ-20185,Kayla Sisk,20.00,,10.00,0.00,(3.00),30.00,Discover,Paid
+SQT-700331,SQA-500134,4/29/2026,1:10 PM,Utica,Lindsay,SQ-20045,Wesley Hartman,23.00,,8.00,0.00,,31.00,Discover,Paid
+SQT-700332,SQA-500472,4/29/2026,2:20 PM,Coralville,Makenna,SQ-20160,Joseph,18.00,,6.00,0.00,,24.00,Discover,Paid
+SQT-700333,,5/6/2026,11:20 AM,Kimberly,Maddie,SQ-20053,Cameron Weber,20.00,,6.00,0.00,,26.00,Cash,Paid
+SQT-700334,SQA-500049,5/6/2026,1:50 PM,Utica,Sarah,SQ-20020,Jason Becker,18.00,,3.00,0.00,,21.00,Discover,Paid
+SQT-700335,SQA-500045,5/7/2026,11:40 AM,Utica,Sarah,SQ-20020,Jason Becker,23.00,,6.00,0.00,,29.00,Amex,Paid
+SQT-700336,SQA-500010,5/7/2026,1:15 PM,Coralville,Makenna,SQ-20008,Nathan Ramirez,19.00,28.00,3.00,1.96,,51.96,Cash,Paid
+SQT-700337,SQA-500614,5/9/2026,1:20 PM,Rock Island,Garrett,,Walk In,20.00,,3.00,0.00,,23.00,Gift Card,Paid
+SQT-700338,,5/9/2026,5:10 PM,Utica,Lindsay,SQ-20113,Lucas Ramirez,23.00,,4.00,0.00,,27.00,Gift Card,Paid
+SQT-700339,SQA-500432,5/11/2026,2:10 PM,Coralville,Makenna,SQ-20148,Derek Dietrich,23.00,,4.00,0.00,,27.00,Visa,Paid
+SQT-700340,SQA-500141,5/12/2026,10:25 AM,Rock Island,Mercedez,SQ-20047,Derek Zimmerman,21.00,,0.00,0.00,,21.00,Cash,Paid
+SQT-700341,SQA-500571,5/12/2026,11:10 AM,Le Claire,Skylar,SQ-20191,Tyler Johnson,19.00,,5.00,0.00,,24.00,Discover,Paid
+SQT-700342,SQA-500165,5/12/2026,12:50 PM,Utica,Kate,SQ-20054,Hunter Hoffman,18.00,,5.00,0.00,,23.00,Mastercard,Paid
+SQT-700343,SQA-500103,5/13/2026,3:50 PM,Moline,Mackenzie,SQ-20037,Kevin Jensen,40.00,,6.00,0.00,,46.00,Cash,Paid
+SQT-700344,SQA-500623,5/15/2026,11:50 AM,Utica,Sarah,,Walk In,18.00,,8.00,0.00,,26.00,Discover,Paid
+SQT-700345,SQA-500344,5/19/2026,12:20 PM,Utica,Kate,SQ-20108,Nathan Vogel,20.00,,5.00,0.00,,25.00,Visa,Paid
+SQT-700346,SQA-500558,5/19/2026,1:10 PM,Rock Island,Taylor A,SQ-20188,Chris Miller,23.00,,0.00,0.00,,23.00,Visa,Paid
+SQT-700347,SQA-500313,5/22/2026,2:50 PM,Kimberly,Olivia A,SQ-20098,Ethan Hartman,40.00,,5.00,0.00,,45.00,Discover,Paid
+SQT-700348,SQA-500419,5/22/2026,3:50 PM,Utica,Lindsay,SQ-20144,Aiden Steiner,18.00,,0.00,0.00,,18.00,Discover,Paid
+SQT-700349,SQA-500174,5/25/2026,1:10 PM,Rock Island,Garrett,SQ-20059,Corey Bauer,23.00,,5.00,0.00,,28.00,Cash,Paid
+SQT-700350,SQA-500115,5/27/2026,4:10 PM,Rock Island,Taylor B,SQ-20041,Noah Anderson,20.00,,0.00,0.00,(3.00),20.00,Discover,Paid
+SQT-700351,SQA-500119,5/29/2026,4:25 PM,Silvis,Abigail,SQ-20042,Carlos Weber,23.00,,0.00,0.00,,23.00,Amex,Paid
+SQT-700352,SQA-500379,6/1/2026,3:40 PM,Kimberly,Sammie,SQ-20125,Brian Klein,23.00,,4.00,0.00,,27.00,Amex,Paid
+SQT-700353,SQA-500093,6/3/2026,11:45 AM,Silvis,Abigail,SQ-20034,Shane Lopez,19.00,,5.00,0.00,,24.00,Mastercard,Paid
+SQT-700354,SQA-500572,6/3/2026,1:50 PM,Le Claire,Skylar,SQ-20191,Tyler Johnson,18.00,,6.00,0.00,,24.00,Amex,Paid
+SQT-700355,SQA-500519,6/4/2026,12:50 PM,Coralville,Michelle,SQ-20175,Kevin Brandt,18.00,,6.00,0.00,,24.00,Discover,Paid
+SQT-700356,,6/4/2026,2:25 PM,Coralville,Michelle,SQ-20012,Corey Schroeder,23.00,,10.00,0.00,,33.00,Mastercard,Paid
+SQT-700357,SQA-500356,6/5/2026,9:20 AM,Utica,Lindsay,SQ-20113,Lucas Ramirez,24.00,,10.00,0.00,,34.00,Mastercard,Paid
+SQT-700358,SQA-500396,6/5/2026,4:10 PM,Le Claire,Audra,SQ-20129,Parker Walsh,23.00,,8.00,0.00,,31.00,Gift Card,Paid
+SQT-700359,SQA-500231,6/6/2026,1:10 PM,Kimberly,Ali,SQ-20079,Aaron Vogel,23.00,,0.00,0.00,,23.00,Amex,Paid
+SQT-700360,SQA-500357,6/9/2026,11:15 AM,Utica,Lindsay,SQ-20113,Lucas Ramirez,19.00,,5.00,0.00,,24.00,Mastercard,Paid
+SQT-700361,SQA-500492,6/9/2026,11:20 AM,Le Claire,Audra,SQ-20164,Daniel Ostrowski,18.00,,4.00,0.00,,22.00,Visa,Paid
+SQT-700362,SQA-500207,6/9/2026,1:45 PM,Utica,Sarah,SQ-20071,Nathan Yoder,19.00,,0.00,0.00,,19.00,Gift Card,Paid
+SQT-700363,SQA-500620,6/9/2026,2:15 PM,Utica,Em,,Walk In,19.00,,10.00,0.00,,29.00,Cash,Paid
+SQT-700364,SQA-500221,6/10/2026,12:15 PM,Coralville,Delaney,SQ-20074,Blake Vogel,19.00,,4.00,0.00,,23.00,Mastercard,Paid
+SQT-700365,SQA-500338,6/17/2026,1:10 PM,Kimberly,Brittany,SQ-20106,Justin Wright,19.00,,0.00,0.00,,19.00,Gift Card,Paid
+SQT-700366,SQA-500266,6/17/2026,1:20 PM,Le Claire,Audra,SQ-20087,Eli Wagner,20.00,,0.00,0.00,,20.00,Visa,Paid
+SQT-700367,SQA-500512,6/17/2026,1:40 PM,Moline,Destiny,SQ-20171,Zach Holm,19.00,,3.00,0.00,,22.00,Discover,Paid
+SQT-700368,SQA-500243,6/17/2026,4:50 PM,Utica,Em,SQ-20082,Dominic Gonzalez,18.00,,5.00,0.00,,23.00,Cash,Paid
+SQT-700369,SQA-500427,6/18/2026,12:20 PM,Utica,Lindsay,SQ-20146,Ethan Yoder,15.00,,6.00,0.00,(3.00),21.00,Mastercard,Paid
+SQT-700370,SQA-500039,6/19/2026,12:15 PM,Kimberly,Maddie,SQ-20019,Isaac Nguyen,37.00,,5.00,0.00,,42.00,Cash,Paid
+SQT-700371,SQA-500183,6/19/2026,1:15 PM,Moline,Jilane,SQ-20060,Lucas Vogel,19.00,,0.00,0.00,,19.00,Mastercard,Paid
+SQT-700372,SQA-500612,6/20/2026,3:40 PM,Rock Island,Garrett,,Walk In,23.00,,8.00,0.00,,31.00,Visa,Paid
+SQT-700373,SQA-500428,6/22/2026,1:20 PM,Utica,Lindsay,SQ-20146,Ethan Yoder,18.00,,0.00,0.00,,18.00,Mastercard,Paid
+SQT-700374,SQA-500208,6/24/2026,4:10 PM,Utica,Sarah,SQ-20071,Nathan Yoder,19.00,,8.00,0.00,,27.00,Cash,Paid
+SQT-700375,SQA-500613,6/25/2026,9:45 AM,Rock Island,Mercedez,,Walk In,19.00,,5.00,0.00,,24.00,Cash,Paid
+SQT-700376,SQA-500455,6/25/2026,10:50 AM,Rock Island,Taylor B,SQ-20154,Chris Duffy,42.00,18.00,0.00,1.26,,61.26,Visa,Paid
+SQT-700377,,6/25/2026,4:40 PM,Moline,Jilane,SQ-20152,Michael,23.00,,6.00,0.00,,29.00,Cash,Paid
+SQT-700378,SQA-500128,6/26/2026,12:55 PM,Moline,Destiny,SQ-20044,Austin Gonzalez,21.00,,3.00,0.00,,24.00,Cash,Paid
+SQT-700379,SQA-500219,6/29/2026,12:40 PM,Coralville,Makenna,SQ-20074,Blake Vogel,16.00,,5.00,0.00,(3.00),21.00,Gift Card,Paid
+SQT-700380,,7/1/2026,3:20 PM,Le Claire,Skylar,SQ-20004,Brooke Christensen,18.00,,8.00,0.00,,26.00,Cash,Paid
+SQT-700381,,7/2/2026,10:20 AM,Rock Island,Garrett,SQ-20059,Corey Bauer,18.00,,0.00,0.00,,18.00,Cash,Paid
+SQT-700382,SQA-500125,7/2/2026,4:10 PM,Moline,Jilane,SQ-20044,Austin Gonzalez,16.00,,0.00,0.00,(3.00),16.00,Gift Card,Paid
+SQT-700383,SQA-500412,7/6/2026,12:15 PM,Kimberly,Maddie,SQ-20143,Ryan Carlson,26.00,,10.00,0.00,,36.00,Visa,Paid
+SQT-700384,SQA-500284,7/6/2026,4:50 PM,Rock Island,Mercedez,SQ-20092,Cameron Becker,18.00,,5.00,0.00,,23.00,Cash,Paid
+SQT-700385,,7/8/2026,9:45 AM,Le Claire,Audra,SQ-20164,Daniel Ostrowski,37.00,,10.00,0.00,,47.00,Amex,Paid
+SQT-700386,,7/8/2026,10:15 AM,Kimberly,Ali,SQ-20083,Jordan Lopez,19.00,28.00,8.00,1.96,,56.96,Discover,Paid
+SQT-700387,SQA-500317,7/9/2026,1:10 PM,Kimberly,Ali,SQ-20100,Ethan Johnson,23.00,,0.00,0.00,,23.00,Gift Card,Paid
+SQT-700388,SQA-500622,7/10/2026,11:50 AM,Le Claire,Skylar,,Walk In,17.00,,6.00,0.00,(3.00),23.00,Gift Card,Paid
+SQT-700389,SQA-500305,7/11/2026,11:45 AM,Utica,Sarah,SQ-20097,Victor Klein,37.00,,10.00,0.00,,47.00,Gift Card,Paid
+SQT-700390,SQA-500531,7/13/2026,11:50 AM,Utica,Lindsay,SQ-20181,Brooke Kerr,20.00,,5.00,0.00,,25.00,Gift Card,Paid
+SQT-700391,SQA-500007,7/14/2026,4:50 PM,Le Claire,Skylar,SQ-20007,Andre Vogel,20.00,,5.00,0.00,,25.00,Amex,Paid
+SQT-700392,SQA-500005,7/17/2026,9:40 AM,Le Claire,Audra,SQ-20007,Andre Vogel,20.00,,3.00,0.00,(3.00),23.00,Cash,Paid
+SQT-700393,,7/18/2026,10:25 AM,Moline,Jilane,SQ-20096,Shane Peterson,20.00,,10.00,0.00,(3.00),30.00,Cash,Paid
+SQT-700394,SQA-500549,7/18/2026,3:40 PM,Coralville,Jessica,SQ-20187,Chris Miller,19.00,22.00,0.00,1.54,,42.54,Cash,Paid
+SQT-700395,SQA-500473,7/21/2026,12:50 PM,Coralville,Makenna,SQ-20160,Joseph,18.00,18.00,5.00,1.26,,42.26,Cash,Paid
+SQT-700396,SQA-500569,7/23/2026,10:45 AM,Silvis,Amanda,SQ-20190,Ryan Schultz,19.00,,0.00,0.00,,19.00,Visa,Paid
+SQT-700397,SQA-500028,7/25/2026,9:50 AM,Silvis,Abigail,SQ-20016,Derek Reyes,18.00,,5.00,0.00,,23.00,Cash,Paid
+SQT-700398,,7/25/2026,3:40 PM,Utica,Sarah,SQ-20124,Trevor Lopez,19.00,,6.00,0.00,,25.00,Mastercard,Paid
+SQT-700399,SQA-500485,7/27/2026,2:50 PM,Utica,Kate,SQ-20163,Dan Ostrowski,17.00,,0.00,0.00,(3.00),17.00,Cash,Paid
+SQT-700400,SQA-500277,7/28/2026,10:50 AM,Rock Island,Taylor A,SQ-20089,Jared Anderson,18.00,,5.00,0.00,,23.00,Cash,Refunded
+SQT-700401,SQA-500265,7/29/2026,2:15 PM,Le Claire,Audra,SQ-20087,Eli Wagner,19.00,,4.00,0.00,,23.00,Amex,Paid
+SQT-700402,,7/30/2026,3:45 PM,Rock Island,Garrett,SQ-20168,Matthew,37.00,22.00,3.00,1.54,,63.54,Visa,Refunded
+SQT-700403,SQA-500285,8/1/2026,3:50 PM,Rock Island,Taylor A,SQ-20092,Cameron Becker,20.00,,8.00,0.00,,28.00,Amex,Paid
+SQT-700404,SQA-500291,8/3/2026,10:45 AM,Utica,Kate,SQ-20093,Cody Christensen,19.00,,6.00,0.00,,25.00,Visa,Paid
+SQT-700405,SQA-500417,8/4/2026,5:10 PM,Utica,Lindsay,SQ-20144,Aiden Steiner,19.00,,10.00,0.00,,29.00,Cash,Paid
+SQT-700406,,8/6/2026,3:50 PM,Rock Island,Taylor A,SQ-20089,Jared Anderson,18.00,,4.00,0.00,,22.00,Gift Card,Paid
+SQT-700407,SQA-500089,8/7/2026,11:15 AM,Utica,Sarah,SQ-20033,Hunter Johnson,26.00,,8.00,0.00,,34.00,Gift Card,Paid
+SQT-700408,SQA-500116,8/7/2026,11:50 AM,Rock Island,Taylor B,SQ-20041,Noah Anderson,40.00,,0.00,0.00,,40.00,Cash,Paid
+SQT-700409,SQA-500625,8/10/2026,12:40 PM,Utica,Sarah,,Big Mike,23.00,,8.00,0.00,,31.00,Amex,Paid
+SQT-700410,SQA-500503,8/11/2026,9:20 AM,Rock Island,Garrett,SQ-20168,Matthew,18.00,18.00,0.00,1.26,,37.26,Cash,Paid
+SQT-700411,SQA-500466,8/14/2026,2:15 PM,Rock Island,Taylor A,SQ-20159,Joseph Russo,26.00,,8.00,0.00,,34.00,Cash,Paid
+SQT-700412,SQA-500616,8/18/2026,12:50 PM,Coralville,Delaney,,Walk In,18.00,,5.00,0.00,,23.00,Mastercard,Paid
+SQT-700413,,8/19/2026,11:55 AM,Moline,Destiny,SQ-20066,Marcus Schroeder,21.00,,10.00,0.00,,31.00,Mastercard,Paid
+SQT-700414,SQA-500496,8/20/2026,12:15 PM,Coralville,Delaney,SQ-20165,Jacob Lindqvist,37.00,,5.00,0.00,,42.00,Mastercard,Paid
+SQT-700415,SQA-500484,8/20/2026,12:45 PM,Utica,Em,SQ-20163,Dan Ostrowski,19.00,,8.00,0.00,,27.00,Gift Card,Paid
+SQT-700416,SQA-500260,8/20/2026,3:25 PM,Moline,Mackenzie,SQ-20086,Luis Thompson,23.00,,4.00,0.00,,27.00,Amex,Paid
+SQT-700417,,8/21/2026,11:50 AM,Coralville,Delaney,SQ-20118,Cody Reyes,20.00,,0.00,0.00,,20.00,Cash,Paid
+SQT-700418,,8/21/2026,4:45 PM,Le Claire,Skylar,SQ-20177,Marcus Freeman,28.00,,0.00,0.00,,28.00,Cash,Paid
+SQT-700419,SQA-500390,8/24/2026,10:50 AM,Silvis,Amanda,SQ-20128,Mason Thompson,22.00,,5.00,0.00,,27.00,Gift Card,Paid
+SQT-700420,,8/25/2026,10:50 AM,Le Claire,Audra,SQ-20046,Landon Walsh,20.00,,4.00,0.00,,24.00,Cash,Paid
+SQT-700421,SQA-500529,8/25/2026,4:15 PM,Rock Island,Garrett,SQ-20180,Owen Lindgren,19.00,,6.00,0.00,,25.00,Discover,Paid
+SQT-700422,SQA-500147,8/28/2026,10:50 AM,Kimberly,Maddie,SQ-20048,Brandon De La Cruz,18.00,18.00,0.00,1.26,,37.26,Visa,Paid
+SQT-700423,SQA-500420,8/28/2026,11:20 AM,Rock Island,Garrett,SQ-20145,Andre Christensen,20.00,18.00,5.00,1.26,,44.26,Cash,Paid
+SQT-700424,SQA-500060,8/29/2026,9:50 AM,Le Claire,Audra,SQ-20024,Dylan Becker,18.00,,8.00,0.00,,26.00,Gift Card,Paid
+SQT-700425,SQA-500330,8/31/2026,2:10 PM,Silvis,Liv,SQ-20103,Grant O'Brien,23.00,,10.00,0.00,,33.00,Cash,Paid
+SQT-700426,,8/31/2026,1:50 PM,Kimberly,Ali,SQ-20162,Tony Bianchi,22.00,,5.00,0.00,,27.00,Gift Card,Paid
+SQT-700427,SQA-500114,9/1/2026,12:45 PM,Rock Island,Taylor B,SQ-20041,Noah Anderson,37.00,,4.00,0.00,,41.00,Discover,Paid
+SQT-700428,SQA-500447,9/1/2026,1:50 PM,Moline,Jilane,SQ-20152,Michael,18.00,,5.00,0.00,,23.00,Gift Card,Paid
+SQT-700429,SQA-500555,9/1/2026,4:50 PM,Rock Island,Taylor A,SQ-20188,Chris Miller,40.00,,6.00,0.00,,46.00,Gift Card,Paid
+SQT-700430,SQA-500351,9/2/2026,4:50 PM,Silvis,Amanda,SQ-20109,Corey Fischer,20.00,,0.00,0.00,,20.00,Visa,Paid
+SQT-700431,SQA-500513,9/3/2026,10:10 AM,Utica,Sarah,SQ-20172,Zachary Holm,20.00,,5.00,0.00,(3.00),25.00,Gift Card,Paid
+SQT-700432,SQA-500251,9/4/2026,2:45 PM,Le Claire,Skylar,SQ-20085,Victor O'Brien,37.00,,0.00,0.00,,37.00,Gift Card,Paid
+SQT-700433,SQA-500082,9/7/2026,9:45 AM,Moline,Destiny,SQ-20032,Quinn Steiner,19.00,,0.00,0.00,,19.00,Mastercard,Paid
+SQT-700434,SQA-500615,9/8/2026,2:20 PM,Coralville,Delaney,,Walk In,20.00,,0.00,0.00,,20.00,Amex,Paid
+SQT-700435,SQA-500191,9/9/2026,3:10 PM,Moline,Mackenzie,SQ-20066,Marcus Schroeder,23.00,22.00,8.00,1.54,,54.54,Discover,Paid
+SQT-700436,SQA-500429,9/12/2026,9:40 AM,Utica,Lindsay,SQ-20146,Ethan Yoder,19.00,,4.00,0.00,,23.00,Discover,Paid
+SQT-700437,SQA-500048,9/12/2026,4:40 PM,Utica,Sarah,SQ-20020,Jason Becker,19.00,,6.00,0.00,,25.00,Amex,Paid
+SQT-700438,SQA-500406,9/15/2026,1:45 PM,Utica,Sarah,SQ-20139,Victor Vogel,25.00,,5.00,0.00,(3.00),30.00,Mastercard,Paid
+SQT-700439,SQA-500202,9/16/2026,3:15 PM,Rock Island,Taylor B,SQ-20068,Dominic Weber,37.00,,4.00,0.00,,41.00,Gift Card,Paid
+SQT-700440,SQA-500430,9/18/2026,9:20 AM,Utica,Lindsay,SQ-20146,Ethan Yoder,20.00,,0.00,0.00,,20.00,Cash,Paid
+SQT-700441,SQA-500352,9/18/2026,11:20 AM,Silvis,Amanda,SQ-20109,Corey Fischer,18.00,,0.00,0.00,,18.00,Discover,Paid
+SQT-700442,SQA-500410,9/18/2026,3:50 PM,Kimberly,Maddie,SQ-20140,Jason Zimmerman,20.00,,5.00,0.00,,25.00,Cash,Paid
+SQT-700443,SQA-500194,9/19/2026,11:50 AM,Moline,Mackenzie,SQ-20066,Marcus Schroeder,18.00,28.00,0.00,1.96,,47.96,Mastercard,Paid
+SQT-700444,SQA-500006,9/19/2026,4:20 PM,Le Claire,Audra,SQ-20007,Andre Vogel,20.00,,4.00,0.00,,24.00,Cash,Paid
+SQT-700445,,9/21/2026,10:45 AM,Utica,Lindsay,SQ-20082,Dominic Gonzalez,19.00,22.00,4.00,1.54,,46.54,Discover,Paid
+SQT-700446,SQA-500627,9/23/2026,10:50 AM,Utica,Sarah,SQ-20198,Tobias Wendt,20.00,,8.00,0.00,,28.00,Cash,Paid
+SQT-700447,SQA-500036,9/23/2026,3:40 PM,Coralville,Makenna,SQ-20017,Landon Yoder,23.00,,4.00,0.00,,27.00,Mastercard,Paid
+SQT-700448,,9/24/2026,11:50 AM,Coralville,Delaney,SQ-20076,Seth Schmidt,18.00,,4.00,0.00,,22.00,Gift Card,Refunded
+SQT-700449,SQA-500159,9/25/2026,10:10 AM,Kimberly,Olivia A,SQ-20053,Cameron Weber,19.00,18.00,8.00,1.26,,46.26,Discover,Paid
+SQT-700450,,9/26/2026,11:20 AM,Moline,Jilane,SQ-20095,Aiden Jensen,20.00,,8.00,0.00,,28.00,Amex,Paid
+SQT-700451,SQA-500187,9/26/2026,3:55 PM,Silvis,Abigail,SQ-20064,Luis Gonzalez,23.00,,0.00,0.00,,23.00,Gift Card,Paid
+SQT-700452,SQA-500498,9/28/2026,12:20 PM,Coralville,Delaney,SQ-20165,Jacob Lindqvist,20.00,,5.00,0.00,,25.00,Cash,Paid
+SQT-700453,SQA-500057,9/29/2026,1:40 PM,Le Claire,Audra,SQ-20023,Quinn Johnson,20.00,,0.00,0.00,(3.00),20.00,Discover,Paid
+SQT-700454,SQA-500257,9/30/2026,1:45 PM,Moline,Mackenzie,SQ-20086,Luis Thompson,19.00,,4.00,0.00,,23.00,Cash,Paid
+SQT-700455,SQA-500003,9/30/2026,4:50 PM,Le Claire,Skylar,SQ-20004,Brooke Christensen,18.00,,4.00,0.00,,22.00,Visa,Paid
+SQT-700456,SQA-500065,10/2/2026,9:40 AM,Silvis,Liv,SQ-20026,Dylan Larson,19.00,,10.00,0.00,,29.00,Discover,Paid
+SQT-700457,SQA-500453,10/2/2026,12:45 PM,Kimberly,Maddie,SQ-20153,Christopher Duffy,37.00,,0.00,0.00,,37.00,Mastercard,Paid
+SQT-700458,,10/3/2026,11:50 AM,Kimberly,Olivia A,SQ-20039,Corey Steiner,18.00,,5.00,0.00,,23.00,Cash,Paid
+SQT-700459,SQA-500381,10/5/2026,12:15 PM,Kimberly,Sammie,SQ-20125,Brian Klein,28.00,22.00,5.00,1.54,,56.54,Discover,Paid
+SQT-700460,SQA-500486,10/6/2026,11:50 AM,Utica,Em,SQ-20163,Dan Ostrowski,20.00,,6.00,0.00,,26.00,Discover,Paid
+SQT-700461,,10/7/2026,2:55 PM,Coralville,Michelle,SQ-20075,Wesley Wagner,25.00,,0.00,0.00,,25.00,Amex,Paid
+SQT-700462,SQA-500619,10/7/2026,4:45 PM,Rock Island,Taylor A,,Walk In,19.00,,8.00,0.00,,27.00,Visa,Paid
+SQT-700463,,10/8/2026,12:50 PM,Utica,Sarah,SQ-20198,Tobias Wendt,18.00,,0.00,0.00,,18.00,Visa,Paid
+SQT-700464,SQA-500062,10/10/2026,10:20 AM,Le Claire,Audra,SQ-20024,Dylan Becker,20.00,,6.00,0.00,,26.00,Mastercard,Paid
+SQT-700465,SQA-500121,10/10/2026,12:45 PM,Silvis,Abigail,SQ-20042,Carlos Weber,37.00,,0.00,0.00,,37.00,Amex,Paid
+SQT-700466,,7/31/2026,1:30 PM,Kimberly,,SQ-20002,Nora Christensen,0.00,28.00,0.00,1.96,,29.96,Visa,Paid
+SQT-700467,,9/29/2026,4:30 PM,Moline,,SQ-20003,Grant Zimmerman,0.00,22.00,0.00,1.54,,23.54,Visa,Paid
+SQT-700468,,7/30/2026,4:30 PM,Le Claire,,SQ-20004,Brooke Christensen,0.00,18.00,0.00,1.26,,19.26,Visa,Paid
+SQT-700469,,8/14/2026,1:30 PM,Coralville,,SQ-20005,Cameron Wright,0.00,28.00,0.00,1.96,,29.96,Visa,Paid
+SQT-700470,,8/6/2026,4:00 PM,Le Claire,,SQ-20007,Andre Vogel,0.00,22.00,0.00,1.54,,23.54,Visa,Paid
+SQT-700471,,1/5/2026,2:30 PM,Coralville,,SQ-20008,Nathan Ramirez,0.00,22.00,0.00,1.54,,23.54,Visa,Paid
+SQT-700472,,2/27/2026,11:00 AM,Kimberly,,SQ-20010,Andre Larson,0.00,18.00,0.00,1.26,,19.26,Visa,Paid
+SQT-700473,,2/17/2026,10:00 AM,Coralville,,SQ-20012,Corey Schroeder,0.00,18.00,0.00,1.26,,19.26,Visa,Paid
+SQT-700474,,2/3/2026,2:00 PM,Clinton,,,,20.00,,0.00,0.00,,20.00,Cash,Paid
+SQT-700475,,2/4/2026,2:00 PM,Moline,,,,,,,,,,Cash,Paid
+SQT-700476,,2/5/2026,2:00 PM,Moline,,,,(20.00),,0.00,0.00,,(20.00),Visa,Refund
+SQT-700477,,02/30/2026,2:00 PM,Moline,,,,20.00,,0.00,0.00,,20.00,Visa,Paid

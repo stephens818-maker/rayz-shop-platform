@@ -1,0 +1,2 @@
+-- Charles (2026-10-28): his CPA approved direct Stripe tip payouts to barbers, as Squire pays them, so FEATURE_TIP_TO_BARBER is on at launch. This is its per-shop kill switch, on for every shop; the Brand Owner turns it off on Tip payout settings, and that shop's card tips stay in its transfer and are paid through payroll. Additive only.
+ALTER TABLE "shops" ADD COLUMN IF NOT EXISTS "tip_to_barber" boolean DEFAULT true NOT NULL;

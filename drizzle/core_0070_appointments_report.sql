@@ -1,0 +1,3 @@
+-- Appointments report: every appointment filtered by payment, booking method, status and platform. Its view permission goes to every role that already has "Who's working, off and blocked" (view only, as that report is for the front desk), and export where that report's export is. No schema change.
+UPDATE "roles" SET "permissions" = "permissions" || '["report.appointments.view"]'::jsonb WHERE "permissions" ? 'report.staffing.view' AND NOT ("permissions" ? 'report.appointments.view');--> statement-breakpoint
+UPDATE "roles" SET "permissions" = "permissions" || '["report.appointments.export"]'::jsonb WHERE "permissions" ? 'report.staffing.export' AND NOT ("permissions" ? 'report.appointments.export');

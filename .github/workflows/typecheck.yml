@@ -1,0 +1,24 @@
+# Catches a TypeScript error before it spends a Vercel preview build.
+# `next build` typechecks this project; `pnpm typecheck` is that same check.
+name: Typecheck
+on:
+  pull_request:
+  push:
+permissions:
+  contents: read
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - name: Text button stays on the calendar
+        run: pnpm exec vitest run tests/text-button.test.ts tests/desk-landing.test.ts --reporter=dot
