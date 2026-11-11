@@ -8,7 +8,7 @@ import { safe } from "@/server/action";
 import { authorize, type StaffContext } from "@/server/auth/staff";
 import { AppError, forbidden } from "@/server/errors";
 import { assertShop, requireInTenant } from "@/server/tenant";
-import { addPunch, approveAsManager, approveOwn, editPunch, lockPeriod, unlockPeriod, voidPunch, type Editor } from "@/server/time-clock";
+import { addPunch, approveAsManager, approveOwn, editPunch, lockPeriod, unlockPeriod, voidPunch, voidPunches, type Editor } from "@/server/time-clock";
 
 const PunchType = z.enum(["in", "out", "break_start", "break_end"]);
 const Day = z.string().refine(isValidLocalDate, "Pick a date.");
@@ -55,6 +55,17 @@ export async function voidPunchAction(input: { punchId: string; reason: string }
     const ctx = await authorize("timesheet.edit");
     const v = z.object({ punchId: z.uuid(), reason: z.string().max(400) }).parse(input);
     await voidPunch(editor(ctx), v.punchId, v.reason);
+    refresh();
+    return null;
+  });
+}
+
+/** Voids a whole shift (the clock-in, the clock-out, and any breaks) for one reason. */
+export async function voidShiftAction(input: { punchIds: string[]; reason: string }) {
+  return safe(async () => {
+    const ctx = await authorize("timesheet.edit");
+    const v = z.object({ punchIds: z.array(z.uuid()).min(1).max(8), reason: z.string().max(400) }).parse(input);
+    await voidPunches(editor(ctx), v.punchIds, v.reason);
     refresh();
     return null;
   });

@@ -37,7 +37,7 @@ export default async function BookingLinksPage() {
                 </li>
               ))}
             </ul>
-            <PhotoUpload label="Shop photo" current={photoOf[s.id] ?? null} save={(dataUrl) => saveShopPhotoAction(s.id, dataUrl)} />
+            <PhotoUpload label="Shop photo" current={photoOf[s.id] ?? null} save={saveShopPhotoAction.bind(null, s.id)} />
           </div>
         </Card>
       ))}

@@ -16,6 +16,7 @@ import { found, get, open } from "./render";
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", async () => (await import("./session")).headersMock);
 vi.mock("next/cache", () => ({ revalidatePath() {}, revalidateTag() {} }));
+vi.mock("next/navigation", async (orig) => ({ ...(await orig<typeof import("next/navigation")>()), useRouter: () => ({ refresh() {}, push() {} }) }));
 
 let m: Mods;
 let tc: typeof import("@/server/time-clock");
@@ -71,7 +72,7 @@ describe("punching", () => {
     const day = m.time.addDays(period(2).start, 1);
     const inn = await punchAt(mk, cv.id, "in", at(day, 9 * 60));
     expect((await tc.clockState(mk.id, at(day, 10 * 60))).state).toBe("working");
-    await expect(punchAt(mk, cv.id, "in", at(day, 10 * 60))).rejects.toThrow(/already clocked in/);
+    await expect(punchAt(mk, cv.id, "in", at(day, 10 * 60))).rejects.toThrow(/You're already clocked in since /);
     const other = await shop("moline");
     await expect(punchAt(mk, other.id, "out", at(day, 10 * 60))).rejects.toThrow(/team|clocked in at Coralville/);
     await punchAt(mk, cv.id, "break_start", at(day, 12 * 60));
@@ -462,7 +463,7 @@ describe("manager edits", () => {
     await expect(m.db.db.delete(S().timePunchEdits).where(eq(S().timePunchEdits.id, log.id))).rejects.toThrow();
   });
 
-  it("nobody edits their own punches (except the owner), or punches at a shop outside their access", async () => {
+  it("a manager can't move or add their own punches, and can void them; punches outside their shops stay refused", async () => {
     const michelle = await staffBy("michelle@rayz.test");
     const mk = await staffBy("makenna@rayz.test");
     const cv = await shop("coralville");
@@ -470,14 +471,37 @@ describe("manager edits", () => {
     const mine = await punchAt(michelle, cv.id, "in", at(day, 9 * 60));
     const now = at(day, 12 * 60);
     await expect(tc.editPunch(editorOf(michelle, [cv.id]), mine.punchId, { at: at(day, 8 * 60) }, "Early start", now)).rejects.toThrow(/your own punches/);
+    const out = await punchAt(michelle, cv.id, "out", at(day, 11 * 60));
     await signInAs(michelle.id);
-    const viaAction = await sheetActions.voidPunchAction({ punchId: mine.punchId, reason: "Mistake" });
-    expect(!viaAction.ok && viaAction.error).toMatch(/your own punches/);
-    await punchAt(michelle, cv.id, "out", at(day, 11 * 60));
+    const viaAction = await sheetActions.voidShiftAction({ punchIds: [mine.punchId, out.punchId], reason: "Test punch" });
+    expect(viaAction).toEqual({ ok: true, data: null });
+    expect(await entriesOf(mine.punchId)).toEqual([]);
+    const [aud] = await m.db.db
+      .select()
+      .from(S().auditLog)
+      .where(m.drizzle.and(eq(S().auditLog.action, "timeclock.punch_void"), eq(S().auditLog.entityId, mine.punchId)));
+    expect(aud.details).toMatchObject({ reason: "Test punch" });
+    const [edit] = await m.db.db.select().from(S().timePunchEdits).where(eq(S().timePunchEdits.punchId, mine.punchId));
+    expect(edit).toMatchObject({ action: "void", reason: "Test punch", editedBy: michelle.id });
+    await expect(tc.addPunch(editorOf(michelle, [cv.id]), { staffId: michelle.id, shopId: cv.id, type: "in", at: at(day, 15 * 60) }, "Add my own", now)).rejects.toThrow(/your own punches/);
     const moline = await staffBy("manager.moline@rayz.test");
     const theirs = await punchAt(mk, cv.id, "in", at(day, 13 * 60));
     await expect(tc.editPunch(editorOf(moline, [(await shop("moline")).id]), theirs.punchId, { at: at(day, 12 * 60) }, "Fix", now)).rejects.toThrow(/outside your access/);
     await punchAt(mk, cv.id, "out", at(day, 14 * 60));
+  });
+
+  it("a closed clock shift is the hours payroll reads, and voiding it takes those hours back", async () => {
+    const mk = await staffBy("makenna@rayz.test");
+    const michelle = await staffBy("michelle@rayz.test");
+    const cv = await shop("coralville");
+    const day = m.time.addDays(period(20).start, 2);
+    const inn = await punchAt(mk, cv.id, "in", at(day, 9 * 60));
+    const out = await punchAt(mk, cv.id, "out", at(day, 17 * 60));
+    const before = await run.employeeDays(mk.id, [cv.id], day, day);
+    expect(before.hours.find((h) => h.staffId === mk.id && h.date === day)?.worked).toBe(800);
+    await tc.voidPunches(editorOf(michelle, [cv.id]), [inn.punchId, out.punchId], "Wrong punch", at(day, 18 * 60));
+    const after = await run.employeeDays(mk.id, [cv.id], day, day);
+    expect(after.hours.find((h) => h.staffId === mk.id && h.date === day)?.worked ?? 0).toBe(0);
   });
 });
 
@@ -692,5 +716,56 @@ describe("pages and reports", () => {
     expect(rows[0]).toMatchObject({ workedMin: 46.25 * 60, otMin: 6.25 * 60, rate: 16 });
     expect(rows[0].regularCost).toBe(64000);
     expect(rows[0].otCost).toBe(15000);
+  });
+
+  it("shows the clocked-in sentence, a void on the shift, and a PIN form that does not post the page", async () => {
+    const { createElement } = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { ClockPanel, PinForm } = await import("@/app/admin/clock/clock");
+    const { VoidShift } = await import("@/app/admin/timesheets/timesheets");
+    const shop = { id: "00000000-0000-0000-0000-000000000001", name: "Coralville", gps: false, photo: "off" as const, rule: "" };
+    const since = "2026-11-10T20:41:00.000Z";
+    const html = renderToStaticMarkup(
+      createElement(ClockPanel, {
+        shops: [shop],
+        state: "working",
+        shiftShopId: shop.id,
+        since,
+        breakSince: null,
+        next: ["break_start", "out"],
+        defaultShopId: shop.id,
+        breakReasons: [],
+      }),
+    );
+    expect(html).toContain(`You&#x27;re already clocked in since ${m.time.formatTime(new Date(since))}.`);
+    expect(html).not.toContain("Clock in");
+    expect(renderToStaticMarkup(createElement(PinForm, { hasPin: true }))).toContain('method="get"');
+    expect(renderToStaticMarkup(createElement(VoidShift, { punchIds: ["00000000-0000-0000-0000-000000000002"] }))).toContain("Void");
+  });
+
+  it("jessica@rayz.test can sign in, and her staff page renders", async () => {
+    const { checkPassword } = await import("@/server/auth/sign-in-guard");
+    const password = process.env.SEED_PASSWORD ?? "rayz2026!";
+    const who = await checkPassword("jessica@rayz.test", password, { ip: null, via: "web" });
+    expect(who.displayLabel).toBe("Jessica");
+    const owner = await staffBy("owner@rayz.test");
+    await signInAs(owner.id);
+    let photoSave = "";
+    const page = await open("/admin/staff/[id]", { id: who.id }, {}, (_type, props) => {
+      if (props.label === "Upload a JPEG or PNG" && typeof props.save === "function") photoSave = props.save.name;
+    });
+    expect(page.kind).toBe("ok");
+    expect(page.kind === "ok" && page.text).toContain("Jessica");
+    // An inline wrapper can't cross to the photo picker; Next rejects the page (digest 4092432547).
+    expect(photoSave.startsWith("bound ")).toBe(true);
+    const michelle = await staffBy("michelle@rayz.test");
+    await signInAs(michelle.id);
+    const asManager = await open("/admin/staff/[id]", { id: who.id });
+    expect(asManager.kind).toBe("ok");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const mod = await import("@/app/admin/staff/[id]/page");
+    const el = await mod.default({ params: Promise.resolve({ id: who.id }) });
+    const html = renderToStaticMarkup(el as never);
+    expect(html).toContain("Jessica");
   });
 });
