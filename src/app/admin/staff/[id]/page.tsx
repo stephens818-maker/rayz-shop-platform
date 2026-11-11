@@ -116,7 +116,7 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
         <Card>
           <CardHeader title="Photo" subtitle={person.id === ctx.staff.id ? "This is the photo you show on the schedule." : "The photo this person shows on the schedule."} />
           <div className="p-4">
-            <PhotoUpload label="Upload a JPEG or PNG" current={photo} save={(dataUrl) => saveStaffPhotoAction(person.id, dataUrl)} />
+            <PhotoUpload label="Upload a JPEG or PNG" current={photo} save={saveStaffPhotoAction.bind(null, person.id)} />
           </div>
         </Card>
       )}

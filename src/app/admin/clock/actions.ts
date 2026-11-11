@@ -4,29 +4,37 @@ import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
 import { z } from "zod";
 import QRCode from "qrcode";
+import { and, eq, isNull } from "drizzle-orm";
+import { db } from "@/db";
+import { clockDevices, shops } from "@/db/schema";
 import { clientIp } from "@/lib/client-ip";
 import { safe } from "@/server/action";
-import { authorize, can, getStaffContext } from "@/server/auth/staff";
+import { authorize, can } from "@/server/auth/staff";
+import { HANDOFF_COOKIE, SESSION_COOKIE } from "@/server/auth/cookies";
+import { lockedHandoff } from "@/server/auth/handoff-lock";
+import { sha256, verifyToken } from "@/server/auth/tokens";
 import { clockProofUrl } from "@/server/clock-codes";
 import { issueKioskQr, type ClockNonce } from "@/server/clock-security";
-import { pairedDevice, startPairing } from "@/server/clock-pairing";
+import { startPairing } from "@/server/clock-pairing";
 import { type Actor } from "@/server/audit";
 import { forbidden } from "@/server/errors";
 import { type Welcome, clockInWelcome } from "@/server/milestones/day";
 import { declareAtClockOut } from "@/server/tips/declarations";
 import {
   DEVICE_COOKIE,
-  checkPin,
+  acceptKioskPin,
   clearPin,
-  clockState,
   deviceFromToken,
+  kioskOperator,
   onShopTeam,
   punch,
   registerDevice,
   revokeDevice,
   setOpensEarly,
   setPin,
+  shopClocks,
   unlockPin,
+  type ClockState,
   type PunchResult,
 } from "@/server/time-clock";
 
@@ -139,19 +147,44 @@ export async function punchAction(
   });
 }
 
-/** The front-desk clock this browser is: a paired one on its own, or a registered one under a signed-in login with the clock permission. */
+const NOT_A_CLOCK = "This device isn't a front-desk clock. Ask a manager to pair it.";
+const NOT_YOUR_CLOCK = "This browser isn't registered as one of your shops' time clock devices.";
+
+/**
+ * The front-desk clock this browser is. A paired one runs on its token alone. A registered one needs
+ * the signed-in person to hold the kiosk permission at that shop, looked up for this shop only.
+ */
 async function kioskDevice() {
-  const paired = await pairedDevice((await cookies()).get(DEVICE_COOKIE)?.value, null);
-  if (paired) return { device: paired, by: `kiosk:${paired.label}` };
-  if (!(await getStaffContext())) throw forbidden("This device isn't a front-desk clock. Ask a manager to pair it.");
-  const ctx = await authorize("timeclock.kiosk");
-  const device = await thisDevice();
-  if (!device || !ctx.shopIds.includes(device.shopId))
-    throw forbidden(
-      "This browser isn't registered as one of your shops' time clock devices.",
-    );
-  return { device, by: `kiosk:${device.label} (${ctx.staff.displayLabel})` };
+  const jar = await cookies();
+  const token = jar.get(DEVICE_COOKIE)?.value ?? null;
+  if (!token) throw forbidden(NOT_A_CLOCK);
+  const [d] = await db
+    .select({ id: clockDevices.id, shopId: clockDevices.shopId, label: clockDevices.label, shop: shops.name, pairedAt: clockDevices.pairedAt, installHash: clockDevices.installHash })
+    .from(clockDevices)
+    .innerJoin(shops, eq(shops.id, clockDevices.shopId))
+    .where(and(eq(clockDevices.tokenHash, sha256(token)), isNull(clockDevices.revokedAt)));
+  if (!d || d.installHash) throw forbidden(NOT_A_CLOCK);
+  const device = { id: d.id, shopId: d.shopId, label: d.label, shop: d.shop };
+  if (d.pairedAt) return { device, by: `kiosk:${d.label}` };
+  const handoff = jar.get(HANDOFF_COOKIE)?.value;
+  if (handoff && (await lockedHandoff(handoff))) throw forbidden(NOT_A_CLOCK);
+  const raw = jar.get(SESSION_COOKIE)?.value;
+  const payload = raw ? await verifyToken<{ sub?: string; sid?: string; iat?: number }>(raw, "staff_session") : null;
+  if (!payload?.sid || !payload.sub) throw forbidden(NOT_A_CLOCK);
+  const op = await kioskOperator({ sid: payload.sid, staffId: payload.sub, iat: payload.iat }, d.shopId);
+  if (!op.ok) throw forbidden(op.signedIn ? NOT_YOUR_CLOCK : NOT_A_CLOCK);
+  return { device, by: `kiosk:${d.label} (${op.label})` };
 }
+
+const pinWhere = (device: { id: string; shopId: string }, by: string) => ({ deviceId: device.id, shopId: device.shopId, via: "kiosk_web" as const, by });
+
+const statusOf = (s: ClockState) => ({
+  kind: "status" as const,
+  state: s.state,
+  next: s.next,
+  shop: s.shift?.shop ?? null,
+  since: s.shift?.start.toISOString() ?? null,
+});
 
 /** The QR code the front-desk clock shows, for phones to scan: signed, single-use, good for a minute, redrawn every 15 seconds. */
 export async function kioskQrAction() {
@@ -173,15 +206,56 @@ export async function kioskStatusAction(input: {
     const v = z
       .object({ staffId: z.uuid(), pin: z.string().max(12) })
       .parse(input);
-    await onShopTeam(device.shopId, v.staffId);
-    await checkPin(v.staffId, v.pin, new Date(), { deviceId: device.id, shopId: device.shopId, via: "kiosk_web", by });
-    const s = await clockState(v.staffId);
-    return {
-      state: s.state,
-      next: s.next,
-      shop: s.shift?.shop ?? null,
-      since: s.shift?.start.toISOString() ?? null,
-    };
+    const s = await acceptKioskPin(v.staffId, v.pin, pinWhere(device, by));
+    return statusOf(s);
+  });
+}
+
+/**
+ * PIN plus, when the only next step is clocking in and a photo isn't required, the clock-in itself.
+ * One round trip instead of PIN, then a button, then another round trip.
+ */
+export async function kioskEnterAction(
+  input: {
+    staffId: string;
+    pin: string;
+    photo: string | null;
+    confirmTimeOff?: boolean;
+    nonce?: { id: string; at: number | string };
+  },
+) {
+  return safe(async () => {
+    const { device, by } = await kioskDevice();
+    const v = z
+      .object({
+        staffId: z.uuid(),
+        pin: z.string().max(12),
+        photo: Photo,
+        confirmTimeOff: z.boolean().optional(),
+        nonce: Nonce,
+      })
+      .parse(input);
+    const s = await acceptKioskPin(v.staffId, v.pin, pinWhere(device, by));
+    const clockIn = s.next.length === 1 && s.next[0] === "in";
+    if (!clockIn) return statusOf(s);
+    const [clock] = await shopClocks([device.shopId]);
+    if (clock?.settings.photo === "required" && !v.photo) return statusOf(s);
+    const actor = { staffId: v.staffId, label: by };
+    const r = await punch({
+      staffId: v.staffId,
+      shopId: device.shopId,
+      type: "in",
+      source: "kiosk",
+      evidence: { deviceShopId: device.shopId, ip: await requestIp(), gps: null },
+      deviceId: device.id,
+      nonce: v.nonce ?? noNonce,
+      photo: v.photo,
+      confirmTimeOff: v.confirmTimeOff,
+      actor,
+    });
+    refresh();
+    const reply = await withWelcome(r, v.staffId, actor, "kiosk");
+    return reply.kind === "confirm" ? reply : { ...reply, kind: "done" as const };
   });
 }
 
@@ -209,8 +283,7 @@ export async function kioskPunchAction(
         ...BreakPlan,
       })
       .parse(input);
-    await onShopTeam(device.shopId, v.staffId);
-    await checkPin(v.staffId, v.pin, new Date(), { deviceId: device.id, shopId: device.shopId, via: "kiosk_web", by });
+    await acceptKioskPin(v.staffId, v.pin, pinWhere(device, by));
     const actor = { staffId: v.staffId, label: by };
     const r = await punch({
       staffId: v.staffId,

@@ -7,10 +7,13 @@ import {
   clockDevices,
   ftStatusChanges,
   payrollLockedOt,
+  roles,
   shops,
   staff,
+  staffAccessShops,
   staffSchedules,
   staffShops,
+  staffWebSessions,
   timeBlocks,
   timeEntries,
   timePunchEdits,
@@ -55,7 +58,17 @@ import {
 import { appBaseUrl } from "@/lib/deployment";
 import { mealCheck, mealPromptDue, rulesFor, workStateOf } from "@/domain/wage-hour";
 import { callInHref, clockBlockTitle } from "@/domain/clock-live";
-import type { Permission } from "@/domain/permissions";
+import {
+  OWNER_ROLE_KEY,
+  cleanExpiries,
+  cleanLimits,
+  cleanOverrides,
+  effectiveAccess,
+  liveOverrides,
+  sharedLoginAccess,
+  type Permission,
+} from "@/domain/permissions";
+import { scrub } from "@/lib/sensitive";
 import { addDays, endOfLocalDay, formatDate, formatTime, isValidLocalDate, localDateOf, localMinutesOf, startOfLocalDay, todayLocal, weekdayOf, type LocalDate } from "@/lib/time";
 import { settingAt, settingFor } from "./brand-sync/settings";
 import { audit, SYSTEM, type Actor } from "./audit";
@@ -315,6 +328,153 @@ export async function checkPin(staffId: string, pin: string, now = new Date(), w
   throw bad(lock ? `Wrong PIN. That was ${PIN_MAX_FAILURES} wrong tries in a row, so this PIN is locked until a manager unlocks it.` : "Wrong PIN.");
 }
 
+/**
+ * The signed-in person behind a registered (not paired) front-desk clock, checked for this shop
+ * only. A paired clock has no session. Middleware already applied the network rule to the request.
+ */
+export async function kioskOperator(
+  session: { sid: string; staffId: string; iat?: number },
+  shopId: string,
+  now = new Date(),
+): Promise<{ ok: true; label: string } | { ok: false; signedIn: boolean }> {
+  const [row] = await db
+    .select({
+      label: staff.displayLabel,
+      kind: staff.kind,
+      scope: staff.shopScope,
+      overrides: staff.permissionOverrides,
+      expiries: staff.permissionOverrideExpires,
+      maxDiscount: staff.maxDiscountPct,
+      limits: staff.moneyLimits,
+      sessionsValidAfter: staff.sessionsValidAfter,
+      role: roles,
+      accessStaffId: staffAccessShops.staffId,
+      accessRoleId: staffAccessShops.roleId,
+    })
+    .from(staffWebSessions)
+    .innerJoin(staff, eq(staff.id, staffWebSessions.staffId))
+    .innerJoin(roles, eq(roles.id, staff.roleId))
+    .leftJoin(staffAccessShops, and(eq(staffAccessShops.staffId, staff.id), eq(staffAccessShops.shopId, shopId)))
+    .where(and(eq(staffWebSessions.id, session.sid), eq(staffWebSessions.staffId, session.staffId), isNull(staffWebSessions.revokedAt), gt(staffWebSessions.expiresAt, now), eq(staff.active, true)));
+  if (!row) return { ok: false, signedIn: false };
+  if (row.sessionsValidAfter && (session.iat ?? 0) < Math.floor(row.sessionsValidAfter.getTime() / 1000)) return { ok: false, signedIn: false };
+  let role = row.role;
+  if (row.accessRoleId && row.accessRoleId !== row.role.id) {
+    const [alt] = await db.select().from(roles).where(eq(roles.id, row.accessRoleId));
+    if (alt) role = alt;
+  }
+  const scope = role.key === OWNER_ROLE_KEY ? "all" : row.scope;
+  const inShop = scope === "all" || !!row.accessStaffId;
+  const access = effectiveAccess(
+    role,
+    liveOverrides(cleanOverrides(row.overrides), cleanExpiries(row.expiries), todayLocal(now)),
+    row.maxDiscount,
+    scope === "all" ? "all" : "selected",
+    cleanLimits(row.limits),
+  );
+  const perms = row.kind === "shop" ? sharedLoginAccess(access).permissions : access.permissions;
+  if (!inShop || !perms.has("timeclock.kiosk")) return { ok: false, signedIn: true };
+  return { ok: true, label: row.label };
+}
+
+const pinAttempt = (where: PinPlace, staffId: string, ok: boolean, details: Record<string, unknown>) =>
+  audit({ staffId: null, label: where.by }, "timeclock.pin_attempt", "staff", staffId, { ok, via: where.via, deviceId: where.deviceId, ...details }, where.shopId);
+
+/**
+ * A front-desk PIN check in a few round trips. The failure counter still moves before the compare,
+ * so a burst of tries can't get past five. A correct PIN resets it, writes the audit row, marks the
+ * device seen, and returns the punches the clock state is read from.
+ */
+export async function acceptKioskPin(staffId: string, pin: string, where: PinPlace, now = new Date()): Promise<ClockState> {
+  clockSecret();
+  const since = new Date(now.getTime() - PIN_RATE_WINDOW_MS).toISOString();
+  const from = new Date(now.getTime() - 3 * DAY).toISOString();
+  const to = new Date(now.getTime() + 60_000).toISOString();
+  const at = now.toISOString();
+  const [s] = await db
+    .select({
+      kind: staff.kind,
+      label: staff.displayLabel,
+      hash: staff.clockPinHash,
+      failures: staff.clockPinFailures,
+      lockedUntil: staff.clockPinLockedUntil,
+      onTeam: sql<boolean>`exists (select 1 from staff_shops ss where ss.staff_id = ${staff.id} and ss.shop_id = ${where.shopId}::uuid)`,
+      staffTries: sql<number>`(select count(*)::int from api_rate_events e where e.bucket = 'clock_pin_staff' and e.key = ${staffId} and e.created_at > ${since}::timestamptz)`,
+      deviceFails: sql<number>`(select count(*)::int from api_rate_events e where e.bucket = 'clock_pin_device' and e.key = ${where.deviceId ?? ""} and e.created_at > ${since}::timestamptz)`,
+    })
+    .from(staff)
+    .where(and(eq(staff.id, staffId), eq(staff.active, true)));
+  if (!s || s.kind !== "person") throw notFound("Staff member");
+  if (!s.onTeam) throw notFound("Team member");
+  if (!s.hash) throw bad(`${s.label} hasn't set a time clock PIN yet. They set one on their Time clock page.`);
+  const limited = Number(s.staffTries) >= PIN_STAFF_TRIES;
+  const deviceLimited = !!where.deviceId && Number(s.deviceFails) >= PIN_DEVICE_FAILURES;
+  if (limited || deviceLimited) {
+    await pinAttempt(where, staffId, false, { refused: "rate_limited" });
+    throw new AppError(
+      "rate_limited",
+      limited ? "Too many PIN tries. Wait 15 minutes, or ask a manager." : "Too many wrong PINs on this clock. Wait 15 minutes, or ask a manager.",
+      { retryAfterSeconds: Math.ceil(PIN_RATE_WINDOW_MS / 1000) },
+    );
+  }
+  const lockedAlready = s.failures >= PIN_MAX_FAILURES || (!!s.lockedUntil && s.lockedUntil > now);
+  if (lockedAlready) {
+    await db.execute(sql`insert into api_rate_events (bucket, key) values ('clock_pin_staff', ${staffId})`);
+    await pinAttempt(where, staffId, false, { refused: "locked" });
+    throw new AppError("conflict", PIN_LOCKED, { reason: "pin_locked" });
+  }
+  const slot = (await db.execute(sql`
+    with rate as (
+      insert into api_rate_events (bucket, key) values ('clock_pin_staff', ${staffId})
+    )
+    update staff
+    set clock_pin_failures = clock_pin_failures + 1
+    where id = ${staffId}::uuid
+      and clock_pin_failures < ${PIN_MAX_FAILURES}
+      and (clock_pin_locked_until is null or clock_pin_locked_until <= ${at}::timestamptz)
+    returning clock_pin_failures
+  `)) as unknown as { clock_pin_failures: number }[];
+  const taken = slot[0];
+  if (!taken) {
+    await pinAttempt(where, staffId, false, { refused: "locked" });
+    throw new AppError("conflict", PIN_LOCKED, { reason: "pin_locked" });
+  }
+  if (await bcrypt.compare(pin, s.hash)) {
+    const details = JSON.stringify(scrub({ ok: true, via: where.via, deviceId: where.deviceId }));
+    const punches = (await db.execute(sql`
+      with reset as (
+        update staff set clock_pin_failures = 0, clock_pin_locked_until = null where id = ${staffId}::uuid
+      ),
+      seen as (
+        update clock_devices set last_seen_at = ${at}::timestamptz where id = ${where.deviceId}::uuid
+      ),
+      aud as (
+        insert into audit_log (actor_label, shop_id, action, entity, entity_id, details)
+        values (${where.by}, ${where.shopId}::uuid, 'timeclock.pin_attempt', 'staff', ${staffId}, ${details}::jsonb)
+      )
+      select p.id, p.staff_id, p.shop_id, p.type, p.at, sh.name as shop
+      from time_punches p
+      left join shops sh on sh.id = p.shop_id
+      where p.staff_id = ${staffId}::uuid and p.at >= ${from}::timestamptz and p.at < ${to}::timestamptz and p.voided_at is null
+      order by p.at
+    `)) as unknown as { id: string; staff_id: string; shop_id: string; type: PunchType; at: Date; shop: string | null }[];
+    return stateFrom(
+      punches.map((p) => ({ id: p.id, staffId: p.staff_id, shopId: p.shop_id, type: p.type, at: new Date(p.at) })),
+      new Map(punches.map((p) => [p.shop_id, p.shop ?? ""])),
+      now,
+    );
+  }
+  const failures = Number(taken.clock_pin_failures);
+  if (where.deviceId) await rateRecord("clock_pin_device", where.deviceId);
+  const lock = failures >= PIN_MAX_FAILURES;
+  if (lock) {
+    await db.update(staff).set({ clockPinLockedUntil: PIN_LOCKED_UNTIL_UNLOCKED }).where(eq(staff.id, staffId));
+    await audit(SYSTEM, "timeclock.pin_locked", "staff", staffId, { failures, deviceId: where.deviceId }, where.shopId);
+  }
+  await pinAttempt(where, staffId, false, { failures });
+  throw bad(lock ? `Wrong PIN. That was ${PIN_MAX_FAILURES} wrong tries in a row, so this PIN is locked until a manager unlocks it.` : "Wrong PIN.");
+}
+
 // ───────────────────────────── Punches and shifts ─────────────────────────────
 
 type PunchRow = typeof timePunches.$inferSelect;
@@ -397,16 +557,23 @@ export interface ClockState {
   next: PunchType[];
 }
 
-export async function clockState(staffId: string, now = new Date()): Promise<ClockState> {
-  const recent = await punchesBetween([staffId], new Date(now.getTime() - 3 * DAY), new Date(now.getTime() + 60_000));
-  const { shifts } = pairPunches(recent.map(asLike));
+function stateFrom(recent: PunchLike[], names: Map<string, string>, now: Date): ClockState {
+  const { shifts } = pairPunches(recent);
   const open = [...shifts].reverse().find((s) => s.end === null) ?? null;
-  const names = new Map((await db.select({ id: shops.id, name: shops.name }).from(shops)).map((s) => [s.id, s.name]));
   if (!open) return { state: "off", shift: null, stale: null, next: allowedNext("off") };
   if (now.getTime() - open.start.getTime() > STALE_OPEN_MS) return { state: "off", shift: null, stale: { shop: names.get(open.shopId) ?? "", start: open.start }, next: allowedNext("off") };
   const br = open.breaks.find((b) => b.end === null) ?? null;
   const state = br ? "on_break" : "working";
   return { state, shift: { shopId: open.shopId, shop: names.get(open.shopId) ?? "", start: open.start, breakStart: br?.start ?? null }, stale: null, next: allowedNext(state) };
+}
+
+export async function clockState(staffId: string, now = new Date()): Promise<ClockState> {
+  const recent = await punchesBetween([staffId], new Date(now.getTime() - 3 * DAY), new Date(now.getTime() + 60_000));
+  const { shifts } = pairPunches(recent.map(asLike));
+  const open = [...shifts].reverse().find((s) => s.end === null) ?? null;
+  if (!open) return { state: "off", shift: null, stale: null, next: allowedNext("off") };
+  const [shop] = await db.select({ name: shops.name }).from(shops).where(eq(shops.id, open.shopId));
+  return stateFrom(recent.map(asLike), new Map([[open.shopId, shop?.name ?? ""]]), now);
 }
 
 /**
@@ -502,7 +669,7 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
         ? "You're not clocked in."
         : state.state === "on_break"
           ? `You're on a break${where}. End the break or clock out.`
-          : `You're already clocked in${where}.`,
+          : `You're already clocked in since ${formatTime(state.shift?.start ?? now)}.`,
     );
   }
   if (state.shift && state.shift.shopId !== req.shopId) throw bad(`You're clocked in at ${state.shift.shop}. Punch there.`);
@@ -655,8 +822,9 @@ function cleanReason(reason: string) {
   return r;
 }
 
-function assertCanEdit(e: Editor, staffId: string, shopIds: string[]) {
-  if (staffId === e.staffId && !e.isOwner) throw forbidden("You can't change your own punches. Ask another manager.");
+function assertCanEdit(e: Editor, staffId: string, shopIds: string[], self: "deny" | "void" = "deny") {
+  // A manager may void their own punch (it only removes hours, and the reason is kept). They still can't move or add their own.
+  if (self !== "void" && staffId === e.staffId && !e.isOwner) throw forbidden("You can't change your own punches. Ask another manager.");
   for (const s of shopIds) if (!e.shopIds.includes(s)) throw forbidden("That punch is at a shop outside your access.");
 }
 
@@ -723,7 +891,7 @@ export async function voidPunch(e: Editor, punchId: string, reason: string, now 
   const why = cleanReason(reason);
   const [p] = await db.select().from(timePunches).where(eq(timePunches.id, punchId));
   if (!p || p.voidedAt) throw notFound("Punch");
-  assertCanEdit(e, p.staffId, [p.shopId]);
+  assertCanEdit(e, p.staffId, [p.shopId], "void");
   await assertOpen(p.shopId, p.at);
   const before = snapshot(p);
   const after = { ...before, voided: true };
@@ -734,6 +902,36 @@ export async function voidPunch(e: Editor, punchId: string, reason: string, now 
     const cleared = await clearApprovals(p.staffId, p.shopId, [localDateOf(p.at)], tx);
     await audit(e.actor, "timeclock.punch_void", "time_punch", punchId, { staffId: p.staffId, before, after, reason: why, approvalsCleared: cleared }, p.shopId, tx);
     await syncClockBlocks([p.staffId], { from: p.at, to: p.at }, { tx, now, actor: e.actor });
+  });
+}
+
+/** Voids every punch of a shift (in, out, and breaks) for one reason. Each punch stays on record, with its own edit and audit row. */
+export async function voidPunches(e: Editor, punchIds: string[], reason: string, now = new Date()) {
+  const why = cleanReason(reason);
+  const ids = [...new Set(punchIds)];
+  if (!ids.length) throw bad("Nothing to void.");
+  const rows = await db.select().from(timePunches).where(inArray(timePunches.id, ids));
+  const live = rows.filter((p) => !p.voidedAt);
+  if (live.length !== ids.length) throw notFound("Punch");
+  const staffId = live[0].staffId;
+  if (live.some((p) => p.staffId !== staffId)) throw bad("Those punches aren't one person's.");
+  assertCanEdit(e, staffId, live.map((p) => p.shopId), "void");
+  for (const p of live) await assertOpen(p.shopId, p.at);
+  const times = live.map((p) => p.at.getTime());
+  const lo = new Date(Math.min(...times));
+  const hi = new Date(Math.max(...times));
+  await db.transaction(async (tx) => {
+    for (const p of live) {
+      const before = snapshot(p);
+      const after = { ...before, voided: true };
+      await tx.update(timePunches).set({ voidedAt: now, editedAt: now }).where(eq(timePunches.id, p.id));
+      await tx.insert(timePunchEdits).values({ punchId: p.id, action: "void", before, after, reason: why, editedBy: e.staffId });
+      await audit(e.actor, "timeclock.punch_void", "time_punch", p.id, { staffId: p.staffId, before, after, reason: why }, p.shopId, tx);
+    }
+    await rederive(staffId, lo, hi, tx);
+    const dates = [...new Set(live.map((p) => localDateOf(p.at)))];
+    for (const shopId of new Set(live.map((p) => p.shopId))) await clearApprovals(staffId, shopId, dates, tx);
+    await syncClockBlocks([staffId], { from: lo, to: hi }, { tx, now, actor: e.actor });
   });
 }
 

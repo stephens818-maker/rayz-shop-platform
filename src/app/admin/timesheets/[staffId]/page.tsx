@@ -13,7 +13,7 @@ import { inTenant } from "@/server/tenant";
 import { chosenPeriod, recentPeriods, timesheetView } from "@/server/time-clock";
 import { declarationRules, myDeclarations } from "@/server/tips/declarations";
 import { DeclarationList, DeclareCashTips } from "../../my-tips/declare";
-import { AddPunch, ApproveOwn, ClearPin, EditPunch, ManagerApprove, UnlockPin } from "../timesheets";
+import { AddPunch, ApproveOwn, ClearPin, EditPunch, ManagerApprove, UnlockPin, VoidShift } from "../timesheets";
 import { formatPayHours } from "@/lib/hours";
 
 export const metadata: Metadata = { title: "Timesheet" };
@@ -37,6 +37,7 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
   const [periods, period] = await Promise.all([recentPeriods(today), chosenPeriod(sp.period, today)]);
   const view = await timesheetView(staffId, period.start, own ? null : ctx.shopIds);
   const canEdit = can(ctx, "timesheet.edit") && (!own || ctx.isOwner);
+  const canVoid = can(ctx, "timesheet.edit");
   const canApprove = can(ctx, "timesheet.approve") && !own;
   const canPhoto = canAny(ctx, ["timesheet.edit", "timesheet.approve"]);
   const editShopIds = canEdit ? ctx.shopIds : [];
@@ -169,6 +170,11 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
                               </Badge>
                             ))}
                             {sh.edited && <Badge tone="gray">Edited</Badge>}
+                            {canVoid && !locked && (
+                              <VoidShift
+                                punchIds={[sh.inId, sh.outId, ...sh.breaks.flatMap((b) => [b.startId, b.endId])].filter((id): id is string => !!id)}
+                              />
+                            )}
                             {canPhoto &&
                               sh.photos.map((id) => (
                               <a key={id} href={`/admin/timesheets/photo?id=${id}`} target="_blank" rel="noreferrer" className="text-xs underline">

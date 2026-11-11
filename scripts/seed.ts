@@ -803,6 +803,7 @@ async function main() {
   console.log("    michelle@rayz.test   Shop Manager, Coralville");
   console.log("    frontdesk@rayz.test  Front Desk, Coralville");
   console.log("    makenna@rayz.test    Barber, Coralville");
+  console.log("    jessica@rayz.test    Barber, Coralville");
   console.log("    manager.moline@rayz.test  Shop Manager, Moline");
   console.log("    kat@rayz.test        Barber at Moline and Silvis, Shop Manager at Rock Island (one shop at a time)");
   console.log(`    <shop>@rayz.test     Shop login (front desk) for one shop: ${SHOPS.map((s) => s.slug).join(", ")}`);

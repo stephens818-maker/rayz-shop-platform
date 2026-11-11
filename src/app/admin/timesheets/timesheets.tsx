@@ -5,7 +5,7 @@ import { Button, Input, Select } from "@/components/ui";
 import { useAction } from "@/components/use-action";
 import { PUNCH_LABEL, isRepeatedWallTime, type PunchType } from "@/domain/time-clock";
 import { clearPinAction, unlockPinAction } from "../clock/actions";
-import { addPunchAction, approveManagerAction, approveOwnAction, editPunchAction, lockPeriodAction, unlockPeriodAction, voidPunchAction } from "./actions";
+import { addPunchAction, approveManagerAction, approveOwnAction, editPunchAction, lockPeriodAction, unlockPeriodAction, voidPunchAction, voidShiftAction } from "./actions";
 import { DateTimeInput } from "@/components/time-input";
 import { hhmmLabel } from "@/lib/time";
 
@@ -88,6 +88,38 @@ export function EditPunch({ punch, shops }: { punch: { id: string; type: PunchTy
         {open === "edit" ? "Save" : "Void punch"}
       </Button>
       <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(null)}>
+        Cancel
+      </Button>
+      <Err error={error} />
+    </form>
+  );
+}
+
+/** Voids the punches of one shift. The rows stay, marked void, with the reason in the edit log and the audit log. */
+export function VoidShift({ punchIds }: { punchIds: string[] }) {
+  const { pending, error, run } = useAction();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  if (!punchIds.length) return null;
+  if (!open)
+    return (
+      <button type="button" className="text-xs text-red-700 underline" onClick={() => setOpen(true)}>
+        Void
+      </button>
+    );
+  return (
+    <form
+      className="mt-1 flex flex-wrap items-center gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        run(() => voidShiftAction({ punchIds, reason }), () => setOpen(false));
+      }}
+    >
+      <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why void this shift (required)" className="w-64" maxLength={300} aria-label="Reason" />
+      <Button size="sm" variant="danger" disabled={pending || !reason.trim()}>
+        Void shift
+      </Button>
+      <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)}>
         Cancel
       </Button>
       <Err error={error} />

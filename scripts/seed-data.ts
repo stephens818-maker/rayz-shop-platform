@@ -304,7 +304,7 @@ export const STAFF: StaffSeed[] = [
   { key: "michelle", firstName: "Michelle", displayLabel: "Michelle", listedAt: ["coralville"], schedule: { coralville: [1, 2, 3, 4, 5] }, role: "shop_manager", managerShop: "coralville", email: "michelle@rayz.test" },
   { key: "makenna", firstName: "Makenna", displayLabel: "Makenna", listedAt: ["coralville"], schedule: { coralville: [2, 3, 4, 5, 6] }, email: "makenna@rayz.test" },
   { key: "delaney", firstName: "Delaney", displayLabel: "Delaney", listedAt: ["coralville"], schedule: { coralville: [1, 3, 5, 6] } },
-  { key: "jessica", firstName: "Jessica", displayLabel: "Jessica", listedAt: ["coralville"], schedule: { coralville: [1, 2, 4, 6] } },
+  { key: "jessica", firstName: "Jessica", displayLabel: "Jessica", listedAt: ["coralville"], schedule: { coralville: [1, 2, 4, 6] }, email: "jessica@rayz.test" },
   { key: "leilah", firstName: "Leilah", displayLabel: "Leilah", listedAt: ["coralville"], schedule: {}, active: false, note: "Had Coralville sales but is no longer on the barber list." },
   // Floats at 7 shops; only real sales at Le Claire.
   { key: "casey", firstName: "Casey", displayLabel: "Casey", listedAt: ["coralville", "kimberly", "le-claire", "moline", "rock-island", "silvis", "utica"], schedule: { "le-claire": [2, 3] } },

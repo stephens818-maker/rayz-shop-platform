@@ -912,6 +912,22 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-11-10: time clock void, PIN, Jessica's page, payroll hours
+
+`core_0163_jessica_login` (next migration is `core_0164`). It sets a sign-in on the Coralville barber named Jessica only when she has no email, no password, and `jessica@rayz.test` is free. The demo seed gives her that same address. Anyone who already has an email or a password is left alone.
+
+A manager with timesheet edit can void a shift from the timesheet day row, including their own. One reason voids the clock-in, the clock-out, and any breaks. Each punch stays on record, with a void row in the edit log and `timeclock.punch_void` in the audit log, and the hours come off the timesheet. Moving or adding your own punches is still refused. A locked pay period still refuses the void.
+
+Clocked in, the time clock says "You're already clocked in since 3:41 PM." instead of only hiding Clock in. The front-desk clock checks the PIN when the last digit is in (no OK), and clocks in on that same request when a photo isn't required. The PIN check is one device read, one signed-in person read, one PIN read, one rate-limit write, and one success write. A wrong PIN still counts before the compare, and five wrong tries still lock it.
+
+Jessica's staff page was failing in the app (digest 4092432547) because the photo card handed the browser an inline function. It now hands the photo save itself. The same pattern on booking links is fixed the same way. `jessica@rayz.test` signs in with the demo password.
+
+A closed clock shift is what payroll reads as worked hours. Voiding that shift takes the hours back. Covered in `tests/db/time-clock.test.ts`.
+
+The PIN and register forms on the time clock submit as GET, so a submit before the page is ready reloads instead of a 400 from Next. That 400 was not reproduced as a click.
+
+Makenna's Oct 27 open GPS punches were not changed. Coralville's end-of-night tip timing was not changed. No canary booking was added.
+
 ### 2026-11-09: faster /admin home, resize shows immediately
 
 No new migration. The next one is still `core_0163`. Punches, tip payout schedules, tip transfers, and demo rows were not changed.

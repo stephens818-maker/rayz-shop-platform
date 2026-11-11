@@ -21,9 +21,9 @@ import {
 } from "@/domain/time-clock";
 import type { Welcome } from "@/server/milestones/day";
 import {
+  kioskEnterAction,
   kioskPunchAction,
   kioskQrAction,
-  kioskStatusAction,
   punchAction,
   registerDeviceAction,
   setOpensEarlyAction,
@@ -346,12 +346,14 @@ export function ClockPanel({
           Right now
         </div>
         <div className="text-2xl font-semibold">
-          {state === "off"
-            ? "Clocked out"
-            : state === "working"
-              ? "Working"
-              : "On a break"}
-          {since && state !== "off" ? (
+          {state === "working" && since
+            ? `You're already clocked in since ${time(since)}.`
+            : state === "off"
+              ? "Clocked out"
+              : state === "on_break"
+                ? "On a break"
+                : "Working"}
+          {since && state === "on_break" ? (
             <span className="ml-2 text-base font-normal text-zinc-500">
               since {time(breakSince ?? since)}
             </span>
@@ -442,8 +444,10 @@ export function PinForm({ hasPin }: { hasPin: boolean }) {
         }
       />
       <form
+        method="get"
         className="flex flex-wrap items-end gap-3 p-4 pt-0"
         onSubmit={(e) => {
+          // A real POST of this page is a 400 from Next (it isn't a server action). Stay on the page.
           e.preventDefault();
           setSaved(false);
           if (pin !== again) return;
@@ -549,6 +553,7 @@ export function RegisterDevice({
         subtitle="Staff then punch here with their own PIN. Register it once, on the device itself; it stays registered in this browser until revoked in Time clock setup."
       />
       <form
+        method="get"
         className="flex flex-wrap items-end gap-3 p-4 pt-0"
         onSubmit={(e) => {
           e.preventDefault();
@@ -612,6 +617,7 @@ export function Kiosk({
   const [done, setDone] = useState<Done | null>(null);
   const [welcome, setWelcome] = useState<Welcome | null>(null);
   const [pending, start] = useTransition();
+  const sent = useRef("");
 
   const reset = () => {
     setWho(null);
@@ -620,17 +626,39 @@ export function Kiosk({
     setShot(null);
     setBreakReasonId(breakReasons[0]?.id ?? "");
     setPlanned("");
+    sent.current = "";
   };
-  const check = () =>
+  const enter = (confirmTimeOff = false) =>
     start(async () => {
       setError(null);
-      const r = await kioskStatusAction({ staffId: who!.id, pin });
+      const r = await kioskEnterAction({ staffId: who!.id, pin, photo: shot, confirmTimeOff, nonce: freshNonce() });
       if (!r.ok) {
+        sent.current = "";
         setPin("");
         return setError(r.error);
       }
-      setStatus(r.data);
+      if (r.data.kind === "status") return setStatus(r.data);
+      if (r.data.kind === "confirm") {
+        if (window.confirm(r.data.message)) enter(true);
+        else {
+          sent.current = "";
+          setPin("");
+        }
+        return;
+      }
+      setDone({ ...r.data, notes: [`${who!.label}`, ...r.data.notes] });
+      setWelcome(r.data.welcome ?? null);
+      reset();
     });
+  useEffect(() => {
+    if (!who || status || pin.length < 4 || sent.current === pin) return;
+    const wait = pin.length >= 6 ? 0 : 400;
+    const t = setTimeout(() => {
+      sent.current = pin;
+      enter(false);
+    }, wait);
+    return () => clearTimeout(t);
+  }, [pin, who, status]);
   const go = (type: PunchType, confirmTimeOff = false) =>
     start(async () => {
       setError(null);
@@ -705,26 +733,27 @@ export function Kiosk({
             {"•".repeat(pin.length) || "\u00a0"}
           </div>
           <div className="grid max-w-xs grid-cols-3 gap-2">
-            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "OK"].map(
+            {["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0"].map(
               (k) => (
                 <Button
                   key={k}
-                  variant={k === "OK" ? "primary" : "secondary"}
+                  variant="secondary"
                   className="h-14 text-lg"
-                  disabled={pending || (k === "OK" && pin.length < 4)}
-                  onClick={() =>
-                    k === "⌫"
-                      ? setPin(pin.slice(0, -1))
-                      : k === "OK"
-                        ? check()
-                        : pin.length < 6 && setPin(pin + k)
-                  }
+                  disabled={pending}
+                  onClick={() => {
+                    const next = k === "⌫" ? pin.slice(0, -1) : pin.length < 6 ? pin + k : pin;
+                    if (next !== pin) {
+                      sent.current = "";
+                      setPin(next);
+                    }
+                  }}
                 >
                   {k}
                 </Button>
               ),
             )}
           </div>
+          <p className="text-sm text-zinc-500">The PIN is checked when you finish it. No extra OK.</p>
           <button
             type="button"
             className="text-sm text-zinc-500 underline"
@@ -740,8 +769,8 @@ export function Kiosk({
             {status.state === "off"
               ? "clocked out"
               : status.state === "working"
-                ? `working since ${time(status.since!)}`
-                : "on a break"}
+                ? `You're already clocked in since ${time(status.since!)}.`
+                : "You're on a break."}
           </div>
           <PhotoInput mode={photo} value={shot} onChange={setShot} />
           {status.next.includes("break_start") && breakReasons.length > 0 && (
