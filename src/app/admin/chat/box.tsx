@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useAction } from "@/components/use-action";
 import { Button, Notice, Textarea } from "@/components/ui";
-import { moderateChatAction, openDmAction, postChatAction } from "./actions";
+import { deleteOwnChatAction, moderateChatAction, openDmAction, postChatAction } from "./actions";
 
 export function ChatComposer({ channelId, canPost }: { channelId: string; canPost: boolean }) {
   const { pending, error, run } = useAction();
@@ -57,6 +57,15 @@ export function DirectMessage({ people }: { people: { id: string; label: string 
       </Button>
       {error && <span className="text-xs text-red-600">{error}</span>}
     </div>
+  );
+}
+
+export function DeleteOwn({ messageId }: { messageId: string }) {
+  const { pending, run } = useAction();
+  return (
+    <button type="button" className="ml-2 text-[11px] underline" disabled={pending} onClick={() => run(() => deleteOwnChatAction(messageId), undefined, "Deleted")}>
+      Delete
+    </button>
   );
 }
 

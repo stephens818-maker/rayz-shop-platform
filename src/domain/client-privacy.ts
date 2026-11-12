@@ -311,11 +311,15 @@ export function entryDenied(e: FieldEntry, before: string | null | undefined, ne
 
 // ───────────────────────────── Masking ─────────────────────────────
 
-/** +13195551234 → ***-***-1234 */
-export function maskPhone(e164: string | null | undefined): string | null {
+/**
+ * +13195551234 → ***-***-1234, or ***-***-**34 when only the last two digits show.
+ * Barbers and apprentices get the last two. Everyone else who sees a masked phone still gets the last four.
+ */
+export function maskPhone(e164: string | null | undefined, last: 2 | 4 = 4): string | null {
   if (!e164) return null;
   const d = e164.replace(/\D/g, "");
-  return d.length >= 4 ? `***-***-${d.slice(-4)}` : "***-***-****";
+  if (d.length < last) return "***-***-****";
+  return `***-***-${last === 2 ? `**${d.slice(-2)}` : d.slice(-4)}`;
 }
 
 /** jordan@gmail.com → j***@gmail.com */

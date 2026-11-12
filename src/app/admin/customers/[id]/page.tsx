@@ -94,9 +94,11 @@ export default async function CustomerPage({
   const salesHere = moneyShops ? inShops(ctx, sales.shopId) : undefined;
   const vPage = Math.max(1, Number(sp.v) || 1);
   const sPage = Math.max(1, Number(sp.s) || 1);
+  const chairId = ctx.staff.roleKey === "barber" || ctx.staff.roleKey === "apprentice" ? ctx.staff.id : undefined;
+  const visitWhere = and(eq(appointments.customerId, id), chairId ? eq(appointments.staffId, chairId) : undefined);
 
   const [stats, money, visits, [{ visitCount }], saleRows, [{ saleCount }], loyalty, ledger, squireIds, dupes, barberOptions, cadence] = await Promise.all([
-    customerStats(id, db, new Date()),
+    customerStats(id, db, new Date(), undefined, chairId),
     moneyShops ? customerStats(id, db, new Date(), moneyShops) : null,
     db
       .select({
@@ -109,14 +111,14 @@ export default async function CustomerPage({
       .from(appointments)
       .innerJoin(shops, eq(shops.id, appointments.shopId))
       .innerJoin(staff, eq(staff.id, appointments.staffId))
-      .where(eq(appointments.customerId, id))
+      .where(visitWhere)
       .orderBy(desc(appointments.startsAt))
       .limit(VISITS_PAGE)
       .offset((vPage - 1) * VISITS_PAGE),
     db
       .select({ visitCount: sql<number>`count(*)::int` })
       .from(appointments)
-      .where(eq(appointments.customerId, id)),
+      .where(visitWhere),
     full
       ? db
           .select({
@@ -569,7 +571,11 @@ export default async function CustomerPage({
           <Card id="visits">
             <CardHeader
               title="Visit history"
-              subtitle={`${visitCount} appointment${visitCount === 1 ? "" : "s"} at every Ray'z shop, including Squire history${moneyShops ? ". Prices show for this shop's visits only." : ""}`}
+              subtitle={
+                chairId
+                  ? `${visitCount} appointment${visitCount === 1 ? "" : "s"} with you`
+                  : `${visitCount} appointment${visitCount === 1 ? "" : "s"} at every Ray'z shop, including Squire history${moneyShops ? ". Prices show for this shop's visits only." : ""}`
+              }
             />
             <Table>
               <thead>

@@ -30,6 +30,8 @@ vi.mock("server-only", () => ({}));
 describe("masking", () => {
   it("keeps only what staff need to recognise a client", () => {
     expect(maskPhone("+13195554321")).toBe("***-***-4321");
+    expect(maskPhone("+13195554321", 2)).toBe("***-***-**21");
+    expect(maskPhone("+13195554321", 4)).toBe("***-***-4321");
     expect(maskPhone(null)).toBeNull();
     expect(maskEmail("jordan@gmail.com")).toBe("j***@gmail.com");
     expect(maskEmail("not-an-email")).toBe("***");
@@ -244,6 +246,9 @@ describe("entering details", () => {
     expect(entered(p, "phone", "+13195550000", undefined)).toBe("+13195550000");
     expect(entered(p, "address", "1 Old Road, Moline, IL", "2 New Road, Moline, IL")).toBe("2 New Road, Moline, IL");
     expect(shownField(p, "phone", "+13195551234")).toEqual({ key: "phone", label: "Phone", level: "masked", value: "***-***-1234", saved: true, canAdd: true, canEdit: false });
+    const barber = makePolicy({ staffId: "b", isOwner: false, canReveal: false, custom: [], levels, phoneLast: 2 });
+    expect(barber.show("phone", "+13195554321")).toBe("***-***-**21");
+    expect(barber.phoneLast).toBe(2);
     expect(shownField(p, "address", "2 New Road, Moline, IL")).toEqual({
       key: "address",
       label: "Address",

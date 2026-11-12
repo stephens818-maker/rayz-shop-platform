@@ -12,7 +12,7 @@ import {
   timingFlags,
   waitMinutes,
 } from "@/domain/service-times";
-import { formatTime } from "@/lib/time";
+import { formatDate, formatTime, localDateOf, todayLocal } from "@/lib/time";
 import { Actor, audit } from "./audit";
 import { AppError, notFound } from "./errors";
 
@@ -52,6 +52,12 @@ async function lockAppointment(id: string, tx: DBorTx) {
   return a;
 }
 
+/** Check-in, Start and Finish belong on the visit's own day. */
+export function visitDayProblem(startsAt: Date, now = new Date()): string | null {
+  if (localDateOf(startsAt) === todayLocal(now)) return null;
+  return `This visit is ${formatDate(startsAt)}, not today. Check it in, start it, or finish it on that day.`;
+}
+
 /** The first check-in counts as the arrival; checking in again doesn't move it. */
 export async function recordArrival(appointmentId: string, actor: Actor, tx: DBorTx = db, now = new Date()) {
   const t = await current(appointmentId, tx);
@@ -76,6 +82,8 @@ export async function clearStart(appointmentId: string, tx: DBorTx = db) {
 export async function startService(appointmentId: string, actor: Actor, now = new Date()) {
   await db.transaction(async (tx) => {
     const a = await lockAppointment(appointmentId, tx);
+    const day = visitDayProblem(a.startsAt, now);
+    if (day) throw new AppError("conflict", day);
     if (a.status === "booked" || a.status === "confirmed") throw new AppError("conflict", "Check the client in first.");
     if (!STARTABLE.includes(a.status)) throw new AppError("conflict", `This appointment is ${STATUS_WORD[a.status] ?? a.status}, so it can't be started`);
     const t = await current(appointmentId, tx);
@@ -90,6 +98,8 @@ export async function startService(appointmentId: string, actor: Actor, now = ne
 export async function finishService(appointmentId: string, actor: Actor, now = new Date()) {
   await db.transaction(async (tx) => {
     const a = await lockAppointment(appointmentId, tx);
+    const day = visitDayProblem(a.startsAt, now);
+    if (day) throw new AppError("conflict", day);
     if (a.status === "cancelled" || a.status === "no_show") throw new AppError("conflict", `This appointment is ${STATUS_WORD[a.status]}`);
     const t = await current(appointmentId, tx);
     if (!t?.startedAt) throw new AppError("conflict", "Start the service first");

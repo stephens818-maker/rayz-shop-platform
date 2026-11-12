@@ -257,10 +257,13 @@ export function ClockPanel({
   defaultShopId,
   breakReasons,
   proof,
+  deviceShopId,
   cashTips,
 }: {
   /** Opened from the front-desk QR code or the shop's NFC tag. */
   proof?: { shopId: string; qr?: string; tag?: string } | null;
+  /** This browser is the registered front-desk clock for this shop. */
+  deviceShopId?: string | null;
   /** Ask for today's cash tips at clock-out, with this attestation. */
   cashTips?: { attestation: string } | null;
   shops: ClockShop[];
@@ -288,6 +291,8 @@ export function ClockPanel({
   const [tipNote, setTipNote] = useState<{ tone: "green" | "amber"; text: string } | null>(null);
   const [pending, start] = useTransition();
   const shop = shops.find((s) => s.id === shopId);
+  const scanned = !!proof && proof.shopId === shopId && !!(proof.qr || proof.tag);
+  const canPunchHere = (!!deviceShopId && deviceShopId === shopId) || scanned;
   const tipCents = tips.trim() === "" ? null : Math.round(Number(tips) * 100);
   const tipProblem =
     tipCents === null ? null : !Number.isFinite(tipCents) || tipCents < 0 || tipCents > 1_000_000 ? "Enter cash tips from $0 to $10,000." : !attest ? "Check the box to declare your cash tips." : null;
@@ -407,13 +412,20 @@ export function ClockPanel({
           </label>
         </fieldset>
       )}
+      {!canPunchHere && (
+        <Notice>
+          {shopId
+            ? "This phone can't clock you in by itself. Use the front-desk clock and your PIN, or scan the QR code on that clock."
+            : "Pick the shop you're working at."}
+        </Notice>
+      )}
       <div className="grid grid-cols-2 gap-3">
         {next.map((t) => (
           <Button
             key={t}
             variant={BUTTON_TONE[t]}
             className={cx("h-14 text-base", next.length === 1 && "col-span-2")}
-            disabled={pending || !shopId}
+            disabled={pending || !shopId || !canPunchHere}
             onClick={() => go(t)}
           >
             {PUNCH_LABEL[t]}

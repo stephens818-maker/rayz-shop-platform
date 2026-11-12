@@ -25,6 +25,7 @@ import {
   entryDenied,
   fieldLabel,
   formatBirthday,
+  maskPhone,
   maskValue,
   minLevel,
   resolveEntry,
@@ -64,6 +65,8 @@ export interface ClientPolicy {
   entry(f: FieldKey): FieldEntry;
   /** The value as this person may see it: the full value (formatted), the masked form, or null. */
   show(f: FieldKey, raw: string | null | undefined): string | null;
+  /** Digits left on a masked phone. Barbers and apprentices see the last 2; everyone else, the last 4. */
+  phoneLast: 2 | 4;
   /** A client's name with the last name at this person's level: "Marcus Smith" or "Marcus S.". */
   name(first: string | null | undefined, last: string | null | undefined): string;
   /** A name typed as one string (a waitlist entry): everything after the first word is the last name. */
@@ -163,15 +166,19 @@ export function makePolicy(o: {
   entries?: Map<string, boolean>;
   badges?: Iterable<string>;
   customBadges?: readonly Pick<CustomBadge, "id" | "label" | "tooltip" | "icon" | "tone">[];
+  /** Last digits of a masked phone. Defaults to 4. */
+  phoneLast?: 2 | 4;
 }): ClientPolicy {
   const fullContact = o.isOwner || !!o.fullContact || !!o.grantedContact;
   const level = (f: FieldKey): Level => (o.isOwner || (o.grantedContact && isContactField(f)) ? "full" : contactCeiling(f, o.levels.get(f) ?? "hidden", fullContact));
   const may = (s: EntrySetting, f: FieldKey) => f !== "ratings" && (o.isOwner || (o.entries?.get(`${s}:${f}`) ?? false));
   const canAdd = (f: FieldKey) => may("add", f);
   const canEdit = (f: FieldKey) => may("edit", f);
+  const phoneLast = o.phoneLast ?? 4;
   const show = (f: FieldKey, raw: string | null | undefined) => {
     const l = level(f);
     if (l === "hidden") return null;
+    if (l !== "full" && f === "phone") return maskPhone(raw, phoneLast);
     return l === "full" ? displayFull(f, raw) : maskValue(f, raw);
   };
   return {
@@ -191,6 +198,7 @@ export function makePolicy(o: {
       const [first, ...rest] = full.trim().split(/\s+/);
       return clientName(first, show("last_name", rest.join(" ")));
     },
+    phoneLast,
     stars: (r) => (level("ratings") === "hidden" ? null : (r ?? null)),
     ratingDetail: level("ratings") === "full",
     badges: new Set(o.badges ?? []),
@@ -250,7 +258,16 @@ export async function clientViewPreview(o: {
     const cap = await shopLoginCap(o.shopId);
     levels = new Map([...levels].map(([f, l]) => [f, shopLoginLevel(cap, f, l)]));
   }
-  const p = makePolicy({ staffId: who.staffId, isOwner: o.isOwner, fullContact: o.brandLevel, grantedContact: o.grantedContact, canReveal: o.canReveal, custom, levels });
+  const p = makePolicy({
+    staffId: who.staffId,
+    isOwner: o.isOwner,
+    fullContact: o.brandLevel,
+    grantedContact: o.grantedContact,
+    canReveal: o.canReveal,
+    custom,
+    levels,
+    phoneLast: (o.roleKey === "barber" || o.roleKey === "apprentice" ? 2 : 4) as 2 | 4,
+  });
   return fields.map((f) => ({ field: f, label: fieldLabel(f, custom), level: p.level(f), reveal: p.mayReveal(f) }));
 }
 
@@ -281,6 +298,7 @@ export function clientPolicy(ctx: StaffContext): Promise<ClientPolicy> {
         custom,
         levels,
         entries: entriesFor(rules, ctx.staff.id, working, fields),
+        phoneLast: (ctx.staff.roleKey === "barber" || ctx.staff.roleKey === "apprentice" ? 2 : 4) as 2 | 4,
       };
       const [settings, customBadges] = await Promise.all([
         loadBadgeSettings(ctx.currentShopId),

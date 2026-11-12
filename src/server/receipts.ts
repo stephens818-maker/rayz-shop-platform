@@ -525,7 +525,7 @@ export async function stopReceiptEmails(token: string) {
 /** A number or email as this person may see it: in full where Client data allows, otherwise masked (never hidden, so they can still send to it). */
 export function onFileShown(policy: ClientPolicy, c: { phone: string | null; email: string | null } | null) {
   return {
-    phone: c?.phone ? (policy.level("phone") === "full" ? formatPhone(c.phone) || c.phone : maskPhone(c.phone)) : null,
+    phone: c?.phone ? (policy.level("phone") === "full" ? formatPhone(c.phone) || c.phone : maskPhone(c.phone, policy.phoneLast)) : null,
     email: c?.email ? (policy.level("email") === "full" ? c.email : maskEmail(c.email)) : null,
   };
 }

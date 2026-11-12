@@ -5,7 +5,7 @@ import { customers, notificationJobs, shops } from "@/db/schema";
 import { maskPhone } from "@/domain/client-privacy";
 import { audit } from "./audit";
 import { StaffContext, can } from "./auth/staff";
-import { recordClientAccess } from "./client-privacy";
+import { clientPolicy, recordClientAccess } from "./client-privacy";
 import { customerAccess } from "./customers";
 import { contactFor } from "./household-contact";
 import { AppError, notFound } from "./errors";
@@ -64,5 +64,6 @@ export async function contactClient(ctx: StaffContext, customerId: string, input
   }
   await recordClientAccess(ctx, { kind: "contact", customerId: c.id, detail: { channel: input.channel } });
   await audit(ctx.actor, input.channel === "sms" ? "client.text" : "client.call", "customer", c.id, { jobId }, shopId);
-  return { status: sent?.status ?? "pending", to: maskPhone(c.phone) };
+  const policy = await clientPolicy(ctx);
+  return { status: sent?.status ?? "pending", to: maskPhone(c.phone, policy.phoneLast) };
 }

@@ -68,7 +68,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   );
   return (
     <div className="mx-auto max-w-5xl space-y-5">
-      <PageHeader title={`${shop.name} settings`} subtitle={ctx.currentShopId === null && shop.id === ctx.shopIds[0] ? "All-shops view: editing the first shop. Use the switcher to pick another." : undefined} />
+      <PageHeader title={`${shop.name} settings`} subtitle={ctx.currentShopId === null ? `You're editing ${shop.name}. Pick another shop in the shop switcher to change a different location.` : undefined} />
       {!shop.taxRatesVerified && <Notice>Tax rates for {shop.name} are placeholders. Confirm the local rates with your accountant, enter them below and tick &ldquo;verified&rdquo;.</Notice>}
       {(part("details") || part("booking") || part("phone")) && (
       <ShopInfoEditor

@@ -255,11 +255,12 @@ export async function rebookReportData(scope: ReportScope, loc: ViewCtx, params:
     (g, i, xs) => xs.findIndex((y) => !!y.byShop === !!g.byShop && !!y.byStaff === !!g.byStaff) === i,
   );
   const brand = await brandScope(scope);
+  const showBrand = !brand.same && !staffSelection(scope);
   const [at, trendAt, brandAt, brandTrend] = await Promise.all([
     rebookAt(scope, f, grains),
     rebookTrend(scope, f, trend),
-    brand.same ? Promise.resolve(null) : rebookAt(brand.scope, f, [{}]),
-    brand.same ? Promise.resolve(null) : rebookTrend(brand.scope, f, trend),
+    showBrand ? rebookAt(brand.scope, f, [{}]) : Promise.resolve(null),
+    showBrand ? rebookTrend(brand.scope, f, trend) : Promise.resolve(null),
   ]);
   const total = at[TOTAL] ?? zeroCounts();
   const brandTotal = brandAt?.[TOTAL] ?? total;
@@ -325,7 +326,7 @@ export async function rebookReportData(scope: ReportScope, loc: ViewCtx, params:
     { label: who },
     { label: "Visits", kind: "int" },
     { label: "Rebook rate", kind: "pct" },
-    { label: "Vs brand" },
+    ...(showBrand ? [{ label: "Vs brand" }] : []),
     { label: "New-client rebook", kind: "pct" },
     { label: `Back within ${wl}`, kind: "pct" },
     { label: "2nd-visit retention", kind: "pct" },
@@ -333,7 +334,7 @@ export async function rebookReportData(scope: ReportScope, loc: ViewCtx, params:
   ];
   const boardRow = (rank: number | null, label: string, c: RebookCounts): Cell[] => {
     const r = rebookRates(c, w);
-    return [rank, label, c.visits, r.rebook, ptsLabel(r.rebook, b.rebook), r.newRebook, r.returned, r.secondVisit, c.future];
+    return [rank, label, c.visits, r.rebook, ...(showBrand ? [ptsLabel(r.rebook, b.rebook)] : []), r.newRebook, r.returned, r.secondVisit, c.future];
   };
   const keysAt = (byShop: boolean, byStaff: boolean) =>
     Object.keys(at)
@@ -354,10 +355,10 @@ export async function rebookReportData(scope: ReportScope, loc: ViewCtx, params:
   const board = (id: string, title: string, who: string, list: typeof barbers): ReportTable => ({
     id,
     title: `${title}: ${RANK_BY[rankBy].label.toLowerCase()}`,
-    subtitle: `Ranked highest first. Fewer than 10 ${rankBy === "second_visit" ? "new clients judged" : rankBy === "return" ? "clients judged" : "visits"} and they're listed at the end without a rank. Vs brand is the rebook rate against the brand average.`,
+    subtitle: `Ranked highest first. Fewer than 10 ${rankBy === "second_visit" ? "new clients judged" : rankBy === "return" ? "clients judged" : "visits"} and they're listed at the end without a rank.${showBrand ? " Vs brand is the rebook rate against the brand average." : ""}`,
     columns: boardColumns(who),
-    rows: [...list.map((x) => boardRow(x.rank, x.item.name, x.item.counts)), [null, "Brand average", brandTotal.visits, b.rebook, null, b.newRebook, b.returned, b.secondVisit, brandTotal.future]],
-    rowStyles: [...list.map(() => undefined), "total"],
+    rows: [...list.map((x) => boardRow(x.rank, x.item.name, x.item.counts)), ...(showBrand ? [boardRow(null, "Brand average", brandTotal)] : [])],
+    rowStyles: [...list.map(() => undefined), ...(showBrand ? ["total" as const] : [])],
   });
 
   const starts = periodStarts(scope.from, scope.to, trend);
@@ -372,7 +373,7 @@ export async function rebookReportData(scope: ReportScope, loc: ViewCtx, params:
       { label: "Visits", kind: "int" },
       { label: "Rebooked", kind: "int" },
       { label: "Rebook rate", kind: "pct" },
-      { label: "Brand rebook rate", kind: "pct" },
+      ...(showBrand ? [{ label: "Brand rebook rate", kind: "pct" as const }] : []),
       { label: "New-client visits", kind: "int" },
       { label: "New-client rebook", kind: "pct" },
       { label: `Back within ${wl}`, kind: "pct" },
@@ -381,12 +382,12 @@ export async function rebookReportData(scope: ReportScope, loc: ViewCtx, params:
     rows: starts.map((d) => {
       const c = trendAt.get(d) ?? zeroCounts();
       const r = tr(d);
-      return [d, c.visits, c.rebooked, r.rebook, br(d).rebook, c.newVisits, r.newRebook, r.returned, r.secondVisit];
+      return [d, c.visits, c.rebooked, r.rebook, ...(showBrand ? [br(d).rebook] : []), c.newVisits, r.newRebook, r.returned, r.secondVisit];
     }),
   };
   const labels = starts.map((d) => periodLabel(d, trend));
-  const tone = (x: number | null, y: number | null) => (x === null || y === null || brand.same || Math.round((x - y) * 100) === 0 ? undefined : x > y ? ("up" as const) : ("down" as const));
-  const vs = (x: number | null, y: number | null) => (brand.same ? undefined : `brand ${pctText(y)}${ptsLabel(x, y) && ptsLabel(x, y) !== "even" ? ` (${ptsLabel(x, y)})` : ""}`);
+  const tone = (x: number | null, y: number | null) => (x === null || y === null || !showBrand || Math.round((x - y) * 100) === 0 ? undefined : x > y ? ("up" as const) : ("down" as const));
+  const vs = (x: number | null, y: number | null) => (!showBrand ? undefined : `brand ${pctText(y)}${ptsLabel(x, y) && ptsLabel(x, y) !== "even" ? ` (${ptsLabel(x, y)})` : ""}`);
 
   return {
     stats: [
@@ -418,7 +419,7 @@ export async function rebookReportData(scope: ReportScope, loc: ViewCtx, params:
         labels,
         series: [
           { label: selectionLabel, values: starts.map((d) => tr(d).rebook) },
-          ...(brand.same ? [] : [{ label: "Brand average", values: starts.map((d) => br(d).rebook), dashed: true }]),
+          ...(showBrand ? [{ label: "Brand average", values: starts.map((d) => br(d).rebook), dashed: true }] : []),
         ],
       },
       {
@@ -431,7 +432,7 @@ export async function rebookReportData(scope: ReportScope, loc: ViewCtx, params:
         ],
       },
     ],
-    tables: [summary, ...(brand.same ? [] : [compare]), board("barbers", "Barber leaderboard", "Barber", barbers), ...(multiShop ? [board("locations", "Location leaderboard", "Location", locations)] : []), trendTable],
+    tables: [summary, ...(showBrand ? [compare] : []), board("barbers", "Barber leaderboard", "Barber", barbers), ...(multiShop ? [board("locations", "Location leaderboard", "Location", locations)] : []), trendTable],
     notes: [
       ...(brand.same ? ["This is every location and barber, so the total is the brand average."] : []),
       `${total.visits > total.known ? `Rebook rate leaves out ${total.visits - total.known} imported visits with no booking time. ` : ""}Back within ${wl} and 2nd-visit retention count a return to any Ray'z shop or barber, booked at checkout or later.`,

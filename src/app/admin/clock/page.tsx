@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { cookies } from "next/headers";
 import { and, asc, eq, gte, inArray, isNull, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { shops, staff, timePunches } from "@/db/schema";
@@ -9,7 +10,7 @@ import { formatDate, formatTime, startOfLocalDay, todayLocal } from "@/lib/time"
 import { workShopIds } from "@/server/auth/access";
 import { can, guardPage, openShops } from "@/server/auth/staff";
 import { breakReasons } from "@/server/block-reasons";
-import { clockState, shopClocks } from "@/server/time-clock";
+import { DEVICE_COOKIE, clockState, deviceFromToken, shopClocks } from "@/server/time-clock";
 import { declarationRules } from "@/server/tips/declarations";
 import { ClockPanel, OpensEarlyForm, PinForm, type ClockShop } from "./clock";
 
@@ -42,6 +43,7 @@ export default async function ClockPage({ searchParams }: { searchParams: Promis
   const earlyShops = clocks.filter((c) => c.settings.openEarly && team.includes(c.id)).map((c) => c.name);
   const primary = team.find((s) => open.includes(s)) ?? null;
   const list: ClockShop[] = clocks.map((c) => ({ id: c.id, name: c.name, gps: c.settings.methods.includes("gps"), photo: c.settings.photo, rule: clockRuleText() }));
+  const device = await deviceFromToken((await cookies()).get(DEVICE_COOKIE)?.value ?? null);
   return (
     <div className="mx-auto max-w-xl space-y-4">
       <PageHeader
@@ -72,6 +74,7 @@ export default async function ClockPage({ searchParams }: { searchParams: Promis
         defaultShopId={primary}
         breakReasons={reasons}
         proof={proof}
+        deviceShopId={device?.shopId ?? null}
         cashTips={tipRules.enabled && tipRules.atClockOut && can(ctx, "tips.own") ? { attestation: tipRules.attestation } : null}
       />
       <Card>

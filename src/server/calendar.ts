@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, eq, gt, inArray, isNull, lt, ne, or } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appointmentItems, appointments, customers, sales, shopClosures, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks, timeOffRequests, timePunches } from "@/db/schema";
 import type { ReasonViewer, ShownReason } from "@/domain/block-reasons";
@@ -54,6 +54,8 @@ export interface CalAppt {
   anyBarber: boolean;
   saleId: string | null;
   saleStatus: string | null;
+  /** Finished, and the only ticket on it is voided: the day can clear the visit. */
+  ticketVoided: boolean;
   /** Prep and cleanup held around it, as booked. */
   bufferBeforeMin: number;
   bufferAfterMin: number;
@@ -207,6 +209,7 @@ export async function loadDayCalendar(
         guardianLast: guardian.lastName,
         saleId: sales.id,
         saleStatus: sales.status,
+        ticketVoided: sql<boolean>`exists (select 1 from sales vs where vs.status = 'voided' and (vs.appointment_id = ${appointments.id} or exists (select 1 from sale_appointments sa where sa.sale_id = vs.id and sa.appointment_id = ${appointments.id}))) and not exists (select 1 from sales ns where ns.status <> 'voided' and (ns.appointment_id = ${appointments.id} or exists (select 1 from sale_appointments sa where sa.sale_id = ns.id and sa.appointment_id = ${appointments.id})))`,
       })
       .from(appointments)
       .leftJoin(customers, eq(customers.id, appointments.customerId))
@@ -377,6 +380,7 @@ export async function loadDayCalendar(
           anyBarber: r.a.anyBarber,
           saleId: r.saleId,
           saleStatus: r.saleStatus,
+          ticketVoided: !!r.ticketVoided,
           bufferBeforeMin: r.a.bufferBeforeMinutes,
           bufferAfterMin: r.a.bufferMinutes,
           squeezed: r.a.squeezed,
