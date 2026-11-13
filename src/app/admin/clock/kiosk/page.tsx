@@ -23,7 +23,7 @@ export default async function KioskPage() {
         <PageHeader title="Front-desk clock" subtitle="A shared device at the front desk where staff clock in and out with their own PIN." />
         {device && <Notice tone="red">This device is registered to {device.shop}, which is outside your access.</Notice>}
         <Empty title="This browser isn't the front-desk clock">
-          This phone can't clock you in by itself. Use the paired clock at the desk and your PIN, or scan the QR code on that clock.
+          This phone can&apos;t clock you in by itself. Use the paired clock at the desk and your PIN, or scan the QR code on that clock.
         </Empty>
       </div>
     );
