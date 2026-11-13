@@ -6,10 +6,10 @@ import { z } from "zod";
 import QRCode from "qrcode";
 import { and, eq, isNull } from "drizzle-orm";
 import { db } from "@/db";
-import { clockDevices, shops } from "@/db/schema";
+import { clockDevices, shops, staff, staffShops } from "@/db/schema";
 import { clientIp } from "@/lib/client-ip";
 import { safe } from "@/server/action";
-import { authorize, can } from "@/server/auth/staff";
+import { authorize, can, getStaffContext } from "@/server/auth/staff";
 import { HANDOFF_COOKIE, SESSION_COOKIE } from "@/server/auth/cookies";
 import { lockedHandoff } from "@/server/auth/handoff-lock";
 import { sha256, verifyToken } from "@/server/auth/tokens";
@@ -17,7 +17,7 @@ import { clockProofUrl } from "@/server/clock-codes";
 import { issueKioskQr, type ClockNonce } from "@/server/clock-security";
 import { startPairing } from "@/server/clock-pairing";
 import { type Actor } from "@/server/audit";
-import { forbidden } from "@/server/errors";
+import { forbidden, notFound } from "@/server/errors";
 import { type Welcome, clockInWelcome } from "@/server/milestones/day";
 import { declareAtClockOut } from "@/server/tips/declarations";
 import {
@@ -155,6 +155,7 @@ const NOT_YOUR_CLOCK = "This browser isn't registered as one of your shops' time
  * the signed-in person to hold the kiosk permission at that shop, looked up for this shop only.
  */
 async function kioskDevice() {
+  await getStaffContext();
   const jar = await cookies();
   const token = jar.get(DEVICE_COOKIE)?.value ?? null;
   if (!token) throw forbidden(NOT_A_CLOCK);
@@ -391,6 +392,23 @@ export async function revokeDeviceAction(id: string) {
     const ctx = await authorize("settings.shop");
     await revokeDevice(z.uuid().parse(id), ctx.shopIds, ctx.actor);
     revalidatePath("/admin/time-clock");
+    return null;
+  });
+}
+
+/** A manager sets or resets the PIN someone uses on the front-desk clock. */
+export async function setStaffPinAction(staffId: string, pin: string) {
+  return safe(async () => {
+    const ctx = await authorize("timesheet.edit");
+    const id = z.uuid().parse(staffId);
+    const [row] = await db.select({ id: staff.id, kind: staff.kind }).from(staff).where(eq(staff.id, id));
+    if (!row || row.kind !== "person") throw notFound("Staff member");
+    if (!ctx.brandWide) {
+      const shopsFor = await db.select({ shopId: staffShops.shopId }).from(staffShops).where(eq(staffShops.staffId, id));
+      if (!shopsFor.some((s) => ctx.shopIds.includes(s.shopId))) throw forbidden("That person isn't at one of your shops.");
+    }
+    await setPin(id, pin, ctx.actor);
+    revalidatePath(`/admin/staff/${id}`);
     return null;
   });
 }

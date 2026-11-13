@@ -71,6 +71,7 @@ import {
   splitTenderProblem,
 } from "@/domain/combined-checkout";
 import { formatMinutes, type TimesView } from "@/domain/service-times";
+import { deskPin } from "@/components/desk-pin";
 import { searchCustomersAction } from "../../calendar/actions";
 import { ServiceTimer } from "../../calendar/service-times-panel";
 import {
@@ -813,6 +814,7 @@ export function Pos(props: {
           tipByStaff: perBarber ? eachCents : null,
           ticketPeople: props.people.map((p) => p.appointmentId),
           waiveCardFee: waive.on ? { reason: waive.reason } : null,
+          desk: deskPin(),
         }),
       (d) => {
         const q = new URLSearchParams({ done: "1" });
@@ -2289,6 +2291,9 @@ export function Pos(props: {
                   )}
                 </div>
               )}
+              {props.payments.noCards && (
+                <Notice>{props.payments.noCards}</Notice>
+              )}
               {base.primaryBaseCents > 0 && !split && (
                 <div className="grid grid-cols-2 gap-2">
                   <TenderBtn
@@ -2312,12 +2317,6 @@ export function Pos(props: {
                   />
                 </div>
               )}
-              {base.primaryBaseCents > 0 && props.payments.noCards && (
-                <p className="text-xs text-amber-800">
-                  {props.payments.noCards}
-                </p>
-              )}
-
               {method === "cash" && (
                 <div className="space-y-2">
                   <div className="text-xs font-medium text-zinc-700">
@@ -2346,7 +2345,7 @@ export function Pos(props: {
                 </div>
               )}
 
-              {method === "card" && (
+              {method === "card" && props.payments.cards && (
                 <div className="space-y-3">
                   <div className="flex rounded-lg bg-zinc-100 p-1 text-sm">
                     {(["terminal", "keyed"] as const).map((m) => (

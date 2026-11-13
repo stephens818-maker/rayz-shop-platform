@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { and, asc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import { db } from "@/db";
+import { shownBookingStatus } from "@/domain/booking-status";
 import {
   appointmentItems,
   appointments,
@@ -185,6 +186,7 @@ export default async function Dashboard({
           last: customers.lastName,
           notes: appointments.notes,
           readyAt: appointments.checkoutReadyAt,
+          finished: sql<boolean>`exists (select 1 from appointment_times t where t.appointment_id = ${appointments.id} and t.finished_at is not null)`,
           shop: shops.name,
           services: sql<string>`(select string_agg(${appointmentItems.name}, ' + ') from ${appointmentItems} where ${appointmentItems.appointmentId} = ${appointments.id})`,
         })
@@ -560,7 +562,7 @@ export default async function Dashboard({
                       )}
                     </Td>
                     <Td>
-                      <StatusBadge status={a.status} />
+                      <StatusBadge status={shownBookingStatus(a.status, a.finished)} />
                     </Td>
                     <Td right className="w-36">
                       {runsTimer(a) && (

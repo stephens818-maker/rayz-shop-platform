@@ -10,6 +10,7 @@ import { safe } from "@/server/action";
 import { HANDOFF_COOKIE } from "@/server/auth/cookies";
 import { HANDOFF_TTL, handoffToken } from "@/server/auth/handoff-lock";
 import { StaffContext, authorize, can, limitsAt, requireStaff, workingShopId } from "@/server/auth/staff";
+import { withDesk, type DeskPin } from "@/server/desk-pin";
 import { CheckoutLineInput, SplitTenderInput, TenderInput, assertStaffAtShop, finalizeSale, lookupGiftCard, openBlankSale } from "@/server/checkout";
 import { acceptRebook, addPromptProduct, declinePrompt, tagUsedProduct, untagUsedProduct } from "@/server/checkout-prompts";
 import { mergeTickets, openTickets, splitOffTicket, splitTicketApart } from "@/server/combined-checkout";
@@ -215,9 +216,10 @@ export async function finalizeAction(input: {
   tenders?: SplitTenderInput[] | null;
   ticketPeople?: string[] | null;
   waiveCardFee?: { reason: string } | null;
+  desk?: DeskPin | null;
 }) {
   return safe(async () => {
-    const ctx = await requireStaff();
+    const ctx = await withDesk(await requireStaff(), input.desk);
     const sale = await loadSale(ctx, input.saleId);
     const limits = limitsAt(ctx, sale.shopId);
     if (input.manualDiscount && input.manualDiscount.value > 0 && !can(ctx, "pos.discount")) throw forbidden("You don't have permission to give discounts");

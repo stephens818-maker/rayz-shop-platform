@@ -167,6 +167,8 @@ export default async function CalendarPage({
           callIns: can(ctx, "callins.mark"),
           clockBlocks: can(ctx, "blocks.others"),
           family: can(ctx, "clients.family"),
+          clock: ctx.staff.kind === "shop" || can(ctx, "timeclock.punch") || can(ctx, "timeclock.edit_others") || can(ctx, "timesheet.edit"),
+          clockOthers: ctx.staff.kind === "shop" || can(ctx, "timeclock.edit_others") || can(ctx, "timesheet.edit"),
         }}
         meId={ctx.staff.id}
         othersReadOnly={!manages}

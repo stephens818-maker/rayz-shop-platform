@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button, Field, Input, Notice, Textarea } from "@/components/ui";
+import { deskPin } from "@/components/desk-pin";
 import { closeDrawerAction } from "./actions";
 
 const DENOMS = [10000, 5000, 2000, 1000, 500, 100, 25, 10, 5, 1];
@@ -96,7 +97,7 @@ export function CloseDrawerForm({
         disabled={pending}
         onClick={() =>
           start(async () => {
-            const r = await closeDrawerAction({ shopId, date, openingFloatCents: cents(float), payoutsCents: cents(payouts), countedCents: counted, notes });
+            const r = await closeDrawerAction({ shopId, date, openingFloatCents: cents(float), payoutsCents: cents(payouts), countedCents: counted, notes, desk: deskPin() });
             if (!r.ok) setError(r.error);
             else router.refresh();
           })

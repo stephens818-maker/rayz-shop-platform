@@ -26,6 +26,10 @@ import { StepUpHost } from "./step-up";
 import { ClientQuickSearch } from "./client-quick-search";
 import { CommandPalette, CommandPaletteButton } from "./command-palette";
 import { FrontDeskBar } from "./front-desk-bar";
+import { and, asc, eq } from "drizzle-orm";
+import { db } from "@/db";
+import { staff, staffShops } from "@/db/schema";
+import { DeskPinBar } from "@/components/desk-pin";
 import { AdminNav, BackToBrand, ShopSwitcher } from "./nav";
 
 export const metadata: Metadata = {
@@ -74,6 +78,15 @@ export default async function AdminLayout({
     </>
   );
   if (ctx.staff.kind === "shop") {
+    const shopId = ctx.currentShopId ?? ctx.shopIds[0];
+    const team = shopId
+      ? await db
+          .select({ id: staff.id, label: staff.displayLabel })
+          .from(staffShops)
+          .innerJoin(staff, eq(staff.id, staffShops.staffId))
+          .where(and(eq(staffShops.shopId, shopId), eq(staff.active, true), eq(staff.kind, "person")))
+          .orderBy(asc(staff.displayLabel))
+      : [];
     const tabs = frontDeskTabs(ctx.permissions).map(({ href, label }) => ({ href, label }));
     return (
       <div className="touch-ui min-h-dvh bg-zinc-50 text-zinc-900" data-testid="front-desk-shell">
@@ -101,6 +114,7 @@ export default async function AdminLayout({
           </div>
         </header>
         <main id="main" tabIndex={-1} className="min-w-0 px-3 py-4 focus:outline-none sm:px-5">
+          <DeskPinBar people={team} />
           {children}
         </main>
         <p className="no-print px-3 pb-3 text-[11px] text-zinc-400" data-testid="build-revision">

@@ -391,24 +391,58 @@ export async function acceptKioskPin(staffId: string, pin: string, where: PinPla
   const from = new Date(now.getTime() - 3 * DAY).toISOString();
   const to = new Date(now.getTime() + 60_000).toISOString();
   const at = now.toISOString();
-  const [s] = await db
-    .select({
-      kind: staff.kind,
-      label: staff.displayLabel,
-      hash: staff.clockPinHash,
-      failures: staff.clockPinFailures,
-      lockedUntil: staff.clockPinLockedUntil,
-      onTeam: sql<boolean>`exists (select 1 from staff_shops ss where ss.staff_id = ${staff.id} and ss.shop_id = ${where.shopId}::uuid)`,
-      staffTries: sql<number>`(select count(*)::int from api_rate_events e where e.bucket = 'clock_pin_staff' and e.key = ${staffId} and e.created_at > ${since}::timestamptz)`,
-      deviceFails: sql<number>`(select count(*)::int from api_rate_events e where e.bucket = 'clock_pin_device' and e.key = ${where.deviceId ?? ""} and e.created_at > ${since}::timestamptz)`,
-    })
-    .from(staff)
-    .where(and(eq(staff.id, staffId), eq(staff.active, true)));
+  // One round trip reads the PIN and, when a try is allowed, counts the failure before bcrypt.
+  const [s] = (await db.execute(sql`
+    with s as (
+      select kind, display_label as label, clock_pin_hash as hash, clock_pin_failures as failures,
+        clock_pin_locked_until as locked_until,
+        exists (select 1 from staff_shops ss where ss.staff_id = staff.id and ss.shop_id = ${where.shopId}::uuid) as on_team,
+        (select count(*)::int from api_rate_events e where e.bucket = 'clock_pin_staff' and e.key = ${staffId} and e.created_at > ${since}::timestamptz) as staff_tries,
+        (select count(*)::int from api_rate_events e where e.bucket = 'clock_pin_device' and e.key = ${where.deviceId ?? ""} and e.created_at > ${since}::timestamptz) as device_fails
+      from staff
+      where id = ${staffId}::uuid and active
+    ),
+    upd as (
+      update staff
+      set clock_pin_failures = clock_pin_failures + 1
+      where id = ${staffId}::uuid
+        and exists (
+          select 1 from s
+          where s.hash is not null and s.kind = 'person' and s.on_team
+            and s.staff_tries < ${PIN_STAFF_TRIES}
+            and (${where.deviceId}::text is null or s.device_fails < ${PIN_DEVICE_FAILURES})
+            and s.failures < ${PIN_MAX_FAILURES}
+            and (s.locked_until is null or s.locked_until <= ${at}::timestamptz)
+        )
+        and clock_pin_failures < ${PIN_MAX_FAILURES}
+        and (clock_pin_locked_until is null or clock_pin_locked_until <= ${at}::timestamptz)
+      returning clock_pin_failures
+    ),
+    rate as (
+      insert into api_rate_events (bucket, key)
+      select 'clock_pin_staff', ${staffId} from upd
+      returning 1
+    )
+    select s.kind, s.label, s.hash, s.failures, s.locked_until, s.on_team, s.staff_tries, s.device_fails,
+      u.clock_pin_failures as taken, (select count(*)::int from rate) as rated
+    from s
+    left join upd u on true
+  `)) as unknown as {
+    kind: string;
+    label: string;
+    hash: string | null;
+    failures: number;
+    locked_until: Date | null;
+    on_team: boolean;
+    staff_tries: number;
+    device_fails: number;
+    taken: number | null;
+  }[];
   if (!s || s.kind !== "person") throw notFound("Staff member");
-  if (!s.onTeam) throw notFound("Team member");
+  if (!s.on_team) throw notFound("Team member");
   if (!s.hash) throw bad(`${s.label} hasn't set a time clock PIN yet. They set one on their Time clock page.`);
-  const limited = Number(s.staffTries) >= PIN_STAFF_TRIES;
-  const deviceLimited = !!where.deviceId && Number(s.deviceFails) >= PIN_DEVICE_FAILURES;
+  const limited = Number(s.staff_tries) >= PIN_STAFF_TRIES;
+  const deviceLimited = !!where.deviceId && Number(s.device_fails) >= PIN_DEVICE_FAILURES;
   if (limited || deviceLimited) {
     await pinAttempt(where, staffId, false, { refused: "rate_limited" });
     throw new AppError(
@@ -417,28 +451,14 @@ export async function acceptKioskPin(staffId: string, pin: string, where: PinPla
       { retryAfterSeconds: Math.ceil(PIN_RATE_WINDOW_MS / 1000) },
     );
   }
-  const lockedAlready = s.failures >= PIN_MAX_FAILURES || (!!s.lockedUntil && s.lockedUntil > now);
-  if (lockedAlready) {
-    await db.execute(sql`insert into api_rate_events (bucket, key) values ('clock_pin_staff', ${staffId})`);
+  const lockedUntil = s.locked_until ? new Date(s.locked_until) : null;
+  const lockedAlready = Number(s.failures) >= PIN_MAX_FAILURES || (!!lockedUntil && lockedUntil > now);
+  if (lockedAlready || s.taken == null) {
+    if (lockedAlready) await db.execute(sql`insert into api_rate_events (bucket, key) values ('clock_pin_staff', ${staffId})`);
     await pinAttempt(where, staffId, false, { refused: "locked" });
     throw new AppError("conflict", PIN_LOCKED, { reason: "pin_locked" });
   }
-  const slot = (await db.execute(sql`
-    with rate as (
-      insert into api_rate_events (bucket, key) values ('clock_pin_staff', ${staffId})
-    )
-    update staff
-    set clock_pin_failures = clock_pin_failures + 1
-    where id = ${staffId}::uuid
-      and clock_pin_failures < ${PIN_MAX_FAILURES}
-      and (clock_pin_locked_until is null or clock_pin_locked_until <= ${at}::timestamptz)
-    returning clock_pin_failures
-  `)) as unknown as { clock_pin_failures: number }[];
-  const taken = slot[0];
-  if (!taken) {
-    await pinAttempt(where, staffId, false, { refused: "locked" });
-    throw new AppError("conflict", PIN_LOCKED, { reason: "pin_locked" });
-  }
+  const taken = { clock_pin_failures: Number(s.taken) };
   if (await bcrypt.compare(pin, s.hash)) {
     const details = JSON.stringify(scrub({ ok: true, via: where.via, deviceId: where.deviceId }));
     const punches = (await db.execute(sql`
@@ -802,6 +822,75 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
     }
   }
   return { kind: "done", punchId: result, type: req.type, at: now, shop: clock.name, flags, notes };
+}
+
+/**
+ * A live punch from the calendar, by a manager or by the person themselves. Same timesheet, breaks
+ * and payroll hours as a front-desk punch. Source and method are "manager", and the audit names who
+ * punched. No kiosk, QR or photo: the person is already signed in, or a shop login just checked their PIN.
+ */
+export async function punchForStaff(o: { actor: Actor; byStaffId: string; staffId: string; shopId: string; type: PunchType; now?: Date }): Promise<PunchResult> {
+  const now = o.now ?? new Date();
+  const who = await db.query.staff.findFirst({ where: and(eq(staff.id, o.staffId), eq(staff.active, true), eq(staff.kind, "person")) });
+  if (!who) throw notFound("Staff member");
+  await onShopTeam(o.shopId, o.staffId);
+  const [shopRow] = await db.select({ name: shops.name, status: shops.status }).from(shops).where(eq(shops.id, o.shopId));
+  if (!shopRow || shopRow.status === "archived") throw notFound("Shop");
+  const state = await clockState(o.staffId, now);
+  if (!state.next.includes(o.type)) {
+    const where = state.shift ? ` at ${state.shift.shop}` : "";
+    throw bad(
+      state.state === "off"
+        ? "They're not clocked in."
+        : state.state === "on_break"
+          ? `They're on a break${where}. End the break or clock out.`
+          : `They're already clocked in since ${formatTime(state.shift?.start ?? now)}.`,
+    );
+  }
+  if (state.shift && state.shift.shopId !== o.shopId) throw bad(`They're clocked in at ${state.shift.shop}. Punch there.`);
+  const date = localDateOf(now);
+  if (await hoursLockedOn(o.shopId, date)) throw new AppError("conflict", "This pay period is locked, so no more punches can go into it. Ask a manager.");
+  const rules = await loadClockRules(o.shopId);
+  const flags: PunchFlag[] = ["manual"];
+  let offScheduleMin: number | null = null;
+  if (o.type === "in" || o.type === "out") {
+    const sched = await schedulesOf([o.staffId]);
+    const day = o.type === "out" && state.shift ? localDateOf(state.shift.start) : date;
+    const off = offSchedule(o.type, now, scheduleFor(sched, o.staffId, o.shopId, day), rules.graceMinutes);
+    offScheduleMin = off.minutes;
+    if (off.flag) flags.push(off.flag);
+  }
+  const id = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .insert(timePunches)
+      .values({
+        staffId: o.staffId,
+        shopId: o.shopId,
+        type: o.type,
+        at: now,
+        originalAt: now,
+        source: "manager",
+        method: "manager",
+        flags,
+        offScheduleMin,
+        createdBy: o.byStaffId,
+      })
+      .returning({ id: timePunches.id });
+    await rederive(o.staffId, now, now, tx, rules);
+    const cleared = await clearApprovals(o.staffId, o.shopId, [date], tx);
+    await audit(o.actor, "timeclock.punch", "time_punch", row.id, { staffId: o.staffId, type: o.type, source: "manager", method: "manager", flags, by: o.byStaffId, approvalsCleared: cleared }, o.shopId, tx);
+    await syncClockBlocks([o.staffId], { from: now, to: now }, { tx, now, actor: o.actor });
+    if (o.type === "in" || o.type === "break_end") await releaseHeldStaffNotices(o.staffId, now, tx);
+    return row.id;
+  });
+  if (o.type === "break_start" || o.type === "out") {
+    try {
+      await sendClockFallout(now, { onlyStaffId: o.staffId, shopIds: [o.shopId] });
+    } catch (e) {
+      console.error("clock fallout after punch failed", e);
+    }
+  }
+  return { kind: "done", punchId: id, type: o.type, at: now, shop: shopRow.name, flags, notes: [] };
 }
 
 // ───────────────────────────── Manager corrections ─────────────────────────────

@@ -13,6 +13,7 @@ import { CADENCE_GAPS, DUE_LEAD_DAYS, VISIT_STATUS_LABEL, VISIT_STATUS_TONE, typ
 import { formatPhone } from "@/lib/phone";
 import { progressLabel } from "@/domain/loyalty";
 import { formatCents } from "@/lib/money";
+import { shownBookingStatus } from "@/domain/booking-status";
 import { formatDate, formatDateTime } from "@/lib/time";
 import { can, guardPage, ratingViewer, workingShopId } from "@/server/auth/staff";
 import { PAUSED_MESSAGE, clientPolicy, isPaused, recordClientAccess, shownField } from "@/server/client-privacy";
@@ -107,6 +108,7 @@ export default async function CustomerPage({
         barber: staff.displayLabel,
         items: sql<string>`(select string_agg(name, ' + ' order by kind, name) from appointment_items i where i.appointment_id = ${appointments.id})`,
         paid: sql<number | null>`(select s.total_cents from sales s where s.appointment_id = ${appointments.id} and s.status <> 'voided' limit 1)`,
+        finished: sql<boolean>`exists (select 1 from appointment_times t where t.appointment_id = ${appointments.id} and t.finished_at is not null)`,
       })
       .from(appointments)
       .innerJoin(shops, eq(shops.id, appointments.shopId))
@@ -601,7 +603,7 @@ export default async function CustomerPage({
                     </Td>
                     <Td right>{ownMoney(v.a.shopId) ? formatCents(v.paid ?? v.a.estimateCents) : <span className="text-zinc-400">—</span>}</Td>
                     <Td>
-                      <StatusBadge status={v.a.status} />
+                      <StatusBadge status={shownBookingStatus(v.a.status, v.finished)} />
                     </Td>
                     {policy.ratingDetail && <Td className="whitespace-nowrap text-xs">{visitStars.get(v.a.id)?.map((n, k) => <Stars key={k} n={n} />) ?? null}</Td>}
                   </tr>

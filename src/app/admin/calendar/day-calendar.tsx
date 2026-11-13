@@ -25,6 +25,7 @@ import { ConflictConfirm } from "@/components/conflict-confirm";
 import { useHotkeys } from "@/components/hotkeys";
 import { columnsThatFit } from "@/domain/calendar-layout";
 import { shownBookingStatus } from "@/domain/booking-status";
+import { deskPin } from "@/components/desk-pin";
 import { canDragAppointment, resizeEndMin } from "@/domain/calendar-desk";
 import { toast } from "@/components/toast";
 import { useAction as useServerAction } from "@/components/use-action";
@@ -78,6 +79,8 @@ import {
   sendToCheckoutAction,
   staffOpeningsAction,
   startCheckoutAction,
+  columnClockAction,
+  columnPunchAction,
 } from "./actions";
 import {
   cancelGroupStaffAction,
@@ -285,6 +288,8 @@ export function DayCalendar({
     callIns: boolean;
     clockBlocks: boolean;
     family: boolean;
+    clock: boolean;
+    clockOthers: boolean;
   };
   meId: string;
   /** They see every column but act only on their own ("calendar.view_all" without "calendar.manage"). */
@@ -340,7 +345,7 @@ export function DayCalendar({
       return;
     setMoved({ id: a.id, colId: col.id, startMin, appt: a });
     move.run(
-      () => moveAppointmentAction(a.id, col.id, data.date, startMin),
+      () => moveAppointmentAction(a.id, col.id, data.date, startMin, { desk: deskPin() }),
       () => setMoved(null),
       `Moved to ${label(startMin)} with ${col.label}`,
     );
@@ -709,6 +714,7 @@ export function DayCalendar({
                   nowMin={nowMin}
                   hideCancelled={hideCancelled}
                   clocked={clocked}
+                  canClock={canManage.clock && (canManage.clockOthers || col.id === meId) && data.date === today}
                   selectedId={panel?.kind === "appt" ? panel.appt.id : null}
                   readOnly={othersReadOnly && col.id !== meId}
                   onAppt={(appt) => setPanel({ kind: "appt", col, appt })}
@@ -824,6 +830,71 @@ export function DayCalendar({
   );
 }
 
+const COLUMN_PUNCH = { in: "Clock in", out: "Clock out", break_start: "Out to lunch", break_end: "In from lunch" } as const;
+
+function ColumnClock({ staffId, shopId, label }: { staffId: string; shopId: string; label: string }) {
+  const [open, setOpen] = useState(false);
+  const [status, setStatus] = useState<{ state: string; next: (keyof typeof COLUMN_PUNCH)[]; since: string | null } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, start] = useTransition();
+  const load = () =>
+    start(async () => {
+      const r = await columnClockAction({ staffId, shopId });
+      if (r.ok) {
+        setStatus(r.data);
+        setError(null);
+      } else setError(r.error);
+    });
+  return (
+    <div className="relative min-w-0">
+      <button
+        type="button"
+        className="max-w-full truncate text-left text-sm font-semibold underline-offset-2 hover:underline"
+        onClick={() => {
+          const next = !open;
+          setOpen(next);
+          if (next) load();
+        }}
+      >
+        {label}
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-56 space-y-2 rounded-lg bg-white p-3 text-left shadow-lg ring-1 ring-zinc-200" data-testid="column-clock">
+          <div className="text-xs text-zinc-600">
+            {status?.state === "working" && status.since
+              ? `Clocked in since ${formatTime(status.since)}`
+              : status?.state === "on_break"
+                ? "Out to lunch"
+                : status
+                  ? "Clocked out"
+                  : "Checking the clock…"}
+          </div>
+          {error && <p className="text-xs text-red-700">{error}</p>}
+          <div className="grid grid-cols-1 gap-1">
+            {(status?.next ?? []).map((t) => (
+              <Button
+                key={t}
+                size="sm"
+                disabled={pending}
+                onClick={() =>
+                  start(async () => {
+                    const r = await columnPunchAction({ staffId, shopId, type: t, desk: deskPin() });
+                    if (!r.ok) return setError(r.error);
+                    setStatus({ state: r.data.state, next: r.data.next, since: r.data.since });
+                    setError(null);
+                  })
+                }
+              >
+                {COLUMN_PUNCH[t]}
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Column({
   col,
   celebrating,
@@ -834,6 +905,7 @@ function Column({
   nowMin,
   hideCancelled,
   clocked,
+  canClock = false,
   selectedId,
   readOnly = false,
   onAppt,
@@ -851,6 +923,8 @@ function Column({
   hideCancelled: boolean;
   /** Some column has clock data, so headers make room for the status line. */
   clocked: boolean;
+  /** Today's column, and they may punch this person from the heading. */
+  canClock?: boolean;
   selectedId: string | null;
   /** Someone else's column they may only look at. */
   readOnly?: boolean;
@@ -953,7 +1027,11 @@ function Column({
             className="h-2.5 w-2.5 shrink-0 rounded-full"
             style={{ background: col.color }}
           />
-          <span className="truncate text-sm font-semibold">{col.label}</span>
+          {canClock ? (
+            <ColumnClock staffId={col.id} shopId={data.shop.id} label={col.label} />
+          ) : (
+            <span className="truncate text-sm font-semibold">{col.label}</span>
+          )}
           {celebrating.length > 0 && (
             <span
               className="shrink-0 rounded-full bg-amber-100 p-0.5 ring-1 ring-amber-300"
@@ -1562,7 +1640,7 @@ function GroupBox({
               size="sm"
               variant="secondary"
               disabled={pending}
-              onClick={() => run(() => checkInGroupAction(groupId))}
+              onClick={() => run(() => checkInGroupAction(groupId, deskPin()))}
             >
               Check in all {due.length}
             </Button>
@@ -1570,7 +1648,7 @@ function GroupBox({
           <Button
             size="sm"
             disabled={pending}
-            onClick={() => run(() => groupTicketAction(groupId), toSale)}
+            onClick={() => run(() => groupTicketAction(groupId, deskPin()), toSale)}
           >
             One ticket
           </Button>
@@ -1581,7 +1659,7 @@ function GroupBox({
             disabled={pending}
             data-testid="group-send-to-checkout"
             onClick={() =>
-              run(() => groupSendToCheckoutAction(groupId), onDone)
+              run(() => groupSendToCheckoutAction(groupId, deskPin()), onDone)
             }
           >
             Send group to checkout
@@ -1620,7 +1698,7 @@ function GroupBox({
                     `Mark ${due.map((m) => m.firstName ?? "Guest").join(", ")} as no-shows?`,
                   )
                 )
-                  run(() => groupNoShowAction(groupId));
+                  run(() => groupNoShowAction(groupId, deskPin()));
               }}
             >
               No-show ({due.length})
@@ -1632,7 +1710,7 @@ function GroupBox({
             disabled={pending}
             onClick={() => {
               if (confirm(`Cancel everyone in family booking ${group.code}?`))
-                run(() => cancelGroupStaffAction(groupId), onDone);
+                run(() => cancelGroupStaffAction(groupId, undefined, deskPin()), onDone);
             }}
           >
             Cancel all
@@ -1742,7 +1820,7 @@ function ApptPanel({
   const open = ["booked", "confirmed", "checked_in", "in_service"].includes(s);
   const checkout = () =>
     run(
-      () => startCheckoutAction(appt.id),
+      () => startCheckoutAction(appt.id, deskPin()),
       (d) => {
         const r = d as { saleId: string; status: string };
         router.push(
@@ -1898,7 +1976,7 @@ function ApptPanel({
                 data-testid="send-to-checkout"
                 onClick={() =>
                   run(
-                    () => sendToCheckoutAction(appt.id),
+                    () => sendToCheckoutAction(appt.id, deskPin()),
                     (d) => setSent(d as { ready: number; total: number }),
                   )
                 }
@@ -1911,7 +1989,7 @@ function ApptPanel({
               <Button
                 variant="secondary"
                 disabled={pending}
-                onClick={() => run(() => setStatusAction(appt.id, "confirmed"))}
+                onClick={() => run(() => setStatusAction(appt.id, "confirmed", deskPin()))}
               >
                 Confirm
               </Button>
@@ -1921,7 +1999,7 @@ function ApptPanel({
                 variant="secondary"
                 disabled={pending}
                 onClick={() =>
-                  run(() => setStatusAction(appt.id, "checked_in"))
+                  run(() => setStatusAction(appt.id, "checked_in", deskPin()))
                 }
               >
                 Check in
@@ -1931,7 +2009,7 @@ function ApptPanel({
               <Button
                 variant="ghost"
                 disabled={pending}
-                onClick={() => run(() => setStatusAction(appt.id, "booked"))}
+                onClick={() => run(() => setStatusAction(appt.id, "booked", deskPin()))}
               >
                 Undo check-in
               </Button>
@@ -1940,7 +2018,7 @@ function ApptPanel({
               <Button
                 variant="danger"
                 disabled={pending}
-                onClick={() => run(() => setStatusAction(appt.id, "no_show"))}
+                onClick={() => run(() => setStatusAction(appt.id, "no_show", deskPin()))}
               >
                 No-show
               </Button>
@@ -1951,7 +2029,7 @@ function ApptPanel({
                 disabled={pending}
                 onClick={() => {
                   if (confirm(`Cancel ${appt.customerName}'s appointment?`))
-                    run(() => setStatusAction(appt.id, "cancelled"), onDone);
+                    run(() => setStatusAction(appt.id, "cancelled", deskPin()), onDone);
                 }}
               >
                 Cancel
@@ -1965,7 +2043,7 @@ function ApptPanel({
           variant="secondary"
           className="w-full"
           disabled={pending}
-          onClick={() => run(() => setStatusAction(appt.id, "booked"))}
+          onClick={() => run(() => setStatusAction(appt.id, "booked", deskPin()))}
         >
           Restore appointment
         </Button>
@@ -1979,15 +2057,15 @@ function ApptPanel({
           View receipt
         </LinkButton>
       )}
-      {s === "completed" && appt.ticketVoided && (
+      {appt.ticketVoided && (s === "completed" || s === "in_service" || s === "checked_in") && (
         <div className="space-y-2">
-          <Notice>The ticket on this visit was voided, so it still shows as finished. Clear it to take it off the day.</Notice>
+          <Notice>The ticket on this visit was voided. Clear the visit to take it off the day.</Notice>
           <Button
             variant="danger"
             className="w-full"
             disabled={pending}
             onClick={() => {
-              if (confirm(`Clear ${appt.customerName}'s finished visit?`)) run(() => setStatusAction(appt.id, "cancelled"), onDone);
+              if (confirm(`Clear ${appt.customerName}'s finished visit?`)) run(() => setStatusAction(appt.id, "cancelled", deskPin()), onDone);
             }}
           >
             Clear visit
@@ -2431,7 +2509,7 @@ function NewPanel({
           })),
           plan: finderPick!.plan,
           seats: seatsOf(finderPick!),
-        }),
+        }, deskPin()),
       (d) => {
         const r = d as {
           code: string | null;
@@ -2771,7 +2849,7 @@ function NewPanel({
                                 timing: m.timing,
                               })),
                             ],
-                          })
+                          }, deskPin())
                         : createStaffAppointmentAction({
                             shopId: data.shop.id,
                             staffId: col.id,
@@ -2789,7 +2867,7 @@ function NewPanel({
                             details: picked ? null : entryPayload(entry, details),
                             notes,
                             squeezeIn: squeeze && !isOpen,
-                          }),
+                          }, deskPin()),
                     onDone,
                   )
             }

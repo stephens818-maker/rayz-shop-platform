@@ -45,7 +45,7 @@ export default async function PairedClockPage() {
       ) : (
         <Empty title="Nobody is on this shop's team yet" />
       )}
-      {clock?.settings.methods.includes("qr") && <ClockQr />}
+      <ClockQr />
     </main>
   );
 }

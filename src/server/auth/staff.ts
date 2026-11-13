@@ -21,7 +21,7 @@ import { HANDOFF_COOKIE, SESSION_COOKIE, SHOP_COOKIE, TRUSTED_DEVICE_COOKIE } fr
 import { lockedHandoff } from "./handoff-lock";
 import { approvedShopIds, devicesFromCookie, evaluateNetwork } from "./network";
 import type { Caller } from "./policy";
-import { SessionRef, WEB_SESSION_TTL_SECONDS, endWebSession, liveWebSession, openWebSession } from "./sessions";
+import { SessionRef, WEB_SESSION_TTL_SECONDS, endWebSession, liveWebSession, openWebSession, shopStaySeconds } from "./sessions";
 import { signToken, verifyToken } from "./tokens";
 
 export { SESSION_COOKIE, SHOP_COOKIE };
@@ -56,14 +56,16 @@ export interface StaffContext {
 /** A web session for this browser: its own row (listed and signed out on its own), named by the cookie. */
 export async function startSession(staffId: string, o: { ip: string | null; userAgent: string | null; browserId: string | null }) {
   const sid = await openWebSession(staffId, { ip: o.ip, userAgent: o.userAgent, deviceKey: o.browserId });
-  const token = await signToken({ sub: staffId, sid }, "staff_session", WEB_SESSION_TTL_SECONDS);
+  const who = await db.query.staff.findFirst({ where: eq(staff.id, staffId), columns: { kind: true } });
+  const ttl = who?.kind === "shop" ? shopStaySeconds() : WEB_SESSION_TTL_SECONDS;
+  const token = await signToken({ sub: staffId, sid }, "staff_session", ttl);
   const jar = await cookies();
   jar.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: WEB_SESSION_TTL_SECONDS,
+    maxAge: ttl,
   });
   return sid;
 }
@@ -93,6 +95,16 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
   if (!payload?.sid || !(await liveWebSession(payload.sid, payload.sub))) return null;
   const device = await devicesFromCookie(jar.get(TRUSTED_DEVICE_COOKIE)?.value);
   const ctx = await staffContextOf(payload.sub, payload.iat, { ip: clientIp(await headers()), deviceShopIds: approvedShopIds(device), shopPref: jar.get(SHOP_COOKIE)?.value ?? null });
+  if (ctx?.staff.kind === "shop") {
+    const ttl = shopStaySeconds();
+    jar.set(SESSION_COOKIE, await signToken({ sub: payload.sub, sid: payload.sid }, "staff_session", ttl), {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: ttl,
+    });
+  }
   return ctx && { ...ctx, session: { kind: "web", id: payload.sid } };
 });
 
