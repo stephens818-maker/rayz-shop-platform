@@ -240,7 +240,8 @@ describe("hidden and masked values never reach a restricted person's browser", (
       expect(opened).toBeGreaterThanOrEqual(who === "makenna" ? 5 : 9);
       // Below brand level a client's last name is an initial; a brand-level custom role sees it in full.
       expect(profile, "the profile opened").toContain(who === "admin" ? `${P.first} ${P.last}` : `${P.first} S.`);
-      expect(profile).toContain("***-***-9876");
+      expect(profile).toContain(who === "makenna" ? "***-***-**76" : "***-***-9876");
+      if (who === "makenna") expect(profile).not.toContain("***-***-9876");
       if (who === "makenna") expect(profile).not.toContain("p***@");
       if (who === "frontdesk" || who === "michelle") expect(profile).toContain("p***@example.test");
       if (who === "michelle") expect(profile).toContain("***, Coralville, IA 52241");
@@ -289,10 +290,10 @@ describe("staff still do their job", () => {
     const { contactClientAction } = await import("@/app/admin/customers/actions");
     await as("makenna", shop.coralville);
     const text = await contactClientAction(ids.client, { channel: "sms", message: "Running 10 minutes behind" });
-    expect(text).toMatchObject({ ok: true, data: { to: "***-***-9876" } });
+    expect(text).toMatchObject({ ok: true, data: { to: "***-***-**76" } });
     expect(found(JSON.stringify(text), PHONE)).toEqual([]);
     const call = await contactClientAction(ids.client, { channel: "call" });
-    expect(call).toMatchObject({ ok: true, data: { to: "***-***-9876" } });
+    expect(call).toMatchObject({ ok: true, data: { to: "***-***-**76" } });
     const jobs = await m.db.db.select().from(m.schema.notificationJobs).where(eq(m.schema.notificationJobs.customerId, ids.client));
     expect(jobs.find((j) => j.kind === "staff_text")).toMatchObject({ to: P.phone, channel: "sms", body: expect.stringContaining("Running 10 minutes behind") });
     expect(jobs.find((j) => j.kind === "staff_call")).toMatchObject({ to: P.phone, channel: "voice" });

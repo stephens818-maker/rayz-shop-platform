@@ -41,7 +41,7 @@ export async function clientListQuery(
   const found = input.q ? await findClients(ctx, policy, input.q, { via: "clients", limit: 500, ownClientsOf: full ? undefined : ctx.staff.id, record: false }) : null;
   const ids = found?.ranked.map((r) => r.id) ?? [];
   const search = found ? (ids.length ? inArray(customers.id, ids) : sql`false`) : undefined;
-  const scope = !full ? visitedScope({ staffId: ctx.staff.id }) : input.purpose === "export" && !ctx.brandWide ? shopClientsScope(ctx.shopIds) : undefined;
+  const scope = !full ? visitedScope({ staffId: ctx.staff.id, served: true }) : input.purpose === "export" && !ctx.brandWide ? shopClientsScope(ctx.shopIds) : undefined;
   const filtered = await filteredClientIds(seg, input.now ?? new Date());
   const relevance = ids.length ? sql`array_position(array[${sql.join(
     ids.map((i) => sql`${i}::uuid`),

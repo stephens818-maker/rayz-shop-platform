@@ -738,7 +738,23 @@ describe("pages and reports", () => {
       }),
     );
     expect(html).toContain(`You&#x27;re already clocked in since ${m.time.formatTime(new Date(since))}.`);
+    expect(html).toContain("This phone can&#x27;t clock you in by itself.");
     expect(html).not.toContain("Clock in");
+    const onTheClock = renderToStaticMarkup(
+      createElement(ClockPanel, {
+        shops: [shop],
+        state: "off",
+        shiftShopId: null,
+        since: null,
+        breakSince: null,
+        next: ["in"],
+        defaultShopId: shop.id,
+        breakReasons: [],
+        deviceShopId: shop.id,
+      }),
+    );
+    expect(onTheClock).toContain("Clock in");
+    expect(onTheClock).not.toContain("can&#x27;t clock you in");
     expect(renderToStaticMarkup(createElement(PinForm, { hasPin: true }))).toContain('method="get"');
     expect(renderToStaticMarkup(createElement(VoidShift, { punchIds: ["00000000-0000-0000-0000-000000000002"] }))).toContain("Void");
   });

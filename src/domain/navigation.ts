@@ -17,6 +17,8 @@ export const PAGE_ACCESS = {
   "/admin": null,
   "/admin/help": null,
   "/admin/chat": null,
+  "/admin/photos": null,
+  "/admin/portfolio": null,
   "/admin/booking-links": ["calendar.manage", "settings.shop"],
   "/admin/calendar": null,
   "/admin/calendar/board": ["calendar.manage"],
@@ -192,6 +194,7 @@ const SECTIONS: { title: string; items: { href: AdminPage; label: string }[] }[]
     title: "Employees",
     items: [
       { href: "/admin/staff", label: "Staff & schedules" },
+      { href: "/admin/photos", label: "Photos" },
       { href: "/admin/clock", label: "Time clock" },
       { href: "/admin/clock/kiosk", label: "Front-desk clock" },
       { href: "/admin/my-time", label: "My time" },

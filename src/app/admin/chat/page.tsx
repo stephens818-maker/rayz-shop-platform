@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Card, CardHeader, PageHeader } from "@/components/ui";
 import { guardPage } from "@/server/auth/staff";
 import { staffChatFor, staffMessagesFor } from "@/server/staff-chat";
-import { ChatComposer, DirectMessage, Moderate } from "./box";
+import { ChatComposer, DeleteOwn, DirectMessage, Moderate } from "./box";
 
 export const metadata: Metadata = { title: "Staff chat" };
 
@@ -45,6 +45,7 @@ export default async function StaffChatPage({ searchParams }: { searchParams: Pr
                   <div className="text-[11px] text-zinc-500">
                     {m.author} · {new Date(m.at).toLocaleString()}
                     {m.reported ? " · reported" : ""}
+                    {m.mine && m.body !== "Removed" && <DeleteOwn messageId={m.id} />}
                     {canModerate && m.body !== "Removed" && <Moderate messageId={m.id} />}
                   </div>
                   <div className="whitespace-pre-wrap text-zinc-800">{m.body}</div>

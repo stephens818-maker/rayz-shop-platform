@@ -343,17 +343,18 @@ export interface CustomerStats {
 const toDate = (v: unknown) => (v ? new Date(v as string) : null);
 
 /** Brand-wide, or only what happened at `shopIds` for a shop workspace. */
-export async function customerStats(customerId: string, tx: DBorTx = db, now = new Date(), shopIds?: readonly string[]): Promise<CustomerStats> {
+export async function customerStats(customerId: string, tx: DBorTx = db, now = new Date(), shopIds?: readonly string[], staffId?: string): Promise<CustomerStats> {
   const nowIso = now.toISOString();
   const at = (alias: string) => (shopIds ? sql`and ${sql.raw(alias)}shop_id in (${shopIds.length ? sql.join(shopIds.map((x) => sql`${x}::uuid`), sql`, `) : sql`null::uuid`})` : sql``);
+  const chair = (alias: string) => (staffId ? sql`and ${sql.raw(alias)}staff_id = ${staffId}::uuid` : sql``);
   const [row] = (await tx.execute(sql`
     select
-      (select count(*) from appointments where customer_id = ${customerId} ${at("")} and status = 'completed')::int as visits,
-      (select count(*) from appointments where customer_id = ${customerId} ${at("")} and status = 'no_show')::int as "noShows",
-      (select count(*) from appointments where customer_id = ${customerId} ${at("")} and status = 'cancelled')::int as cancellations,
-      (select count(*) from appointments where customer_id = ${customerId} ${at("")} and status in ('booked','confirmed','checked_in','in_service') and starts_at >= ${nowIso})::int as upcoming,
-      (select min(starts_at) from appointments where customer_id = ${customerId} ${at("")} and status = 'completed') as "firstVisit",
-      (select max(starts_at) from appointments where customer_id = ${customerId} ${at("")} and status = 'completed') as "lastVisit",
+      (select count(*) from appointments where customer_id = ${customerId} ${at("")} ${chair("")} and status = 'completed')::int as visits,
+      (select count(*) from appointments where customer_id = ${customerId} ${at("")} ${chair("")} and status = 'no_show')::int as "noShows",
+      (select count(*) from appointments where customer_id = ${customerId} ${at("")} ${chair("")} and status = 'cancelled')::int as cancellations,
+      (select count(*) from appointments where customer_id = ${customerId} ${at("")} ${chair("")} and status in ('booked','confirmed','checked_in','in_service') and starts_at >= ${nowIso})::int as upcoming,
+      (select min(starts_at) from appointments where customer_id = ${customerId} ${at("")} ${chair("")} and status = 'completed') as "firstVisit",
+      (select max(starts_at) from appointments where customer_id = ${customerId} ${at("")} ${chair("")} and status = 'completed') as "lastVisit",
       (select coalesce(sum(service_net_cents + product_net_cents), 0) from sales
         where customer_id = ${customerId} ${at("")} and status in ('paid','partially_refunded','refunded'))::int as gross,
       (select coalesce(sum(tip_cents), 0) from sales
@@ -364,10 +365,10 @@ export async function customerStats(customerId: string, tx: DBorTx = db, now = n
       (select coalesce(sum(r.tip_cents), 0) from refunds r join sales s on s.id = r.sale_id
         where s.customer_id = ${customerId} ${at("s.")} and r.kind = 'refund' and s.status <> 'voided')::int as "tipRefunds",
       (select coalesce(sum(a.estimate_cents), 0) from appointments a
-        where a.customer_id = ${customerId} ${at("a.")} and a.status = 'completed' and a.source = 'import'
+        where a.customer_id = ${customerId} ${at("a.")} ${chair("a.")} and a.status = 'completed' and a.source = 'import'
           and not exists (select 1 from sales s where s.appointment_id = a.id
             or (s.customer_id = a.customer_id and s.business_date = (a.starts_at at time zone 'America/Chicago')::date)))::int as "squireVisitSpend",
-      (select staff_id from appointments where customer_id = ${customerId} ${at("")} and status = 'completed'
+      (select staff_id from appointments where customer_id = ${customerId} ${at("")} ${chair("")} and status = 'completed'
         group by staff_id order by count(*) desc, max(starts_at) desc limit 1) as "usualBarberId"
   `)) as unknown as Record<string, number | string | null>[];
   const ticketSpendCents = Number(row.gross) - Number(row.refunded);
@@ -421,11 +422,12 @@ export function customerSearchWhere(term: string, reach: SearchReach = FULL_REAC
   return reach.email ? or(sql`${fullNameExpr} like ${`%${lower}%`}`, sql`lower(${customers.email}) like ${`${lower}%`}`) : sql`${fullNameExpr} like ${`%${lower}%`}`;
 }
 
-/** Clients with any appointment at these shops (or with this barber). */
-export function visitedScope(opts: { shopIds?: string[]; staffId?: string }): SQL {
+/** Clients with an appointment at these shops, or (when served) a completed visit with this barber. */
+export function visitedScope(opts: { shopIds?: string[]; staffId?: string; served?: boolean }): SQL {
   const conds: SQL[] = [sql`v.customer_id = ${customers.id}`];
   if (opts.shopIds) conds.push(opts.shopIds.length ? sql`v.shop_id in (${sql.join(opts.shopIds.map((s) => sql`${s}::uuid`), sql`, `)})` : sql`false`);
   if (opts.staffId) conds.push(sql`v.staff_id = ${opts.staffId}::uuid`);
+  if (opts.served) conds.push(sql`v.status = 'completed'`);
   return sql`exists (select 1 from appointments v where ${sql.join(conds, sql` and `)})`;
 }
 
@@ -510,8 +512,17 @@ export async function duplicatePairs(opts: { forId?: string; limit?: number; squ
   const fuzzy = sql`${name("a")} % ${name("b")} and coalesce(a.last_name, '') <> '' and coalesce(b.last_name, '') <> '' and ${backed}`;
   // One client's pairs start from that client, so the profile page doesn't pair up the whole book.
   const candidates = opts.forId
-    ? sql`select least(a.id, b.id) a_id, greatest(a.id, b.id) b_id from customers a join customers b on b.id <> a.id
-        and (a.phone = b.phone or a.email = b.email or (${fuzzy})) where a.id = ${opts.forId}::uuid`
+    ? sql`select least(a.id, b.id) a_id, greatest(a.id, b.id) b_id from customers a
+        join customers b on b.id <> a.id and b.phone = a.phone
+        where a.id = ${opts.forId}::uuid and a.phone is not null
+        union
+        select least(a.id, b.id), greatest(a.id, b.id) from customers a
+        join customers b on b.id <> a.id and b.email = a.email
+        where a.id = ${opts.forId}::uuid and a.email is not null
+        union
+        select least(a.id, b.id), greatest(a.id, b.id) from customers a
+        join customers b on b.id <> a.id and ${fuzzy}
+        where a.id = ${opts.forId}::uuid`
     : sql`select a.id a_id, b.id b_id from customers a join customers b on a.id < b.id and a.phone = b.phone where a.phone is not null
         union
         select a.id, b.id from customers a join customers b on a.id < b.id and a.email = b.email where a.email is not null

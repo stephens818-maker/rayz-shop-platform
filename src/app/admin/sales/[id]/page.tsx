@@ -122,7 +122,12 @@ export default async function SalePage({ params, searchParams }: { params: Promi
           </Notice>
         </div>
       )}
-      {sp.done && (
+      {sale.status === "voided" && (
+        <div className="no-print mb-4">
+          <Notice>This ticket is voided. Nothing was collected.</Notice>
+        </div>
+      )}
+      {sp.done && sale.status !== "voided" && (
         <div className="no-print mb-4 space-y-2">
           <Notice tone="green">
             Paid {formatCents(sale.totalCents)}

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { safe } from "@/server/action";
 import { requireStaff } from "@/server/auth/staff";
-import { moderateStaffMessage, openDirectMessage, postStaffChat } from "@/server/staff-chat";
+import { deleteOwnStaffMessage, moderateStaffMessage, openDirectMessage, postStaffChat } from "@/server/staff-chat";
 
 export async function postChatAction(channelId: string, body: string) {
   return safe(async () => {
@@ -18,6 +18,14 @@ export async function openDmAction(otherId: string) {
     const id = await openDirectMessage(await requireStaff(), otherId);
     revalidatePath("/admin/chat");
     return id;
+  });
+}
+
+export async function deleteOwnChatAction(messageId: string) {
+  return safe(async () => {
+    await deleteOwnStaffMessage(await requireStaff(), messageId);
+    revalidatePath("/admin/chat");
+    return null;
   });
 }
 

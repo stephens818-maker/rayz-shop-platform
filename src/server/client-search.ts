@@ -55,7 +55,7 @@ interface Scope {
  */
 function scopeFor(ctx: StaffContext, o: SearchOptions): Scope {
   const shops = o.brandWide || ctx.brandWide ? undefined : ctx.shopIds;
-  return o.ownClientsOf ? { clients: visitedScope({ staffId: o.ownClientsOf }), shops } : { shops };
+  return o.ownClientsOf ? { clients: visitedScope({ staffId: o.ownClientsOf, served: true }), shops } : { shops };
 }
 
 async function ids(q: Promise<{ id: string | null; score?: number }[]>, base: number): Promise<Found[]> {
@@ -187,7 +187,7 @@ export async function findClients(ctx: StaffContext, policy: ClientPolicy, term:
   let ranked = [...best.entries()].sort((a, b) => b[1].score - a[1].score).map(([id, v]) => ({ id, matched: v.matched }));
   // Ticket and appointment matches came from the ticket; the client must still be in reach.
   if (o.ownClientsOf && ranked.length) {
-    const ok = new Set((await db.select({ id: customers.id }).from(customers).where(and(inArray(customers.id, ranked.map((r) => r.id)), visitedScope({ staffId: o.ownClientsOf })))).map((r) => r.id));
+    const ok = new Set((await db.select({ id: customers.id }).from(customers).where(and(inArray(customers.id, ranked.map((r) => r.id)), visitedScope({ staffId: o.ownClientsOf, served: true })))).map((r) => r.id));
     ranked = ranked.filter((r) => ok.has(r.id));
   }
   // ST-I19: the Demo Shop's reviewer finds only demo clients, and nobody else ever finds them.
@@ -262,7 +262,7 @@ export async function clientHits(ctx: StaffContext, policy: ClientPolicy, ranked
         lastName: policy.show("last_name", r.last_name),
         short: shortName(r.first_name, policy.level("last_name") === "hidden" ? null : r.last_name),
         nickname: r.nickname,
-        phone: policy.level("phone") === "hidden" ? null : maskPhone(r.phone),
+        phone: policy.level("phone") === "hidden" ? null : policy.level("phone") === "full" ? maskPhone(r.phone) : policy.show("phone", r.phone),
         email: policy.show("email", r.email),
         notes: policy.show("notes", r.notes),
         lastVisit: r.last_at ? { at: new Date(r.last_at).toISOString(), shop: r.last_shop } : null,

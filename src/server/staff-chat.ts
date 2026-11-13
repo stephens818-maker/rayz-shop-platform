@@ -141,6 +141,15 @@ export async function openDirectMessage(ctx: StaffContext, otherId: string) {
   return created.id;
 }
 
+export async function deleteOwnStaffMessage(ctx: StaffContext, messageId: string) {
+  const [row] = await db.select().from(staffMessages).where(eq(staffMessages.id, messageId));
+  if (!row) throw notFound("Message");
+  if (row.authorId !== ctx.staff.id) throw forbidden("You can delete your own messages");
+  await readable(ctx, row.channelId);
+  await db.update(staffMessages).set({ deletedAt: new Date() }).where(and(eq(staffMessages.id, messageId), isNull(staffMessages.deletedAt)));
+  await audit(ctx.actor, "staff_chat.delete", "staff_message", messageId, { own: true }, ctx.currentShopId);
+}
+
 export async function moderateStaffMessage(ctx: StaffContext, messageId: string, action: "delete" | "report") {
   if (!manager(ctx)) throw forbidden("A manager removes or reports a message");
   const [row] = await db.select().from(staffMessages).where(eq(staffMessages.id, messageId));

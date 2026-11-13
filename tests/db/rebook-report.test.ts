@@ -226,14 +226,16 @@ describe("the report", () => {
     expect(table(d, "barbers")!.title).toContain("new-client rebook rate");
   });
 
-  it("shows a barber only their own numbers, against the whole brand", async () => {
+  it("shows a barber only their own numbers, without the brand average", async () => {
     const d = await load("makenna", {});
     expect(d.scope.staffIds).toEqual([ids.makenna]);
     expect(metric(table(d, "rebook")!, "Completed visits")).toBe(6);
     const board = table(d, "barbers")!;
-    expect(board.rows).toHaveLength(2);
-    expect(board.rows[1]).toEqual(expect.arrayContaining(["Brand average", 8]));
-    expect(table(d, "brand")!.rows[0]).toEqual(["Rebook rate", 0.4, 3 / 7, "−3 pts"]);
+    expect(board.rows).toHaveLength(1);
+    expect(board.rows.some((r) => r.includes("Brand average"))).toBe(false);
+    expect(table(d, "brand")).toBeUndefined();
+    expect(d.charts?.[0].series).toHaveLength(1);
+    expect(d.stats[0].hint ?? "").not.toContain("brand");
   });
 });
 

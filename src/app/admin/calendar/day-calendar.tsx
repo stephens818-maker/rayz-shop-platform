@@ -1979,6 +1979,21 @@ function ApptPanel({
           View receipt
         </LinkButton>
       )}
+      {s === "completed" && appt.ticketVoided && (
+        <div className="space-y-2">
+          <Notice>The ticket on this visit was voided, so it still shows as finished. Clear it to take it off the day.</Notice>
+          <Button
+            variant="danger"
+            className="w-full"
+            disabled={pending}
+            onClick={() => {
+              if (confirm(`Clear ${appt.customerName}'s finished visit?`)) run(() => setStatusAction(appt.id, "cancelled"), onDone);
+            }}
+          >
+            Clear visit
+          </Button>
+        </div>
+      )}
       <div className="flex flex-wrap gap-3 border-t border-zinc-100 pt-3 text-sm">
         {appt.customerId && canManage.clients && (
           <Link

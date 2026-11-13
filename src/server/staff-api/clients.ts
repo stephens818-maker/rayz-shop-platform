@@ -1,5 +1,5 @@
 import "server-only";
-import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appointmentItems, appointments, customerTags, customers, shops, staff } from "@/db/schema";
 import { BUILTIN_FIELDS, FieldKey, customFieldKey } from "@/domain/client-privacy";
@@ -60,6 +60,8 @@ export async function clientCard(ctx: StaffAppContext, customerId: string) {
   await recordClientAccess(ctx, { kind: "view", customerId, detail: { via: "staff_app" } });
   const policy = await clientPolicy(ctx);
   const label = async (id: string | null) => (id ? ((await db.query.staff.findFirst({ where: eq(staff.id, id), columns: { displayLabel: true } }))?.displayLabel ?? null) : null);
+  const chairId = ctx.staff.roleKey === "barber" || ctx.staff.roleKey === "apprentice" ? ctx.staff.id : undefined;
+  const visitWhere = and(eq(appointments.customerId, customerId), chairId ? eq(appointments.staffId, chairId) : undefined);
   const [preferred, home, visits, [{ visitCount }], notes, badges, tags, summary] = await Promise.all([
     label(c.preferredStaffId),
     c.homeShopId ? db.query.shops.findFirst({ where: eq(shops.id, c.homeShopId), columns: { id: true, name: true } }) : null,
@@ -68,10 +70,10 @@ export async function clientCard(ctx: StaffAppContext, customerId: string) {
       .from(appointments)
       .innerJoin(shops, eq(shops.id, appointments.shopId))
       .innerJoin(staff, eq(staff.id, appointments.staffId))
-      .where(eq(appointments.customerId, customerId))
+      .where(visitWhere)
       .orderBy(desc(appointments.startsAt))
       .limit(VISITS),
-    db.select({ visitCount: sql<number>`count(*)::int` }).from(appointments).where(eq(appointments.customerId, customerId)),
+    db.select({ visitCount: sql<number>`count(*)::int` }).from(appointments).where(visitWhere),
     listNotes(ctx, customerId),
     shownBadges(policy, [customerId]),
     access === "full" ? db.select({ tag: customerTags.tag }).from(customerTags).where(eq(customerTags.customerId, customerId)).orderBy(asc(customerTags.tag)) : [],

@@ -377,7 +377,7 @@ export function TimeOffForm({
           />
         ) : (
           <Button size="lg" className="w-full" disabled={pending || !reasonId} onClick={() => go(false)}>
-            Request {labelOf(reasons, reasonId).toLowerCase()} time off
+            Request time off
           </Button>
         )}
         <Messages error={error} ok={ok} />

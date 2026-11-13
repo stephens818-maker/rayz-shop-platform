@@ -21,6 +21,7 @@ Order inside a group is the order below. Shop logins keep the front-desk tabs (F
 ## Calendar
 
 - Calendar — `/admin/calendar`
+- Booking links — `/admin/booking-links`
 - All-shops day board — `/admin/calendar/board`
 
 ## Clients
@@ -33,11 +34,13 @@ Find a client stays on the Clients page. Booking an appointment on the calendar 
 ## Employees
 
 - Staff & schedules — `/admin/staff`
+- Photos — `/admin/photos`
 - Time clock — `/admin/clock`
 - Front-desk clock — `/admin/clock/kiosk`
 - My time — `/admin/my-time`
 - Time off — `/admin/time-off`
 - Timesheets — `/admin/timesheets`
+- Staff chat — `/admin/chat`
 - Hours — `/admin/payroll/hours`
 - Time clock setup — `/admin/time-clock`
 - Staff milestones — `/admin/milestones/settings`

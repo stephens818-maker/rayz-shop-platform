@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import {
   appointmentItems,
@@ -6,6 +6,8 @@ import {
   customerCards,
   customers,
   notificationJobs,
+  saleAppointments,
+  sales,
   services,
   shopClosures,
   shopHours,
@@ -48,7 +50,7 @@ import { AppError, isDoubleBookingError, notFound } from "./errors";
 import { liveClock } from "./clock-live";
 import { AppointmentMessageContext, cancelPendingReminders, queueAppointmentMessage, scheduleAppointmentNotifications } from "./notifications/queue";
 import { guardian, householdContact } from "./household-contact";
-import { clearArrival, recordArrival, startService } from "./service-times";
+import { clearArrival, recordArrival, startService, visitDayProblem } from "./service-times";
 import { queueStaffAlert } from "./staff-alerts";
 import { cleanNotificationPrefs, reminderHours } from "@/domain/staff-notifications";
 import { shopReminderHours } from "./location-defaults";
@@ -809,9 +811,25 @@ const TRANSITIONS: Record<string, string[]> = {
  * Status changes also record service times: checking in is the arrival, and "in the chair" starts the
  * service only after check-in. A check-in after Start keeps the start. Finishing goes through Finish or checkout.
  */
+async function hasLiveTicket(appointmentId: string) {
+  const [direct] = await db.select({ id: sales.id }).from(sales).where(and(eq(sales.appointmentId, appointmentId), ne(sales.status, "voided"))).limit(1);
+  if (direct) return true;
+  const [linked] = await db
+    .select({ id: sales.id })
+    .from(saleAppointments)
+    .innerJoin(sales, eq(sales.id, saleAppointments.saleId))
+    .where(and(eq(saleAppointments.appointmentId, appointmentId), ne(sales.status, "voided")))
+    .limit(1);
+  return !!linked;
+}
+
 export async function setAppointmentStatus(id: string, status: keyof typeof TRANSITIONS, actor: Actor, now = new Date()) {
   const a = await db.query.appointments.findFirst({ where: eq(appointments.id, id) });
   if (!a) throw notFound("Appointment");
+  if (status === "checked_in" || status === "in_service" || status === "completed") {
+    const day = visitDayProblem(a.startsAt, now);
+    if (day) throw new AppError("conflict", day);
+  }
   if (status === "in_service" && a.status === "in_service") return startService(id, actor, now);
   if (status === "checked_in" && a.status === "in_service") {
     await db.transaction(async (tx) => {
@@ -821,7 +839,9 @@ export async function setAppointmentStatus(id: string, status: keyof typeof TRAN
     });
     return;
   }
-  if (!TRANSITIONS[a.status]?.includes(status)) throw new AppError("conflict", `Can't move from ${a.status} to ${status}`);
+  const clearingVoided = a.status === "completed" && status === "cancelled";
+  if (clearingVoided && (await hasLiveTicket(id))) throw new AppError("conflict", "This visit has a ticket. Void the ticket before clearing the visit.");
+  if (!clearingVoided && !TRANSITIONS[a.status]?.includes(status)) throw new AppError("conflict", `Can't move from ${a.status} to ${status}`);
   if (status === "in_service") return startService(id, actor, now);
   try {
     await db.transaction(async (tx) => {

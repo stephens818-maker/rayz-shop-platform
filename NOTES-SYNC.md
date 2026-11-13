@@ -912,6 +912,28 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-11-11: visits, phones, photos, chat, wording
+
+No new migration. Next is still `core_0164`. Makenna's Oct 27 punches and Coralville's end-of-night tip payout timing are unchanged. No canary.
+
+Check-in, Start, and Finish refuse a visit whose date is not today. The message names the visit's date. Confirm, cancel, and no-show are unchanged. A finished visit whose only ticket is voided gets **Clear visit** on the calendar. That cancels it and writes `appointment.cancelled`. A visit that still has a live ticket cannot be cleared that way.
+
+A barber's own Time clock page says, in plain words, to use the front-desk clock and PIN or scan that clock's QR when this browser is not the registered clock. The buttons stay off until then. The earlier clock fixes (already clocked in, PIN form, Jessica's page) are left as they were.
+
+`/admin/photos` is in the Employees menu. A person changes their own photo. Someone who can edit booking links also changes shop photos. `/admin/portfolio` opens the same page. The upload still uses the existing save actions.
+
+A voided ticket no longer shows the green Paid banner. All-shops settings names the shop being edited and points at the shop switcher. The time-off button says **Request time off**.
+
+A barber's client list is people with a completed visit in their chair. Their client page and the staff-app card count and list only their visits. Their rebook report no longer adds Brand average rows, the brand comparison table, or the brand chart series. A manager looking at one shop still sees the brand average.
+
+Staff chat has **Delete** on your own message. It marks the message removed and writes `staff_chat.delete`. A manager can still remove someone else's.
+
+Barbers and apprentices see a client's phone as `***-***-**60` (last 2 digits) on the client list, client page, calendar, and receipt-on-file line. Managers, front desk, and anyone else who sees a masked phone still see the last 4. Search by the last 4 digits is unchanged.
+
+The client profile's duplicate search no longer joins every client in one OR. Same phone, same email, and a close name are three lookups. Digest, the payroll report, tips, and My pay were not changed. `/admin`, Morning, and sign-in were not re-timed in a browser.
+
+Still waiting on Charles: manager access to Payouts, Shop P&L by Stripe account, and the audit log; regional access to Shop logins. Held: Makenna's Oct 27 GPS punches, Coralville tip payout timing, and the client AI/portal phase.
+
 ### 2026-11-10: time clock void, PIN, Jessica's page, payroll hours
 
 `core_0163_jessica_login` (next migration is `core_0164`). It sets a sign-in on the Coralville barber named Jessica only when she has no email, no password, and `jessica@rayz.test` is free. The demo seed gives her that same address. Anyone who already has an email or a password is left alone.
