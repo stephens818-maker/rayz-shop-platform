@@ -3,6 +3,7 @@ import { and, desc, eq, gt, isNull, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { staff, staffAppTokens, staffWebSessions } from "@/db/schema";
 import { STEP_UP_MESSAGE, deviceLabel, stepUpFresh, type StepUpAction } from "@/domain/staff-auth";
+import { endOfLocalDay, todayLocal } from "@/lib/time";
 import { AppError } from "@/server/errors";
 import { sha256 } from "./tokens";
 
@@ -15,11 +16,18 @@ import { sha256 } from "./tokens";
 export const WEB_SESSION_TTL_SECONDS = 60 * 60 * 12;
 const TOUCH_EVERY_MS = 5 * 60_000;
 
+/** A shop login stays signed in through the business day: at least 12 hours, and until 4 hours after local midnight. */
+export function shopStaySeconds(now = new Date()) {
+  const throughClose = endOfLocalDay(todayLocal(now)).getTime() + 4 * 60 * 60_000;
+  return Math.max(WEB_SESSION_TTL_SECONDS, Math.ceil((throughClose - now.getTime()) / 1000));
+}
+
 export type SessionRef = { kind: "web" | "app"; id: string };
 
 export async function openWebSession(staffId: string, o: { ip: string | null; userAgent: string | null; deviceKey: string | null }, now = new Date()) {
-  const who = await db.query.staff.findFirst({ where: eq(staff.id, staffId), columns: { isDemo: true } });
+  const who = await db.query.staff.findFirst({ where: eq(staff.id, staffId), columns: { isDemo: true, kind: true } });
   if (who?.isDemo) throw new AppError("unauthorized", "The app review login works in the Ray'z Staff app only.");
+  const ttl = who?.kind === "shop" ? shopStaySeconds(now) : WEB_SESSION_TTL_SECONDS;
   const [row] = await db
     .insert(staffWebSessions)
     .values({
@@ -28,7 +36,7 @@ export async function openWebSession(staffId: string, o: { ip: string | null; us
       deviceLabel: deviceLabel(o.userAgent),
       ip: o.ip,
       lastSeenAt: now,
-      expiresAt: new Date(now.getTime() + WEB_SESSION_TTL_SECONDS * 1000),
+      expiresAt: new Date(now.getTime() + ttl * 1000),
       stepUpAt: now,
     })
     .returning({ id: staffWebSessions.id });
@@ -37,11 +45,20 @@ export async function openWebSession(staffId: string, o: { ip: string | null; us
 
 /** The web session a cookie names, while it's open; marks it seen every few minutes. */
 export async function liveWebSession(id: string, staffId: string, now = new Date()) {
-  const [row] = await db
-    .select()
+  const [hit] = await db
+    .select({ session: staffWebSessions, kind: staff.kind })
     .from(staffWebSessions)
+    .innerJoin(staff, eq(staff.id, staffWebSessions.staffId))
     .where(and(eq(staffWebSessions.id, id), eq(staffWebSessions.staffId, staffId), isNull(staffWebSessions.revokedAt), gt(staffWebSessions.expiresAt, now)));
-  if (!row) return null;
+  if (!hit) return null;
+  const row = hit.session;
+  if (hit.kind === "shop") {
+    const until = new Date(now.getTime() + shopStaySeconds(now) * 1000);
+    if (until.getTime() > row.expiresAt.getTime() || now.getTime() - row.lastSeenAt.getTime() > TOUCH_EVERY_MS) {
+      await db.update(staffWebSessions).set({ lastSeenAt: now, expiresAt: until > row.expiresAt ? until : row.expiresAt }).where(eq(staffWebSessions.id, id));
+    }
+    return row;
+  }
   if (now.getTime() - row.lastSeenAt.getTime() > TOUCH_EVERY_MS) await db.update(staffWebSessions).set({ lastSeenAt: now }).where(eq(staffWebSessions.id, id));
   return row;
 }

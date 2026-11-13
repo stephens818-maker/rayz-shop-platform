@@ -7,6 +7,7 @@ import { db } from "@/db";
 import { shops, waitlistEntries } from "@/db/schema";
 import { safe } from "@/server/action";
 import { assertShopAccess, authorize } from "@/server/auth/staff";
+import { withDesk, type DeskPin } from "@/server/desk-pin";
 import { quickWalkIn, seatFromWaitlist, updateWaitlistStatus } from "@/server/booking";
 import { linkWalkIns } from "@/server/booking-groups";
 import { clientPolicy } from "@/server/client-privacy";
@@ -25,9 +26,10 @@ export async function walkInAction(input: {
   customerId?: string | null;
   /** A new client's other details, each needing "add"; a matched client keeps what's on file. */
   details?: EntryDetails | null;
+  desk?: DeskPin | null;
 }) {
   return safe(async () => {
-    const ctx = await authorize("walkins.manage");
+    const ctx = await withDesk(await authorize("walkins.manage"), input.desk);
     assertShopAccess(ctx, input.shopId);
     const customerId = input.customerId ? z.uuid().parse(input.customerId) : null;
     const typed = customerId ? null : checkEntry(await clientPolicy(ctx), { ...input.details, phone: input.phone });
@@ -62,19 +64,19 @@ async function entryFor(entryId: string) {
   return { ctx, e };
 }
 
-export async function seatAction(entryId: string, staffId: string) {
+export async function seatAction(entryId: string, staffId: string, pin?: DeskPin) {
   return safe(async () => {
     const { ctx } = await entryFor(entryId);
-    const appt = await seatFromWaitlist(entryId, staffId, ctx.actor);
+    const appt = await seatFromWaitlist(entryId, staffId, (await withDesk(ctx, pin)).actor);
     revalidatePath("/admin/walk-ins");
     return { appointmentId: appt.id };
   });
 }
 
-export async function waitlistStatusAction(entryId: string, status: "left" | "done") {
+export async function waitlistStatusAction(entryId: string, status: "left" | "done", pin?: DeskPin) {
   return safe(async () => {
     const { ctx } = await entryFor(entryId);
-    await updateWaitlistStatus(entryId, status, ctx.actor);
+    await updateWaitlistStatus(entryId, status, (await withDesk(ctx, pin)).actor);
     revalidatePath("/admin/walk-ins");
     return null;
   });

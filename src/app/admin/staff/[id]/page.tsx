@@ -5,6 +5,7 @@ import { and, asc, eq, gt } from "drizzle-orm";
 import { db } from "@/db";
 import { payrollProfiles, roles, shopHours, shops, staff, staffSchedules, staffShops, timeBlocks } from "@/db/schema";
 import { PhotoUpload } from "@/components/photo-upload";
+import { StaffPinForm } from "@/components/staff-pin";
 import { Card, CardHeader, Notice, PageHeader } from "@/components/ui";
 import { TrophyCase } from "@/components/trophy-case";
 import { assignableRoles, staffEditDenied } from "@/domain/permissions";
@@ -118,6 +119,12 @@ export default async function StaffDetail({ params }: { params: Promise<{ id: st
           <div className="p-4">
             <PhotoUpload label="Upload a JPEG or PNG" current={photo} save={saveStaffPhotoAction.bind(null, person.id)} />
           </div>
+        </Card>
+      )}
+      {person && person.kind === "person" && can(ctx, "timesheet.edit") && (
+        <Card>
+          <CardHeader title="Time clock PIN" subtitle={person.clockPinHash ? "Set or reset the PIN they use on the front-desk clock." : "This person has no time clock PIN yet. Set one so they can punch."} />
+          <StaffPinForm staffId={person.id} hasPin={!!person.clockPinHash} />
         </Card>
       )}
       <ProfileForm

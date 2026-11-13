@@ -14,6 +14,7 @@ import { noteBriefsAction } from "../notes/actions";
 import { FAMILY_BOOKING_MAX } from "@/domain/family";
 import { searchCustomersAction, startCheckoutAction } from "../calendar/actions";
 import { ClientEntryFields, entryPayload, type EntryField, type EntryValues } from "@/components/client-entry-fields";
+import { deskPin } from "@/components/desk-pin";
 import { linkWalkInsAction, notifyAction, seatAction, waitlistStatusAction, walkInAction } from "./actions";
 import { formatTime } from "@/lib/time";
 
@@ -127,7 +128,7 @@ export function WalkIns({
                 setError(null);
                 const done: Result[] = [];
                 for (const id of who) {
-                  const r = await walkInAction({ shopId, serviceId, name, phone, preferredStaffId: pref, customerId: id, details: id ? null : entryPayload(entry, details) });
+                  const r = await walkInAction({ shopId, serviceId, name, phone, preferredStaffId: pref, customerId: id, details: id ? null : entryPayload(entry, details), desk: deskPin() });
                   if (!r.ok) {
                     setError(done.length ? `${r.error} (the others above are in)` : r.error);
                     break;
@@ -343,7 +344,7 @@ function WaitRow({
             </option>
           ))}
         </Select>
-        <Button size="sm" disabled={pending || !staffId} onClick={() => run(() => seatAction(w.id, staffId))}>
+        <Button size="sm" disabled={pending || !staffId} onClick={() => run(() => seatAction(w.id, staffId, deskPin()))}>
           Seat
         </Button>
         {w.hasPhone && w.status === "waiting" && (
@@ -351,7 +352,7 @@ function WaitRow({
             Text
           </Button>
         )}
-        <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => waitlistStatusAction(w.id, "left"))}>
+        <Button size="sm" variant="ghost" disabled={pending} onClick={() => run(() => waitlistStatusAction(w.id, "left", deskPin()))}>
           Left
         </Button>
       </div>

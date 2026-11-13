@@ -128,15 +128,49 @@ export async function refundEverything(saleId: string, reason: string, restock: 
   });
 }
 
+/**
+ * A void takes every visit on the ticket off the book. It never puts one back to Checked in or In
+ * chair. The void itself stays on the sale and in the refunds log (who, reason, time, amount).
+ */
+async function cancelVisitsForVoid(tx: Tx, ids: string[], now: Date, actor: Actor | null) {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return;
+  const rows = await tx
+    .select({ id: appointments.id, status: appointments.status, shopId: appointments.shopId })
+    .from(appointments)
+    .where(inArray(appointments.id, unique));
+  const live = rows.filter((r) => r.status !== "cancelled" && r.status !== "no_show");
+  if (!live.length) return;
+  await tx
+    .update(appointments)
+    .set({ status: "cancelled", cancelledAt: now, cancelledBy: "staff" })
+    .where(inArray(appointments.id, live.map((r) => r.id)));
+  if (!actor) return;
+  for (const a of live) await audit(actor, "appointment.cancelled", "appointment", a.id, { from: a.status, reason: "ticket voided" }, a.shopId, tx);
+}
+
 export async function voidSale(saleId: string, reason: string, actor: Actor, now = new Date(), maxCents: number | null = null) {
   if (!reason.trim()) throw new AppError("bad_request", "A reason is required");
   await db.transaction(async (tx) => {
     const sale = await lockSale(tx, saleId);
     if (sale.status === "open") {
       await tx.update(sales).set({ status: "voided", voidedAt: now, voidReason: reason, voidApprovedBy: actor.approvedBy?.staffId ?? null }).where(eq(sales.id, saleId));
-      const booked = [sale.appointmentId, ...(await ticketAppointmentIds(saleId, tx))].filter((x): x is string => !!x);
-      if (booked.length) await tx.update(appointments).set({ status: "checked_in" }).where(inArray(appointments.id, booked));
-      await audit(actor, "sale.void_open", "sale", saleId, { reason }, sale.shopId, tx);
+      await cancelVisitsForVoid(tx, [sale.appointmentId, ...(await ticketAppointmentIds(saleId, tx))].filter((x): x is string => !!x), now, actor);
+      const [lines] = await tx.select({ cents: sql<number>`coalesce(sum(${saleItems.netCents} + ${saleItems.taxCents}), 0)::int` }).from(saleItems).where(eq(saleItems.saleId, saleId));
+      const amountCents = Math.max(0, sale.totalCents, Number(lines?.cents ?? 0));
+      await tx.insert(refunds).values({
+        saleId,
+        shopId: sale.shopId,
+        businessDate: localDateOf(now),
+        method: "cash",
+        amountCents,
+        reason,
+        kind: "void",
+        source: "staff",
+        createdBy: actor.staffId ?? null,
+        approvedBy: actor.approvedBy?.staffId ?? null,
+      });
+      await audit(actor, "sale.void_open", "sale", saleId, { reason, amountCents }, sale.shopId, tx);
       return;
     }
     if (sale.isImported) throw new AppError("conflict", "This ticket was imported from Squire and can't be voided here");
@@ -297,7 +331,7 @@ async function reverse(tx: Tx, sale: Sale, o: ReverseOpts) {
   }
   await postMovements(tx, restock, { actor: o.actor, at: o.now, audit: { action: `inventory.${o.kind}`, entity: "sale", entityId: sale.id, details: { reason: o.reason } } });
 
-  const result = await settle(tx, sale, components, o.kind, o.reason, o.now);
+  const result = await settle(tx, sale, components, o.kind, o.reason, o.now, o.actor);
   const receipt = await sendUpdatedReceipt(sale.id, o.kind === "void" ? { kind: "void" } : { kind: "refund", refundedCents: componentsTotal(components) }, tx, o.now);
   await audit(
     o.actor,
@@ -391,7 +425,7 @@ async function recordSteps(
 }
 
 /** Loyalty, promo, appointment, and sale status after a reversal. */
-async function settle(tx: Tx, sale: Sale, components: RefundComponents, kind: "refund" | "void", reason: string, now: Date) {
+async function settle(tx: Tx, sale: Sale, components: RefundComponents, kind: "refund" | "void", reason: string, now: Date, actor: Actor | null = null) {
   const [{ refunded }] = await tx.select({ refunded: sql<number>`coalesce(sum(${refunds.amountCents}),0)::int` }).from(refunds).where(eq(refunds.saleId, sale.id));
   const full = kind === "void" || refunded >= sale.totalCents;
   let loyalty = null;
@@ -406,8 +440,7 @@ async function settle(tx: Tx, sale: Sale, components: RefundComponents, kind: "r
     // Tickets from before coupon redemptions were recorded only have the one promo code.
     if (!(await reverseCoupons(tx, sale.id, now)) && sale.promoCodeId) await tx.update(promoCodes).set({ redemptions: sql`greatest(${promoCodes.redemptions} - 1, 0)` }).where(eq(promoCodes.id, sale.promoCodeId));
   }
-  const booked = kind === "void" ? [sale.appointmentId, ...(await ticketAppointmentIds(sale.id, tx))].filter((x): x is string => !!x) : [];
-  if (booked.length) await tx.update(appointments).set({ status: "in_service", completedAt: null }).where(inArray(appointments.id, booked));
+  if (kind === "void") await cancelVisitsForVoid(tx, [sale.appointmentId, ...(await ticketAppointmentIds(sale.id, tx))].filter((x): x is string => !!x), now, actor);
   const status = kind === "void" ? "voided" : full ? "refunded" : "partially_refunded";
   await tx
     .update(sales)

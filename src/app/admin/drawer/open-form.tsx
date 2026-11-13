@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button, Field, Input, Notice, Select } from "@/components/ui";
+import { deskPin } from "@/components/desk-pin";
 import { drawerMoveAction, noSaleAction, openDrawerAction } from "./actions";
 
 const cents = (s: string) => Math.round((Number(s) || 0) * 100);
@@ -23,7 +24,7 @@ export function OpenDrawerForm({ shopId, date, defaultCents }: { shopId: string;
         disabled={pending}
         onClick={() =>
           start(async () => {
-            const r = await openDrawerAction({ shopId, date, openingCents: cents(amount) });
+            const r = await openDrawerAction({ shopId, date, openingCents: cents(amount), desk: deskPin() });
             if (!r.ok) setError(r.error);
             else router.refresh();
           })
@@ -65,7 +66,7 @@ export function DrawerMoveForm({ shopId, date }: { shopId: string; date: string 
         disabled={pending}
         onClick={() =>
           start(async () => {
-            const r = await drawerMoveAction({ shopId, date, kind, amountCents: cents(amount), reason });
+            const r = await drawerMoveAction({ shopId, date, kind, amountCents: cents(amount), reason, desk: deskPin() });
             if (!r.ok) setError(r.error);
             else {
               setError(null);
@@ -96,7 +97,7 @@ export function NoSaleButton({ shopId, date }: { shopId: string; date: string })
         disabled={pending}
         onClick={() =>
           start(async () => {
-            const r = await noSaleAction({ shopId, date, reason });
+            const r = await noSaleAction({ shopId, date, reason, desk: deskPin() });
             if (!r.ok) return setMsg({ ok: false, text: r.error });
             setReason("");
             setMsg({ ok: true, text: "Recorded: opened, no sale" });

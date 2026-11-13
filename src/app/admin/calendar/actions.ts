@@ -33,6 +33,9 @@ import { panelThread, replyToCustomer } from "@/server/messaging";
 import { messageHistory } from "@/server/notification-history";
 import { assertShop as assertShopAccess, hasShop, requireInTenant } from "@/server/tenant";
 import { isValidLocalDate, localDateOf, zonedWallTime } from "@/lib/time";
+import { withDesk, type DeskPin } from "@/server/desk-pin";
+import { clockState, punchForStaff } from "@/server/time-clock";
+import { loadStaffAccess } from "@/server/auth/access";
 
 /**
  * Open starts on this barber's grid for this service and these add-ons, as the front desk books
@@ -85,9 +88,9 @@ export async function appointmentReplyAction(id: string, body: string) {
 
 type Status = "confirmed" | "checked_in" | "in_service" | "completed" | "cancelled" | "no_show" | "booked";
 
-export async function setStatusAction(id: string, status: Status) {
+export async function setStatusAction(id: string, status: Status, pin?: DeskPin) {
   return safe(async () => {
-    await changeStatus(await requireStaff(), id, status);
+    await changeStatus(await withDesk(await requireStaff(), pin), id, status);
     revalidatePath("/admin/calendar");
     revalidatePath("/admin");
     return null;
@@ -95,9 +98,9 @@ export async function setStatusAction(id: string, status: Status) {
 }
 
 /** Finish tapped: the end of the service. Start is "In chair" (`setStatusAction(id, "in_service")`). */
-export async function finishServiceAction(id: string) {
+export async function finishServiceAction(id: string, pin?: DeskPin) {
   return safe(async () => {
-    await finishFor(await requireStaff(), id);
+    await finishFor(await withDesk(await requireStaff(), pin), id);
     revalidatePath("/admin/calendar");
     revalidatePath("/admin");
     return null;
@@ -144,9 +147,9 @@ export async function reviewServiceTimeAction(id: string, review: "include" | "e
   });
 }
 
-export async function startCheckoutAction(appointmentId: string) {
+export async function startCheckoutAction(appointmentId: string, pin?: DeskPin) {
   return safe(async () => {
-    const ctx = await requireStaff();
+    const ctx = await withDesk(await requireStaff(), pin);
     await loadAppt(ctx, appointmentId, "checkout.any");
     const sale = await openSaleForAppointment(appointmentId, ctx.actor);
     return { saleId: sale.id, status: sale.status };
@@ -157,9 +160,9 @@ export async function startCheckoutAction(appointmentId: string) {
  * The barber's "Send to checkout": the service is done, the visit goes onto its group's ticket (or its
  * own) and waits in the checkout queue, and the barber goes back to the next client.
  */
-export async function sendToCheckoutAction(appointmentId: string) {
+export async function sendToCheckoutAction(appointmentId: string, pin?: DeskPin) {
   return safe(async () => {
-    const ctx = await requireStaff();
+    const ctx = await withDesk(await requireStaff(), pin);
     await loadAppt(ctx, appointmentId, "checkout.any");
     const r = await sendToCheckout(appointmentId, ctx.actor);
     revalidatePath("/admin/calendar");
@@ -181,9 +184,9 @@ export async function searchCustomersAction(q: string, via: "booking" | "pos" | 
   });
 }
 
-export async function createStaffAppointmentAction(input: StaffBookingInput) {
+export async function createStaffAppointmentAction(input: StaffBookingInput, pin?: DeskPin) {
   return safe(async () => {
-    const appt = await bookForStaff(await requireStaff(), input);
+    const appt = await bookForStaff(await withDesk(await requireStaff(), pin), input);
     revalidatePath("/admin/calendar");
     return { code: appt.code };
   });
@@ -200,9 +203,9 @@ export async function resizeAppointmentAction(id: string, date: string, endMin: 
 }
 
 /** Moves land on the target barber's grid; with "calendar.squeeze_in" they can be squeezed in instead. */
-export async function moveAppointmentAction(id: string, staffId: string, date: string, startMin: number, opts: { squeezeIn?: boolean } = {}) {
+export async function moveAppointmentAction(id: string, staffId: string, date: string, startMin: number, opts: { squeezeIn?: boolean; desk?: DeskPin } = {}) {
   return safe(async () => {
-    await moveForStaff(await requireStaff(), id, staffId, date, startMin, opts);
+    await moveForStaff(await withDesk(await requireStaff(), opts.desk), id, staffId, date, startMin, { squeezeIn: opts.squeezeIn });
     revalidatePath("/admin/calendar");
     return null;
   });
@@ -281,5 +284,43 @@ export async function resetClockBlockAction(id: string) {
     await resetClockBlock(id, ctx.actor);
     revalidateBlocks();
     return null;
+  });
+}
+
+const Punch = z.enum(["in", "out", "break_start", "break_end"]);
+
+/** Where this person stands right now, for the clock on their calendar column. */
+export async function columnClockAction(input: { staffId: string; shopId: string }) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    assertShopAccess(ctx, input.shopId);
+    const s = await clockState(z.uuid().parse(input.staffId));
+    return { state: s.state, next: s.next, since: s.shift?.start.toISOString() ?? null, shop: s.shift?.shop ?? null };
+  });
+}
+
+/** Clock in, out to lunch, back from lunch, or clock out. A manager can punch for someone else. */
+export async function columnPunchAction(input: { staffId: string; shopId: string; type: z.infer<typeof Punch>; desk?: DeskPin }) {
+  return safe(async () => {
+    const ctx = await requireStaff();
+    assertShopAccess(ctx, input.shopId);
+    const type = Punch.parse(input.type);
+    const desk = await withDesk(ctx, input.desk);
+    const byId = desk.actor.staffId;
+    if (!byId) throw forbidden("Enter your PIN.");
+    const access = ctx.staff.kind === "shop" ? await loadStaffAccess(byId) : null;
+    const others = access ? access.isOwner || access.permissions.has("timeclock.edit_others") || access.permissions.has("timesheet.edit") : ctx.isOwner || can(ctx, "timeclock.edit_others") || can(ctx, "timesheet.edit");
+    const self = input.staffId === byId;
+    if (!self && !others) throw forbidden("You can clock yourself in from here. A manager clocks someone else in.");
+    if (self && !others) {
+      const canSelf = access ? access.permissions.has("timeclock.punch") || access.isOwner : can(ctx, "timeclock.punch");
+      if (!canSelf) throw forbidden("You can't punch from the calendar.");
+    }
+    const r = await punchForStaff({ actor: desk.actor, byStaffId: byId, staffId: z.uuid().parse(input.staffId), shopId: input.shopId, type });
+    if (r.kind !== "done") throw new AppError("bad_request", "That punch needs a confirmation. Use the front-desk clock.");
+    revalidatePath("/admin/calendar");
+    revalidatePath("/admin/timesheets");
+    const s = await clockState(input.staffId);
+    return { type: r.type, at: r.at.toISOString(), state: s.state, next: s.next, since: s.shift?.start.toISOString() ?? null };
   });
 }

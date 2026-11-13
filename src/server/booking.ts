@@ -839,7 +839,7 @@ export async function setAppointmentStatus(id: string, status: keyof typeof TRAN
     });
     return;
   }
-  const clearingVoided = a.status === "completed" && status === "cancelled";
+  const clearingVoided = status === "cancelled" && (a.status === "completed" || a.status === "in_service");
   if (clearingVoided && (await hasLiveTicket(id))) throw new AppError("conflict", "This visit has a ticket. Void the ticket before clearing the visit.");
   if (!clearingVoided && !TRANSITIONS[a.status]?.includes(status)) throw new AppError("conflict", `Can't move from ${a.status} to ${status}`);
   if (status === "in_service") return startService(id, actor, now);

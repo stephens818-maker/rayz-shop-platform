@@ -912,6 +912,22 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-11-12: voids, the calendar clock, and the shop login
+
+`core_0164_clock_others` adds `timeclock.edit_others` to every role that already has `timesheet.edit`. Next migration is `core_0165`. Makenna's Oct 27 punches and Coralville's end-of-night tip payout timing are unchanged. No canary. Stripe Connect test onboarding is still waiting on Charles.
+
+Voiding a ticket takes every visit on it off the book (`cancelled`). It does not put the visit back to Checked in or In chair. The void stays on the discounts and refunds report: amount, reason, who voided it, and the business date, plus `voided_at` / `void_reason` on the sale and `appointment.cancelled` in the audit log (reason "ticket voided"). An open ticket's void amount is the ticket total when the sale total is still zero. A refund does not cancel the visit.
+
+Clear visit shows for a voided ticket whether the visit is completed, in the chair, or checked in, and that cancel is allowed when no live ticket remains. The front desk, the appointment list, and the client profile use the same status as the day detail: a finished service says Finished.
+
+The front-desk clock and the paired clock always show the QR code. `kioskQrAction` still runs on the device cookie; `kioskDevice` also calls `getStaffContext`, which is null when the paired clock has no staff session. A browser that is not the paired clock gets a plain sentence instead of the register form. The PIN check reads the PIN and counts the try in one query before bcrypt. The bcrypt cost is unchanged.
+
+Clicking a staff name on today's calendar opens their clock: Clock in, Out to lunch, In from lunch, and Clock out, only the ones that follow from where they are, plus "Clocked in since 9:02 AM". Those punches use source and method `manager`, the same timesheet, breaks, and payroll hours, and an audit row that names who punched. A manager (or anyone with `timeclock.edit_others` or `timesheet.edit`) can punch for someone else. A person can punch themselves. Set or reset PIN is on the staff profile for managers.
+
+A shop login stays signed in through the business day: the session and the cookie last until four hours after local midnight, and at least twelve hours, and they refresh while the desk is in use. Daily work (book, rebook, check-in, start, finish, checkout, walk-ins, the calendar clock, the drawer) asks for that staff member's PIN once on this browser and writes that person on the audit log. Voids, refunds, and discounts over the login's limit still need a manager. Payroll and settings stay off the shop login. Client phones stay masked the way the shop login already shows them.
+
+Checkout shows "can't take cards until its Stripe account is set up and approved" on the page, before any card form, when the shop's account is missing, not approved, or only simulated while Stripe is live. The card form is not mounted in that case.
+
 ### 2026-11-11: visits, phones, photos, chat, wording
 
 No new migration. Next is still `core_0164`. Makenna's Oct 27 punches and Coralville's end-of-night tip payout timing are unchanged. No canary.

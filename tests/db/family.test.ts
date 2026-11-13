@@ -297,7 +297,7 @@ describe("family ticket", () => {
       await m.checkout.voidSale(sale.id, "Rang up the wrong family", actor);
       rows = await ledger(sale.id);
       expect([sumFor(rows, p.id), sumFor(rows, kid.id)]).toEqual([0, 0]);
-      expect([await statusOf(pa.id), await statusOf(ka.id)]).toEqual(["in_service", "in_service"]);
+      expect([await statusOf(pa.id), await statusOf(ka.id)]).toEqual(["cancelled", "cancelled"]);
     } finally {
       await brandSettings({ family: DEFAULTS });
     }

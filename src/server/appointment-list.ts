@@ -1,7 +1,8 @@
 import "server-only";
-import { and, asc, eq, gte, inArray, lt, ne } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lt, ne, or, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { appointmentItems, appointments, customers, sales, shops, staff } from "@/db/schema";
+import { shownBookingStatus } from "@/domain/booking-status";
 import { clientName } from "@/domain/client-privacy";
 import { LocalDate, addDays, endOfLocalDay, localDateOf, localMinutesOf, startOfLocalDay } from "@/lib/time";
 import type { ClientPolicy } from "./client-privacy";
@@ -45,6 +46,15 @@ export async function loadAppointmentList(
 ): Promise<{ shop: string; rows: ListedAppointment[] }> {
   const shop = await db.query.shops.findFirst({ where: eq(shops.id, shopId), columns: { name: true } });
   const statuses = LIST_STATUSES[o.status];
+  const finished = sql`exists (select 1 from appointment_times t where t.appointment_id = ${appointments.id} and t.finished_at is not null)`;
+  const statusWhere =
+    o.status === "completed"
+      ? or(eq(appointments.status, "completed"), and(eq(appointments.status, "in_service"), finished))
+      : o.status === "upcoming"
+        ? and(inArray(appointments.status, [...LIST_STATUSES.upcoming]), sql`not (${finished})`)
+        : statuses
+          ? inArray(appointments.status, [...statuses])
+          : undefined;
   const rows = await db
     .select({
       a: appointments,
@@ -52,6 +62,7 @@ export async function loadAppointmentList(
       firstName: customers.firstName,
       lastName: customers.lastName,
       saleId: sales.id,
+      finished: sql<boolean>`exists (select 1 from appointment_times t where t.appointment_id = ${appointments.id} and t.finished_at is not null)`,
     })
     .from(appointments)
     .innerJoin(staff, eq(staff.id, appointments.staffId))
@@ -63,7 +74,7 @@ export async function loadAppointmentList(
         gte(appointments.startsAt, startOfLocalDay(from)),
         lt(appointments.startsAt, endOfLocalDay(addDays(from, days - 1))),
         o.staffId ? eq(appointments.staffId, o.staffId) : undefined,
-        statuses ? inArray(appointments.status, [...statuses]) : undefined,
+        statusWhere,
       ),
     )
     .orderBy(asc(appointments.startsAt), asc(staff.displayLabel))
@@ -83,7 +94,7 @@ export async function loadAppointmentList(
       date: localDateOf(r.a.startsAt),
       startMin: localMinutesOf(r.a.startsAt),
       endMin: localMinutesOf(r.a.endsAt),
-      status: r.a.status,
+      status: shownBookingStatus(r.a.status, r.finished),
       source: r.a.source,
       barber: r.barber,
       staffId: r.a.staffId,

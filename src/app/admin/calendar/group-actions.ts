@@ -22,6 +22,7 @@ import { staffWallTime } from "@/server/booking";
 import { sendGroupToCheckout } from "@/server/combined-checkout";
 import { customerAccess } from "@/server/customers";
 import { isValidLocalDate } from "@/lib/time";
+import { withDesk, type DeskPin } from "@/server/desk-pin";
 import { AppError, notFound } from "@/server/errors";
 
 const touch = () => {
@@ -49,9 +50,9 @@ export async function staffGroupOptionsAction(guardianId: string, input: { shopI
 }
 
 /** Book the option picked, all or nothing. A seat taken in the meantime returns the times still open. */
-export async function staffBookGroupAction(guardianId: string, input: unknown) {
+export async function staffBookGroupAction(guardianId: string, input: unknown, pin?: DeskPin) {
   return safe(async () => {
-    const ctx = await authorize("calendar.manage", "You can't book appointments");
+    const ctx = await withDesk(await authorize("calendar.manage", "You can't book appointments"), pin);
     const shopId = z.object({ shopId: z.uuid() }).parse(input).shopId;
     assertShopAccess(ctx, shopId);
     await reachClient(ctx.staff.id, can(ctx, "clients.view_all"), z.uuid().parse(guardianId));
@@ -69,34 +70,34 @@ export async function staffBookGroupAction(guardianId: string, input: unknown) {
   });
 }
 
-async function loadGroup(groupId: string, need: "calendar.manage" | "checkout.any") {
-  const ctx = await authorize(need, need === "checkout.any" ? "You can't check out other barbers' clients" : "You can't change appointments");
+async function loadGroup(groupId: string, need: "calendar.manage" | "checkout.any", pin?: DeskPin) {
+  const ctx = await withDesk(await authorize(need, need === "checkout.any" ? "You can't check out other barbers' clients" : "You can't change appointments"), pin);
   const g = await db.query.bookingGroups.findFirst({ where: eq(bookingGroups.id, z.uuid().parse(groupId)) });
   if (!g) throw notFound("Family booking");
   assertShopAccess(ctx, g.shopId);
   return { ctx, g };
 }
 
-export async function checkInGroupAction(groupId: string) {
+export async function checkInGroupAction(groupId: string, pin?: DeskPin) {
   return safe(async () => {
-    const { ctx, g } = await loadGroup(groupId, "calendar.manage");
+    const { ctx, g } = await loadGroup(groupId, "calendar.manage", pin);
     const n = await checkInGroup(g.id, ctx.actor);
     touch();
     return { checkedIn: n };
   });
 }
 
-export async function groupTicketAction(groupId: string) {
+export async function groupTicketAction(groupId: string, pin?: DeskPin) {
   return safe(async () => {
-    const { ctx, g } = await loadGroup(groupId, "checkout.any");
+    const { ctx, g } = await loadGroup(groupId, "checkout.any", pin);
     return { saleId: await openGroupTicket(g.id, ctx.actor) };
   });
 }
 
 /** Everyone in the group finished: one combined ticket, all of them ready in the checkout queue. */
-export async function groupSendToCheckoutAction(groupId: string) {
+export async function groupSendToCheckoutAction(groupId: string, pin?: DeskPin) {
   return safe(async () => {
-    const { ctx, g } = await loadGroup(groupId, "checkout.any");
+    const { ctx, g } = await loadGroup(groupId, "checkout.any", pin);
     const saleId = await sendGroupToCheckout(g.id, ctx.actor);
     touch();
     revalidatePath("/admin/sales");
@@ -104,36 +105,36 @@ export async function groupSendToCheckoutAction(groupId: string) {
   });
 }
 
-export async function groupSplitTicketsAction(groupId: string) {
+export async function groupSplitTicketsAction(groupId: string, pin?: DeskPin) {
   return safe(async () => {
-    const { ctx, g } = await loadGroup(groupId, "checkout.any");
+    const { ctx, g } = await loadGroup(groupId, "checkout.any", pin);
     const tickets = await openGroupSplitTickets(g.id, ctx.actor);
     touch();
     return { tickets };
   });
 }
 
-export async function groupNoShowAction(groupId: string) {
+export async function groupNoShowAction(groupId: string, pin?: DeskPin) {
   return safe(async () => {
-    const { ctx, g } = await loadGroup(groupId, "calendar.manage");
+    const { ctx, g } = await loadGroup(groupId, "calendar.manage", pin);
     const r = await groupNoShow(g.id, ctx.actor);
     touch();
     return r;
   });
 }
 
-export async function cancelGroupStaffAction(groupId: string, reason?: string) {
+export async function cancelGroupStaffAction(groupId: string, reason?: string, pin?: DeskPin) {
   return safe(async () => {
-    const { ctx, g } = await loadGroup(groupId, "calendar.manage");
+    const { ctx, g } = await loadGroup(groupId, "calendar.manage", pin);
     await cancelGroup(g.code, { actor: ctx.actor, byCustomer: false, reason: reason?.slice(0, 200) });
     touch();
     return null;
   });
 }
 
-export async function groupDepositAction(groupId: string) {
+export async function groupDepositAction(groupId: string, pin?: DeskPin) {
   return safe(async () => {
-    const { ctx, g } = await loadGroup(groupId, "checkout.any");
+    const { ctx, g } = await loadGroup(groupId, "checkout.any", pin);
     return { saleId: await startGroupDeposit(g.id, ctx.actor) };
   });
 }

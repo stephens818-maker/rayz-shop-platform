@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { deskPin } from "@/components/desk-pin";
 import { sendToCheckoutAction } from "../calendar/actions";
 
 /** The barber's "Send to checkout" on a visit in the chair: it joins the checkout queue, on its group's ticket. */
@@ -26,7 +27,7 @@ export function SendToCheckoutButton({ appointmentId, readyAt }: { appointmentId
         onClick={() =>
           start(async () => {
             setError(null);
-            const r = await sendToCheckoutAction(appointmentId);
+            const r = await sendToCheckoutAction(appointmentId, deskPin());
             if (!r.ok) return setError(r.error);
             setDone(r.data);
             router.refresh();

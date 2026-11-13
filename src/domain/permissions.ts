@@ -351,6 +351,12 @@ export const FEATURE_PERMISSIONS = [
     hint: "From their own phone, held to the shop's device, GPS or network rule, or with their PIN on the shop's front-desk clock.",
   },
   { key: "timeclock.kiosk", group: "Payroll and time clock", label: "Open the shop's front-desk time clock", hint: "On a registered device, where staff punch with their own PIN." },
+  {
+    key: "timeclock.edit_others",
+    group: "Payroll and time clock",
+    label: "Clock someone in or out from the calendar",
+    hint: "A live punch for someone else, written as a manager punch on their timesheet. Their own punches still go through the front-desk clock.",
+  },
   { key: "timesheet.own", group: "Payroll and time clock", label: "See and sign off their own timesheet", hint: "Their punches, breaks, scheduled against actual hours and overtime." },
   {
     key: "timesheet.edit",
@@ -1141,6 +1147,7 @@ const MANAGER_FEATURES: FeaturePermission[] = [
   "campaign_center.openings",
   "timeclock.punch",
   "timeclock.kiosk",
+  "timeclock.edit_others",
   "timesheet.own",
   "timesheet.edit",
   "timesheet.approve",

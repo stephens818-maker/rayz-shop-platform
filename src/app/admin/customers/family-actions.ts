@@ -18,6 +18,7 @@ import {
 } from "@/server/auth/staff";
 import { clientPolicy } from "@/server/client-privacy";
 import { customerAccess } from "@/server/customers";
+import { withDesk, type DeskPin } from "@/server/desk-pin";
 import { AppError, forbidden } from "@/server/errors";
 import {
   addChild,
@@ -248,11 +249,15 @@ const StaffFamilyBooking = z.object({
 /** The calendar booking several family members at once: the first at the slot clicked, the rest alongside or right after. */
 export async function staffFamilyBookingAction(
   raw: z.input<typeof StaffFamilyBooking>,
+  pin?: DeskPin,
 ) {
   return safe(async () => {
-    const ctx = await authorize(
-      "calendar.manage",
-      "You can't book appointments",
+    const ctx = await withDesk(
+      await authorize(
+        "calendar.manage",
+        "You can't book appointments",
+      ),
+      pin,
     );
     const p = StaffFamilyBooking.parse(raw);
     assertShopAccess(ctx, p.shopId);

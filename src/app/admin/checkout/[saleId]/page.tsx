@@ -25,7 +25,7 @@ import {
   paymentsMode,
   terminal,
 } from "@/server/payments/processor";
-import { settlementAccount } from "@/server/payments/connect";
+import { connectMode, settlementAccount } from "@/server/payments/connect";
 import { takesCards } from "@/domain/connect";
 import { and, asc, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
@@ -150,7 +150,13 @@ export default async function CheckoutPage({
     (p, i, a) => a.findIndex((x) => x.customerId === p.customerId) === i,
   );
   const coupons = await ticketCoupons(c.sale);
-  const cards = takesCards(c.shop.paymentsMode, account);
+  const ownerAccount = c.shop.paymentsMode === "entity";
+  const cards = takesCards(c.shop.paymentsMode, account) && !(connectMode() === "stripe" && !!account?.simulated);
+  const noCards = cards
+    ? null
+    : c.shop.paymentsMode === "cash_only"
+      ? `${c.shop.name} takes cash and gift cards only for now.`
+      : `${c.shop.name} can't take cards until its ${ownerAccount ? "owner's " : ""}Stripe account is set up and approved. Take cash or a gift card for now, and finish Payments in Location setup.`;
   return (
     <>
       <CelebrationBanner items={day.pos} className="mx-auto mb-4 max-w-6xl" />
@@ -326,11 +332,7 @@ export default async function CheckoutPage({
             funding: c.funding,
           })),
           cards,
-          noCards: cards
-            ? null
-            : c.shop.paymentsMode === "cash_only"
-              ? `${c.shop.name} takes cash and gift cards only for now.`
-              : `${c.shop.name} can't take cards until Stripe finishes approving its ${c.shop.paymentsMode === "entity" ? "owner's " : ""}account. Take cash or a gift card.`,
+          noCards,
           readers,
         }}
         taxCategories={Object.fromEntries([

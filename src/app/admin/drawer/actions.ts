@@ -3,12 +3,13 @@
 import { revalidatePath } from "next/cache";
 import { safe } from "@/server/action";
 import { assertShopAccess, authorize } from "@/server/auth/staff";
+import { withDesk, type DeskPin } from "@/server/desk-pin";
 import { closeDrawer } from "@/server/checkout";
 import { openDrawer, openDrawerNoSale, recordDrawerMove } from "@/server/drawer";
 
-export async function closeDrawerAction(input: { shopId: string; date: string; openingFloatCents: number; payoutsCents: number; countedCents: number; notes: string }) {
+export async function closeDrawerAction(input: { shopId: string; date: string; openingFloatCents: number; payoutsCents: number; countedCents: number; notes: string; desk?: DeskPin | null }) {
   return safe(async () => {
-    const ctx = await authorize("drawer.manage");
+    const ctx = await withDesk(await authorize("drawer.manage"), input.desk);
     assertShopAccess(ctx, input.shopId);
     const r = await closeDrawer({ ...input, actor: ctx.actor });
     revalidatePath("/admin/drawer");
@@ -16,9 +17,9 @@ export async function closeDrawerAction(input: { shopId: string; date: string; o
   });
 }
 
-export async function openDrawerAction(input: { shopId: string; date: string; openingCents: number }) {
+export async function openDrawerAction(input: { shopId: string; date: string; openingCents: number; desk?: DeskPin | null }) {
   return safe(async () => {
-    const ctx = await authorize("drawer.manage");
+    const ctx = await withDesk(await authorize("drawer.manage"), input.desk);
     assertShopAccess(ctx, input.shopId);
     await openDrawer({ ...input, actor: ctx.actor });
     revalidatePath("/admin/drawer");
@@ -26,9 +27,9 @@ export async function openDrawerAction(input: { shopId: string; date: string; op
   });
 }
 
-export async function drawerMoveAction(input: { shopId: string; date: string; kind: "paid_in" | "paid_out"; amountCents: number; reason: string }) {
+export async function drawerMoveAction(input: { shopId: string; date: string; kind: "paid_in" | "paid_out"; amountCents: number; reason: string; desk?: DeskPin | null }) {
   return safe(async () => {
-    const ctx = await authorize("drawer.manage");
+    const ctx = await withDesk(await authorize("drawer.manage"), input.desk);
     assertShopAccess(ctx, input.shopId);
     await recordDrawerMove({ ...input, actor: ctx.actor });
     revalidatePath("/admin/drawer");
@@ -36,9 +37,9 @@ export async function drawerMoveAction(input: { shopId: string; date: string; ki
   });
 }
 
-export async function noSaleAction(input: { shopId: string; date: string; reason: string }) {
+export async function noSaleAction(input: { shopId: string; date: string; reason: string; desk?: DeskPin | null }) {
   return safe(async () => {
-    const ctx = await authorize("drawer.no_sale");
+    const ctx = await withDesk(await authorize("drawer.no_sale"), input.desk);
     assertShopAccess(ctx, input.shopId);
     await openDrawerNoSale({ ...input, actor: ctx.actor });
     revalidatePath("/admin/drawer");
