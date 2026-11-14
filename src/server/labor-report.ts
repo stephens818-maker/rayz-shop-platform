@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { staff } from "@/db/schema";
 import { Cell, Column, ViewCtx, listTable } from "@/domain/report-views";
 import type { Permission } from "@/domain/permissions";
+import { formatPayHours } from "@/lib/hours";
 import { formatCents } from "@/lib/money";
 import type { ReportData } from "./report-data";
 import { ReportScope, staffSelection } from "./reports";
@@ -57,7 +58,7 @@ export async function laborData(scope: ReportScope, loc: ViewCtx, perms: Readonl
   const noRate = rows.filter((r) => r.workedMin > 0 && !r.rate).length;
   return {
     stats: [
-      { label: "Labor hours", value: (totalMin / 60).toFixed(1), hint: `${(rows.reduce((a, r) => a + r.otMin, 0) / 60).toFixed(1)} h overtime` },
+      { label: "Labor hours", value: formatPayHours(totalMin / 60), hint: `${formatPayHours(rows.reduce((a, r) => a + r.otMin, 0) / 60)} overtime` },
       { label: "Sales per labor hour", value: totalMin ? formatCents(Math.round(totalSales / (totalMin / 60))) : "—", hint: "service and product sales ÷ clocked hours" },
       ...(rates
         ? [

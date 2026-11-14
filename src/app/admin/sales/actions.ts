@@ -39,7 +39,6 @@ export async function voidAction(saleId: string, reason: string, approval?: Appr
   return safe(async () => {
     const { actor, limitCents } = await guard(saleId, "sales.void", approval);
     await voidSale(saleId, reason, actor, new Date(), limitCents);
-    revalidatePath(`/admin/sales/${saleId}`);
     return null;
   });
 }

@@ -12,14 +12,14 @@ export function useAction() {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const run = <T>(fn: () => Promise<Result<T>>, ok?: (data: T) => void, done?: string) =>
+  const run = <T>(fn: () => Promise<Result<T>>, ok?: (data: T) => void, done?: string, o?: { refresh?: boolean }) =>
     start(async () => {
       setError(null);
       const r = await fn();
       if (!r.ok) return setError(r.error);
       ok?.(r.data);
       if (done) toast(done);
-      router.refresh();
+      if (o?.refresh !== false) router.refresh();
     });
   return { pending, error, setError, run };
 }

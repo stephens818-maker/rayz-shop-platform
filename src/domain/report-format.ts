@@ -7,7 +7,7 @@ export function formatCell(v: Cell, kind: ColumnKind | undefined) {
   if (v === null || v === "") return "—";
   if (kind === "money" && typeof v === "number") return formatCents(v);
   if (kind === "pct" && typeof v === "number") return `${Math.round(v * 100)}%`;
-  if (kind === "hours" && typeof v === "number") return (v / 60).toFixed(1);
+  if (kind === "hours" && typeof v === "number") return formatPayHours(v / 60);
   if (kind === "decimal" && typeof v === "number") return v.toFixed(2);
   if (kind === "pay_hours" && typeof v === "number") return formatPayHours(v);
   if (kind === "minutes" && typeof v === "number") return v.toFixed(1);

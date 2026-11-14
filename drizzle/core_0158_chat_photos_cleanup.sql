@@ -1,6 +1,7 @@
 -- Staff chat, shop and staff photos, archived clients, and demo cleanup.
--- A one-minute GPS self punch (in, break, out) is voided only when that shop day
--- is not inside a locked timesheet. Locked payroll is left alone. Safe to run again.
+-- Punches are not voided here. A one-minute GPS cluster used to be voided on every
+-- run of this file. That rule is gone: no punch is voided automatically. Makenna's
+-- Oct 27 punches are not touched.
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS archived_at timestamptz;
 CREATE INDEX IF NOT EXISTS customers_live_name_idx ON customers (search_name) WHERE archived_at IS NULL AND deleted_at IS NULL;
 
@@ -66,34 +67,3 @@ WHERE s.id::text LIKE '5417a3e4%'
     SELECT 1 FROM payments p
     WHERE p.sale_id = s.id AND p.status IN ('pending', 'succeeded')
   );
-
--- One-minute phone-GPS clusters (in, break, out). Skip a shop day inside a locked timesheet.
-WITH clusters AS (
-  SELECT i.id AS in_id, b.id AS break_id, o.id AS out_id
-  FROM time_punches i
-  JOIN time_punches b
-    ON b.staff_id = i.staff_id AND b.shop_id = i.shop_id
-   AND b.type = 'break_start' AND b.voided_at IS NULL
-   AND b.source = 'self' AND b.method = 'gps'
-   AND b.at >= i.at AND b.at <= i.at + interval '60 seconds'
-  JOIN time_punches o
-    ON o.staff_id = i.staff_id AND o.shop_id = i.shop_id
-   AND o.type = 'out' AND o.voided_at IS NULL
-   AND o.source = 'self' AND o.method = 'gps'
-   AND o.at >= i.at AND o.at <= i.at + interval '60 seconds'
-  WHERE i.type = 'in' AND i.voided_at IS NULL
-    AND i.source = 'self' AND i.method = 'gps'
-    AND NOT EXISTS (
-      SELECT 1 FROM timesheet_locks l
-      WHERE l.shop_id = i.shop_id
-        AND (i.at AT TIME ZONE 'America/Chicago')::date BETWEEN l.period_start AND l.period_end
-    )
-)
-UPDATE time_punches
-SET voided_at = now(),
-    note = CASE WHEN note IS NULL OR btrim(note) = '' THEN 'Voided: one-minute GPS test cluster' ELSE note END
-WHERE id IN (
-  SELECT in_id FROM clusters
-  UNION SELECT break_id FROM clusters
-  UNION SELECT out_id FROM clusters
-);

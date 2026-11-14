@@ -85,8 +85,8 @@ async function thisDevice() {
 }
 
 function refresh() {
-  revalidatePath("/admin/clock", "layout");
-  revalidatePath("/admin/timesheets", "layout");
+  // The clock page already shows the punch it just got back. Rebuilding that page inside the click was the slow part.
+  revalidatePath("/admin/timesheets");
 }
 
 /** A punch from the signed-in person's own phone or browser. */

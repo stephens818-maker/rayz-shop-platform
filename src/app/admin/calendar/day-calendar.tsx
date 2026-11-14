@@ -2065,7 +2065,7 @@ function ApptPanel({
             className="w-full"
             disabled={pending}
             onClick={() => {
-              if (confirm(`Clear ${appt.customerName}'s finished visit?`)) run(() => setStatusAction(appt.id, "cancelled", deskPin()), onDone);
+              if (confirm(`Clear ${appt.customerName}'s visit? It leaves the book.`)) run(() => setStatusAction(appt.id, "cancelled", deskPin()), onDone);
             }}
           >
             Clear visit

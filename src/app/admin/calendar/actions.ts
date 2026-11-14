@@ -317,10 +317,8 @@ export async function columnPunchAction(input: { staffId: string; shopId: string
       if (!canSelf) throw forbidden("You can't punch from the calendar.");
     }
     const r = await punchForStaff({ actor: desk.actor, byStaffId: byId, staffId: z.uuid().parse(input.staffId), shopId: input.shopId, type });
-    if (r.kind !== "done") throw new AppError("bad_request", "That punch needs a confirmation. Use the front-desk clock.");
-    revalidatePath("/admin/calendar");
+    if (r.kind !== "done" || !r.clock) throw new AppError("bad_request", "That punch needs a confirmation. Use the front-desk clock.");
     revalidatePath("/admin/timesheets");
-    const s = await clockState(input.staffId);
-    return { type: r.type, at: r.at.toISOString(), state: s.state, next: s.next, since: s.shift?.start.toISOString() ?? null };
+    return { type: r.type, at: r.at.toISOString(), state: r.clock.state, next: r.clock.next, since: r.clock.since };
   });
 }

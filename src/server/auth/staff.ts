@@ -95,16 +95,7 @@ export const getStaffContext = cache(async (): Promise<StaffContext | null> => {
   if (!payload?.sid || !(await liveWebSession(payload.sid, payload.sub))) return null;
   const device = await devicesFromCookie(jar.get(TRUSTED_DEVICE_COOKIE)?.value);
   const ctx = await staffContextOf(payload.sub, payload.iat, { ip: clientIp(await headers()), deviceShopIds: approvedShopIds(device), shopPref: jar.get(SHOP_COOKIE)?.value ?? null });
-  if (ctx?.staff.kind === "shop") {
-    const ttl = shopStaySeconds();
-    jar.set(SESSION_COOKIE, await signToken({ sub: payload.sub, sid: payload.sid }, "staff_session", ttl), {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: ttl,
-    });
-  }
+  // The cookie is written at sign-in (shopStaySeconds). Setting it again here runs during render and Next.js 15 rejects that, so every shop-login page 500s.
   return ctx && { ...ctx, session: { kind: "web", id: payload.sid } };
 });
 

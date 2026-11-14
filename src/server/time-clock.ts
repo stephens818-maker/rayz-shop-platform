@@ -639,7 +639,19 @@ export interface PunchRequest {
 /** The longest break length someone can plan at break start. */
 export const MAX_PLANNED_BREAK_MIN = 240;
 
-export type PunchResult = { kind: "confirm"; message: string } | { kind: "done"; punchId: string; type: PunchType; at: Date; shop: string; flags: PunchFlag[]; notes: string[] };
+export type PunchResult =
+  | { kind: "confirm"; message: string }
+  | {
+      kind: "done";
+      punchId: string;
+      type: PunchType;
+      at: Date;
+      shop: string;
+      flags: PunchFlag[];
+      notes: string[];
+      /** Where they stand after this punch, so the calendar clock doesn't read the timesheet again. */
+      clock?: { state: "off" | "working" | "on_break"; next: PunchType[]; since: string | null };
+    };
 
 function photoProblem(photo: string | null): string | null {
   if (!photo) return null;
@@ -672,16 +684,20 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
   const deviceAt = serverTime && req.offline ? req.now : undefined;
   const now = serverTime && req.offline ? req.offline.receivedAt : (req.now ?? new Date());
   await claimClockNonce({ nonce: req.nonce, kind: "request", staffId: req.staffId, deviceId: req.deviceId }, req.offline?.receivedAt ?? req.now ?? new Date());
-  const who = await db.query.staff.findFirst({ where: and(eq(staff.id, req.staffId), eq(staff.active, true)) });
+  const [who, access, worked, clocks, shopRows, state] = await Promise.all([
+    db.query.staff.findFirst({ where: and(eq(staff.id, req.staffId), eq(staff.active, true)) }),
+    loadStaffAccess(req.staffId),
+    workShopIds(req.staffId),
+    shopClocks([req.shopId]),
+    db.select({ status: shops.status }).from(shops).where(eq(shops.id, req.shopId)),
+    clockState(req.staffId, now),
+  ]);
   if (!who || who.kind !== "person") throw forbidden("Shop logins can't punch. Use the front-desk clock with your own PIN.");
-  const access = await loadStaffAccess(req.staffId);
-  const mine = new Set([...(await workShopIds(req.staffId)), ...(access?.shopIds ?? [])]);
+  const mine = new Set([...worked, ...(access?.shopIds ?? [])]);
   if (!mine.has(req.shopId)) throw forbidden("You aren't on that shop's team.");
-  const [clock] = await shopClocks([req.shopId]);
-  const [shopRow] = await db.select({ status: shops.status }).from(shops).where(eq(shops.id, req.shopId));
+  const clock = clocks[0];
+  const shopRow = shopRows[0];
   if (!clock || shopRow?.status === "archived") throw notFound("Shop");
-
-  const state = await clockState(req.staffId, now);
   if (!state.next.includes(req.type)) {
     const where = state.shift ? ` at ${state.shift.shop}` : "";
     throw bad(
@@ -721,34 +737,38 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
   if (clock.settings.photo === "required" && !req.photo) throw bad("This shop needs a photo with every punch. Take one and try again.");
 
   const date = localDateOf(now);
-  if (await hoursLockedOn(req.shopId, date)) throw new AppError("conflict", "This pay period is locked, so no more punches can go into it. Ask a manager.");
-
   const flags: PunchFlag[] = offline ? ["offline"] : [];
   const notes: string[] = [];
+  const [locked, offRows, rules, sched] = await Promise.all([
+    hoursLockedOn(req.shopId, date),
+    req.type === "in"
+      ? db
+          .select({ reason: timeBlocks.reason, startsAt: timeBlocks.startsAt, endsAt: timeBlocks.endsAt })
+          .from(timeBlocks)
+          .where(
+            and(
+              eq(timeBlocks.staffId, req.staffId),
+              eq(timeBlocks.category, "time_off"),
+              lte(timeBlocks.startsAt, now),
+              gt(timeBlocks.endsAt, now),
+              or(isNull(timeBlocks.shopId), eq(timeBlocks.shopId, req.shopId)),
+            ),
+          )
+          .limit(1)
+      : Promise.resolve([]),
+    loadClockRules(req.shopId),
+    req.type === "in" || req.type === "out" ? schedulesOf([req.staffId]) : Promise.resolve(null),
+  ]);
+  if (locked) throw new AppError("conflict", "This pay period is locked, so no more punches can go into it. Ask a manager.");
   if (req.type === "in") {
-    const off = await db
-      .select({ reason: timeBlocks.reason, startsAt: timeBlocks.startsAt, endsAt: timeBlocks.endsAt })
-      .from(timeBlocks)
-      .where(
-        and(
-          eq(timeBlocks.staffId, req.staffId),
-          eq(timeBlocks.category, "time_off"),
-          lte(timeBlocks.startsAt, now),
-          gt(timeBlocks.endsAt, now),
-          or(isNull(timeBlocks.shopId), eq(timeBlocks.shopId, req.shopId)),
-        ),
-      )
-      .limit(1);
-    if (off[0]) {
-      if (!req.confirmTimeOff) return { kind: "confirm", message: `You have time off right now (${off[0].reason}, until ${formatTime(off[0].endsAt)}). Clock in anyway? Your manager will see it.` };
+    if (offRows[0]) {
+      if (!req.confirmTimeOff) return { kind: "confirm", message: `You have time off right now (${offRows[0].reason}, until ${formatTime(offRows[0].endsAt)}). Clock in anyway? Your manager will see it.` };
       flags.push("during_time_off");
     }
     if (state.stale) notes.push(`Your clock-in at ${state.stale.shop} on ${formatDate(state.stale.start)} was never closed. A manager will fix it.`);
   }
-  const rules = await loadClockRules(req.shopId);
   let offScheduleMin: number | null = null;
-  if (req.type === "in" || req.type === "out") {
-    const sched = await schedulesOf([req.staffId]);
+  if (sched && (req.type === "in" || req.type === "out")) {
     const day = req.type === "out" && state.shift ? localDateOf(state.shift.start) : date;
     const o = offSchedule(req.type, now, scheduleFor(sched, req.staffId, req.shopId, day), clock.settings.graceMinutes ?? rules.graceMinutes);
     offScheduleMin = o.minutes;
@@ -831,12 +851,19 @@ export async function punch(req: PunchRequest): Promise<PunchResult> {
  */
 export async function punchForStaff(o: { actor: Actor; byStaffId: string; staffId: string; shopId: string; type: PunchType; now?: Date }): Promise<PunchResult> {
   const now = o.now ?? new Date();
-  const who = await db.query.staff.findFirst({ where: and(eq(staff.id, o.staffId), eq(staff.active, true), eq(staff.kind, "person")) });
+  const date = localDateOf(now);
+  const [who, shopRows, state, locked, rules, sched] = await Promise.all([
+    db.query.staff.findFirst({ where: and(eq(staff.id, o.staffId), eq(staff.active, true), eq(staff.kind, "person")) }),
+    db.select({ name: shops.name, status: shops.status }).from(shops).where(eq(shops.id, o.shopId)),
+    clockState(o.staffId, now),
+    hoursLockedOn(o.shopId, date),
+    loadClockRules(o.shopId),
+    o.type === "in" || o.type === "out" ? schedulesOf([o.staffId]) : Promise.resolve(null),
+    onShopTeam(o.shopId, o.staffId),
+  ]);
   if (!who) throw notFound("Staff member");
-  await onShopTeam(o.shopId, o.staffId);
-  const [shopRow] = await db.select({ name: shops.name, status: shops.status }).from(shops).where(eq(shops.id, o.shopId));
+  const shopRow = shopRows[0];
   if (!shopRow || shopRow.status === "archived") throw notFound("Shop");
-  const state = await clockState(o.staffId, now);
   if (!state.next.includes(o.type)) {
     const where = state.shift ? ` at ${state.shift.shop}` : "";
     throw bad(
@@ -848,13 +875,10 @@ export async function punchForStaff(o: { actor: Actor; byStaffId: string; staffI
     );
   }
   if (state.shift && state.shift.shopId !== o.shopId) throw bad(`They're clocked in at ${state.shift.shop}. Punch there.`);
-  const date = localDateOf(now);
-  if (await hoursLockedOn(o.shopId, date)) throw new AppError("conflict", "This pay period is locked, so no more punches can go into it. Ask a manager.");
-  const rules = await loadClockRules(o.shopId);
+  if (locked) throw new AppError("conflict", "This pay period is locked, so no more punches can go into it. Ask a manager.");
   const flags: PunchFlag[] = ["manual"];
   let offScheduleMin: number | null = null;
-  if (o.type === "in" || o.type === "out") {
-    const sched = await schedulesOf([o.staffId]);
+  if (sched && (o.type === "in" || o.type === "out")) {
     const day = o.type === "out" && state.shift ? localDateOf(state.shift.start) : date;
     const off = offSchedule(o.type, now, scheduleFor(sched, o.staffId, o.shopId, day), rules.graceMinutes);
     offScheduleMin = off.minutes;
@@ -890,7 +914,14 @@ export async function punchForStaff(o: { actor: Actor; byStaffId: string; staffI
       console.error("clock fallout after punch failed", e);
     }
   }
-  return { kind: "done", punchId: id, type: o.type, at: now, shop: shopRow.name, flags, notes: [] };
+  const since = o.type === "in" ? now : (state.shift?.start ?? now);
+  const clock =
+    o.type === "out"
+      ? { state: "off" as const, next: ["in" as const], since: null }
+      : o.type === "break_start"
+        ? { state: "on_break" as const, next: ["break_end" as const, "out" as const], since: since.toISOString() }
+        : { state: "working" as const, next: ["break_start" as const, "out" as const], since: since.toISOString() };
+  return { kind: "done", punchId: id, type: o.type, at: now, shop: shopRow.name, flags, notes: [], clock };
 }
 
 // ───────────────────────────── Manager corrections ─────────────────────────────
