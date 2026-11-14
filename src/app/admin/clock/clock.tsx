@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import {
   Button,
   Card,
@@ -275,10 +274,12 @@ export function ClockPanel({
   defaultShopId: string | null;
   breakReasons: BreakReason[];
 }) {
-  const router = useRouter();
   const [shopId, setShopId] = useState(
     shiftShopId ?? (proof && shops.some((s) => s.id === proof.shopId) ? proof.shopId : null) ?? defaultShopId ?? shops[0]?.id ?? "",
   );
+  // The punch comes back in the action. The page does not rebuild, so the buttons follow this instead of waiting on a refresh.
+  const [live, setLive] = useState<{ state: "off" | "working" | "on_break"; next: PunchType[]; since: string | null; breakSince: string | null; shiftShopId: string | null } | null>(null);
+  const view = live ?? { state, next, since, breakSince, shiftShopId };
   const [photo, setPhoto] = useState<string | null>(null);
   const [breakReasonId, setBreakReasonId] = useState(breakReasons[0]?.id ?? "");
   const [planned, setPlanned] = useState("");
@@ -332,9 +333,17 @@ export function ClockPanel({
       setAttest(false);
       setDone(r.data);
       setWelcome(r.data.welcome ?? null);
+      const at = typeof r.data.at === "string" ? r.data.at : r.data.at.toISOString();
+      setLive((cur) => {
+        const was = cur ?? { state, next, since, breakSince, shiftShopId };
+        if (r.data.kind !== "done") return cur;
+        if (r.data.type === "out") return { state: "off", next: ["in"], since: null, breakSince: null, shiftShopId: null };
+        if (r.data.type === "break_start") return { state: "on_break", next: ["break_end", "out"], since: was.since ?? at, breakSince: at, shiftShopId: shopId };
+        if (r.data.type === "in") return { state: "working", next: ["break_start", "out"], since: at, breakSince: null, shiftShopId: shopId };
+        return { state: "working", next: ["break_start", "out"], since: was.since ?? at, breakSince: null, shiftShopId: shopId };
+      });
       setPhoto(null);
       setPlanned("");
-      router.refresh();
     });
 
   return (
@@ -351,16 +360,16 @@ export function ClockPanel({
           Right now
         </div>
         <div className="text-2xl font-semibold">
-          {state === "working" && since
-            ? `You're already clocked in since ${time(since)}.`
-            : state === "off"
+          {view.state === "working" && view.since
+            ? `You're already clocked in since ${time(view.since)}.`
+            : view.state === "off"
               ? "Clocked out"
-              : state === "on_break"
+              : view.state === "on_break"
                 ? "On a break"
                 : "Working"}
-          {since && state === "on_break" ? (
+          {view.since && view.state === "on_break" ? (
             <span className="ml-2 text-base font-normal text-zinc-500">
-              since {time(breakSince ?? since)}
+              since {time(view.breakSince ?? view.since)}
             </span>
           ) : null}
         </div>
@@ -373,7 +382,7 @@ export function ClockPanel({
           <Select
             value={shopId}
             onChange={(e) => setShopId(e.target.value)}
-            disabled={state !== "off"}
+            disabled={view.state !== "off"}
             aria-label="Shop"
           >
             {shops.map((s) => (
@@ -388,7 +397,7 @@ export function ClockPanel({
       {shop && (
         <PhotoInput mode={shop.photo} value={photo} onChange={setPhoto} />
       )}
-      {next.includes("break_start") && breakReasons.length > 0 && (
+      {view.next.includes("break_start") && breakReasons.length > 0 && (
         <BreakPlan
           reasons={breakReasons}
           reasonId={breakReasonId}
@@ -399,7 +408,7 @@ export function ClockPanel({
           }}
         />
       )}
-      {cashTips && next.includes("out") && (
+      {cashTips && view.next.includes("out") && (
         <fieldset className="space-y-2 rounded-lg border border-zinc-200 p-3 text-sm">
           <legend className="px-1 text-xs font-medium text-zinc-600">Cash tips today (when you clock out)</legend>
           <label className="block">
@@ -420,11 +429,11 @@ export function ClockPanel({
         </Notice>
       )}
       <div className="grid grid-cols-2 gap-3">
-        {next.map((t) => (
+        {view.next.map((t) => (
           <Button
             key={t}
             variant={BUTTON_TONE[t]}
-            className={cx("h-14 text-base", next.length === 1 && "col-span-2")}
+            className={cx("h-14 text-base", view.next.length === 1 && "col-span-2")}
             disabled={pending || !shopId || !canPunchHere}
             onClick={() => go(t)}
           >

@@ -907,15 +907,38 @@ export async function refundLog(s: ReportScope) {
     from refunds r join sales s on s.id = r.sale_id join shops sh on sh.id = r.shop_id
       left join staff st on st.id = s.staff_id left join staff b on b.id = r.created_by left join staff ap on ap.id = r.approved_by
     where r.shop_id in ${ids(s)} and r.business_date between ${s.from} and ${s.to} ${staffFilter(sql`s.staff_id`, s)}
-    order by r.business_date desc, r.created_at desc limit 2000`);
+    union all
+    select s.shop_id, s.staff_id, to_char((s.voided_at at time zone 'America/Chicago')::date, 'YYYY-MM-DD'), s.number, sh.name, st.display_label, 'void', 'cash',
+      greatest(s.total_cents, coalesce((select sum(i.net_cents + i.tax_cents)::int from sale_items i where i.sale_id = s.id), 0), 0),
+      0, coalesce(s.void_reason, ''), 'staff',
+      (select a.actor_label from audit_log a where a.entity = 'sale' and a.entity_id = s.id::text and a.action in ('sale.void', 'sale.void_open') order by a.at desc limit 1),
+      ap.display_label
+    from sales s join shops sh on sh.id = s.shop_id
+      left join staff st on st.id = s.staff_id left join staff ap on ap.id = s.void_approved_by
+    where s.status = 'voided' and s.voided_at is not null and s.shop_id in ${ids(s)}
+      and (s.voided_at at time zone 'America/Chicago')::date between ${s.from} and ${s.to}
+      and not exists (select 1 from refunds r where r.sale_id = s.id and r.kind = 'void')
+      ${staffFilter(sql`s.staff_id`, s)}
+    order by 3 desc limit 2000`);
 }
 
 /** Refund and void totals, for the stat tiles (the log above is capped). */
 export async function refundTotals(s: ReportScope, o?: Grain) {
   return rows<{ shopId: string | null; staffId: string | null; kind: string; n: number; amountCents: number }>(sql`
-    select ${grp(o, sql`r.shop_id`)} "shopId", ${sgrp(o, sql`s.staff_id`)} "staffId", r.kind, count(*)::int n, coalesce(sum(r.amount_cents),0)::int "amountCents"
-    from refunds r join sales s on s.id = r.sale_id
-    where r.shop_id in ${ids(s)} and r.business_date between ${s.from} and ${s.to} ${staffFilter(sql`s.staff_id`, s)}
+    select ${grp(o, sql`x.shop_id`)} "shopId", ${sgrp(o, sql`x.staff_id`)} "staffId", x.kind, count(*)::int n, coalesce(sum(x.amount_cents),0)::int "amountCents"
+    from (
+      select r.shop_id, s.staff_id, r.kind, r.amount_cents
+      from refunds r join sales s on s.id = r.sale_id
+      where r.shop_id in ${ids(s)} and r.business_date between ${s.from} and ${s.to} ${staffFilter(sql`s.staff_id`, s)}
+      union all
+      select s.shop_id, s.staff_id, 'void',
+        greatest(s.total_cents, coalesce((select sum(i.net_cents + i.tax_cents)::int from sale_items i where i.sale_id = s.id), 0), 0)
+      from sales s
+      where s.status = 'voided' and s.voided_at is not null and s.shop_id in ${ids(s)}
+        and (s.voided_at at time zone 'America/Chicago')::date between ${s.from} and ${s.to}
+        and not exists (select 1 from refunds r where r.sale_id = s.id and r.kind = 'void')
+        ${staffFilter(sql`s.staff_id`, s)}
+    ) x
     group by 1, 2, 3`);
 }
 

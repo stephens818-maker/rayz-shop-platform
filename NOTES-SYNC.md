@@ -912,6 +912,26 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-11-13: shop login, voids on the report, and the clock
+
+No new migration. Next is still `core_0165`. Makenna's Oct 27 punches and Coralville's end-of-night tip payout timing are unchanged. No canary.
+
+A shop login no longer 500s on `/admin`. `getStaffContext` was writing the session cookie during render, which Next.js 15 refuses (digest 1183021027). The cookie is set at sign-in only. The database session still extends while the desk is in use. `/pos` redirects to `/admin/sales` (there was no `/pos` page).
+
+In the browser, signed in as the Coralville shop login: Front desk, Calendar, and Checkout loaded. `/pos` opened Checkout. One PIN stayed on the bar ("Acting as Michelle") through check-in, Start, Finish, checkout, a product on the ticket (Gibs Beard Wash), rebook, a walk-in, and a no-sale drawer open. Ticket #2102 was paid in cash, then voided with Michelle's manager PIN. The discounts and refunds report lists that void, issued by the Coralville desk, approved by Michelle. With Makenna's PIN, clocking Michelle in from the calendar was refused: "You can clock yourself in from here. A manager clocks someone else in." Makenna could clock herself in. Client phones stayed masked.
+
+Every void is on the discounts and refunds report, including $0. A void that never got a `refunds` row (the old $0 case) is read from the voided sale. A paid void whose tender plan is empty now writes a $0 void row. Open voids already did.
+
+A voided or cleared visit does not stay on the appointment list as Cancelled. The list hides a cancelled visit whose only ticket is voided. The void report and the audit log still have it. A normal cancel, with no voided ticket, still shows. Clear visit is offered at Checked in, In chair, and Finished when the ticket is voided.
+
+No punch is voided automatically. The one-minute GPS cluster statement was removed from `core_0158_chat_photos_cleanup.sql`. That file has already been applied, so this does not rewrite punches that were voided before, and it does not touch Makenna's Oct 27 punches. A fresh database does not void that cluster.
+
+Labor report hour cells use the same format as the timesheet (`formatPayHours`: two decimals, or hours and minutes). One minute no longer prints as 0.0.
+
+Payroll pages read live figures. The 15-second memo inside `buildPayroll` is gone. The morning page and brand settings still keep theirs.
+
+A correct PIN confirm took 67 ms on the local test database. The bcrypt cost is unchanged. An open-ticket void no longer rebuilds the checkout page inside the click (it opens the sale), and a calendar clock punch no longer rebuilds the calendar inside the click. Those click times were not measured in the browser.
+
 ### 2026-11-12: voids, the calendar clock, and the shop login
 
 `core_0164_clock_others` adds `timeclock.edit_others` to every role that already has `timesheet.edit`. Next migration is `core_0165`. Makenna's Oct 27 punches and Coralville's end-of-night tip payout timing are unchanged. No canary. Stripe Connect test onboarding is still waiting on Charles.

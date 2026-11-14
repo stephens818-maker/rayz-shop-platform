@@ -151,9 +151,11 @@ async function cancelVisitsForVoid(tx: Tx, ids: string[], now: Date, actor: Acto
 
 export async function voidSale(saleId: string, reason: string, actor: Actor, now = new Date(), maxCents: number | null = null) {
   if (!reason.trim()) throw new AppError("bad_request", "A reason is required");
+  let open = false;
   await db.transaction(async (tx) => {
     const sale = await lockSale(tx, saleId);
     if (sale.status === "open") {
+      open = true;
       await tx.update(sales).set({ status: "voided", voidedAt: now, voidReason: reason, voidApprovedBy: actor.approvedBy?.staffId ?? null }).where(eq(sales.id, saleId));
       await cancelVisitsForVoid(tx, [sale.appointmentId, ...(await ticketAppointmentIds(saleId, tx))].filter((x): x is string => !!x), now, actor);
       const [lines] = await tx.select({ cents: sql<number>`coalesce(sum(${saleItems.netCents} + ${saleItems.taxCents}), 0)::int` }).from(saleItems).where(eq(saleItems.saleId, saleId));
@@ -194,7 +196,8 @@ export async function voidSale(saleId: string, reason: string, actor: Actor, now
     });
     if (actor.approvedBy) await tx.update(sales).set({ voidApprovedBy: actor.approvedBy.staffId }).where(eq(sales.id, saleId));
   });
-  await settleSale(saleId);
+  // An open ticket has no charge to move. Skipping settlement keeps the click to the void itself.
+  if (!open) await settleSale(saleId);
 }
 
 /** Over the limit: a manager whose limit covers it approves with their PIN. */
@@ -318,6 +321,20 @@ async function reverse(tx: Tx, sale: Sale, o: ReverseOpts) {
 
   const itemsJson = lines.map((l) => ({ saleItemId: l.itemId, name: l.name, kind: l.kind, qty: l.qty, cents: l.netCents + l.taxCents, netCents: l.netCents }));
   await recordSteps(tx, sale, pays, plan, { kind: o.kind, source: o.source, reason: o.reason, actor: o.actor, now: o.now, items: itemsJson, stripeIds });
+  if (o.kind === "void" && plan.length === 0) {
+    await tx.insert(refunds).values({
+      saleId: sale.id,
+      shopId: sale.shopId,
+      businessDate: localDateOf(o.now),
+      method: "cash",
+      amountCents: 0,
+      reason: o.reason,
+      kind: "void",
+      source: o.source,
+      createdBy: o.actor.staffId ?? null,
+      approvedBy: o.actor.approvedBy?.staffId ?? null,
+    });
+  }
   await syncTipLedger(tx, { saleId: sale.id });
   await planRefundReversals(tx, sale.id);
 

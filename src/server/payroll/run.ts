@@ -369,32 +369,15 @@ const centi = (x: number) => x / 100;
  * comes back exactly as it was approved. Without `clockChecks` (an employee's own pay), the time
  * clock's flags and hours gate are left out.
  */
-const payrollMemo = new Map<string, { at: number; view: PayrollView | null }>();
-const PAYROLL_MEMO_MS = 15_000;
-
-function payrollMemoKey(start: string, end: string, o: { clockChecks?: boolean; review?: { shopIds: readonly string[] }; weeks?: { shopIds: readonly string[] } }) {
-  const ids = (xs?: readonly string[]) => (xs ? [...xs].sort().join(",") : "");
-  return `${start}|${end}|${o.clockChecks === false ? 0 : 1}|${ids(o.review?.shopIds)}|${ids(o.weeks?.shopIds)}`;
-}
-
-/** Drops the short-lived payroll read cache after a pay change. Tests don't use the cache. */
-export function forgetPayrollMemo() {
-  payrollMemo.clear();
-}
+/** Payroll pages always read live figures. The morning page and brand settings keep their own short memory. */
+export function forgetPayrollMemo() {}
 
 export async function buildPayroll(
   start: LocalDate,
   end: LocalDate,
   o: { clockChecks?: boolean; review?: { shopIds: readonly string[] }; weeks?: { shopIds: readonly string[] } } = {},
 ): Promise<PayrollView | null> {
-  const memoKey = process.env.NODE_ENV === "production" ? payrollMemoKey(start, end, o) : null;
-  if (memoKey) {
-    const hit = payrollMemo.get(memoKey);
-    if (hit && Date.now() - hit.at < PAYROLL_MEMO_MS) return hit.view;
-  }
-  const view = await buildPayrollNow(start, end, o);
-  if (memoKey) payrollMemo.set(memoKey, { at: Date.now(), view });
-  return view;
+  return buildPayrollNow(start, end, o);
 }
 
 async function buildPayrollNow(
