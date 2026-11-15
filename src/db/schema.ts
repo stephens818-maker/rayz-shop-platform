@@ -1799,6 +1799,8 @@ export const appointments = pgTable(
     squeezed: boolean("squeezed").notNull().default(false),
     status: appointmentStatus("status").notNull().default("booked"),
     source: appointmentSource("source").notNull().default("online"),
+    /** Seeded sample book and the demo roll-forward. Hidden on the calendar. Not a delete. */
+    sample: boolean("sample").notNull().default(false),
     anyBarber: boolean("any_barber").notNull().default(false),
     estimateCents: integer("estimate_cents").notNull().default(0),
     /** A tip the client chose while booking or on the confirmation page; filled in on the ticket at checkout. */

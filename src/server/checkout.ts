@@ -244,40 +244,33 @@ async function stampOpenedRates(saleId: string, shopId: string, tx: DBorTx) {
 export async function loadCheckoutContext(saleId: string) {
   const sale = await db.query.sales.findFirst({ where: eq(sales.id, saleId) });
   if (!sale) throw notFound("Sale");
-  const shop = await getShop(sale.shopId);
-  const items = await db
-    .select()
-    .from(saleItems)
-    .where(eq(saleItems.saleId, saleId))
-    .orderBy(asc(saleItems.kind));
-  const customer = sale.customerId
-    ? await db.query.customers.findFirst({
-        where: eq(customers.id, sale.customerId),
-      })
-    : null;
-  const appt = sale.appointmentId
-    ? await db.query.appointments.findFirst({
-        where: eq(appointments.id, sale.appointmentId),
-      })
-    : null;
-  const retail = await db
-    .select({
-      productId: products.id,
-      name: products.name,
-      brand: products.brand,
-      priceCents: shopProducts.priceCents,
-      stock: shopProducts.stock,
-      taxCategory: products.taxCategory,
-    })
-    .from(shopProducts)
-    .innerJoin(products, eq(products.id, shopProducts.productId))
-    .where(and(eq(shopProducts.shopId, shop.id), eq(shopProducts.active, true)))
-    .orderBy(asc(products.brand), asc(products.name));
-  const barber = sale.staffId
-    ? await db.query.staff.findFirst({ where: eq(staff.id, sale.staffId) })
-    : null;
+  const [shop, items, customer, appt, barber] = await Promise.all([
+    getShop(sale.shopId),
+    db.select().from(saleItems).where(eq(saleItems.saleId, saleId)).orderBy(asc(saleItems.kind)),
+    sale.customerId ? db.query.customers.findFirst({ where: eq(customers.id, sale.customerId) }) : null,
+    sale.appointmentId ? db.query.appointments.findFirst({ where: eq(appointments.id, sale.appointmentId) }) : null,
+    sale.staffId ? db.query.staff.findFirst({ where: eq(staff.id, sale.staffId) }) : null,
+  ]);
   // What other open tickets hold doesn't count as available here; this ticket's own hold does.
-  const levels = await stockLevels([shop.id]);
+  const [retail, levels, family, feePolicy, feeChannel] = await Promise.all([
+    db
+      .select({
+        productId: products.id,
+        name: products.name,
+        brand: products.brand,
+        priceCents: shopProducts.priceCents,
+        stock: shopProducts.stock,
+        taxCategory: products.taxCategory,
+      })
+      .from(shopProducts)
+      .innerJoin(products, eq(products.id, shopProducts.productId))
+      .where(and(eq(shopProducts.shopId, shop.id), eq(shopProducts.active, true)))
+      .orderBy(asc(products.brand), asc(products.name)),
+    stockLevels([shop.id]),
+    familyTicket(sale),
+    shopFeePolicy(shop.id),
+    saleFeeChannel(sale.id, "pos"),
+  ]);
   const own = new Map<string, number>();
   for (const i of items)
     if (i.kind === "product" && i.refId && sale.status === "open")
@@ -291,7 +284,6 @@ export async function loadCheckoutContext(saleId: string) {
         Math.max(0, (l?.committed ?? 0) - (own.get(r.productId) ?? 0)),
     };
   });
-  const family = await familyTicket(sale);
   if (sale.status !== "open") family.candidates = [];
   const groupDeposit =
     sale.status === "open"
@@ -304,8 +296,6 @@ export async function loadCheckoutContext(saleId: string) {
           ].filter((x): x is string => !!x),
         )
       : null;
-  const feePolicy = await shopFeePolicy(shop.id);
-  const feeChannel = await saleFeeChannel(sale.id, "pos");
   const config = await ratesForShop(shop, feeChannel);
   // An open ticket keeps the tax and the fee rate it opened with (TX-03). Whether this channel
   // charges the fee is still decided now, so a deposit ticket follows the deposit channel.

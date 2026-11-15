@@ -91,8 +91,6 @@ type Status = "confirmed" | "checked_in" | "in_service" | "completed" | "cancell
 export async function setStatusAction(id: string, status: Status, pin?: DeskPin) {
   return safe(async () => {
     await changeStatus(await withDesk(await requireStaff(), pin), id, status);
-    revalidatePath("/admin/calendar");
-    revalidatePath("/admin");
     return null;
   });
 }
@@ -101,8 +99,6 @@ export async function setStatusAction(id: string, status: Status, pin?: DeskPin)
 export async function finishServiceAction(id: string, pin?: DeskPin) {
   return safe(async () => {
     await finishFor(await withDesk(await requireStaff(), pin), id);
-    revalidatePath("/admin/calendar");
-    revalidatePath("/admin");
     return null;
   });
 }
@@ -165,9 +161,6 @@ export async function sendToCheckoutAction(appointmentId: string, pin?: DeskPin)
     const ctx = await withDesk(await requireStaff(), pin);
     await loadAppt(ctx, appointmentId, "checkout.any");
     const r = await sendToCheckout(appointmentId, ctx.actor);
-    revalidatePath("/admin/calendar");
-    revalidatePath("/admin");
-    revalidatePath("/admin/sales");
     return r;
   });
 }
@@ -187,7 +180,6 @@ export async function searchCustomersAction(q: string, via: "booking" | "pos" | 
 export async function createStaffAppointmentAction(input: StaffBookingInput, pin?: DeskPin) {
   return safe(async () => {
     const appt = await bookForStaff(await withDesk(await requireStaff(), pin), input);
-    revalidatePath("/admin/calendar");
     return { code: appt.code };
   });
 }
@@ -197,7 +189,6 @@ export async function resizeAppointmentAction(id: string, date: string, endMin: 
   return safe(async () => {
     const { resizeForStaff } = await import("@/server/calendar-ops");
     await resizeForStaff(await requireStaff(), id, date, endMin);
-    revalidatePath("/admin/calendar");
     return null;
   });
 }
@@ -206,7 +197,6 @@ export async function resizeAppointmentAction(id: string, date: string, endMin: 
 export async function moveAppointmentAction(id: string, staffId: string, date: string, startMin: number, opts: { squeezeIn?: boolean; desk?: DeskPin } = {}) {
   return safe(async () => {
     await moveForStaff(await withDesk(await requireStaff(), opts.desk), id, staffId, date, startMin, { squeezeIn: opts.squeezeIn });
-    revalidatePath("/admin/calendar");
     return null;
   });
 }

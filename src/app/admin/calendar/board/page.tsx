@@ -101,6 +101,9 @@ export default async function BoardPage({ searchParams }: { searchParams: Promis
               <span>{shop.counts.working} working</span>
             </div>
           </div>
+          {!shop.closed && shop.counts.booked + shop.counts.noShow === 0 && (
+            <p className="px-4 pt-3 text-sm text-zinc-500">No appointments booked for {formatDate(date, "EEEE")}</p>
+          )}
           {shop.lanes.length === 0 ? (
             <p className="px-4 py-4 text-sm text-zinc-500">{shop.closed ? "Closed today." : "Nobody scheduled."}</p>
           ) : (

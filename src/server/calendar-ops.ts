@@ -9,6 +9,7 @@ import { blockChangeDenied, clockBlockChangeDenied } from "@/server/auth/policy"
 import { StaffContext, assertShopAccess, blockCaller, can } from "@/server/auth/staff";
 import { usableReason } from "@/server/block-reasons";
 import { createAppointment, getAvailability, rescheduleAppointment, setAppointmentStatus, staffWallTime } from "@/server/booking";
+import { bookedForReal } from "@/server/calendar-sample";
 import { checkEntry, fillEntry, type EntryDetails } from "@/server/client-entry";
 import { clientPolicy } from "@/server/client-privacy";
 import { releaseClockBlock } from "@/server/clock-blocks";
@@ -79,6 +80,8 @@ export interface StaffBookingInput {
   notes?: string | null;
   /** Off the barber's grid, into buffer time or outside hours. Needs "calendar.squeeze_in"; logged. */
   squeezeIn?: boolean;
+  /** The end the desk dragged on the calendar, in minutes from midnight. The service length is used when this is left out. */
+  endMin?: number | null;
 }
 
 /** A booking made by staff: their own column unless they manage the calendar, on the grid unless they may squeeze in. */
@@ -103,6 +106,12 @@ export async function bookForStaff(ctx: StaffContext, input: StaffBookingInput, 
     actor: via === "staff_app" ? { ...ctx.actor, label: `${ctx.actor.label} (staff app)` } : ctx.actor,
   });
   if (typed && appt.customer) await fillEntry(appt.customer.id, typed, { actor: ctx.actor, staffId: ctx.staff.id, shopId: input.shopId });
+  const endMin = input.endMin;
+  if (endMin != null && Number.isInteger(endMin) && endMin % 5 === 0 && endMin > input.startMin && endMin - input.startMin <= 8 * 60) {
+    const endsAt = staffWallTime(input.date as LocalDate, endMin);
+    await db.update(appointments).set({ endsAt }).where(eq(appointments.id, appt.id));
+    return { ...appt, endsAt };
+  }
   return appt;
 }
 
@@ -126,6 +135,7 @@ export async function resizeForStaff(ctx: StaffContext, id: string, date: string
         notInArray(appointments.status, ["cancelled", "no_show"]),
         lt(appointments.startsAt, endsAt),
         gt(appointments.endsAt, a.startsAt),
+        bookedForReal,
       ),
     )
     .limit(1);

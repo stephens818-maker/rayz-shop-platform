@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { publicBarberHints, publicBarberName } from "@/domain/public-barber";
+import { publicBarberLabels, publicBarberName } from "@/domain/public-barber";
 
 describe("public barber names", () => {
-  it("keeps the first name and adds a specialty only when that name is shared", () => {
+  it("keeps a unique first name and uses the display label when that name is shared", () => {
     expect(publicBarberName("Taylor A.")).toBe("Taylor");
     expect(publicBarberName("Olivia B.")).toBe("Olivia");
-    const names = ["Taylor", "Garrett", "Taylor"];
-    expect(publicBarberHints(names, ["Skin fades", null, "Scissor cuts"])).toEqual(["Skin fades", null, "Scissor cuts"]);
-    expect(publicBarberHints(["Michelle"], ["Skin fades"])).toEqual([null]);
-    expect(publicBarberHints(["Taylor", "Taylor"], [null, "  "])).toEqual([null, null]);
+    expect(publicBarberLabels(["Taylor A.", "Garrett", "Taylor B."])).toEqual(["Taylor A.", "Garrett", "Taylor B."]);
+    expect(publicBarberLabels(["Michelle"])).toEqual(["Michelle"]);
+    expect(publicBarberLabels(["Taylor A.", "Taylor B."]).every((n) => !n.toLowerCase().includes("fade"))).toBe(true);
   });
 });

@@ -1,14 +1,17 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { CelebrationBanner } from "@/components/celebration";
-import { Empty, PageHeader } from "@/components/ui";
+import { Empty } from "@/components/ui";
 import {
   addDays,
+  formatDate,
   isValidLocalDate,
   localMinutesOf,
   todayLocal,
   weekdayOf,
 } from "@/lib/time";
+import { ShopRequired } from "../shop-pick";
 import {
   can,
   guardPage,
@@ -46,34 +49,36 @@ export default async function CalendarPage({
   const sp = await searchParams;
   const ctx = await guardPage("/admin/calendar");
   const shopId = workingShopId(ctx, sp.shop);
-  if (!shopId)
-    return (
-      <Empty title="No shop assigned">Ask an admin to add you to a shop.</Empty>
-    );
   const today = todayLocal();
   const date = sp.date && isValidLocalDate(sp.date) ? sp.date : today;
   const manages = can(ctx, "calendar.manage");
+  if (!shopId) {
+    if (!ctx.shopIds.length) return <Empty title="No shop assigned">Ask an admin to add you to a shop.</Empty>;
+    if (sp.view === "list" || sp.view === "week" || !manages) return <ShopRequired ctx={ctx} base="/admin/calendar" />;
+    const q = date === today ? "" : `?date=${date}`;
+    redirect(`/admin/calendar/board${q}`);
+  }
+  const shopName = ctx.shops.find((s) => s.id === shopId)?.name ?? "This shop";
+  const shops = ctx.assignedShops.filter((s) => s.status !== "archived");
+  const dayQuery = date === today ? "" : `&date=${date}`;
+  const switcher = shops.length > 1 && (
+    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Shop">
+      <span className="mr-1 text-sm font-semibold text-zinc-900">{shopName}</span>
+      {manages && (
+        <Link href={date === today ? "/admin/calendar/board" : `/admin/calendar/board?date=${date}`} className="rounded-full px-3 py-1 text-sm ring-1 ring-zinc-300 hover:bg-zinc-50">
+          All shops
+        </Link>
+      )}
+      {shops.map((s) => (
+        <Link key={s.id} href={`/admin/calendar?shop=${s.id}${dayQuery}`} className={s.id === shopId ? "rounded-full bg-ink-900 px-3 py-1 text-sm text-white" : "rounded-full px-3 py-1 text-sm ring-1 ring-zinc-300 hover:bg-zinc-50"}>
+          {s.name}
+        </Link>
+      ))}
+    </div>
+  );
   // "See every barber's column" without managing the calendar: everyone's day, only their own to act on.
   const seesAll = manages || can(ctx, "calendar.view_all");
-  const header = ctx.currentShopId === null && (
-    <PageHeader
-      title="Calendar"
-      subtitle={
-        <>
-          The calendar shows one shop at a time. Use the shop switcher to change
-          {manages && (
-            <>
-              , or see every shop on the{" "}
-              <Link className="underline" href="/admin/calendar/board">
-                all-shops day board
-              </Link>
-            </>
-          )}
-          .
-        </>
-      }
-    />
-  );
+  const header = switcher;
 
   if (sp.view === "list") {
     const days = sp.days === "7" ? 7 : 1;
@@ -143,6 +148,9 @@ export default async function CalendarPage({
   return (
     <div className="space-y-3">
       {header}
+      {data.columns.every((c) => c.appts.length === 0) && (
+        <p className="text-sm text-zinc-500">No appointments booked for {formatDate(date, "EEEE")}</p>
+      )}
       <CelebrationBanner items={day?.calendar ?? []} />
       <DayCalendar
         celebrating={day?.badges ?? {}}

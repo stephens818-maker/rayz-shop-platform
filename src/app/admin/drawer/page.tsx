@@ -3,10 +3,11 @@ import Link from "next/link";
 import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { db } from "@/db";
 import { cashDrawers, staff, tipPayouts } from "@/db/schema";
-import { Card, CardHeader, Empty, LinkButton, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
+import { Card, CardHeader, LinkButton, Notice, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
 import { formatCents } from "@/lib/money";
 import { addDays, formatDate, formatDateTime, formatTime, isValidLocalDate, todayLocal } from "@/lib/time";
 import { can, guardPage, workingShopId } from "@/server/auth/staff";
+import { ShopRequired } from "../shop-pick";
 import { drawerSummary } from "@/server/checkout";
 import { drawerBalanceHistory } from "@/server/drawer";
 import { DRAWER_EVENT_LABEL } from "@/domain/drawer";
@@ -18,11 +19,11 @@ import { DrawerMoveForm, NoSaleButton, OpenDrawerForm } from "./open-form";
 
 export const metadata: Metadata = { title: "Cash drawer" };
 
-export default async function DrawerPage({ searchParams }: { searchParams: Promise<{ date?: string }> }) {
+export default async function DrawerPage({ searchParams }: { searchParams: Promise<{ date?: string; shop?: string }> }) {
   const sp = await searchParams;
   const ctx = await guardPage("/admin/drawer");
-  const shopId = workingShopId(ctx);
-  if (!shopId) return <Empty title="No shop selected" />;
+  const shopId = workingShopId(ctx, sp.shop);
+  if (!shopId) return <ShopRequired ctx={ctx} base="/admin/drawer" />;
   const shop = ctx.shops.find((s) => s.id === shopId)!;
   const date = sp.date && isValidLocalDate(sp.date) ? sp.date : todayLocal();
   const today = todayLocal();

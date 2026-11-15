@@ -53,12 +53,16 @@ export default async function CheckoutPage({
   const { saleId } = await params;
   const { resume: resumeId } = await searchParams;
   const ctx = await guardPage("/admin/checkout/[saleId]");
-  if (!(await inTenant(ctx, "sale", saleId))) notFound();
-  const c = await loadCheckoutContext(saleId);
+  const [allowed, loaded, policy] = await Promise.all([
+    inTenant(ctx, "sale", saleId),
+    loadCheckoutContext(saleId).then((c) => c, () => null),
+    clientPolicy(ctx),
+  ]);
+  if (!allowed || !loaded) notFound();
+  const c = loaded;
   if (c.sale.staffId !== ctx.staff.id && !can(ctx, "checkout.any"))
     redirect("/admin/calendar");
   if (c.sale.status !== "open") redirect(`/admin/sales/${saleId}`);
-  const policy = await clientPolicy(ctx);
   const [
     catalog,
     barbers,

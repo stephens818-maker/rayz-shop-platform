@@ -35,6 +35,7 @@ import {
 } from "@/domain/availability";
 import type { Opening } from "@/domain/booking-group";
 import { closedOn, takesOnlineBookings } from "@/domain/location-lifecycle";
+import { bookedForReal } from "@/server/calendar-sample";
 import { fullAddress, mapsUrl, validLatLng } from "@/domain/location-profile";
 import { appBaseUrl } from "@/lib/deployment";
 import { effectiveEnd } from "@/domain/clock-blocks";
@@ -98,7 +99,7 @@ export async function loadDayInput(shop: Shop, date: LocalDate, opts: DayContext
         bufferAfterMin: appointments.bufferMinutes,
       })
       .from(appointments)
-      .where(and(inArray(appointments.staffId, ids), lt(appointments.startsAt, dayEnd), gt(appointments.endsAt, dayStart))),
+      .where(and(inArray(appointments.staffId, ids), lt(appointments.startsAt, dayEnd), gt(appointments.endsAt, dayStart), bookedForReal)),
     // Time off waiting for a manager is held from online booking, so clients don't book into it; the shop still can.
     opts.staffOverride
       ? []
@@ -954,6 +955,7 @@ export async function estimateWait(shopId: string, staffIds: string[], now = new
         inArray(appointments.status, [...ACTIVE_STATUSES]),
         lt(appointments.startsAt, new Date(now.getTime() + 90 * 60_000)),
         gt(appointments.endsAt, now),
+        bookedForReal,
       ),
     )
     .groupBy(appointments.staffId);
@@ -1011,7 +1013,7 @@ export async function liveWait(shopRef: string, now = new Date()) {
     ? await db
         .select({ staffId: appointments.staffId })
         .from(appointments)
-        .where(and(inArray(appointments.staffId, ids), inArray(appointments.status, [...ACTIVE_STATUSES]), lt(appointments.startsAt, now), gt(appointments.endsAt, now)))
+        .where(and(inArray(appointments.staffId, ids), inArray(appointments.status, [...ACTIVE_STATUSES]), lt(appointments.startsAt, now), gt(appointments.endsAt, now), bookedForReal))
     : [];
   const taken = new Set(busy.map((b) => b.staffId));
   return { waitMinutes, chairsFree: ids.filter((id) => !taken.has(id)).length };

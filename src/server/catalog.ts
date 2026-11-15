@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import { db, DBorTx } from "@/db";
 import { catalogCategories, services, shopHours, shopServices, shops, staff, staffPhotos, staffSchedules, staffShops, Shop, TaxCategory } from "@/db/schema";
-import { isTestBarberLabel, publicBarberHints, publicBarberName } from "@/domain/public-barber";
+import { isTestBarberLabel, publicBarberLabels } from "@/domain/public-barber";
 import { notFound } from "./errors"; import { timingAt } from "./brand-sync/adapters/service-rules";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -68,7 +68,7 @@ export interface PublicBarber {
   slug: string;
   /** First name on the public list. Staff screens keep the admin label. */
   displayName: string;
-  /** Set when another barber here has the same first name. A specialty, never a last name. */
+  /** Unused on the public list. Shared first names use the display label instead of a specialty. */
   hint: string | null;
   color: string;
   photoUrl: string | null;
@@ -81,7 +81,6 @@ export async function shopBarbers(shopId: string, opts: { onlineOnly?: boolean }
       id: staff.id,
       slug: staff.publicSlug,
       displayName: staff.displayLabel,
-      specialty: staff.publicSpecialty,
       color: staff.color,
       visibleOnline: staffShops.visibleOnline,
     })
@@ -100,13 +99,12 @@ export async function shopBarbers(shopId: string, opts: { onlineOnly?: boolean }
     ? await tx.select({ staffId: staffPhotos.staffId }).from(staffPhotos).where(inArray(staffPhotos.staffId, listed.map((r) => r.id)))
     : [];
   const photo = new Set(pics.map((p) => p.staffId));
-  const names = listed.map((r) => (opts.onlineOnly ? publicBarberName(r.displayName) : r.displayName));
-  const hints = opts.onlineOnly ? publicBarberHints(names, listed.map((r) => r.specialty)) : listed.map(() => null);
+  const names = opts.onlineOnly ? publicBarberLabels(listed.map((r) => r.displayName)) : listed.map((r) => r.displayName);
   return listed.map((r, i) => ({
     id: r.id,
     slug: r.slug,
     displayName: names[i],
-    hint: hints[i],
+    hint: null,
     color: r.color,
     photoUrl: photo.has(r.id) ? `/book/photo/${r.slug}` : null,
   }));

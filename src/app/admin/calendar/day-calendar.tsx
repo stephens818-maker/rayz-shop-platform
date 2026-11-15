@@ -257,7 +257,12 @@ const APPT_STYLE: Record<string, string> = {
 type Panel =
   | { kind: "appt"; col: CalColumn; appt: CalAppt }
   | { kind: "block"; col: CalColumn; block: CalColumn["blocks"][number] }
-  | { kind: "new"; col: CalColumn; startMin: number };
+  | { kind: "new"; col: CalColumn; startMin: number; endMin: number };
+
+function defaultSlotLen(services: Svc[]) {
+  const d = services.find((s) => s.kind === "service")?.durationMin ?? 30;
+  return Math.max(SNAP, Math.round(d / SNAP) * SNAP);
+}
 
 export function DayCalendar({
   data,
@@ -719,9 +724,10 @@ export function DayCalendar({
                   readOnly={othersReadOnly && col.id !== meId}
                   onAppt={(appt) => setPanel({ kind: "appt", col, appt })}
                   onBlock={(block) => setPanel({ kind: "block", col, block })}
-                  onEmpty={(startMin) =>
-                    setPanel({ kind: "new", col, startMin })
+                  onEmpty={(startMin, endMin) =>
+                    setPanel({ kind: "new", col, startMin, endMin })
                   }
+                  defaultLen={defaultSlotLen(services)}
                   drag={{
                     active: dragging,
                     ghost: ghost?.colId === col.id ? ghost.startMin : null,
@@ -813,10 +819,11 @@ export function DayCalendar({
           )}
           {panel.kind === "new" && (
             <NewPanel
-              key={`${panel.col.id}:${panel.startMin}`}
+              key={`${panel.col.id}:${panel.startMin}:${panel.endMin}`}
               col={panel.col}
               data={data}
               startMin={panel.startMin}
+              endMin={panel.endMin}
               services={services}
               entry={canManage.entry}
               canFamily={canManage.family}
@@ -911,6 +918,7 @@ function Column({
   onAppt,
   onBlock,
   onEmpty,
+  defaultLen,
   drag,
 }: {
   col: CalColumn;
@@ -930,7 +938,9 @@ function Column({
   readOnly?: boolean;
   onAppt: (a: CalAppt) => void;
   onBlock: (b: CalColumn["blocks"][number]) => void;
-  onEmpty: (startMin: number) => void;
+  onEmpty: (startMin: number, endMin: number) => void;
+  /** A click with no drag books this many minutes. */
+  defaultLen: number;
   drag: {
     active: { appt: CalAppt; grabMin: number } | null;
     ghost: number | null;
@@ -1013,6 +1023,7 @@ function Column({
   const dragLen = drag.active
     ? drag.active.appt.endMin - drag.active.appt.startMin
     : 0;
+  const [slot, setSlot] = useState<{ start: number; end: number } | null>(null);
 
   return (
     <div className="min-w-0 flex-1 border-r border-zinc-100 last:border-r-0">
@@ -1056,10 +1067,45 @@ function Column({
         className={cx("relative", readOnly ? "cursor-default" : "cursor-crosshair")}
         style={{ height }}
         data-readonly={readOnly || undefined}
-        onClick={(e) => {
-          if (readOnly) return;
-          const y = e.clientY - e.currentTarget.getBoundingClientRect().top;
-          onEmpty(snapToGrid(col, data, data.rangeStart + y / PX));
+        onPointerDown={(e) => {
+          if (readOnly || e.button !== 0) return;
+          const target = e.target as HTMLElement;
+          if (target.closest("button, a, input, [role=separator]")) return;
+          const box = e.currentTarget.getBoundingClientRect();
+          const raw = data.rangeStart + (e.clientY - box.top) / PX;
+          const start = Math.max(data.rangeStart, Math.min(data.rangeEnd - SNAP, Math.floor(raw / SNAP) * SNAP));
+          const originY = e.clientY;
+          let startMin = start;
+          let endMin = Math.min(data.rangeEnd, start + defaultLen);
+          let dragged = false;
+          setSlot({ start: startMin, end: endMin });
+          const move = (ev: PointerEvent) => {
+            if (Math.abs(ev.clientY - originY) < 6) return;
+            dragged = true;
+            const cursor = Math.max(data.rangeStart, Math.min(data.rangeEnd, Math.round((data.rangeStart + (ev.clientY - box.top) / PX) / SNAP) * SNAP));
+            if (cursor >= start) {
+              startMin = start;
+              endMin = Math.min(data.rangeEnd, Math.max(start + SNAP, cursor));
+            } else {
+              startMin = cursor;
+              endMin = start;
+              if (endMin - startMin < SNAP) endMin = Math.min(data.rangeEnd, startMin + SNAP);
+            }
+            setSlot({ start: startMin, end: endMin });
+          };
+          const up = () => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+            if (!dragged) {
+              startMin = start;
+              endMin = Math.min(data.rangeEnd, start + defaultLen);
+            }
+            setSlot(null);
+            if (endMin <= startMin) return;
+            onEmpty(startMin, endMin);
+          };
+          window.addEventListener("pointermove", move);
+          window.addEventListener("pointerup", up);
         }}
         onDragOver={(e) => {
           if (!drag.active || readOnly) return;
@@ -1176,6 +1222,14 @@ function Column({
             )}
           </button>
         ))}
+        {slot && (
+          <div
+            className="pointer-events-none absolute inset-x-1 z-[5] rounded-md bg-sky-200/80 px-1.5 py-0.5 text-xs font-semibold text-sky-950 ring-1 ring-sky-500"
+            style={{ top: top(slot.start), height: Math.max(h(slot.start, slot.end), 16) }}
+          >
+            {label(slot.start)}–{label(slot.end)}
+          </div>
+        )}
         {appts.map((a) => {
           if (drag.moved?.id === a.id && drag.moved.colId !== col.id)
             return null;
@@ -1779,14 +1833,15 @@ function useAction() {
     >,
     after?: (data: unknown) => void,
     done?: string,
+    o?: { refresh?: boolean },
   ) =>
     start(async () => {
       setError(null);
       const r = await fn();
       if (!r.ok) return setError(r.error);
-      router.refresh();
       after?.(r.data);
       if (done) toast(done);
+      if (o?.refresh !== false) router.refresh();
     });
   return { pending, error, run, router };
 }
@@ -1829,6 +1884,8 @@ function ApptPanel({
             : `/admin/sales/${r.saleId}`,
         );
       },
+      undefined,
+      { refresh: false },
     );
   return (
     <div className="space-y-4">
@@ -2344,6 +2401,7 @@ function NewPanel({
   col,
   data,
   startMin,
+  endMin,
   services,
   entry,
   canFamily,
@@ -2353,6 +2411,7 @@ function NewPanel({
   col: CalColumn;
   data: DayCalendarData;
   startMin: number;
+  endMin: number;
   services: Svc[];
   entry: EntryField[];
   canFamily: boolean;
@@ -2385,7 +2444,7 @@ function NewPanel({
   const [last, setLast] = useState("");
   const [details, setDetails] = useState<EntryValues>({});
   const [notes, setNotes] = useState("");
-  const [endTime, setEndTime] = useState(hhmm(startMin + 60));
+  const [endTime, setEndTime] = useState(hhmm(endMin));
   const [reasonId, setReasonId] = useState<string | null>(
     reasons[0]?.id ?? null,
   );
@@ -2423,14 +2482,6 @@ function NewPanel({
     return () => clearTimeout(t);
   }, [q]);
 
-  const menuDur = [serviceId, ...addonIds].reduce(
-    (a, id) => a + (services.find((s) => s.id === id)?.durationMin ?? 0),
-    0,
-  );
-  const price = [serviceId, ...addonIds].reduce(
-    (a, id) => a + (services.find((s) => s.id === id)?.priceCents ?? 0),
-    0,
-  );
   const [openings, setOpenings] = useState<{
     key: string;
     durationMin: number;
@@ -2457,7 +2508,6 @@ function NewPanel({
     };
   }, [data.shop.id, data.date, col.id, serviceId, openingsKey]);
   const loaded = openings?.key === openingsKey ? openings : null;
-  const dur = loaded?.durationMin ?? menuDur;
   const startMinPicked = fromHHMM(time);
   const isOpen = loaded?.starts.includes(startMinPicked) ?? true;
 
@@ -2547,12 +2597,10 @@ function NewPanel({
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <Field label="Start">
-              <ClockInput className="w-full" step={squeeze ? 5 : col.intervalMin} value={time} onChange={setTime} />
+              <ClockInput className="w-full" step={15} value={time} onChange={setTime} />
             </Field>
-            <Field label={`Length with ${col.label}`}>
-              <div className="flex h-[38px] items-center text-sm text-zinc-600">
-                {dur} min · {money(price)}
-              </div>
+            <Field label="End">
+              <ClockInput className="w-full" step={15} value={endTime} onChange={setEndTime} />
             </Field>
           </div>
           <div>
@@ -2588,7 +2636,9 @@ function NewPanel({
                     type="button"
                     aria-pressed={m === startMinPicked}
                     onClick={() => {
+                      const len = Math.max(SNAP, fromHHMM(endTime) - fromHHMM(time));
                       setTime(hhmm(m));
+                      setEndTime(hhmm(Math.min(24 * 60, m + len)));
                       setSqueeze(false);
                     }}
                     className={cx(
@@ -2819,6 +2869,7 @@ function NewPanel({
             disabled={
               pending ||
               !serviceId ||
+              fromHHMM(endTime) <= fromHHMM(time) ||
               (!finderPick && !!loaded && !isOpen && !squeeze)
             }
             onClick={() =>
@@ -2855,6 +2906,7 @@ function NewPanel({
                             staffId: col.id,
                             date: data.date,
                             startMin: fromHHMM(time),
+                            endMin: fromHHMM(endTime),
                             serviceId,
                             addonIds,
                             customerId: picked ? (forWho ?? picked.id) : null,
@@ -2874,7 +2926,7 @@ function NewPanel({
           >
             {finderPick
               ? `Book all ${finderPick.seats.length}, ${fmtClock(finderPick.startsAt)} – ${fmtClock(finderPick.endsAt)}`
-              : `${squeeze && !isOpen ? "Squeeze in" : "Book"} ${label(fromHHMM(time))}`}
+              : `${squeeze && !isOpen ? "Squeeze in" : "Book"} ${label(fromHHMM(time))}–${label(fromHHMM(endTime))}`}
           </Button>
         </div>
       ) : (

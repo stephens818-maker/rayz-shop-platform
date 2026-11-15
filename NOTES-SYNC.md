@@ -912,6 +912,26 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-11-14: calendar booking, all shops, and the sample book
+
+New migrations `core_0165_sample_appointments` and `core_0166_sample_not_busy`. Next is `core_0167`. Makenna's Oct 27 punches and Coralville's end-of-night tip payout timing are unchanged. No canary was added.
+
+Sample appointments are flagged, not deleted. The migration marks seeded rows (`@example.test` clients, `DEMO…` codes, no-client notes that are exactly "Walk-in", and clients with no email whose phone contains 555) and leaves a Zzcanary canary visible. The calendar, the week, the all-shops board, the appointment list, and the front-desk upcoming list hide flagged rows. Openings, conflict checks, the live wait, and staffing counts ignore them too. The chair constraints also skip a flagged row, so a real booking can use that time. Ask before any of those rows are deleted.
+
+The demo reviewer shop no longer rolls visits onto today and tomorrow at sign-in. Each demo client keeps one completed sample visit in 2020 so the reviewer can still find them. Those visits stay off the calendar.
+
+`/admin/portfolio` is gone. Photos stay at `/admin/photos`.
+
+An empty slot on a barber's column opens the same booking sheet beside the calendar. A click uses the first service's length. A drag down the column fills a block in 15-minute steps and opens the sheet at that start and end. Dragging a booked or confirmed visit, and dragging its bottom edge, still work.
+
+A brand login with no shop picked opens the all-shops day board. `?shop=` opens that shop's calendar, with the shop name and a switcher in the header, including All shops. One-shop pages (settings, drawer, walk-ins, tips) list every shop and wait for a pick instead of opening Coralville. An empty day says "No appointments booked for <weekday>".
+
+On the public booking page, two barbers who share a first name are "Taylor A." and "Taylor B.". The specialty tags are not shown.
+
+The homepage 400 was not reproduced. A local load of `/` and the Nov 13 preview returned no application 400. The preview console showed the Vercel toolbar JWT at 403 and a Sentry envelope at 429.
+
+Checkout opens without first rebuilding the calendar. The checkout page loads the ticket, the tenant check, and the client policy together, then the ticket's shop, items, client, and fee in parallel. Morning loads its settings and shop calendars together. The 15-second morning and brand memos are unchanged. These cuts were not timed against the 1 second target in production.
+
 ### 2026-11-13: shop login, voids on the report, and the clock
 
 No new migration. Next is still `core_0165`. Makenna's Oct 27 punches and Coralville's end-of-night tip payout timing are unchanged. No canary.
@@ -956,7 +976,7 @@ Check-in, Start, and Finish refuse a visit whose date is not today. The message 
 
 A barber's own Time clock page says, in plain words, to use the front-desk clock and PIN or scan that clock's QR when this browser is not the registered clock. The buttons stay off until then. The earlier clock fixes (already clocked in, PIN form, Jessica's page) are left as they were.
 
-`/admin/photos` is in the Employees menu. A person changes their own photo. Someone who can edit booking links also changes shop photos. `/admin/portfolio` opens the same page. The upload still uses the existing save actions.
+`/admin/photos` is in the Employees menu. A person changes their own photo. Someone who can edit booking links also changes shop photos. The upload still uses the existing save actions.
 
 A voided ticket no longer shows the green Paid banner. All-shops settings names the shop being edited and points at the shop switcher. The time-off button says **Request time off**.
 
