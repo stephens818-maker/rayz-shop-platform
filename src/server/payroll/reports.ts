@@ -19,7 +19,7 @@ import type { ReportChart, ReportData, ReportOption } from "@/server/report-data
 import { PAID, rows as sqlRows, uuids } from "@/server/report-sql";
 import { itemMix, staffSelection, type ReportScope } from "@/server/reports";
 import { ftOverview, hoursSlices, periodFor, punchEditsBetween, scheduledMinutesLeft, shiftsBetween, timesheetList } from "@/server/time-clock";
-import { dailyHours, weekStartOf } from "@/domain/payroll/overtime";
+import { dailyHours, payHours, weekStartOf } from "@/domain/payroll/overtime";
 import { ACA_DEFAULT_MONTHS, ACA_FTE_MONTHLY_CAP, ACA_MEASUREMENT_MONTHS, ACA_MONTHLY_HOURS, ACA_STATUS_LABEL, acaMonths, acaRows, fteByMonth, measurementMonths, monthFirstDay, monthLastDay } from "@/domain/payroll/aca";
 import { addIsolvedSheet, exportFileName } from "./export";
 import { loadSettings } from "./groups";
@@ -330,11 +330,13 @@ export async function payrollTimesheetsData(i: PayrollReportInput): Promise<Repo
   const { scope, loc } = i;
   const sel = staffSelection(scope);
   const multi = loc.shops.length > 1;
-  const [shifts, edits, presets] = await Promise.all([
+  const [{ entries }, shifts, edits, presets] = await Promise.all([
+    hoursSlices(scope.from, scope.to, sel),
     shiftsBetween(scope.shopIds, scope.from, scope.to, sel),
     punchEditsBetween(scope.shopIds, scope.from, scope.to, sel),
     payPeriodPresets(undefined, scope.shopIds),
   ]);
+  const days = dailyHours(entries).filter((d) => scope.shopIds.includes(d.shopId) && d.date >= scope.from && d.date <= scope.to);
   const periods = [];
   for (let p = await periodFor(scope.from); p.start <= scope.to && periods.length < MAX_REPORT_PERIODS; p = await periodFor(addDays(p.end, 1))) periods.push(p);
   const sheets = await Promise.all(periods.map(async (p) => ({ p, list: await timesheetList(p.start, scope.shopIds, sel) })));
@@ -344,7 +346,8 @@ export async function payrollTimesheetsData(i: PayrollReportInput): Promise<Repo
   const approvals = sheets.flatMap(({ p, list }) => list.rows.filter((r) => r.workedCenti > 0 || r.problems > 0).map((r) => ({ p, r, locked: list.locks[r.shopId] ?? null })));
   const waiting = approvals.filter((a) => !a.r.managerApprovedAt).length;
   const perDay = new Map<string, number>();
-  for (const s of shifts) perDay.set(s.date, (perDay.get(s.date) ?? 0) + s.workedMin);
+  for (const d of days) perDay.set(d.date, (perDay.get(d.date) ?? 0) + (d.worked * 60) / 100);
+  const workedHours = days.reduce((a, d) => a + d.worked, 0) / 100;
   return {
     presets,
     bars:
@@ -353,7 +356,7 @@ export async function payrollTimesheetsData(i: PayrollReportInput): Promise<Repo
         : [],
     stats: [
       { label: "Shifts", value: String(shifts.length), hint: `${shifts.filter((s) => !s.end).length} still open` },
-      { label: "Hours worked", value: formatPayHours(sumOf(shifts, (s) => s.workedMin) / 60), hint: `${sumOf(shifts, (s) => s.breaks.length)} breaks, ${formatPayHours(sumOf(shifts, (s) => s.unpaidBreakMin) / 60, { unit: true })} unpaid` },
+      { label: "Hours worked", value: formatPayHours(workedHours), hint: `${sumOf(shifts, (s) => s.breaks.length)} breaks, ${formatPayHours(sumOf(shifts, (s) => s.unpaidBreakMin) / 60, { unit: true })} unpaid` },
       { label: "Edited shifts", value: String(shifts.filter((s) => s.edited).length), hint: `${edits.length} punch changes by a manager` },
       { label: "Waiting on a manager", value: String(waiting), hint: `of ${approvals.length} timesheets with hours` },
     ],
@@ -373,7 +376,7 @@ export async function payrollTimesheetsData(i: PayrollReportInput): Promise<Repo
             s.breaks.map((b) => `${formatTime(b.start, undefined, { zone: true })}–${b.end ? formatTime(b.end, undefined, { zone: true }) : "open"}${b.paid ? "" : " unpaid"}`).join("; "),
             s.breakMin,
             s.unpaidBreakMin,
-            h2(s.workedMin / 60),
+            payHours(s.workedMin),
             h2(s.scheduledMin / 60),
             s.flags.map((f) => FLAG_LABEL[f]).join(", "),
             s.edited,
@@ -421,7 +424,7 @@ export async function payrollTimesheetsData(i: PayrollReportInput): Promise<Repo
       }),
     ],
     notes: [
-      "Shifts are listed on the day they start. Breaks of the shop's unpaid length or longer come out of paid time.",
+      "Shifts are listed on the day they start. Breaks of the shop's unpaid length or longer come out of paid time. Hours worked is every worked time entry in the range, punches and hours typed in or imported, rounded once per day to a hundredth of an hour: the same hours payroll and the export use.",
       `Timesheets run on the time clock's bi-weekly periods; ${shopName.size > 1 ? "each shop" : "the shop"} locks its period once every timesheet with hours is approved.`,
     ],
   };

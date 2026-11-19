@@ -46,8 +46,16 @@ export function weekStartOf(date: string): string {
   return d.minus({ days: d.weekday % 7 }).toISODate()!;
 }
 
-/** Half-up from minutes to hundredths of an hour. */
+/**
+ * The only rounding between a punch and a paycheck. Add the minutes for one local day first, then
+ * half-up to a hundredth of an hour. The timesheet day, the period, labor, payroll and the export
+ * all show this figure. Rounding to a whole minute and then to hours is a different number
+ * (3.7 minutes is 0.06h here and 0.07h that way).
+ */
 export const minutesToCenti = (minutes: number) => Math.floor((minutes * 100) / 60 + 0.5 + 1e-9);
+
+/** Those hundredths as hours (6 centi-hours is 0.06). */
+export const payHours = (minutes: number) => minutesToCenti(minutes) / 100;
 
 export interface DayHours {
   staffId: string;

@@ -26,7 +26,7 @@ import {
 } from "@/db/schema";
 import { payPeriodByIndex, payPeriodFor, type PayPeriod } from "@/domain/payroll";
 import { periodOf } from "@/domain/payroll/calendar";
-import { dailyHours, overtimeSlices, sliceKey, splitByLocalDay, weekStartOf, type Slice, type TimeEntry } from "@/domain/payroll/overtime";
+import { dailyHours, minutesToCenti, overtimeSlices, sliceKey, splitByLocalDay, weekStartOf, type Slice, type TimeEntry } from "@/domain/payroll/overtime";
 import type { PayrollSettings } from "@/domain/payroll/calc";
 import {
   FLAG_LABEL,
@@ -1139,7 +1139,7 @@ export interface ShiftView {
 export interface TimesheetShop {
   shopId: string;
   shop: string;
-  days: { date: LocalDate; scheduledMin: number; workedMin: number; otherMin: number; shifts: ShiftView[] }[];
+  days: { date: LocalDate; scheduledMin: number; workedMin: number; otherMin: number; workedCenti: number; otherCenti: number; shifts: ShiftView[] }[];
   weeks: { weekStart: LocalDate; workedCenti: number; otCenti: number; scheduledMin: number }[];
   totals: { workedCenti: number; otCenti: number; regularCenti: number; ptoCenti: number; trainingCenti: number; breakMin: number; unpaidBreakMin: number; scheduledMin: number };
   problems: { kind: string; label: string; at: string; punchId: string }[];
@@ -1242,7 +1242,15 @@ export async function timesheetView(staffId: string, periodStart: LocalDate, sho
       const dm = dayMinutes.get(`${shopId}|${d}`) ?? { worked: 0, other: 0 };
       const sh = views.filter((v) => v.shopId === shopId && v.date === d);
       const scheduledMin = Math.round(scheduleFor(sched, staffId, shopId, d).reduce((a, i) => a + (i.end.getTime() - i.start.getTime()) / 60_000, 0));
-      days.push({ date: d, scheduledMin, workedMin: Math.round(dm.worked), otherMin: Math.round(dm.other), shifts: sh });
+      days.push({
+        date: d,
+        scheduledMin,
+        workedMin: Math.round(dm.worked),
+        otherMin: Math.round(dm.other),
+        workedCenti: minutesToCenti(dm.worked),
+        otherCenti: minutesToCenti(dm.other),
+        shifts: sh,
+      });
     }
     const here = mySlices.filter((s) => s.shopId === shopId && s.periodStart === period.start);
     const weeks = [...new Set(here.map((s) => s.weekStart))].sort().map((w) => {

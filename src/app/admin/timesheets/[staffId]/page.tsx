@@ -144,14 +144,14 @@ export default async function TimesheetPage({ params, searchParams }: { params: 
               </thead>
               <tbody>
                 {s.days
-                  .filter((d) => d.scheduledMin || d.workedMin || d.otherMin || d.shifts.length)
+                  .filter((d) => d.scheduledMin || d.workedCenti || d.otherCenti || d.shifts.length)
                   .map((d) => (
                     <tr key={d.date}>
                       <Td>{formatDate(d.date)}</Td>
                       <Td className="text-right tabular-nums">{d.scheduledMin ? fromMin(d.scheduledMin) : "–"}</Td>
                       <Td className="text-right tabular-nums">
-                        {fromMin(d.workedMin)}
-                        {d.otherMin > 0 && <span className="block text-xs text-zinc-500">+{fromMin(d.otherMin)} PTO/training</span>}
+                        {hours(d.workedCenti)}
+                        {d.otherCenti > 0 && <span className="block text-xs text-zinc-500">+{hours(d.otherCenti)} PTO/training</span>}
                       </Td>
                       <Td>
                         {d.shifts.map((sh) => (

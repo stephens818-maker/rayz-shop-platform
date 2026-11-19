@@ -1019,7 +1019,7 @@ async function buildStaff(
         service_cents: r.serviceCents,
         product_cents: r.productCents,
       })),
-    )}::jsonb) as x(staff_id uuid, shop_id uuid, worked_min int, ot_min int, service_cents int, product_cents int))`);
+    )}::jsonb) as x(staff_id uuid, shop_id uuid, worked_min float8, ot_min float8, service_cents int, product_cents int))`);
     joins.push("left join lr on lr.staff_id = ss.staff_id and lr.shop_id = ss.shop_id");
   }
   const field = (key: string): SQL => {
