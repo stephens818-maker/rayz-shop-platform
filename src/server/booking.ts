@@ -7,6 +7,7 @@ import {
   customers,
   notificationJobs,
   saleAppointments,
+  saleItems,
   sales,
   services,
   shopClosures,
@@ -35,6 +36,7 @@ import {
 } from "@/domain/availability";
 import type { Opening } from "@/domain/booking-group";
 import { closedOn, takesOnlineBookings } from "@/domain/location-lifecycle";
+import { staffForMove } from "@/domain/calendar-desk";
 import { bookedForReal } from "@/server/calendar-sample";
 import { fullAddress, mapsUrl, validLatLng } from "@/domain/location-profile";
 import { appBaseUrl } from "@/lib/deployment";
@@ -721,7 +723,9 @@ export async function moveInTx(
 ) {
   const now = opts.now;
   const items = await tx.select().from(appointmentItems).where(eq(appointmentItems.appointmentId, a.id));
-  const durationMin = totalDuration(items);
+  // Keep a resized visit the length it has now. The catalog length is only a fallback.
+  const spanMin = Math.round((a.endsAt.getTime() - a.startsAt.getTime()) / 60_000);
+  const durationMin = spanMin >= 5 ? spanMin : totalDuration(items);
   const barberRef = opts.barberRef === undefined ? a.staffId : opts.barberRef;
   const staffOverride = !opts.byCustomer;
   let staffIds: string[];
@@ -780,7 +784,8 @@ export async function moveInTx(
       free = onGrid.filter((id) => isSlotFree(day, id, t));
     }
     if (!free.length) throw new AppError("slot_unavailable", "That time isn't available");
-    const staffId = free.includes(a.staffId) ? a.staffId : pickBarber(free, day.appointments, date)!;
+    const staffId = staffForMove(barberRef && barberRef !== "any" ? staffIds[0] : null, free, a.staffId) ?? pickBarber(free, day.appointments, date);
+    if (!staffId) throw new AppError("slot_unavailable", "That time isn't available");
     try {
       await tx.transaction(async (sp) => {
         await sp.update(appointments).set({ startsAt: start, endsAt: end, staffId, status: "booked", squeezed: squeeze !== null }).where(eq(appointments.id, a.id));
@@ -821,7 +826,14 @@ async function hasLiveTicket(appointmentId: string) {
     .innerJoin(sales, eq(sales.id, saleAppointments.saleId))
     .where(and(eq(saleAppointments.appointmentId, appointmentId), ne(sales.status, "voided")))
     .limit(1);
-  return !!linked;
+  if (linked) return true;
+  const [line] = await db
+    .select({ id: sales.id })
+    .from(saleItems)
+    .innerJoin(sales, eq(sales.id, saleItems.saleId))
+    .where(and(eq(saleItems.appointmentId, appointmentId), ne(sales.status, "voided")))
+    .limit(1);
+  return !!line;
 }
 
 export async function setAppointmentStatus(id: string, status: keyof typeof TRANSITIONS, actor: Actor, now = new Date()) {

@@ -16,6 +16,19 @@ const isAction = (req: NextRequest) => !!req.headers.get("next-action") || req.m
  * Pages and actions still re-verify the session and drop any shop that's out of reach.
  */
 export async function middleware(req: NextRequest) {
+  // A page route has no OPTIONS handler. A preflight (a custom header on / or /admin) was a 400 in the console.
+  if (req.method === "OPTIONS") {
+    return new NextResponse(null, {
+      status: 204,
+      headers: {
+        Allow: "GET, HEAD, POST",
+        "Access-Control-Allow-Origin": req.headers.get("origin") ?? "*",
+        "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
+        "Access-Control-Allow-Headers": req.headers.get("access-control-request-headers") ?? "*",
+        "Access-Control-Max-Age": "86400",
+      },
+    });
+  }
   const path = req.nextUrl.pathname;
   const handoff = req.cookies.get(HANDOFF_COOKIE)?.value;
   if (handoff) {

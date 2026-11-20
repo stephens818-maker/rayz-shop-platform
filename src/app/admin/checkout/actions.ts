@@ -120,7 +120,6 @@ export async function addFamilyToTicketAction(saleId: string, appointmentId: str
     await requireInTenant(ctx, "appointment", appointmentId);
     await addAppointmentToTicket(saleId, appointmentId, ctx.actor);
     revalidatePath(`/admin/checkout/${saleId}`);
-    revalidatePath("/admin/calendar");
     return null;
   });
 }
@@ -131,7 +130,6 @@ export async function removeFamilyFromTicketAction(saleId: string, appointmentId
     await loadSale(ctx, saleId);
     await removeAppointmentFromTicket(saleId, appointmentId, ctx.actor);
     revalidatePath(`/admin/checkout/${saleId}`);
-    revalidatePath("/admin/calendar");
     return null;
   });
 }
@@ -139,7 +137,6 @@ export async function removeFamilyFromTicketAction(saleId: string, appointmentId
 const touchTickets = (...saleIds: string[]) => {
   for (const id of saleIds) revalidatePath(`/admin/checkout/${id}`);
   revalidatePath("/admin/sales");
-  revalidatePath("/admin/calendar");
 };
 
 /** The "add ticket" picker: other open tickets at this ticket's shop, by number or anyone's name on them. */
@@ -315,7 +312,6 @@ export async function acceptRebookAction(saleId: string, promptId: string, pick:
     await loadSale(ctx, saleId);
     const r = await acceptRebook(saleId, promptId, pick, ctx.actor);
     revalidatePath(`/admin/checkout/${saleId}`);
-    revalidatePath("/admin/calendar");
     return r;
   });
 }

@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { shownBookingStatus } from "@/domain/booking-status";
-import { SERVICE_TIME_TOAST, canDragAppointment, resizeEndMin } from "@/domain/calendar-desk";
+import { clearVisitOffered, restoreOffered, shownBookingStatus } from "@/domain/booking-status";
+import { SERVICE_TIME_TOAST, canDragAppointment, resizeEndMin, staffForMove } from "@/domain/calendar-desk";
 import { STATUS_LABEL } from "@/components/ui";
 
 describe("calendar and panel status", () => {
@@ -15,6 +15,17 @@ describe("calendar and panel status", () => {
     expect(calendar).toContain("shownBookingStatus(a.status, !!a.times?.finished)");
     expect(calendar).toContain("shownBookingStatus(s, !!appt.times?.finished)");
     expect(calendar).toContain("<StatusBadge status={shown} />");
+    expect(clearVisitOffered("checked_in", false, true)).toBe(true);
+    expect(clearVisitOffered("in_service", false, true)).toBe(true);
+    expect(clearVisitOffered("in_service", true, true)).toBe(true);
+    expect(clearVisitOffered("completed", true, true)).toBe(true);
+    expect(clearVisitOffered("in_service", true, false)).toBe(false);
+    expect(clearVisitOffered("cancelled", false, true)).toBe(false);
+    expect(restoreOffered("cancelled", false)).toBe(true);
+    expect(restoreOffered("cancelled", true)).toBe(false);
+    expect(calendar).toContain("clearVisitOffered(");
+    expect(staffForMove("taylor-b", ["taylor-b", "taylor-a"], "taylor-a")).toBe("taylor-b");
+    expect(staffForMove(null, ["taylor-a", "taylor-b"], "taylor-a")).toBe("taylor-a");
   });
 });
 

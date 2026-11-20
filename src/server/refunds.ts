@@ -132,6 +132,11 @@ export async function refundEverything(saleId: string, reason: string, restock: 
  * A void takes every visit on the ticket off the book. It never puts one back to Checked in or In
  * chair. The void itself stays on the sale and in the refunds log (who, reason, time, amount).
  */
+async function visitIdsOnSale(tx: Tx, saleId: string, appointmentId: string | null) {
+  const lines = await tx.select({ id: saleItems.appointmentId }).from(saleItems).where(eq(saleItems.saleId, saleId));
+  return [appointmentId, ...(await ticketAppointmentIds(saleId, tx)), ...lines.map((l) => l.id)].filter((x, i, a): x is string => !!x && a.indexOf(x) === i);
+}
+
 async function cancelVisitsForVoid(tx: Tx, ids: string[], now: Date, actor: Actor | null) {
   const unique = [...new Set(ids)];
   if (!unique.length) return;
@@ -157,7 +162,7 @@ export async function voidSale(saleId: string, reason: string, actor: Actor, now
     if (sale.status === "open") {
       open = true;
       await tx.update(sales).set({ status: "voided", voidedAt: now, voidReason: reason, voidApprovedBy: actor.approvedBy?.staffId ?? null }).where(eq(sales.id, saleId));
-      await cancelVisitsForVoid(tx, [sale.appointmentId, ...(await ticketAppointmentIds(saleId, tx))].filter((x): x is string => !!x), now, actor);
+      await cancelVisitsForVoid(tx, await visitIdsOnSale(tx, saleId, sale.appointmentId), now, actor);
       const [lines] = await tx.select({ cents: sql<number>`coalesce(sum(${saleItems.netCents} + ${saleItems.taxCents}), 0)::int` }).from(saleItems).where(eq(saleItems.saleId, saleId));
       const amountCents = Math.max(0, sale.totalCents, Number(lines?.cents ?? 0));
       await tx.insert(refunds).values({
@@ -457,7 +462,7 @@ async function settle(tx: Tx, sale: Sale, components: RefundComponents, kind: "r
     // Tickets from before coupon redemptions were recorded only have the one promo code.
     if (!(await reverseCoupons(tx, sale.id, now)) && sale.promoCodeId) await tx.update(promoCodes).set({ redemptions: sql`greatest(${promoCodes.redemptions} - 1, 0)` }).where(eq(promoCodes.id, sale.promoCodeId));
   }
-  if (kind === "void") await cancelVisitsForVoid(tx, [sale.appointmentId, ...(await ticketAppointmentIds(sale.id, tx))].filter((x): x is string => !!x), now, actor);
+  if (kind === "void") await cancelVisitsForVoid(tx, await visitIdsOnSale(tx, sale.id, sale.appointmentId), now, actor);
   const status = kind === "void" ? "voided" : full ? "refunded" : "partially_refunded";
   await tx
     .update(sales)

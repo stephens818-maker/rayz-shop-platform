@@ -5,8 +5,31 @@ import { Button, Input, Select } from "@/components/ui";
 
 export type DeskPin = { staffId: string; pin: string };
 
+const DESK_PIN_KEY = "rayz.desk-pin";
+
 let current: DeskPin | null = null;
 const listeners = new Set<() => void>();
+
+function readStoredPin(): DeskPin | null {
+  try {
+    const raw = sessionStorage.getItem(DESK_PIN_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as DeskPin;
+    if (v && typeof v.staffId === "string" && typeof v.pin === "string" && v.pin.length >= 4) return { staffId: v.staffId, pin: v.pin };
+  } catch {
+    /* a private window can refuse storage; the PIN is asked again */
+  }
+  return null;
+}
+
+function writeStoredPin(pin: DeskPin | null) {
+  try {
+    if (pin) sessionStorage.setItem(DESK_PIN_KEY, JSON.stringify(pin));
+    else sessionStorage.removeItem(DESK_PIN_KEY);
+  } catch {
+    /* same as a read that fails: the rest of this page still has the PIN in memory */
+  }
+}
 
 export function deskPin(): DeskPin | undefined {
   return current ?? undefined;
@@ -14,6 +37,7 @@ export function deskPin(): DeskPin | undefined {
 
 export function rememberDeskPin(pin: DeskPin | null) {
   current = pin;
+  writeStoredPin(pin);
   for (const listen of listeners) listen();
 }
 
@@ -29,11 +53,18 @@ export function useDeskPin() {
   return current;
 }
 
-/** One PIN for the rest of this browser session. Later taps don't ask again. */
+/** One PIN for the rest of this browser tab, including a reload. Later taps don't ask again. */
 export function DeskPinBar({ people }: { people: { id: string; label: string }[] }) {
   const pin = useDeskPin();
   const [staffId, setStaffId] = useState(people[0]?.id ?? "");
   const [digits, setDigits] = useState("");
+  useEffect(() => {
+    if (current) return;
+    const saved = readStoredPin();
+    if (!saved) return;
+    if (people.some((p) => p.id === saved.staffId)) rememberDeskPin(saved);
+    else rememberDeskPin(null);
+  }, [people]);
   if (!people.length) return null;
   if (pin) {
     const name = people.find((p) => p.id === pin.staffId)?.label ?? "staff";
