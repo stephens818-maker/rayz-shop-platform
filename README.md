@@ -367,7 +367,7 @@ These came with the Today work, beyond what was asked for:
 - Online and API bookings must start on one of the offered times (the shop's slot grid). Staff booking from the calendar can pick any minute.
 - Booking URLs carry only an opaque appointment code and the barber's public slug (first name plus a number, e.g. `makenna-3549`), never a surname.
 - Barbers appear by their **display label** (e.g. "Olivia A.", "Taylor B."), and each has a unique staff ID (`S-0007`).
-- Dubuque has no barbers. It shows as "Opening soon", its booking page explains why, and the API returns empty lists rather than errors.
+- Dubuque has no barbers. The booking page says "No barbers available at this shop yet", and the API returns empty lists rather than errors.
 - Slot math runs in `America/Chicago` with Luxon and is DST-safe; the spring-forward and fall-back days are covered by tests. "Any barber" spreads bookings to the least-booked barber.
 - **No double-booking, ever.** The app checks every shop's appointments and schedules, and a Postgres exclusion constraint (`appointments_no_double_booking`) rejects any overlapping booking for the same barber, even across shops and even if app code is bypassed. The constraint includes the shop's buffer between appointments (stored on each appointment when it's booked). Booked, confirmed, checked-in, and in-service appointments hold the chair; a completed one frees it, so a cut that finishes early opens the rest of its slot.
 - A time staff type that doesn't exist (2:30 AM on a spring-forward morning) is refused instead of being moved an hour.
