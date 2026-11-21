@@ -7,6 +7,16 @@ export function canDragAppointment(status: string): boolean {
 }
 
 /**
+ * The barber a drag lands on. A named column wins when that barber is free. "Any barber" keeps the
+ * current barber when they are free, otherwise the first free one.
+ */
+export function staffForMove(requestedId: string | null, freeIds: readonly string[], currentId: string): string | null {
+  if (requestedId && freeIds.includes(requestedId)) return requestedId;
+  if (freeIds.includes(currentId)) return currentId;
+  return freeIds[0] ?? null;
+}
+
+/**
  * The new end, in minutes from midnight, after dragging the bottom edge.
  * Snaps to 15 minutes and never ends sooner than 15 minutes after the start.
  */

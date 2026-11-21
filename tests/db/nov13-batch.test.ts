@@ -93,8 +93,10 @@ describe("a $0 void", () => {
     const kept = await book();
     await onDay(kept.id, now);
     await m.booking.setAppointmentStatus(kept.id, "cancelled", who, now);
-    const still = await list.loadAppointmentList(shop.id, day, 1, { staffId: null, status: "missed", privacy });
-    expect(still.rows.some((r) => r.id === kept.id)).toBe(true);
+    const still = await list.loadAppointmentList(shop.id, day, 1, { staffId: null, status: "all", privacy });
+    expect(still.rows.some((r) => r.id === kept.id)).toBe(false);
+    const [keptRow] = await m.db.db.select({ status: m.schema.appointments.status }).from(m.schema.appointments).where(eq(m.schema.appointments.id, kept.id));
+    expect(keptRow?.status).toBe("cancelled");
   });
 });
 

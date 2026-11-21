@@ -22,6 +22,7 @@ import { ratingSummaries } from "./ratings";
 import { timesFor } from "./service-times";
 import { reasonShower } from "./block-reasons";
 import { bookedForReal } from "./calendar-sample";
+import { onlyVoidedTicket } from "./visit-ticket";
 import { staffingFor } from "./staff-time";
 import { brandCalendar } from "./payroll/groups";
 import { guardian, householdContact } from "./household-contact";
@@ -210,7 +211,7 @@ export async function loadDayCalendar(
         guardianLast: guardian.lastName,
         saleId: sales.id,
         saleStatus: sales.status,
-        ticketVoided: sql<boolean>`exists (select 1 from sales vs where vs.status = 'voided' and (vs.appointment_id = ${appointments.id} or exists (select 1 from sale_appointments sa where sa.sale_id = vs.id and sa.appointment_id = ${appointments.id}))) and not exists (select 1 from sales ns where ns.status <> 'voided' and (ns.appointment_id = ${appointments.id} or exists (select 1 from sale_appointments sa where sa.sale_id = ns.id and sa.appointment_id = ${appointments.id})))`,
+        ticketVoided: sql<boolean>`${onlyVoidedTicket}`,
       })
       .from(appointments)
       .leftJoin(customers, eq(customers.id, appointments.customerId))

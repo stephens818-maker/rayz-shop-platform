@@ -611,7 +611,7 @@ export function BookingWizard({
     return (
       <Closed
         shop={shop}
-        msg="This shop is opening soon — no barbers are taking bookings yet."
+        msg="No barbers available at this shop yet."
       />
     );
 

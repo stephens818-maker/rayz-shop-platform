@@ -47,7 +47,7 @@ export const SHOPS: ShopSeed[] = [
     // Squire shows a 9-6 every-day placeholder; Sundays are closed brand-wide.
     hours: { 1: [9, 18], 2: [9, 18], 3: [9, 18], 4: [9, 18], 5: [9, 18], 6: [9, 18] },
     ...IA_TAX,
-    note: "No staff yet. Squire lists state as AL (typo) and a personal email; both left blank here.",
+    note: "No staff yet. Squire lists state as AL (typo) and a personal email; both left blank here. Only real staff go here.",
   },
   { slug: "silvis", name: "Silvis", address: "1211 Avenue of the Cities", city: "Silvis", state: "IL", zip: "61282", phone: "+13099127826", email: "rayzbssilvis@outlook.com", hours: std, ...IL_TAX },
   { slug: "utica", name: "Utica", address: "5262 Utica Ridge Road", city: "Davenport", state: "IA", zip: "52807", phone: null, email: "Rayzbsutica@outlook.com", hours: std, ...IA_TAX },

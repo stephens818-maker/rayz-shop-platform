@@ -912,6 +912,26 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-11-21: no placeholder barbers at Dubuque
+
+New migration `core_0168_remove_dubuque_placeholders`. Next is `core_0169`. `core_0167` is left as it ran. Makenna's Oct 27 punches and Coralville's end-of-night tip payout timing are unchanged. No canary was added.
+
+Rowan and Harper (`S-DUB-ROWAN`, `S-DUB-HARPER`) are removed. Only those two staff codes. If a real booking already points at one of them, that person is taken off the book and marked inactive instead of the migration failing. No replacement staff are added. Dubuque's booking page, with no barbers, says "No barbers available at this shop yet."
+
+### 2026-11-20: visits, the desk PIN, and Dubuque
+
+New migration `core_0167_demo_queue_dubuque`. Next is `core_0168`. Makenna's Oct 27 punches and Coralville's end-of-night tip payout timing are unchanged. No canary was added. Rows were flagged, not deleted.
+
+Clear visit is offered at Checked in, In chair, and Finished when the ticket is voided, including a line that only names the visit. A voided visit that is already cancelled does not offer Restore. A plain cancel leaves the appointment list and stays on the reports. A visit whose only ticket is voided leaves the list too, even when it still says Finished.
+
+Dragging a visit to another barber uses that barber and keeps the visit's length. The drag follows the pointer, so the column under the cursor is the one that is saved. Resize is unchanged.
+
+A shop login's desk PIN is kept in the tab, so a reload does not ask again. Switch still clears it.
+
+The checkout queue hides an open ticket whose visits are all sample. The migration flags leftover demo open tickets (example.test, a 555 phone with no email, a walk-in note, or a DEMO code) and leaves a Zzcanary alone. The Dubuque placeholders added here were removed on Nov 21. Shared first names on the booking page still use the neutral label. An owner with more than one shop still opens on all shops.
+
+A preflight to a page (`/` or `/admin`) gets 204 instead of 400. Checkout actions no longer refresh the calendar. Click times were not measured against one second.
+
 ### 2026-11-19: one figure for hours
 
 No new migration. Next is still `core_0167`. Makenna's Oct 27 punches and Coralville's end-of-night tip payout timing are unchanged. No canary was added.

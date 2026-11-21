@@ -7,13 +7,14 @@ import { clientName } from "@/domain/client-privacy";
 import { LocalDate, addDays, endOfLocalDay, localDateOf, localMinutesOf, startOfLocalDay } from "@/lib/time";
 import type { ClientPolicy } from "./client-privacy";
 import { bookedForReal } from "./calendar-sample";
+import { onlyVoidedTicket } from "./visit-ticket";
 
 /** Which appointments the list shows: still to come, finished, called off, or all. */
 export const LIST_STATUSES = {
   all: null,
   upcoming: ["booked", "confirmed", "checked_in", "in_service"],
   completed: ["completed"],
-  missed: ["cancelled", "no_show"],
+  missed: ["no_show"],
 } as const;
 export type ListStatus = keyof typeof LIST_STATUSES;
 export const isListStatus = (s: string | undefined): s is ListStatus => !!s && s in LIST_STATUSES;
@@ -77,8 +78,9 @@ export async function loadAppointmentList(
         o.staffId ? eq(appointments.staffId, o.staffId) : undefined,
         statusWhere,
         bookedForReal,
-        // A void or Clear visit takes the visit off the book. It stays in the audit log and on the void report, not here as Cancelled.
-        sql`not (${appointments.status} = 'cancelled' and exists (select 1 from sales vs where vs.status = 'voided' and (vs.appointment_id = ${appointments.id} or exists (select 1 from sale_appointments sa where sa.sale_id = vs.id and sa.appointment_id = ${appointments.id}))) and not exists (select 1 from sales ns where ns.status <> 'voided' and (ns.appointment_id = ${appointments.id} or exists (select 1 from sale_appointments sa where sa.sale_id = ns.id and sa.appointment_id = ${appointments.id}))))`,
+        // A cancel, a void, or Clear visit leaves the list. The row stays for reports and the void log.
+        ne(appointments.status, "cancelled"),
+        sql`not (${onlyVoidedTicket})`,
       ),
     )
     .orderBy(asc(appointments.startsAt), asc(staff.displayLabel))

@@ -24,7 +24,7 @@ import {
 import { ConflictConfirm } from "@/components/conflict-confirm";
 import { useHotkeys } from "@/components/hotkeys";
 import { columnsThatFit } from "@/domain/calendar-layout";
-import { shownBookingStatus } from "@/domain/booking-status";
+import { clearVisitOffered, restoreOffered, shownBookingStatus } from "@/domain/booking-status";
 import { deskPin } from "@/components/desk-pin";
 import { canDragAppointment, resizeEndMin } from "@/domain/calendar-desk";
 import { toast } from "@/components/toast";
@@ -338,19 +338,16 @@ export function DayCalendar({
     startMin: number;
     appt: CalAppt;
   } | null>(null);
-  const dropOn = (col: CalColumn, startMin: number) => {
-    if (!dragging) return;
-    const a = dragging.appt;
+  const dropOn = (appt: CalAppt, colId: string, startMin: number) => {
+    const col = data.columns.find((c) => c.id === colId);
     setDragging(null);
     setGhost(null);
-    if (
-      startMin === a.startMin &&
-      data.columns.find((c) => c.appts.includes(a))?.id === col.id
-    )
-      return;
-    setMoved({ id: a.id, colId: col.id, startMin, appt: a });
+    if (!col) return;
+    const fromId = data.columns.find((c) => c.appts.some((x) => x.id === appt.id))?.id;
+    if (startMin === appt.startMin && fromId === col.id) return;
+    setMoved({ id: appt.id, colId: col.id, startMin, appt });
     move.run(
-      () => moveAppointmentAction(a.id, col.id, data.date, startMin, { desk: deskPin() }),
+      () => moveAppointmentAction(appt.id, col.id, data.date, startMin, { desk: deskPin() }),
       () => setMoved(null),
       `Moved to ${label(startMin)} with ${col.label}`,
     );
@@ -732,9 +729,11 @@ export function DayCalendar({
                     active: dragging,
                     ghost: ghost?.colId === col.id ? ghost.startMin : null,
                     moved,
-                    start: (appt, grabMin) => setDragging({ appt, grabMin }),
-                    over: (startMin) => setGhost({ colId: col.id, startMin }),
-                    drop: (startMin) => dropOn(col, startMin),
+                    begin: (appt, grabMin) => setDragging({ appt, grabMin }),
+                    hover: (colId, startMin) => {
+                      setGhost({ colId, startMin });
+                    },
+                    drop: dropOn,
                     end: () => {
                       setDragging(null);
                       setGhost(null);
@@ -950,9 +949,9 @@ function Column({
       startMin: number;
       appt: CalAppt;
     } | null;
-    start: (a: CalAppt, grabMin: number) => void;
-    over: (startMin: number) => void;
-    drop: (startMin: number) => void;
+    begin: (a: CalAppt, grabMin: number) => void;
+    hover: (colId: string, startMin: number) => void;
+    drop: (appt: CalAppt, colId: string, startMin: number) => void;
     end: () => void;
   };
 }) {
@@ -1011,22 +1010,20 @@ function Column({
   const holding = appts.filter(
     (a) => !["cancelled", "no_show", "completed"].includes(a.status),
   );
-  const minuteAt = (e: React.DragEvent<HTMLElement>) =>
-    data.rangeStart +
-    (e.clientY - e.currentTarget.getBoundingClientRect().top) / PX;
-  const dropStart = (e: React.DragEvent<HTMLElement>) =>
-    snapToGrid(
-      col,
-      data,
-      Math.round(minuteAt(e) - (drag.active?.grabMin ?? 0)),
-    );
-  const dragLen = drag.active
-    ? drag.active.appt.endMin - drag.active.appt.startMin
-    : 0;
+  const dragged = useRef(false);
+  const startAt = (colId: string, clientY: number, grabMin: number) => {
+    const host = document.querySelector(`[data-cal-col="${CSS.escape(colId)}"]`);
+    const target = data.columns.find((c) => c.id === colId);
+    if (!host || !target) return null;
+    const top = host.getBoundingClientRect().top;
+    const minute = data.rangeStart + (clientY - top) / PX;
+    return snapToGrid(target, data, Math.round(minute - grabMin));
+  };
+  const dragLen = drag.active ? drag.active.appt.endMin - drag.active.appt.startMin : 0;
   const [slot, setSlot] = useState<{ start: number; end: number } | null>(null);
 
   return (
-    <div className="min-w-0 flex-1 border-r border-zinc-100 last:border-r-0">
+    <div className="min-w-0 flex-1 border-r border-zinc-100 last:border-r-0" data-cal-col={col.id}>
       <div
         className={cx(
           "sticky top-0 z-10 flex flex-col justify-center gap-0.5 border-b border-zinc-200 bg-white px-2",
@@ -1106,18 +1103,6 @@ function Column({
           };
           window.addEventListener("pointermove", move);
           window.addEventListener("pointerup", up);
-        }}
-        onDragOver={(e) => {
-          if (!drag.active || readOnly) return;
-          e.preventDefault();
-          e.dataTransfer.dropEffect = "move";
-          const m = dropStart(e);
-          if (m !== drag.ghost) drag.over(m);
-        }}
-        onDrop={(e) => {
-          e.preventDefault();
-          if (readOnly) return;
-          drag.drop(dropStart(e));
         }}
       >
         {hours.map((m) => (
@@ -1242,19 +1227,49 @@ function Column({
           return (
             <button
               key={a.id}
-              draggable={movable}
-              onDragStart={(e) => {
-                e.dataTransfer.effectAllowed = "move";
-                e.dataTransfer.setData("text/plain", a.code);
-                drag.start(
-                  a,
-                  (e.clientY - e.currentTarget.getBoundingClientRect().top) /
-                    PX,
-                );
+              onPointerDown={(e) => {
+                if (!movable || e.button !== 0) return;
+                if ((e.target as HTMLElement).closest("[role=separator]")) return;
+                const originX = e.clientX;
+                const originY = e.clientY;
+                const tile = e.currentTarget;
+                const grabMin = (e.clientY - tile.getBoundingClientRect().top) / PX;
+                let moving = false;
+                const place = (ev: PointerEvent) => {
+                  const under = document.elementFromPoint(ev.clientX, ev.clientY)?.closest("[data-cal-col]");
+                  const colId = under?.getAttribute("data-cal-col");
+                  if (!colId) return null;
+                  return { colId, startMin: startAt(colId, ev.clientY, grabMin) };
+                };
+                const move = (ev: PointerEvent) => {
+                  if (!moving && Math.hypot(ev.clientX - originX, ev.clientY - originY) < 6) return;
+                  if (!moving) {
+                    tile.style.pointerEvents = "none";
+                    drag.begin(a, grabMin);
+                  }
+                  moving = true;
+                  const at = place(ev);
+                  if (at?.startMin != null) drag.hover(at.colId, at.startMin);
+                };
+                const up = (ev: PointerEvent) => {
+                  window.removeEventListener("pointermove", move);
+                  window.removeEventListener("pointerup", up);
+                  const at = moving ? place(ev) : null;
+                  tile.style.pointerEvents = "";
+                  if (!moving) return;
+                  dragged.current = true;
+                  if (at?.startMin != null) drag.drop(a, at.colId, at.startMin);
+                  else drag.end();
+                };
+                window.addEventListener("pointermove", move);
+                window.addEventListener("pointerup", up);
               }}
-              onDragEnd={drag.end}
               onClick={(e) => {
                 e.stopPropagation();
+                if (dragged.current) {
+                  dragged.current = false;
+                  return;
+                }
                 if (!readOnly) onAppt(a);
               }}
               className={cx(
@@ -2095,7 +2110,7 @@ function ApptPanel({
           </div>
         </div>
       )}
-      {(s === "cancelled" || s === "no_show") && (
+      {restoreOffered(s, appt.ticketVoided) && (
         <Button
           variant="secondary"
           className="w-full"
@@ -2104,6 +2119,9 @@ function ApptPanel({
         >
           Restore appointment
         </Button>
+      )}
+      {s === "cancelled" && appt.ticketVoided && (
+        <Notice>This visit was cleared when its ticket was voided.</Notice>
       )}
       {s === "completed" && appt.saleId && canManage.sales && (
         <LinkButton
@@ -2114,7 +2132,7 @@ function ApptPanel({
           View receipt
         </LinkButton>
       )}
-      {appt.ticketVoided && (s === "completed" || s === "in_service" || s === "checked_in") && (
+      {clearVisitOffered(s, !!appt.times?.finished, appt.ticketVoided) && (
         <div className="space-y-2">
           <Notice>The ticket on this visit was voided. Clear the visit to take it off the day.</Notice>
           <Button

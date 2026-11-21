@@ -197,6 +197,7 @@ export async function resizeAppointmentAction(id: string, date: string, endMin: 
 export async function moveAppointmentAction(id: string, staffId: string, date: string, startMin: number, opts: { squeezeIn?: boolean; desk?: DeskPin } = {}) {
   return safe(async () => {
     await moveForStaff(await withDesk(await requireStaff(), opts.desk), id, staffId, date, startMin, { squeezeIn: opts.squeezeIn });
+    revalidatePath("/admin/calendar");
     return null;
   });
 }

@@ -280,7 +280,22 @@ export async function openTickets(shopIds: string[], o: { excludeSaleId?: string
     .from(sales)
     .leftJoin(customers, eq(customers.id, sales.customerId))
     .leftJoin(staff, eq(staff.id, sales.staffId))
-    .where(and(inArray(sales.shopId, shopIds), eq(sales.status, "open"), o.excludeSaleId ? ne(sales.id, o.excludeSaleId) : sql`true`))
+    .where(and(
+      inArray(sales.shopId, shopIds),
+      eq(sales.status, "open"),
+      o.excludeSaleId ? ne(sales.id, o.excludeSaleId) : sql`true`,
+      // A sample visit's open ticket stays in the database and off the queue.
+      sql`not (
+        (${sales.appointmentId} is not null or exists (select 1 from sale_appointments sa where sa.sale_id = ${sales.id}))
+        and not exists (
+          select 1 from appointments a
+          where a.sample = false and (
+            a.id = ${sales.appointmentId}
+            or exists (select 1 from sale_appointments sa where sa.sale_id = ${sales.id} and sa.appointment_id = a.id)
+          )
+        )
+      )`,
+    ))
     .orderBy(desc(sales.createdAt))
     .limit(o.limit ?? 200);
   if (!rows.length) return [];

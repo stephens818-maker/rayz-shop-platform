@@ -58,20 +58,21 @@ describe("the appointment list", () => {
     const day = await list.loadAppointmentList(coralville, busy as never, 1, { staffId: null, status: "all", privacy: FULL });
     expect(day.rows.length).toBeGreaterThan(0);
     expect(day.rows.some((r) => r.code === "REALDAY14")).toBe(true);
-    expect(day.rows.length).toBe(await countSql(busy, 1));
+    expect(day.rows.length).toBe(await countSql(busy, 1, sql`and status <> 'cancelled'`));
     const hidden = (await rows<{ n: number }>(sql`select count(*)::int n from appointments where shop_id = ${coralville} and sample = true`))[0].n;
     expect(hidden).toBeGreaterThan(0);
     expect(day.rows.every((r, i) => i === 0 || day.rows[i - 1].date < r.date || (day.rows[i - 1].date === r.date && day.rows[i - 1].startMin <= r.startMin))).toBe(true);
     const week = await list.loadAppointmentList(coralville, busy as never, 7, { staffId: null, status: "all", privacy: FULL });
-    expect(week.rows.length).toBe(await countSql(busy, 7));
+    expect(week.rows.length).toBe(await countSql(busy, 7, sql`and status <> 'cancelled'`));
     const done = await list.loadAppointmentList(coralville, busy as never, 7, { staffId: null, status: "completed", privacy: FULL });
     expect(done.rows.length).toBe(await countSql(busy, 7, sql`and status = 'completed'`));
     expect(done.rows.every((r) => r.status === "completed")).toBe(true);
     const missed = await list.loadAppointmentList(coralville, busy as never, 7, { staffId: null, status: "missed", privacy: FULL });
-    expect(missed.rows.every((r) => r.status === "cancelled" || r.status === "no_show")).toBe(true);
+    expect(missed.rows.every((r) => r.status === "no_show")).toBe(true);
+    expect(missed.rows.length).toBe(await countSql(busy, 7, sql`and status = 'no_show'`));
     const one = day.rows[0].staffId;
     const mine = await list.loadAppointmentList(coralville, busy as never, 7, { staffId: one, status: "all", privacy: FULL });
-    expect(mine.rows.length).toBe(await countSql(busy, 7, sql`and staff_id = ${one}`));
+    expect(mine.rows.length).toBe(await countSql(busy, 7, sql`and staff_id = ${one} and status <> 'cancelled'`));
   });
 
   it("masks last names as the calendar does", async () => {
