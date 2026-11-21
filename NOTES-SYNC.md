@@ -912,6 +912,16 @@ Compared screen by screen on 2026-10-28 with Charles's read-only notes on Squire
 
 ## Log
 
+### 2026-11-19: one figure for hours
+
+No new migration. Next is still `core_0167`. Makenna's Oct 27 punches and Coralville's end-of-night tip payout timing are unchanged. No canary was added.
+
+Hours round once. A local day's minutes are added, then half-up to a hundredth of an hour (`payHours` / `minutesToCenti` in `src/domain/payroll/overtime.ts`). The timesheet day, the period total, labor, payroll, and the payroll export all use that. Rounding to a whole minute first is a different number: 3.7 minutes is 0.06h this way and was 0.07h on the timesheet day. That was the day-versus-period gap.
+
+Labor hours are those same hundredths, not the raw minutes rounded again at the end. That second rounding is what put labor a fraction of an hour above payroll. Labor hours are worked hours. Payroll's regular-hours tile is worked hours less overtime, and that overtime is labeled on both reports.
+
+The timesheet report's Hours worked was the sum of punch shifts. Payroll counts every worked time entry, including hours typed in or imported with no punch. The owner's sample days are 8 hours on each weekday and no overtime: ten of them in P22 (Oct 4–17) are 80.00h, and five of them in the first week of P23 are 40.00h. A punch-only total is short by exactly that, and it is not an overtime or midnight-split bug. Hours worked on that report is now the same daily hundredths payroll uses, so those imported hours are in it. The shift rows are still the punches.
+
 ### 2026-11-14: calendar booking, all shops, and the sample book
 
 New migrations `core_0165_sample_appointments` and `core_0166_sample_not_busy`. Next is `core_0167`. Makenna's Oct 27 punches and Coralville's end-of-night tip payout timing are unchanged. No canary was added.

@@ -2,7 +2,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { payrollProfiles, payrollRates, shops, staff, timesheetLocks } from "@/db/schema";
 import type { PayPeriod } from "@/domain/payroll";
-import { splitByLocalDay } from "@/domain/payroll/overtime";
+import { dailyHours } from "@/domain/payroll/overtime";
 import { exportLines, genericCsv, mappedCsv, pairPunches, shiftWork, type ExportLine } from "@/domain/time-clock";
 import { flooredTips } from "@/domain/tips";
 import { localDateOf, type LocalDate } from "@/lib/time";
@@ -119,22 +119,24 @@ export interface LaborRow {
 export async function laborRows(shopIds: readonly string[], from: LocalDate, to: LocalDate, staffIds: readonly string[] | null): Promise<LaborRow[]> {
   if (!shopIds.length) return [];
   const { slices, entries, settings } = await hoursSlices(from, to, staffIds);
-  const minutes = new Map<string, number>();
-  for (const e of entries) {
-    if (e.kind !== "worked" || !shopIds.includes(e.shopId)) continue;
-    for (const p of splitByLocalDay(e)) if (p.date >= from && p.date <= to) minutes.set(`${e.staffId}|${e.shopId}`, (minutes.get(`${e.staffId}|${e.shopId}`) ?? 0) + p.minutes);
+  // Same hundredths payroll uses: each local day's minutes, rounded once, then added.
+  const workedCenti = new Map<string, number>();
+  for (const d of dailyHours(entries)) {
+    if (!d.worked || !shopIds.includes(d.shopId) || d.date < from || d.date > to) continue;
+    const k = `${d.staffId}|${d.shopId}`;
+    workedCenti.set(k, (workedCenti.get(k) ?? 0) + d.worked);
   }
   const ot = new Map<string, number>();
   for (const s of slices) if (shopIds.includes(s.shopId) && s.weekStart >= from && s.weekStart <= to) ot.set(`${s.staffId}|${s.shopId}`, (ot.get(`${s.staffId}|${s.shopId}`) ?? 0) + s.ot);
   const sales = await payrollSalesBetween({ shopIds: [...shopIds], staffIds: staffIds ? [...staffIds] : null }, from, to);
-  const keys = new Set([...minutes.keys(), ...ot.keys(), ...sales.filter((s) => s.serviceSalesCents || s.productSalesCents).map((s) => `${s.staffId}|${s.shopId}`)]);
+  const keys = new Set([...workedCenti.keys(), ...ot.keys(), ...sales.filter((s) => s.serviceSalesCents || s.productSalesCents).map((s) => `${s.staffId}|${s.shopId}`)]);
   const ids = [...new Set([...keys].map((k) => k.split("|")[0]))];
   const rates = ids.length ? await db.select().from(payrollRates).where(inArray(payrollRates.staffId, ids)) : [];
   const rateOf = (sid: string, shopId: string) => rates.find((r) => r.staffId === sid && r.shopId === shopId) ?? rates.find((r) => r.staffId === sid && r.shopId === null);
   return [...keys].map((k) => {
     const [staffId, shopId] = k.split("|");
-    const workedMin = Math.round(minutes.get(k) ?? 0);
-    const otMin = Math.min(workedMin, Math.round(((ot.get(k) ?? 0) * 60) / 100));
+    const workedMin = ((workedCenti.get(k) ?? 0) * 60) / 100;
+    const otMin = Math.min(workedMin, ((ot.get(k) ?? 0) * 60) / 100);
     const rate = rateOf(staffId, shopId)?.hourlyRate ?? null;
     const s = sales.find((x) => x.staffId === staffId && x.shopId === shopId);
     return {

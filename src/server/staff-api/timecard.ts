@@ -36,12 +36,14 @@ function appSheet(v: TimesheetView) {
       totals: s.totals,
       weeks: s.weeks,
       days: s.days
-        .filter((d) => d.scheduledMin || d.workedMin || d.otherMin || d.shifts.length)
+        .filter((d) => d.scheduledMin || d.workedCenti || d.otherCenti || d.shifts.length)
         .map((d) => ({
           date: d.date,
           scheduledMin: d.scheduledMin,
           workedMin: d.workedMin,
           otherMin: d.otherMin,
+          workedCenti: d.workedCenti,
+          otherCenti: d.otherCenti,
           shifts: d.shifts.map((sh) => ({
             inId: sh.inId,
             outId: sh.outId,
