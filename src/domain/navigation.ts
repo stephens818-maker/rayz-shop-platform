@@ -18,7 +18,6 @@ export const PAGE_ACCESS = {
   "/admin/help": null,
   "/admin/chat": null,
   "/admin/photos": null,
-  "/admin/portfolio": null,
   "/admin/booking-links": ["calendar.manage", "settings.shop"],
   "/admin/calendar": null,
   "/admin/calendar/board": ["calendar.manage"],

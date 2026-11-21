@@ -36,6 +36,7 @@ import {
   todayLocal,
 } from "@/lib/time";
 import { ACTION_BADGES, todayLine } from "@/domain/badges";
+import { bookedForReal } from "@/server/calendar-sample";
 import { reportsFor } from "@/domain/navigation";
 import { STATUS_LABEL } from "@/domain/staff-time";
 import { listRequests, staffingFor } from "@/server/staff-time";
@@ -139,6 +140,7 @@ export default async function Dashboard({
     lt(appointments.startsAt, endOfLocalDay(today)),
     gt(appointments.endsAt, startOfLocalDay(today)),
     staffId ? eq(appointments.staffId, staffId) : undefined,
+    bookedForReal,
   );
   const countsWhere = (where: ReturnType<typeof and>) =>
     db
@@ -231,6 +233,7 @@ export default async function Dashboard({
               lt(appointments.startsAt, endOfLocalDay(range.to)),
               gt(appointments.endsAt, startOfLocalDay(range.from)),
               staffId ? eq(appointments.staffId, staffId) : undefined,
+              bookedForReal,
             ),
           ),
       payPeriodPicker(shopIds, today),

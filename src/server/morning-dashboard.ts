@@ -934,9 +934,11 @@ export async function buildMorningDashboard(input: BuildInput, cals?: Map<string
 
 async function buildMorningNow(input: BuildInput, cals: Map<string, ShopCal> | undefined, now: Date): Promise<MorningDashboard | null> {
   const today = input.today ?? todayLocal(now);
-  const settings = input.settings ?? (await loadMorningSettings());
   const memo = input.memo ?? new Memo();
-  const calendars = cals ?? (await memo.get(key("cals", today), () => shopCalendars(today)));
+  const [settings, calendars] = await Promise.all([
+    input.settings ? Promise.resolve(input.settings) : loadMorningSettings(),
+    cals ? Promise.resolve(cals) : memo.get(key("cals", today), () => shopCalendars(today)),
+  ]);
   const access = input.access;
   const eligible = new Set(morningShops(access));
   const shopRefs = access.shops.filter((s) => input.shopIds.includes(s.id) && eligible.has(s.id)).map((s) => ({ id: s.id, name: s.name }));

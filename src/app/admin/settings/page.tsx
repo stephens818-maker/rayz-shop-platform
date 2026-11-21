@@ -5,6 +5,7 @@ import { shopClosures, shopHours, shops, terminalReaders } from "@/db/schema";
 import { Card, CardHeader, Empty, LinkButton, Notice, PageHeader } from "@/components/ui";
 import { todayLocal } from "@/lib/time";
 import { can, guardPage, workingShopId } from "@/server/auth/staff";
+import { ShopRequired } from "../shop-pick";
 import { shopMayEdit } from "@/server/brand-sync/engine";
 import { settingAt } from "@/server/brand-sync/settings";
 import { getLoyaltyConfig } from "@/server/loyalty";
@@ -44,7 +45,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
   const brand = can(ctx, "settings.brand");
   const filing = can(ctx, "settings.taxes") && ctx.brandWide;
   const shopId = workingShopId(ctx, (await searchParams).shop);
-  if (!shopId) return <Empty title="No shop selected" />;
+  if (!shopId) return <ShopRequired ctx={ctx} base="/admin/settings" />;
   const [shop, hours, closures, loyalty, brandMinutes, readers, handoff, brandHandoff, reviewRules, family] = await Promise.all([
     db.query.shops.findFirst({ where: eq(shops.id, shopId) }),
     db.select().from(shopHours).where(eq(shopHours.shopId, shopId)),

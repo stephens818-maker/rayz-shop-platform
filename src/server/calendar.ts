@@ -21,6 +21,7 @@ import { staffIntervals } from "./timing";
 import { ratingSummaries } from "./ratings";
 import { timesFor } from "./service-times";
 import { reasonShower } from "./block-reasons";
+import { bookedForReal } from "./calendar-sample";
 import { staffingFor } from "./staff-time";
 import { brandCalendar } from "./payroll/groups";
 import { guardian, householdContact } from "./household-contact";
@@ -215,7 +216,7 @@ export async function loadDayCalendar(
       .leftJoin(customers, eq(customers.id, appointments.customerId))
       .leftJoin(guardian, eq(guardian.id, customers.guardianId))
       .leftJoin(sales, and(eq(sales.appointmentId, appointments.id), ne(sales.status, "voided")))
-      .where(and(eq(appointments.shopId, shopId), lt(appointments.startsAt, dayEnd), gt(appointments.endsAt, dayStart)))
+      .where(and(eq(appointments.shopId, shopId), lt(appointments.startsAt, dayEnd), gt(appointments.endsAt, dayStart), bookedForReal))
       .orderBy(asc(appointments.startsAt)),
   ]);
 
@@ -247,6 +248,7 @@ export async function loadDayCalendar(
               inArray(appointments.status, ["booked", "confirmed", "checked_in", "in_service", "completed"]),
               lt(appointments.startsAt, dayEnd),
               gt(appointments.endsAt, dayStart),
+              bookedForReal,
             ),
           )
       : [],
@@ -504,7 +506,7 @@ export async function loadWeekCalendar(shopId: string, weekStart: LocalDate, sta
       .select({ a: appointments, firstName: customers.firstName, lastName: customers.lastName })
       .from(appointments)
       .leftJoin(customers, eq(customers.id, appointments.customerId))
-      .where(and(eq(appointments.staffId, barber.id), eq(appointments.shopId, shopId), ne(appointments.status, "cancelled"), lt(appointments.startsAt, to), gt(appointments.endsAt, from)))
+      .where(and(eq(appointments.staffId, barber.id), eq(appointments.shopId, shopId), ne(appointments.status, "cancelled"), lt(appointments.startsAt, to), gt(appointments.endsAt, from), bookedForReal))
       .orderBy(asc(appointments.startsAt)),
     reasonShower(reasons),
   ]);

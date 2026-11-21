@@ -28,14 +28,28 @@ beforeAll(async () => {
   for (const k of ["owner", "michelle", "makenna"])
     ids[k] = (await m.db.db.query.staff.findFirst({ where: m.drizzle.eq(m.schema.staff.email, `${k}@rayz.test`) }))!.id;
   coralville = (await m.db.db.query.shops.findFirst({ where: m.drizzle.eq(m.schema.shops.slug, "coralville") }))!.id;
-  [{ d: busy }] = await rows<{ d: string }>(sql`
-    select to_char((starts_at at time zone 'America/Chicago')::date, 'YYYY-MM-DD') d from appointments
-    where shop_id = ${coralville} group by 1 order by count(*) desc limit 1`);
+  busy = m.time.todayLocal();
+  const start = m.time.zonedWallTime(busy as never, 15 * 60).toJSDate();
+  const [cust] = await m.db.db
+    .insert(m.schema.customers)
+    .values({ firstName: "Nia", lastName: "Booker", phone: "+13195550181", email: "nia.booker@rayz.test", homeShopId: coralville })
+    .returning();
+  await m.db.db.insert(m.schema.appointments).values({
+    code: "REALDAY14",
+    shopId: coralville,
+    staffId: ids.makenna,
+    customerId: cust.id,
+    startsAt: start,
+    endsAt: new Date(start.getTime() + 30 * 60_000),
+    status: "booked",
+    source: "staff",
+    sample: false,
+  });
 });
 
 const countSql = async (from: string, days: number, extra = sql``) =>
   (
-    await rows<{ n: number }>(sql`select count(*)::int n from appointments where shop_id = ${coralville}
+    await rows<{ n: number }>(sql`select count(*)::int n from appointments where shop_id = ${coralville} and sample = false
       and (starts_at at time zone 'America/Chicago')::date between ${from}::date and ${from}::date + ${days - 1}::int ${extra}`)
   )[0].n;
 
@@ -43,7 +57,10 @@ describe("the appointment list", () => {
   it("lists a day's or a week's appointments in start order, filtered by barber and status", async () => {
     const day = await list.loadAppointmentList(coralville, busy as never, 1, { staffId: null, status: "all", privacy: FULL });
     expect(day.rows.length).toBeGreaterThan(0);
+    expect(day.rows.some((r) => r.code === "REALDAY14")).toBe(true);
     expect(day.rows.length).toBe(await countSql(busy, 1));
+    const hidden = (await rows<{ n: number }>(sql`select count(*)::int n from appointments where shop_id = ${coralville} and sample = true`))[0].n;
+    expect(hidden).toBeGreaterThan(0);
     expect(day.rows.every((r, i) => i === 0 || day.rows[i - 1].date < r.date || (day.rows[i - 1].date === r.date && day.rows[i - 1].startMin <= r.startMin))).toBe(true);
     const week = await list.loadAppointmentList(coralville, busy as never, 7, { staffId: null, status: "all", privacy: FULL });
     expect(week.rows.length).toBe(await countSql(busy, 7));

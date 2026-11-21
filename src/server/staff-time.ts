@@ -17,6 +17,7 @@ import {
   timeOffRequests,
 } from "@/db/schema";
 import { BlockReason, MAX_NOTE, NO_PRIVATE, ReasonViewer, ShownReason } from "@/domain/block-reasons";
+import { bookedForReal } from "@/server/calendar-sample";
 import { effectiveEnd } from "@/domain/clock-blocks";
 import {
   SERIES_HORIZON_DAYS,
@@ -94,6 +95,7 @@ export async function bookedConflicts(staffId: string, shopId: string | null, sp
         inArray(appointments.status, [...ACTIVE_STATUSES]),
         lt(appointments.startsAt, to),
         gt(appointments.endsAt, from),
+        bookedForReal,
         shopId ? eq(appointments.shopId, shopId) : undefined,
       ),
     )
@@ -682,6 +684,7 @@ export async function staffingFor(shopIds: readonly string[], from: LocalDate, t
           inArray(appointments.status, [...ACTIVE_STATUSES, "completed"]),
           gte(appointments.startsAt, start),
           lt(appointments.startsAt, end),
+          bookedForReal,
         ),
       ),
   ]);

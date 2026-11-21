@@ -473,6 +473,7 @@ async function main() {
           cancelledAt: status === "cancelled" ? new Date(start.getTime() - 3_600_000) : null,
           rebookedFromId: rebooked ? prior!.id : null,
           notes: customer ? null : "Walk-in",
+          sample: true,
         };
         appts.push(appt);
         items.push({ appointmentId: id, serviceId: main.svc.id, kind: "service", name: main.name, priceCents: main.price, durationMin: main.duration });

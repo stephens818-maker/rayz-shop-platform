@@ -214,10 +214,11 @@ export async function routeStaff(perms: Permission | readonly Permission[] | nul
 
 export const assertShopAccess = (ctx: Pick<StaffContext, "shopIds">, shopId: string) => assertShop(ctx, shopId);
 
-/** The shop to operate on for single-shop pages; "all my shops" falls back to the first shop. */
+/** The shop a one-shop page should use. All-shops view stays null. A single assigned shop is that shop. */
 export function workingShopId(ctx: StaffContext, requested?: string | null): string | null {
   if (requested && ctx.shopIds.includes(requested)) return requested;
-  return ctx.currentShopId ?? ctx.shopIds[0] ?? null;
+  if (ctx.currentShopId) return ctx.currentShopId;
+  return ctx.shopIds.length === 1 ? ctx.shopIds[0] : null;
 }
 
 /** Shops a report may cover: one shop, or every shop this person can see. */

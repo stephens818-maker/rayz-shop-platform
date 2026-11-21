@@ -1,6 +1,6 @@
 /**
  * Archived clients leave the A–Z list. Public booking and booking links use the same working
- * barbers. Two Taylors and two Olivias stay first-name only, with a specialty when the name collides.
+ * barbers. Two Taylors and two Olivias stay first-name only, with the display label when the name collides.
  * PF-01: the slow admin reads stay under a second on the median of three, after one warm-up.
  */
 import { readFileSync } from "node:fs";
@@ -95,11 +95,12 @@ describe("public lists and archived clients", () => {
     expect(listed).toHaveLength(4);
     expect(listed.map((b) => b.displayName).sort()).toEqual(["Abigail", "Amanda", "Liv", "Olivia"]);
 
-    const taylors = (await m.catalog.shopBarbers(rock.id, { onlineOnly: true })).filter((b) => b.displayName === "Taylor");
-    expect(taylors.map((b) => b.hint).sort()).toEqual(["Scissor cuts", "Skin fades"]);
-    expect(taylors.every((b) => !b.displayName.includes("."))).toBe(true);
-    const olivias = (await m.catalog.shopBarbers(utica.id, { onlineOnly: true })).filter((b) => b.displayName === "Olivia");
-    expect(olivias.map((b) => b.hint).sort()).toEqual(["Beard trims", "Kids cuts"]);
+    const taylors = (await m.catalog.shopBarbers(rock.id, { onlineOnly: true })).filter((b) => b.displayName.startsWith("Taylor"));
+    expect(taylors.map((b) => b.displayName).sort()).toEqual(["Taylor A.", "Taylor B."]);
+    expect(taylors.every((b) => b.hint == null)).toBe(true);
+    const olivias = (await m.catalog.shopBarbers(utica.id, { onlineOnly: true })).filter((b) => b.displayName.startsWith("Olivia"));
+    expect(olivias.map((b) => b.displayName).sort()).toEqual(["Olivia A.", "Olivia B."]);
+    expect(olivias.every((b) => b.hint == null)).toBe(true);
   });
 
   it("PF-01 keeps the slow admin reads under a second on the median of three", async () => {

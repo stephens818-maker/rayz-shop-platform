@@ -3,12 +3,13 @@ import Link from "next/link";
 import { inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { staff } from "@/db/schema";
-import { Badge, Card, CardHeader, Empty, LinkButton, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
+import { Badge, Card, CardHeader, LinkButton, PageHeader, Stat, Table, Td, Th } from "@/components/ui";
 import { BANKING_STATUS_LABEL, BANKING_STATUS_TONE } from "@/domain/banking";
 import { ENTRY_STATUS_LABEL, METHOD_LABEL, SCHEDULE_LABEL, effectiveMethod, entryStatus } from "@/domain/tips";
 import { formatCents } from "@/lib/money";
 import { addDays, formatDate, formatDateTime, todayLocal } from "@/lib/time";
 import { can, guardPage, workingShopId } from "@/server/auth/staff";
+import { ShopRequired } from "../shop-pick";
 import { tipOverrides } from "@/server/compensation";
 import { shopPayoutAccounts } from "@/server/tips/accounts";
 import { ledgerRows, shopTipConfig, syncTipLedger, tipPolicy } from "@/server/tips/ledger";
@@ -18,10 +19,10 @@ import { BATCH_KIND_LABEL, BATCH_STATUS_LABEL, BATCH_STATUS_TONE } from "./label
 
 export const metadata: Metadata = { title: "Tip payouts" };
 
-export default async function TipsPage() {
+export default async function TipsPage({ searchParams }: { searchParams: Promise<{ shop?: string }> }) {
   const ctx = await guardPage("/admin/tips");
-  const shopId = workingShopId(ctx);
-  if (!shopId) return <Empty title="No shop selected" />;
+  const shopId = workingShopId(ctx, (await searchParams).shop);
+  if (!shopId) return <ShopRequired ctx={ctx} base="/admin/tips" />;
   const shop = ctx.shops.find((s) => s.id === shopId)!;
   const today = todayLocal();
   await syncTipLedger(db, { shopIds: [shopId] });

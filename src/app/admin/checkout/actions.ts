@@ -231,9 +231,6 @@ export async function finalizeAction(input: {
       maxCardFeeWaiverCents: limits.waiverCents,
       actor: ctx.actor,
     });
-    revalidatePath("/admin/calendar");
-    revalidatePath("/admin");
-    revalidatePath("/admin/sales");
     const rebook = r.rebooked && "code" in r.rebooked ? { code: r.rebooked.code, startsAt: r.rebooked.startsAt } : r.rebooked && "error" in r.rebooked ? { error: r.rebooked.error } : null;
     return { saleId: r.saleId, rewardsIssued: r.rewardsIssued, giftCards: r.issuedGiftCards, rebook, stockWarnings: r.stockWarnings };
   });

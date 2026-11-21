@@ -54,8 +54,9 @@ describe("the Demo Shop for app review (ST-I19)", () => {
     expect(await m.db.db.select().from(S().customers).where(eq(S().customers.source, demo.DEMO_CLIENT_SOURCE))).toHaveLength(4);
     const today = m.time.todayLocal();
     const appts = await m.db.db.select().from(S().appointments).where(eq(S().appointments.shopId, a.shopId));
-    expect(appts.filter((x) => x.code.startsWith(`DEMO${today.replace(/-/g, "")}`))).toHaveLength(4);
-    expect(appts).toHaveLength(6);
+    expect(appts.filter((x) => x.code.startsWith(`DEMO${today.replace(/-/g, "")}`))).toHaveLength(0);
+    expect(appts.filter((x) => x.sample)).toHaveLength(4);
+    expect(appts.filter((x) => !x.sample)).toHaveLength(0);
 
     const { loadStaffAccess } = await import("@/server/auth/access");
     const owner = (await loadStaffAccess(ids.owner))!;

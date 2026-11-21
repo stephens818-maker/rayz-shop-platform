@@ -4,6 +4,7 @@ import { appointments, customers, shopClosures, shopHours, shops, staff, staffDa
 import type { ReasonViewer } from "@/domain/block-reasons";
 import { LocalDate, endOfLocalDay, localDateOf, localMinutesOf, startOfLocalDay, weekdayOf } from "@/lib/time";
 import { reasonShower } from "./block-reasons";
+import { bookedForReal } from "./calendar-sample";
 
 export interface BoardAppt {
   id: string;
@@ -89,7 +90,7 @@ export async function loadBrandBoard(shopIds: readonly string[], date: LocalDate
       .select({ a: appointments, first: customers.firstName, last: customers.lastName })
       .from(appointments)
       .leftJoin(customers, eq(customers.id, appointments.customerId))
-      .where(and(inArray(appointments.shopId, ids), ne(appointments.status, "cancelled"), lt(appointments.startsAt, to), gt(appointments.endsAt, from)))
+      .where(and(inArray(appointments.shopId, ids), ne(appointments.status, "cancelled"), lt(appointments.startsAt, to), gt(appointments.endsAt, from), bookedForReal))
       .orderBy(asc(appointments.startsAt)),
     reasonShower(reasons),
   ]);
